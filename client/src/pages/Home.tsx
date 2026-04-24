@@ -7,6 +7,7 @@ import IntegrationsSection from "@/components/IntegrationsSection";
 import RiskManagementSection from "@/components/RiskManagementSection";
 import SEBISection from "@/components/SEBISection";
 import Footer from "@/components/Footer";
+import RiskCalcBanner from "@/components/RiskCalcBanner";
 
 export default function Home() {
   return (
@@ -15,6 +16,7 @@ export default function Home() {
       <TickerBanner />
       <HeroSection />
 
+      <RiskCalcBanner />
       {/* Section dividers */}
       <div className="section-divider" />
       <ScalperToolSection />
