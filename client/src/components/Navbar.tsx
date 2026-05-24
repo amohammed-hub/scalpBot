@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { TrendingUp, Menu, X, Zap } from "lucide-react";
+import { TrendingUp, Menu, X, Zap, QrCode } from "lucide-react";
+import QRModal from "./QRModal";
 
 const navLinks = [
   { label: "Scalper Tool", href: "#scalper" },
@@ -12,6 +13,7 @@ const navLinks = [
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
@@ -26,87 +28,116 @@ export default function Navbar() {
   };
 
   return (
-    <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        scrolled
-          ? "bg-[oklch(0.11_0.025_240/0.95)] backdrop-blur-xl border-b border-white/5 shadow-lg"
-          : "bg-transparent"
-      }`}
-    >
-      <div className="container flex items-center justify-between h-16">
-        {/* Logo */}
-        <a
-          href="#"
-          onClick={(e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-          className="flex items-center gap-2 group"
-        >
-          <div className="w-8 h-8 rounded-lg bg-[oklch(0.78_0.18_195/0.15)] border border-[oklch(0.78_0.18_195/0.4)] flex items-center justify-center pulse-glow">
-            <Zap className="w-4 h-4 text-[oklch(0.78_0.18_195)]" />
+    <>
+      <header
+        className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+          scrolled
+            ? "bg-[oklch(0.11_0.025_240/0.95)] backdrop-blur-xl border-b border-white/5 shadow-lg"
+            : "bg-transparent"
+        }`}
+      >
+        <div className="container flex items-center justify-between h-16">
+          {/* Logo */}
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+            className="flex items-center gap-2 group"
+          >
+            <div className="w-8 h-8 rounded-lg bg-[oklch(0.78_0.18_195/0.15)] border border-[oklch(0.78_0.18_195/0.4)] flex items-center justify-center pulse-glow">
+              <Zap className="w-4 h-4 text-[oklch(0.78_0.18_195)]" />
+            </div>
+            <span className="font-bold text-sm tracking-wide" style={{ fontFamily: "'Syne', sans-serif" }}>
+              <span className="text-[oklch(0.78_0.18_195)]">Upstox</span>
+              <span className="text-white/90"> Scalping Hub</span>
+            </span>
+          </a>
+
+          {/* Desktop Nav */}
+          <nav className="hidden md:flex items-center gap-6">
+            {navLinks.map((link) => (
+              <button
+                key={link.href}
+                onClick={() => handleNav(link.href)}
+                className="text-sm text-white/60 hover:text-[oklch(0.78_0.18_195)] transition-colors duration-200 font-medium"
+              >
+                {link.label}
+              </button>
+            ))}
+          </nav>
+
+          {/* CTA */}
+          <div className="hidden md:flex items-center gap-2">
+            {/* QR / Get on Phone button */}
+            <button
+              onClick={() => setQrOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[oklch(0.78_0.18_195/0.35)] bg-[oklch(0.78_0.18_195/0.08)] text-[oklch(0.78_0.18_195)] text-xs font-semibold hover:bg-[oklch(0.78_0.18_195/0.18)] hover:border-[oklch(0.78_0.18_195/0.55)] transition-all duration-200"
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              Get on Phone
+            </button>
+
+            <a
+              href="https://upstox.com/scalper/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[oklch(0.78_0.18_195)] text-[oklch(0.11_0.025_240)] text-sm font-semibold hover:bg-[oklch(0.82_0.18_195)] transition-colors duration-200"
+            >
+              <TrendingUp className="w-4 h-4" />
+              Try Scalper
+            </a>
           </div>
-          <span className="font-bold text-sm tracking-wide" style={{ fontFamily: "'Syne', sans-serif" }}>
-            <span className="text-[oklch(0.78_0.18_195)]">Upstox</span>
-            <span className="text-white/90"> Scalping Hub</span>
-          </span>
-        </a>
 
-        {/* Desktop Nav */}
-        <nav className="hidden md:flex items-center gap-6">
-          {navLinks.map((link) => (
+          {/* Mobile Menu Toggle */}
+          <div className="md:hidden flex items-center gap-2">
             <button
-              key={link.href}
-              onClick={() => handleNav(link.href)}
-              className="text-sm text-white/60 hover:text-[oklch(0.78_0.18_195)] transition-colors duration-200 font-medium"
+              onClick={() => setQrOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[oklch(0.78_0.18_195/0.35)] bg-[oklch(0.78_0.18_195/0.08)] text-[oklch(0.78_0.18_195)] text-xs font-semibold"
             >
-              {link.label}
+              <QrCode className="w-3.5 h-3.5" />
             </button>
-          ))}
-        </nav>
-
-        {/* CTA */}
-        <div className="hidden md:flex items-center gap-3">
-          <a
-            href="https://upstox.com/scalper/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[oklch(0.78_0.18_195)] text-[oklch(0.11_0.025_240)] text-sm font-semibold hover:bg-[oklch(0.82_0.18_195)] transition-colors duration-200"
-          >
-            <TrendingUp className="w-4 h-4" />
-            Try Scalper
-          </a>
+            <button
+              className="text-white/70 hover:text-white"
+              onClick={() => setMobileOpen(!mobileOpen)}
+            >
+              {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
 
-        {/* Mobile Menu Toggle */}
-        <button
-          className="md:hidden text-white/70 hover:text-white"
-          onClick={() => setMobileOpen(!mobileOpen)}
-        >
-          {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
-      </div>
-
-      {/* Mobile Menu */}
-      {mobileOpen && (
-        <div className="md:hidden bg-[oklch(0.13_0.025_240/0.98)] backdrop-blur-xl border-b border-white/5 px-4 py-4 flex flex-col gap-3">
-          {navLinks.map((link) => (
+        {/* Mobile Menu */}
+        {mobileOpen && (
+          <div className="md:hidden bg-[oklch(0.13_0.025_240/0.98)] backdrop-blur-xl border-b border-white/5 px-4 py-4 flex flex-col gap-3">
+            {navLinks.map((link) => (
+              <button
+                key={link.href}
+                onClick={() => handleNav(link.href)}
+                className="text-left text-sm text-white/70 hover:text-[oklch(0.78_0.18_195)] transition-colors py-2 border-b border-white/5"
+              >
+                {link.label}
+              </button>
+            ))}
             <button
-              key={link.href}
-              onClick={() => handleNav(link.href)}
-              className="text-left text-sm text-white/70 hover:text-[oklch(0.78_0.18_195)] transition-colors py-2 border-b border-white/5"
+              onClick={() => { setQrOpen(true); setMobileOpen(false); }}
+              className="mt-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-[oklch(0.78_0.18_195/0.4)] text-[oklch(0.78_0.18_195)] text-sm font-semibold"
             >
-              {link.label}
+              <QrCode className="w-4 h-4" />
+              Get on Phone / Scan QR
             </button>
-          ))}
-          <a
-            href="https://upstox.com/scalper/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[oklch(0.78_0.18_195)] text-[oklch(0.11_0.025_240)] text-sm font-semibold"
-          >
-            <TrendingUp className="w-4 h-4" />
-            Try Scalper Free
-          </a>
-        </div>
-      )}
-    </header>
+            <a
+              href="https://upstox.com/scalper/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[oklch(0.78_0.18_195)] text-[oklch(0.11_0.025_240)] text-sm font-semibold"
+            >
+              <TrendingUp className="w-4 h-4" />
+              Try Scalper Free
+            </a>
+          </div>
+        )}
+      </header>
+
+      {/* QR Modal */}
+      <QRModal open={qrOpen} onClose={() => setQrOpen(false)} />
+    </>
   );
 }
