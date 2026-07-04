@@ -1,0 +1,62 @@
+CREATE TABLE `bot_sessions` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`status` enum('running','stopped','paused','error') NOT NULL DEFAULT 'stopped',
+	`mode` enum('paper','live') NOT NULL DEFAULT 'paper',
+	`instrumentToken` varchar(128) DEFAULT 'NSE_EQ|INE009A01021',
+	`instrumentSymbol` varchar(32) DEFAULT 'RELIANCE',
+	`capital` float DEFAULT 100000,
+	`riskPerTradePct` float DEFAULT 1,
+	`maxTradesPerDay` int DEFAULT 5,
+	`dailyLossLimitPct` float DEFAULT 3,
+	`tradesCount` int DEFAULT 0,
+	`dailyPnl` float DEFAULT 0,
+	`startedAt` timestamp,
+	`stoppedAt` timestamp,
+	`lastSignal` varchar(16),
+	`lastSignalAt` timestamp,
+	`lastError` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `bot_sessions_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `trade_log` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`sessionId` int,
+	`symbol` varchar(32) NOT NULL,
+	`instrumentToken` varchar(128),
+	`direction` enum('BUY','SELL') NOT NULL,
+	`mode` enum('paper','live') NOT NULL DEFAULT 'paper',
+	`entryPrice` float NOT NULL,
+	`exitPrice` float,
+	`quantity` int NOT NULL,
+	`slPrice` float,
+	`targetPrice` float,
+	`atr` float,
+	`confidence` float,
+	`status` enum('open','closed','cancelled') NOT NULL DEFAULT 'open',
+	`exitReason` varchar(32),
+	`pnl` float,
+	`pnlPct` float,
+	`upstoxOrderId` varchar(64),
+	`signalReason` text,
+	`enteredAt` timestamp NOT NULL DEFAULT (now()),
+	`exitedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `trade_log_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `upstox_credentials` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`apiKey` varchar(128) NOT NULL,
+	`apiSecret` varchar(256) NOT NULL,
+	`accessToken` text,
+	`tokenExpiresAt` timestamp,
+	`redirectUri` varchar(512) DEFAULT 'http://localhost:8000/callback',
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `upstox_credentials_id` PRIMARY KEY(`id`)
+);
