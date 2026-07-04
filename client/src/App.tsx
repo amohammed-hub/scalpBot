@@ -8,6 +8,7 @@ import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import RiskCalculator from "./pages/RiskCalculator";
 import Settings from "./pages/Settings";
+import UpstoxCallback from "./pages/UpstoxCallback";
 
 function Router() {
   return (
@@ -16,6 +17,7 @@ function Router() {
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/risk-calculator" component={RiskCalculator} />
       <Route path="/settings" component={Settings} />
+      <Route path="/upstox-callback" component={UpstoxCallback} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

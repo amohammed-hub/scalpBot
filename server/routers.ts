@@ -88,6 +88,68 @@ export const appRouter = router({
           .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
         return { success: true };
       }),
+
+    // Exchange Upstox authorization code for access token automatically
+    exchangeCode: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        code: z.string().min(1),
+        redirectUri: z.string().min(1),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+
+        // Load stored API key and secret for this session
+        const rows = await db
+          .select()
+          .from(upstoxCredentials)
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .limit(1);
+
+        if (rows.length === 0 || !rows[0].apiKey || !rows[0].apiSecret) {
+          throw new Error("API Key and Secret not found. Please save them in Settings first.");
+        }
+
+        const { apiKey, apiSecret } = rows[0];
+
+        // Call Upstox token endpoint
+        const params = new URLSearchParams({
+          code: input.code,
+          client_id: apiKey,
+          client_secret: apiSecret,
+          redirect_uri: input.redirectUri,
+          grant_type: "authorization_code",
+        });
+
+        const response = await fetch("https://api.upstox.com/v2/login/authorization/token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+          },
+          body: params.toString(),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`Upstox token exchange failed: ${response.status} — ${errText}`);
+        }
+
+        const data = await response.json() as { access_token?: string; extended_token?: string };
+        if (!data.access_token) {
+          throw new Error("Upstox did not return an access token. Please try again.");
+        }
+
+        // Save the access token
+        const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        await db
+          .update(upstoxCredentials)
+          .set({ accessToken: data.access_token, tokenExpiresAt: expires })
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
+
+        return { success: true, userName: undefined };
+      }),
   }),
 
   // Bot

@@ -6,24 +6,53 @@ import {
   AlertTriangle, ChevronDown, ChevronUp, MousePointer,
   LogIn, Copy, ClipboardPaste, RefreshCw, Info
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { trpc } from "@/lib/trpc";
 
 const LS_CREDS = "scalpbot_credentials";
+const LS_SESSION = "scalpbot_session";
+
+function getSessionToken(): string {
+  let token = localStorage.getItem(LS_SESSION);
+  if (!token) {
+    token = crypto.randomUUID();
+    localStorage.setItem(LS_SESSION, token);
+  }
+  return token;
+}
+
+// Build the Upstox authorize URL for automatic token capture
+function buildUpstoxAuthUrl(apiKey: string, redirectUri: string): string {
+  const base = "https://api.upstox.com/v2/login/authorization/dialog";
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: apiKey,
+    redirect_uri: redirectUri,
+  });
+  return `${base}?${params.toString()}`;
+}
 
 interface Credentials {
   apiKey: string;
   apiSecret: string;
   accessToken: string;
   redirectUri: string;
+  tokenSavedAt?: number;
+}
+
+function getCallbackUrl(): string {
+  // Use the current origin so it works on both localhost and the live domain
+  return `${window.location.origin}/upstox-callback`;
 }
 
 function loadCreds(): Credentials {
   try {
-    return JSON.parse(localStorage.getItem(LS_CREDS) ?? "null") ??
-      { apiKey: "", apiSecret: "", accessToken: "", redirectUri: "http://127.0.0.1:8000/callback" };
+    const saved = JSON.parse(localStorage.getItem(LS_CREDS) ?? "null");
+    if (saved) return saved;
+    return { apiKey: "", apiSecret: "", accessToken: "", redirectUri: getCallbackUrl() };
   } catch {
-    return { apiKey: "", apiSecret: "", accessToken: "", redirectUri: "http://127.0.0.1:8000/callback" };
+    return { apiKey: "", apiSecret: "", accessToken: "", redirectUri: getCallbackUrl() };
   }
 }
 
@@ -96,6 +125,19 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [showApiGuide, setShowApiGuide] = useState(false);
   const [showTokenGuide, setShowTokenGuide] = useState(true);
+  const [sessionToken] = useState(getSessionToken);
+
+  // Sync the redirect URI to always use the current origin
+  useEffect(() => {
+    const callbackUrl = getCallbackUrl();
+    if (creds.redirectUri !== callbackUrl) {
+      setCreds(c => ({ ...c, redirectUri: callbackUrl }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save credentials to DB via tRPC (for server-side token exchange)
+  const saveCredsMutation = trpc.credentials.save.useMutation();
 
   const handleSave = () => {
     // Save tokenSavedAt timestamp so Dashboard can check if token is from today
@@ -104,15 +146,30 @@ export default function Settings() {
     setSaved(true);
     toast.success("Credentials saved securely in your browser.");
     setTimeout(() => setSaved(false), 3000);
+
+    // Also save API key/secret to DB so the server can exchange codes automatically
+    if (creds.apiKey && creds.apiSecret) {
+      saveCredsMutation.mutate({
+        sessionToken,
+        apiKey: creds.apiKey,
+        apiSecret: creds.apiSecret,
+        redirectUri: creds.redirectUri,
+      });
+    }
   };
 
   const handleClear = () => {
     localStorage.removeItem(LS_CREDS);
-    setCreds({ apiKey: "", apiSecret: "", accessToken: "", redirectUri: "http://127.0.0.1:8000/callback" });
+    setCreds({ apiKey: "", apiSecret: "", accessToken: "", redirectUri: getCallbackUrl() });
     toast.info("Credentials cleared.");
   };
 
   const hasSavedCreds = !!(loadCreds().apiKey);
+
+  // Build the Upstox authorize URL for automatic token capture
+  const upstoxAuthUrl = creds.apiKey
+    ? buildUpstoxAuthUrl(creds.apiKey, creds.redirectUri || getCallbackUrl())
+    : null;
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
@@ -192,9 +249,8 @@ export default function Settings() {
                 step={3}
                 icon={ClipboardPaste}
                 title="Set the Redirect URL"
-                description="In the app creation form, find the Redirect URL field and paste exactly this value:"
-                highlight="http://127.0.0.1:8000/callback"
-                note="This exact URL is required. Do not change it."
+                description="In the app creation form, find the Redirect URL field. Copy the Redirect URI shown in the credentials form below and paste it there."
+                note="The Redirect URI is shown in the credentials form below — use the copy button next to it. It looks like: https://upstox-scalp-ys6fujba.manus.space/upstox-callback"
               />
               <TokenStep
                 step={4}
@@ -312,37 +368,68 @@ export default function Settings() {
             </div>
           </div>
 
+          {/* Redirect URI — read-only, auto-set to this app's callback URL */}
           <div>
-            <label className="text-xs text-white/50 mb-1.5 block">Redirect URI <span className="text-white/20">(do not change)</span></label>
-            <input
-              type="text"
-              value={creds.redirectUri}
-              onChange={(e) => setCreds(c => ({ ...c, redirectUri: e.target.value }))}
-              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-teal-500 font-mono"
-            />
+            <label className="text-xs text-white/50 mb-1.5 block">
+              Redirect URI
+              <span className="text-white/30 ml-1">(copy this into your Upstox app — required for auto-token)</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={creds.redirectUri}
+                readOnly
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white/60 text-xs focus:outline-none font-mono cursor-text"
+              />
+              <button
+                onClick={() => { navigator.clipboard.writeText(creds.redirectUri); toast.success("Redirect URI copied!"); }}
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-white/60 hover:text-white transition-colors"
+                title="Copy"
+              >
+                <Copy className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-white/30">
+              Set this exact URL as the Redirect URL in your Upstox Developer App settings.
+            </p>
           </div>
 
+          {/* Auto-fetch token OR manual paste */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center justify-between mb-2">
               <label className="text-xs text-white/50 block">
                 Access Token <span className="text-white/30">(required for Live mode — refreshed daily)</span>
               </label>
-              <a
-                href="https://account.upstox.com/developer/apps"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1 text-xs text-teal-400 hover:text-teal-300 bg-teal-500/10 hover:bg-teal-500/20 px-2 py-1 rounded-lg transition-colors"
-              >
-                <ExternalLink className="w-3 h-3" />
-                Get Token from Upstox
-              </a>
             </div>
+
+            {/* Auto-fetch button — primary method */}
+            {upstoxAuthUrl ? (
+              <a
+                href={upstoxAuthUrl}
+                className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-teal-500 hover:bg-teal-600 text-white font-semibold rounded-xl transition-colors mb-3 text-sm"
+              >
+                <LogIn className="w-4 h-4" />
+                Get Token Automatically — Login with Upstox
+              </a>
+            ) : (
+              <div className="flex items-center gap-2 w-full py-3 px-4 bg-white/5 border border-white/10 text-white/30 rounded-xl mb-3 text-sm">
+                <LogIn className="w-4 h-4" />
+                Enter your API Key above to enable auto-login
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex-1 h-px bg-white/10" />
+              <span className="text-xs text-white/30">or paste manually</span>
+              <div className="flex-1 h-px bg-white/10" />
+            </div>
+
             <div className="relative">
               <input
                 type={showToken ? "text" : "password"}
                 value={creds.accessToken}
                 onChange={(e) => setCreds(c => ({ ...c, accessToken: e.target.value }))}
-                placeholder="Paste your Access Token from Upstox Developer Portal"
+                placeholder="Paste your Access Token here if auto-login doesn't work"
                 className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 pr-12 text-white text-sm placeholder-white/20 focus:outline-none focus:border-teal-500 font-mono"
               />
               <button onClick={() => setShowToken(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70">
@@ -352,7 +439,7 @@ export default function Settings() {
             {creds.accessToken && (
               <p className="mt-1.5 text-xs text-emerald-400 flex items-center gap-1">
                 <CheckCircle className="w-3 h-3" />
-                Token entered ({creds.accessToken.length} characters) — remember to refresh it each morning
+                Token saved ({creds.accessToken.length} characters) — remember to refresh it each morning
               </p>
             )}
           </div>

@@ -59,17 +59,34 @@ interface BotConfig {
 interface PricePoint { time: string; price: number; }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+// Instruments are grouped by segment. The bot trades ONE selected instrument at a time.
+// NSE_EQ = NSE Cash/Equity | NSE_INDEX = NSE Index | BSE_EQ = BSE Cash/Equity
+// For F&O (futures/options), use the F&O instrument token from Upstox instruments list.
 const INSTRUMENTS = [
-  { token: "NSE_EQ|INE009A01021", symbol: "RELIANCE", label: "Reliance Industries" },
-  { token: "NSE_INDEX|Nifty 50", symbol: "NIFTY", label: "Nifty 50 Index" },
-  { token: "NSE_INDEX|Nifty Bank", symbol: "BANKNIFTY", label: "Bank Nifty" },
-  { token: "NSE_EQ|INE467B01029", symbol: "TCS", label: "TCS" },
-  { token: "NSE_EQ|INE009B01011", symbol: "INFY", label: "Infosys" },
-  { token: "NSE_EQ|INE040A01034", symbol: "HDFC", label: "HDFC Bank" },
+  // ── NSE Indices (most popular for scalping) ──
+  { token: "NSE_INDEX|Nifty 50",       symbol: "NIFTY",      label: "Nifty 50",           segment: "NSE Index" },
+  { token: "NSE_INDEX|Nifty Bank",     symbol: "BANKNIFTY",  label: "Bank Nifty",         segment: "NSE Index" },
+  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY", label: "Fin Nifty",         segment: "NSE Index" },
+  { token: "NSE_INDEX|MIDCPNIFTY",     symbol: "MIDCPNIFTY", label: "Midcap Nifty",       segment: "NSE Index" },
+  // ── NSE Equity (large-cap) ──
+  { token: "NSE_EQ|INE009A01021",      symbol: "RELIANCE",   label: "Reliance Industries", segment: "NSE Equity" },
+  { token: "NSE_EQ|INE467B01029",      symbol: "TCS",        label: "TCS",                segment: "NSE Equity" },
+  { token: "NSE_EQ|INE009B01011",      symbol: "INFY",       label: "Infosys",            segment: "NSE Equity" },
+  { token: "NSE_EQ|INE040A01034",      symbol: "HDFC",       label: "HDFC Bank",          segment: "NSE Equity" },
+  { token: "NSE_EQ|INE030A01027",      symbol: "ITC",        label: "ITC",                segment: "NSE Equity" },
+  { token: "NSE_EQ|INE585B01010",      symbol: "SBIN",       label: "State Bank of India", segment: "NSE Equity" },
+  { token: "NSE_EQ|INE062A01020",      symbol: "TATAMOTORS", label: "Tata Motors",         segment: "NSE Equity" },
+  { token: "NSE_EQ|INE081A01012",      symbol: "TATASTEEL",  label: "Tata Steel",         segment: "NSE Equity" },
+  // ── BSE Equity ──
+  { token: "BSE_INDEX|SENSEX",         symbol: "SENSEX",     label: "Sensex",             segment: "BSE Index" },
+  { token: "BSE_EQ|500325",            symbol: "RELIANCE_BSE", label: "Reliance (BSE)",   segment: "BSE Equity" },
 ];
 
 const BASE_PRICES: Record<string, number> = {
-  RELIANCE: 2950, NIFTY: 24800, BANKNIFTY: 53200, TCS: 3780, INFY: 1620, HDFC: 1740,
+  NIFTY: 24800, BANKNIFTY: 53200, FINNIFTY: 23500, MIDCPNIFTY: 12800,
+  RELIANCE: 2950, TCS: 3780, INFY: 1620, HDFC: 1740, ITC: 465,
+  SBIN: 820, TATAMOTORS: 960, TATASTEEL: 165,
+  SENSEX: 81500, RELIANCE_BSE: 2950,
 };
 
 const LS_TRADES = "scalpbot_trades";
@@ -533,7 +550,13 @@ export default function Dashboard() {
             <div>
               <label className="text-xs text-white/50 mb-1.5 block">Instrument</label>
               <select value={config.instrumentToken} onChange={(e) => { const inst = INSTRUMENTS.find(i => i.token === e.target.value)!; setConfig(c => ({ ...c, instrumentToken: inst.token, instrumentSymbol: inst.symbol })); }} disabled={isRunning} className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-teal-500 disabled:opacity-50">
-                {INSTRUMENTS.map(i => <option key={i.token} value={i.token} className="bg-gray-900">{i.label}</option>)}
+                {Array.from(new Set(INSTRUMENTS.map(i => i.segment))).map(seg => (
+                  <optgroup key={seg} label={seg} className="bg-gray-900 text-white/50">
+                    {INSTRUMENTS.filter(i => i.segment === seg).map(i => (
+                      <option key={i.token} value={i.token} className="bg-gray-900">{i.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </div>
             <div>

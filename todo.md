@@ -66,3 +66,8 @@
 - [x] Settings: Add step-by-step visual guide for getting Upstox Access Token (numbered steps with icons, screenshots-style cards)
 - [x] Dashboard: Add morning reminder banner after 9 AM IST reminding user to refresh Access Token before Live mode
 - [x] Dashboard: Add token expiry/validity indicator (green/red dot) in Dashboard header showing if saved Access Token is valid
+
+## Fix QR Login Wall + Auto OAuth + Segments
+- [x] Permanently fix QR/mobile login wall on published URL — site visibility changed to Public
+- [x] Build Upstox OAuth callback page (/upstox-callback) that auto-captures auth code and exchanges it for access token via server-side API call
+- [x] Expanded instrument list from 6 to 14 (NSE Index, NSE Equity, BSE Index, BSE Equity), grouped by segment in dropdown
