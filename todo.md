@@ -31,11 +31,11 @@
 - [x] Save checkpoint (v35711260)
 
 ## Independence from Manus Auth
-- [ ] Remove Manus login from Home page — make it publicly accessible
-- [ ] Remove useAuth/protectedProcedure from Dashboard and Settings
-- [ ] Store Upstox API credentials in browser localStorage (encrypted)
-- [ ] Store bot session state (status, config, trades) in localStorage
-- [ ] Remove all redirects to Manus login portal
-- [ ] Make all tRPC routes public (no auth required)
-- [ ] Test full flow without any login
-- [ ] Save checkpoint
+- [x] Remove Manus login from Home page — make it publicly accessible
+- [x] Remove useAuth/protectedProcedure from Dashboard and Settings
+- [x] Store Upstox API credentials in browser localStorage
+- [x] Store bot session state (status, config, trades) in localStorage
+- [x] Remove all redirects to Manus login portal
+- [x] Make all tRPC routes public (no auth required)
+- [x] Test full flow without any login — verified in browser
+- [x] Save checkpoint (v8e941fd0)

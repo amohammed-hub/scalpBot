@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
+import QRModal from "@/components/QRModal";
 import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
@@ -109,6 +110,7 @@ function generateSignalFromPrices(prices: number[], symbol: string): Signal {
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [, navigate] = useLocation();
+  const [qrOpen, setQrOpen] = useState(false);
 
   // Config state (persisted)
   const [config, setConfig] = useState<BotConfig>(() => {
@@ -286,9 +288,19 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold text-white">Trading Dashboard</h1>
             <p className="text-white/50 text-sm">Automated scalping — EMA + VWAP + ADX strategy</p>
           </div>
-          <Badge variant="outline" className={`border-none text-sm px-3 py-1 ${config.mode === "paper" ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>
-            {config.mode === "paper" ? "Paper Trade" : "⚠ Live Trade"}
-          </Badge>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setQrOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-teal-500/15 border border-teal-500/30 text-teal-400 hover:bg-teal-500/25 transition-all"
+              title="Get on Phone / Share"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>
+              <span className="hidden sm:inline">Get on Phone</span>
+            </button>
+            <Badge variant="outline" className={`border-none text-sm px-3 py-1 ${config.mode === "paper" ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>
+              {config.mode === "paper" ? "Paper Trade" : "⚠ Live Trade"}
+            </Badge>
+          </div>
         </div>
 
         {/* Stats Row */}
@@ -472,6 +484,9 @@ export default function Dashboard() {
           </div>
         </div>
       </main>
+
+      {/* QR Modal */}
+      <QRModal open={qrOpen} onClose={() => setQrOpen(false)} />
     </div>
   );
 }

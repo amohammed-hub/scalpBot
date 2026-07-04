@@ -1,9 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
-import { Bot, TrendingUp, Shield, Zap, BarChart2 } from "lucide-react";
+import { Bot, TrendingUp, Shield, Zap, BarChart2, QrCode } from "lucide-react";
+import { useState } from "react";
+import QRModal from "@/components/QRModal";
 
 export default function Home() {
   const [, navigate] = useLocation();
+  const [qrOpen, setQrOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white">
@@ -16,10 +19,20 @@ export default function Home() {
           <span className="font-bold text-lg text-white">ScalpBot</span>
           <span className="text-xs bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded-full border border-teal-500/30">Upstox</span>
         </div>
-        <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={() => navigate("/dashboard")}>
-          Open Dashboard
-        </Button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setQrOpen(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-teal-500/15 border border-teal-500/30 text-teal-400 hover:bg-teal-500/25 transition-all"
+          >
+            <QrCode className="w-4 h-4" />
+            <span className="hidden sm:inline">Get on Phone</span>
+          </button>
+          <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={() => navigate("/dashboard")}>
+            Open Dashboard
+          </Button>
+        </div>
       </nav>
+      <QRModal open={qrOpen} onClose={() => setQrOpen(false)} />
 
       {/* Hero */}
       <div className="max-w-6xl mx-auto px-6 pt-20 pb-16 text-center">
