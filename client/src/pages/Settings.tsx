@@ -95,7 +95,7 @@ export default function Settings() {
             <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">2.</span> Click <strong className="text-white">"Create New App"</strong> — give it any name</li>
             <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">3.</span> Set Redirect URL to: <code className="bg-white/10 px-2 py-0.5 rounded text-teal-300">http://127.0.0.1:8000/callback</code></li>
             <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">4.</span> Copy the <strong className="text-white">API Key</strong> and <strong className="text-white">API Secret</strong> shown on the app page</li>
-            <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">5.</span> For Live trading, run the Python bot once to get your daily <strong className="text-white">Access Token</strong></li>
+            <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">5.</span> For Live trading: go to <a href="https://account.upstox.com/developer/apps" target="_blank" rel="noreferrer" className="text-teal-400 underline inline-flex items-center gap-1">your Upstox App <ExternalLink className="w-3 h-3" /></a>, click <strong className="text-white">"Get Token"</strong> → login → copy the <strong className="text-white">Access Token</strong> shown and paste it below. <span className="text-amber-400">(Token refreshes daily — repeat each morning)</span></li>
           </ol>
         </div>
 
@@ -151,15 +151,26 @@ export default function Settings() {
           </div>
 
           <div>
-            <label className="text-xs text-white/50 mb-1.5 block">
-              Access Token <span className="text-white/30">(required for Live mode — refreshed daily)</span>
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs text-white/50 block">
+                Access Token <span className="text-white/30">(required for Live mode — refreshed daily)</span>
+              </label>
+              <a
+                href="https://account.upstox.com/developer/apps"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 text-xs text-teal-400 hover:text-teal-300 bg-teal-500/10 hover:bg-teal-500/20 px-2 py-1 rounded-lg transition-colors"
+              >
+                <ExternalLink className="w-3 h-3" />
+                Get Token from Upstox
+              </a>
+            </div>
             <div className="relative">
               <input
                 type={showToken ? "text" : "password"}
                 value={creds.accessToken}
                 onChange={(e) => setCreds(c => ({ ...c, accessToken: e.target.value }))}
-                placeholder="Paste your daily access token here for live trading"
+                placeholder="Paste your Access Token from Upstox Developer Portal"
                 className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 pr-12 text-white text-sm placeholder-white/20 focus:outline-none focus:border-teal-500 font-mono"
               />
               <button onClick={() => setShowToken(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70">

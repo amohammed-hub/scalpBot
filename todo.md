@@ -51,3 +51,13 @@
 - [x] Verified: all recent network requests return HTTP 200, no 401 errors
 - [x] Verified: Dashboard loads without any login redirect
 - [x] Verified: Home page loads without any login redirect
+
+## Fix — Remove Login Wall & Python References (Mobile QR Code Fix)
+- [x] Root cause found: DashboardLayout.tsx had hard-coded auth gate (if !user → redirect to Manus login)
+- [x] Rewrote DashboardLayout.tsx — removed all useAuth, getLoginUrl, and login redirect logic entirely
+- [x] Removed "Sign in to continue" screen from DashboardLayout
+- [x] Removed Python bot instruction from Settings.tsx step 5
+- [x] Added direct "Get Token from Upstox" link button next to Access Token field
+- [x] Updated Access Token placeholder text to be clear and non-technical
+- [x] Verified: no getLoginUrl/useAuth calls remain in any page or component
+- [x] Verified: no Python/coding references remain in any page
