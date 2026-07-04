@@ -2,16 +2,10 @@ import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, float } from "dri
 
 /**
  * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
+ * Kept for framework compatibility but not used for app features.
  */
 export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -26,9 +20,10 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 // ── Upstox Credentials ────────────────────────────────────────────────────────
+// sessionToken: browser-generated UUID stored in localStorage — no Manus login required
 export const upstoxCredentials = mysqlTable("upstox_credentials", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  sessionToken: varchar("sessionToken", { length: 128 }).notNull(),
   apiKey: varchar("apiKey", { length: 128 }).notNull(),
   apiSecret: varchar("apiSecret", { length: 256 }).notNull(),
   accessToken: text("accessToken"),
@@ -42,7 +37,7 @@ export type UpstoxCredentials = typeof upstoxCredentials.$inferSelect;
 // ── Bot Sessions ──────────────────────────────────────────────────────────────
 export const botSessions = mysqlTable("bot_sessions", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  sessionToken: varchar("sessionToken", { length: 128 }).notNull(),
   status: mysqlEnum("status", ["running", "stopped", "paused", "error"]).default("stopped").notNull(),
   mode: mysqlEnum("mode", ["paper", "live"]).default("paper").notNull(),
   instrumentToken: varchar("instrumentToken", { length: 128 }).default("NSE_EQ|INE009A01021"),
@@ -66,7 +61,7 @@ export type BotSession = typeof botSessions.$inferSelect;
 // ── Trade Log ─────────────────────────────────────────────────────────────────
 export const tradeLog = mysqlTable("trade_log", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  sessionToken: varchar("sessionToken", { length: 128 }).notNull(),
   sessionId: int("sessionId"),
   symbol: varchar("symbol", { length: 32 }).notNull(),
   instrumentToken: varchar("instrumentToken", { length: 128 }),

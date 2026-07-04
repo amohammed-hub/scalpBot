@@ -15,6 +15,13 @@
       "when": 1783191522204,
       "tag": "0001_wooden_flatman",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1783195828260,
+      "tag": "0002_panoramic_random",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,9 @@
 /**
  * Bot Engine — runs in-process on the Node.js server.
- * Manages per-user bot sessions, generates EMA/VWAP/ADX signals,
+ * Manages per-session bot instances, generates EMA/VWAP/ADX signals,
  * and places paper or live orders via the Upstox API.
+ *
+ * Keyed by sessionToken (browser-generated UUID) — no Manus login required.
  */
 
 import axios from "axios";
@@ -27,7 +29,7 @@ export interface Signal {
 }
 
 export interface BotState {
-  userId: number;
+  sessionToken: string;
   sessionId: number;
   status: "running" | "stopped" | "paused" | "error";
   mode: "paper" | "live";
@@ -47,8 +49,8 @@ export interface BotState {
   lastError: string | null;
 }
 
-// ── In-memory store (keyed by userId) ────────────────────────────────────────
-const bots = new Map<number, BotState>();
+// ── In-memory store (keyed by sessionToken) ───────────────────────────────────
+const bots = new Map<string, BotState>();
 
 // ── Indicator helpers ─────────────────────────────────────────────────────────
 function ema(values: number[], period: number): number[] {
@@ -236,8 +238,6 @@ function buildMockCandle(symbol: string): Candle {
 async function fetchUpstoxCandles(instrumentToken: string, accessToken: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
-    const toDate = new Date().toISOString().split("T")[0];
-    const fromDate = toDate;
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/1minute`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
@@ -299,7 +299,7 @@ export async function placeUpstoxOrder(
 }
 
 // ── Bot tick (called every interval) ─────────────────────────────────────────
-async function tick(state: BotState, onTradeCallback: (trade: Omit<InsertTrade, "userId" | "sessionId">) => Promise<void>) {
+async function tick(state: BotState, onTradeCallback: (trade: Omit<InsertTrade, "sessionToken" | "sessionId">) => Promise<void>) {
   if (state.status !== "running") return;
 
   // Daily loss limit check
@@ -387,7 +387,7 @@ async function tick(state: BotState, onTradeCallback: (trade: Omit<InsertTrade, 
 }
 
 type InsertTrade = {
-  userId: number;
+  sessionToken: string;
   sessionId: number;
   symbol: string;
   instrumentToken: string;
@@ -413,9 +413,9 @@ type InsertTrade = {
 // ── Public API ────────────────────────────────────────────────────────────────
 export function startBot(
   config: Omit<BotState, "candles" | "lastSignal" | "lastPrice" | "intervalHandle" | "lastError">,
-  onTrade: (trade: Omit<InsertTrade, "userId" | "sessionId">) => Promise<void>
+  onTrade: (trade: Omit<InsertTrade, "sessionToken" | "sessionId">) => Promise<void>
 ) {
-  const existing = bots.get(config.userId);
+  const existing = bots.get(config.sessionToken);
   if (existing?.intervalHandle) clearInterval(existing.intervalHandle);
 
   const state: BotState = {
@@ -427,16 +427,16 @@ export function startBot(
     lastError: null,
   };
 
-  const handle = setInterval(() => tick(state, onTrade), 60_000); // every 1 min
+  const handle = setInterval(() => tick(state, onTrade), 60_000);
   state.intervalHandle = handle;
-  bots.set(config.userId, state);
+  bots.set(config.sessionToken, state);
 
   // Run first tick immediately
   tick(state, onTrade);
 }
 
-export function stopBot(userId: number) {
-  const state = bots.get(userId);
+export function stopBot(sessionToken: string) {
+  const state = bots.get(sessionToken);
   if (state?.intervalHandle) {
     clearInterval(state.intervalHandle);
     state.intervalHandle = null;
@@ -444,10 +444,10 @@ export function stopBot(userId: number) {
   }
 }
 
-export function getBotState(userId: number): BotState | undefined {
-  return bots.get(userId);
+export function getBotState(sessionToken: string): BotState | undefined {
+  return bots.get(sessionToken);
 }
 
-export function getLivePrice(userId: number): number {
-  return bots.get(userId)?.lastPrice ?? 0;
+export function getLivePrice(sessionToken: string): number {
+  return bots.get(sessionToken)?.lastPrice ?? 0;
 }

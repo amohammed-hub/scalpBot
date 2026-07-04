@@ -39,3 +39,15 @@
 - [x] Make all tRPC routes public (no auth required)
 - [x] Test full flow without any login — verified in browser
 - [x] Save checkpoint (v8e941fd0)
+
+## Critical Fix — Remove Login Wall (QR Code Access)
+- [x] Confirmed root cause: server/routers.ts used protectedProcedure causing 401 "Please login (10001)" for all bot/credentials/trades routes
+- [x] Rewrote server/routers.ts — all routes now use publicProcedure with sessionToken input
+- [x] Updated botEngine.ts — keyed by sessionToken (string) instead of userId (number)
+- [x] Updated drizzle/schema.ts — replaced userId column with sessionToken in upstox_credentials, bot_sessions, trade_log tables
+- [x] Ran db:push — sessionToken columns added to all 3 tables
+- [x] Rewrote client/src/main.tsx — removed redirectToLoginIfUnauthorized global handler
+- [x] Fixed DashboardLayout.tsx TypeScript errors (null user type)
+- [x] Verified: all recent network requests return HTTP 200, no 401 errors
+- [x] Verified: Dashboard loads without any login redirect
+- [x] Verified: Home page loads without any login redirect
