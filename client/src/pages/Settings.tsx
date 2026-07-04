@@ -4,7 +4,7 @@ import {
   Settings as SettingsIcon, Zap, Activity, Calculator, Key,
   ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle,
   AlertTriangle, ChevronDown, ChevronUp, MousePointer,
-  LogIn, Copy, ClipboardPaste, RefreshCw, Info
+  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
@@ -12,6 +12,35 @@ import { trpc } from "@/lib/trpc";
 
 const LS_CREDS = "scalpbot_credentials";
 const LS_SESSION = "scalpbot_session";
+const LS_TELEGRAM = "scalpbot_telegram";
+
+interface TelegramConfig {
+  botToken: string;
+  chatId: string;
+  enabled: boolean;
+}
+
+function loadTelegram(): TelegramConfig {
+  try {
+    return JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "null") ??
+      { botToken: "", chatId: "", enabled: false };
+  } catch {
+    return { botToken: "", chatId: "", enabled: false };
+  }
+}
+
+async function sendTelegramMessage(botToken: string, chatId: string, text: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 function getSessionToken(): string {
   let token = localStorage.getItem(LS_SESSION);
@@ -165,6 +194,39 @@ export default function Settings() {
   };
 
   const hasSavedCreds = !!(loadCreds().apiKey);
+
+  // Telegram state
+  const [telegram, setTelegram] = useState<TelegramConfig>(loadTelegram);
+  const [showTelegramToken, setShowTelegramToken] = useState(false);
+  const [telegramSaved, setTelegramSaved] = useState(false);
+  const [telegramTesting, setTelegramTesting] = useState(false);
+  const [showTelegramGuide, setShowTelegramGuide] = useState(false);
+
+  const handleSaveTelegram = () => {
+    localStorage.setItem(LS_TELEGRAM, JSON.stringify(telegram));
+    setTelegramSaved(true);
+    toast.success("Telegram settings saved.");
+    setTimeout(() => setTelegramSaved(false), 3000);
+  };
+
+  const handleTestTelegram = async () => {
+    if (!telegram.botToken || !telegram.chatId) {
+      toast.error("Enter Bot Token and Chat ID first.");
+      return;
+    }
+    setTelegramTesting(true);
+    const ok = await sendTelegramMessage(
+      telegram.botToken,
+      telegram.chatId,
+      `⚡ <b>ScalpBot Test Alert</b>\n\nYour Telegram alerts are working correctly!\n\nYou will receive BUY/SELL signals here when the bot is running.`
+    );
+    setTelegramTesting(false);
+    if (ok) {
+      toast.success("✅ Test message sent! Check your Telegram.");
+    } else {
+      toast.error("❌ Failed to send. Check your Bot Token and Chat ID.");
+    }
+  };
 
   // Build the Upstox authorize URL for automatic token capture
   const upstoxAuthUrl = creds.apiKey
@@ -452,6 +514,134 @@ export default function Settings() {
               <Trash2 className="w-4 h-4 mr-2" /> Clear
             </Button>
           </div>
+        </div>
+
+        {/* ── Telegram Alerts ───────────────────────────────────────── */}
+        <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
+          <button
+            onClick={() => setShowTelegramGuide(v => !v)}
+            className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Bell className="w-4 h-4 text-blue-400" />
+              <span className="font-semibold text-white text-sm">Telegram Alerts</span>
+              {telegram.enabled && telegram.botToken && telegram.chatId
+                ? <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">Active</span>
+                : <span className="text-xs text-white/30 bg-white/5 px-2 py-0.5 rounded-full">Not configured</span>
+              }
+            </div>
+            {showTelegramGuide
+              ? <ChevronUp className="w-4 h-4 text-white/40" />
+              : <ChevronDown className="w-4 h-4 text-white/40" />
+            }
+          </button>
+
+          {showTelegramGuide && (
+            <div className="px-5 pb-5 space-y-4">
+              {/* Setup guide */}
+              <div className="space-y-3">
+                <TokenStep
+                  step={1}
+                  icon={ExternalLink}
+                  title="Create a Telegram Bot"
+                  description='Open Telegram and search for @BotFather. Send the command /newbot and follow the steps. Give your bot a name (e.g. "My ScalpBot"). BotFather will give you a Bot Token.'
+                  link="https://t.me/BotFather"
+                  linkLabel="Open BotFather on Telegram"
+                />
+                <TokenStep
+                  step={2}
+                  icon={Copy}
+                  title="Copy Your Bot Token"
+                  description='BotFather gives you a token like: 1234567890:ABCDefGhIJKlmNoPQRsTUVwxyZ. Copy the entire string and paste it in the Bot Token field below.'
+                  note="Keep your bot token private — anyone with it can send messages as your bot."
+                />
+                <TokenStep
+                  step={3}
+                  icon={MousePointer}
+                  title="Get Your Chat ID"
+                  description='Start a chat with your bot (search for it by name in Telegram and click Start). Then search for @userinfobot in Telegram, start it, and it will reply with your Chat ID number.'
+                  link="https://t.me/userinfobot"
+                  linkLabel="Open userinfobot on Telegram"
+                />
+                <TokenStep
+                  step={4}
+                  icon={Send}
+                  title="Paste Both Below & Test"
+                  description='Enter your Bot Token and Chat ID in the fields below, then click "Send Test Alert" to confirm it works. Enable alerts and save.'
+                />
+              </div>
+
+              {/* Fields */}
+              <div className="space-y-4 pt-2">
+                <div>
+                  <label className="text-xs text-white/50 mb-1.5 block">Bot Token</label>
+                  <div className="relative">
+                    <input
+                      type={showTelegramToken ? "text" : "password"}
+                      value={telegram.botToken}
+                      onChange={(e) => setTelegram(t => ({ ...t, botToken: e.target.value }))}
+                      placeholder="e.g. 1234567890:ABCDefGhIJKlmNoPQRsTUVwxyZ"
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 pr-12 text-white text-sm placeholder-white/20 focus:outline-none focus:border-blue-500 font-mono"
+                    />
+                    <button onClick={() => setShowTelegramToken(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70">
+                      {showTelegramToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-white/50 mb-1.5 block">Chat ID</label>
+                  <input
+                    type="text"
+                    value={telegram.chatId}
+                    onChange={(e) => setTelegram(t => ({ ...t, chatId: e.target.value }))}
+                    placeholder="e.g. 123456789"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white text-sm placeholder-white/20 focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
+                  <button
+                    onClick={() => setTelegram(t => ({ ...t, enabled: !t.enabled }))}
+                    className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
+                      telegram.enabled ? "bg-blue-500" : "bg-white/20"
+                    }`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                      telegram.enabled ? "translate-x-5" : "translate-x-0.5"
+                    }`} />
+                  </button>
+                  <div>
+                    <p className="text-sm text-white font-medium">Enable Telegram Alerts</p>
+                    <p className="text-xs text-white/40">Sends BUY, SELL, and STOP signals to your Telegram chat</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-blue-500/30 text-blue-400 hover:bg-blue-500/10 bg-transparent"
+                    onClick={handleTestTelegram}
+                    disabled={telegramTesting}
+                  >
+                    {telegramTesting
+                      ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Sending…</>
+                      : <><Send className="w-4 h-4 mr-2" /> Send Test Alert</>
+                    }
+                  </Button>
+                  <Button
+                    className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
+                    onClick={handleSaveTelegram}
+                  >
+                    {telegramSaved
+                      ? <><CheckCircle className="w-4 h-4 mr-2" /> Saved!</>
+                      : <><Save className="w-4 h-4 mr-2" /> Save Telegram Settings</>
+                    }
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-6 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">

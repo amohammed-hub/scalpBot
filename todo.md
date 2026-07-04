@@ -71,3 +71,8 @@
 - [x] Permanently fix QR/mobile login wall on published URL — site visibility changed to Public
 - [x] Build Upstox OAuth callback page (/upstox-callback) that auto-captures auth code and exchanges it for access token via server-side API call
 - [x] Expanded instrument list from 6 to 14 (NSE Index, NSE Equity, BSE Index, BSE Equity), grouped by segment in dropdown
+
+## New Features — F&O, Telegram, CSV Export
+- [x] Dashboard: Add F&O options instruments (Nifty weekly options, Bank Nifty options) to instrument dropdown
+- [x] Settings + Dashboard: Add Telegram alert integration — bot sends BUY/SELL/STOP signals to Telegram chat
+- [x] Dashboard: Add CSV export button to trade log section for downloading trade history to Excel

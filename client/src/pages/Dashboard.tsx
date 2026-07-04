@@ -5,7 +5,8 @@ import QRModal from "@/components/QRModal";
 import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
-  Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff
+  Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
+  Download, QrCode
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
@@ -60,39 +61,77 @@ interface PricePoint { time: string; price: number; }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Instruments are grouped by segment. The bot trades ONE selected instrument at a time.
-// NSE_EQ = NSE Cash/Equity | NSE_INDEX = NSE Index | BSE_EQ = BSE Cash/Equity
-// For F&O (futures/options), use the F&O instrument token from Upstox instruments list.
+// NSE_EQ = NSE Cash/Equity | NSE_INDEX = NSE Index | BSE_INDEX = BSE Index
+// NFO = NSE F&O segment (futures & options on indices and stocks)
+// NOTE: F&O tokens below use the current-week expiry format. Update the token each week
+// by replacing the expiry date (e.g. 25JUL25 → 01AUG25) in your Upstox instrument list.
 const INSTRUMENTS = [
-  // ── NSE Indices (most popular for scalping) ──
-  { token: "NSE_INDEX|Nifty 50",       symbol: "NIFTY",      label: "Nifty 50",           segment: "NSE Index" },
-  { token: "NSE_INDEX|Nifty Bank",     symbol: "BANKNIFTY",  label: "Bank Nifty",         segment: "NSE Index" },
-  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY", label: "Fin Nifty",         segment: "NSE Index" },
-  { token: "NSE_INDEX|MIDCPNIFTY",     symbol: "MIDCPNIFTY", label: "Midcap Nifty",       segment: "NSE Index" },
+  // ── NSE Indices (spot — for reference / paper trading) ──
+  { token: "NSE_INDEX|Nifty 50",           symbol: "NIFTY",         label: "Nifty 50 (Spot)",         segment: "NSE Index" },
+  { token: "NSE_INDEX|Nifty Bank",         symbol: "BANKNIFTY",     label: "Bank Nifty (Spot)",       segment: "NSE Index" },
+  { token: "NSE_INDEX|Nifty Fin Service",  symbol: "FINNIFTY",      label: "Fin Nifty (Spot)",        segment: "NSE Index" },
+  { token: "NSE_INDEX|MIDCPNIFTY",         symbol: "MIDCPNIFTY",    label: "Midcap Nifty (Spot)",     segment: "NSE Index" },
+  // ── NSE F&O — Nifty Options (weekly expiry — most liquid for scalping) ──
+  // NOTE: Nifty weekly options expire every Thursday. Update the expiry date each week.
+  // Current week expiry: 10 Jul 2026 (format: DDMMMYYYY in token, e.g. 10JUL2026)
+  // To find the exact token string, go to Upstox → Developer → Instruments → search "NIFTY" in NFO segment.
+  { token: "NFO_OPT|NIFTY10JUL202624800CE",  symbol: "NIFTY_CE",      label: "Nifty 24800 CE (10 Jul)",  segment: "NSE F&O Options" },
+  { token: "NFO_OPT|NIFTY10JUL202624800PE",  symbol: "NIFTY_PE",      label: "Nifty 24800 PE (10 Jul)",  segment: "NSE F&O Options" },
+  { token: "NFO_OPT|NIFTY10JUL202625000CE",  symbol: "NIFTY_25000CE", label: "Nifty 25000 CE (10 Jul)",  segment: "NSE F&O Options" },
+  { token: "NFO_OPT|NIFTY10JUL202625000PE",  symbol: "NIFTY_25000PE", label: "Nifty 25000 PE (10 Jul)",  segment: "NSE F&O Options" },
+  // ── NSE F&O — Bank Nifty Options (weekly expiry — expires every Wednesday) ──
+  // Current week expiry: 09 Jul 2026
+  { token: "NFO_OPT|BANKNIFTY09JUL202653000CE", symbol: "BNF_CE",     label: "BankNifty 53000 CE (9 Jul)",  segment: "NSE F&O Options" },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653000PE", symbol: "BNF_PE",     label: "BankNifty 53000 PE (9 Jul)",  segment: "NSE F&O Options" },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653500CE", symbol: "BNF_53500CE", label: "BankNifty 53500 CE (9 Jul)", segment: "NSE F&O Options" },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653500PE", symbol: "BNF_53500PE", label: "BankNifty 53500 PE (9 Jul)", segment: "NSE F&O Options" },
+  // ── NSE F&O — Index Futures (monthly expiry — last Thursday of the month) ──
+  // Current month expiry: 30 Jul 2026
+  { token: "NFO_FUT|NIFTY30JUL2026FUT",        symbol: "NIFTY_FUT",     label: "Nifty Jul 2026 Futures",      segment: "NSE F&O Futures" },
+  { token: "NFO_FUT|BANKNIFTY30JUL2026FUT",    symbol: "BNF_FUT",       label: "BankNifty Jul 2026 Futures",  segment: "NSE F&O Futures" },
   // ── NSE Equity (large-cap) ──
-  { token: "NSE_EQ|INE009A01021",      symbol: "RELIANCE",   label: "Reliance Industries", segment: "NSE Equity" },
-  { token: "NSE_EQ|INE467B01029",      symbol: "TCS",        label: "TCS",                segment: "NSE Equity" },
-  { token: "NSE_EQ|INE009B01011",      symbol: "INFY",       label: "Infosys",            segment: "NSE Equity" },
-  { token: "NSE_EQ|INE040A01034",      symbol: "HDFC",       label: "HDFC Bank",          segment: "NSE Equity" },
-  { token: "NSE_EQ|INE030A01027",      symbol: "ITC",        label: "ITC",                segment: "NSE Equity" },
-  { token: "NSE_EQ|INE585B01010",      symbol: "SBIN",       label: "State Bank of India", segment: "NSE Equity" },
-  { token: "NSE_EQ|INE062A01020",      symbol: "TATAMOTORS", label: "Tata Motors",         segment: "NSE Equity" },
-  { token: "NSE_EQ|INE081A01012",      symbol: "TATASTEEL",  label: "Tata Steel",         segment: "NSE Equity" },
-  // ── BSE Equity ──
-  { token: "BSE_INDEX|SENSEX",         symbol: "SENSEX",     label: "Sensex",             segment: "BSE Index" },
-  { token: "BSE_EQ|500325",            symbol: "RELIANCE_BSE", label: "Reliance (BSE)",   segment: "BSE Equity" },
+  { token: "NSE_EQ|INE009A01021",          symbol: "RELIANCE",      label: "Reliance Industries",     segment: "NSE Equity" },
+  { token: "NSE_EQ|INE467B01029",          symbol: "TCS",           label: "TCS",                     segment: "NSE Equity" },
+  { token: "NSE_EQ|INE009B01011",          symbol: "INFY",          label: "Infosys",                 segment: "NSE Equity" },
+  { token: "NSE_EQ|INE040A01034",          symbol: "HDFC",          label: "HDFC Bank",               segment: "NSE Equity" },
+  { token: "NSE_EQ|INE030A01027",          symbol: "ITC",           label: "ITC",                     segment: "NSE Equity" },
+  { token: "NSE_EQ|INE585B01010",          symbol: "SBIN",          label: "State Bank of India",     segment: "NSE Equity" },
+  { token: "NSE_EQ|INE062A01020",          symbol: "TATAMOTORS",    label: "Tata Motors",             segment: "NSE Equity" },
+  { token: "NSE_EQ|INE081A01012",          symbol: "TATASTEEL",     label: "Tata Steel",              segment: "NSE Equity" },
+  // ── BSE ──
+  { token: "BSE_INDEX|SENSEX",             symbol: "SENSEX",        label: "Sensex",                  segment: "BSE Index" },
 ];
 
 const BASE_PRICES: Record<string, number> = {
   NIFTY: 24800, BANKNIFTY: 53200, FINNIFTY: 23500, MIDCPNIFTY: 12800,
+  NIFTY_CE: 120, NIFTY_PE: 95, NIFTY_25000CE: 45, NIFTY_25000PE: 180,
+  BNF_CE: 250, BNF_PE: 200, BNF_53500CE: 130, BNF_53500PE: 310,
+  NIFTY_FUT: 24820, BNF_FUT: 53250,
   RELIANCE: 2950, TCS: 3780, INFY: 1620, HDFC: 1740, ITC: 465,
   SBIN: 820, TATAMOTORS: 960, TATASTEEL: 165,
-  SENSEX: 81500, RELIANCE_BSE: 2950,
+  SENSEX: 81500,
 };
 
 const LS_TRADES = "scalpbot_trades";
 const LS_CONFIG = "scalpbot_config";
 const LS_CREDS = "scalpbot_credentials";
 const LS_REMINDER_DISMISSED = "scalpbot_reminder_dismissed";
+const LS_TELEGRAM = "scalpbot_telegram";
+
+// Send a Telegram message using the stored bot token and chat ID
+async function fireTelegramAlert(text: string): Promise<void> {
+  try {
+    const cfg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "null");
+    if (!cfg?.enabled || !cfg?.botToken || !cfg?.chatId) return;
+    await fetch(`https://api.telegram.org/bot${cfg.botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: cfg.chatId, text, parse_mode: "HTML" }),
+    });
+  } catch {
+    // Silently ignore Telegram errors — never block the bot
+  }
+}
 
 // Returns true if it is morning (9:00 AM – 10:30 AM IST) — prime reminder window
 function isMorningWindow(): boolean {
@@ -282,6 +321,15 @@ export default function Dashboard() {
           openTradeRef.current = null;
           setTrades(prev => prev.map(t => t.id === closed.id ? closed : t));
           toast[pnl > 0 ? "success" : "error"](`${exitReason}: ${pnl > 0 ? "+" : ""}₹${pnl.toFixed(0)} on ${trade.symbol}`);
+          // Fire Telegram alert for trade exit
+          fireTelegramAlert(
+            `${pnl > 0 ? "✅" : "❌"} <b>ScalpBot Trade Closed</b>\n` +
+            `• Instrument: <b>${trade.symbol}</b>\n` +
+            `• Direction: ${trade.direction}\n` +
+            `• Exit Reason: <b>${exitReason}</b>\n` +
+            `• Entry: ₹${trade.entryPrice.toFixed(2)} → Exit: ₹${price.toFixed(2)}\n` +
+            `• P&L: <b>${pnl > 0 ? "+" : ""}₹${pnl.toFixed(0)}</b> (Qty: ${trade.quantity})`
+          );
         }
         return buf;
       }
@@ -308,6 +356,17 @@ export default function Dashboard() {
           openTradeRef.current = newTrade;
           setTrades(prev => [newTrade, ...prev]);
           toast.info(`${signal.direction} signal: ${config.instrumentSymbol} @ ₹${signal.entryPrice.toFixed(0)} | SL: ₹${signal.slPrice.toFixed(0)} | Target: ₹${signal.targetPrice.toFixed(0)}`);
+          // Fire Telegram alert for new trade signal
+          fireTelegramAlert(
+            `⚡ <b>ScalpBot ${signal.direction} Signal</b>\n` +
+            `• Instrument: <b>${config.instrumentSymbol}</b>\n` +
+            `• Mode: ${config.mode.toUpperCase()}\n` +
+            `• Entry: <b>₹${signal.entryPrice.toFixed(2)}</b>\n` +
+            `• Stop-Loss: ₹${signal.slPrice.toFixed(2)}\n` +
+            `• Target: ₹${signal.targetPrice.toFixed(2)}\n` +
+            `• Qty: ${qty} | Confidence: ${(signal.confidence * 100).toFixed(0)}%\n` +
+            `• Reason: ${signal.reason}`
+          );
           return prev + 1;
         });
       }
@@ -725,7 +784,39 @@ export default function Dashboard() {
               <span className="text-emerald-400">Wins: {wins}</span>
               <span className="text-red-400">Losses: {closedTrades.length - wins}</span>
               <span className={totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}>P&L: ₹{totalPnl.toFixed(0)}</span>
-              <button onClick={() => { setTrades([]); openTradeRef.current = null; toast.info("Trade log cleared"); }} className="text-white/30 hover:text-white/60 transition-colors">
+              <button
+                onClick={() => {
+                  if (trades.length === 0) { toast.info("No trades to export."); return; }
+                  const headers = ["Date", "Symbol", "Direction", "Mode", "Entry Price", "Exit Price", "Quantity", "P&L (INR)", "Status", "Exit Reason"];
+                  const rows = trades.map(t => [
+                    new Date(t.enteredAt).toLocaleString("en-IN"),
+                    t.symbol,
+                    t.direction,
+                    t.mode,
+                    t.entryPrice.toFixed(2),
+                    t.exitPrice ? t.exitPrice.toFixed(2) : "",
+                    t.quantity,
+                    t.pnl !== undefined ? t.pnl.toFixed(2) : "",
+                    t.status,
+                    t.exitReason ?? "",
+                  ]);
+                  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+                  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `scalpbot_trades_${new Date().toISOString().slice(0, 10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  toast.success(`Exported ${trades.length} trades to CSV`);
+                }}
+                className="flex items-center gap-1.5 text-xs text-teal-400 hover:text-teal-300 bg-teal-500/10 hover:bg-teal-500/20 px-2.5 py-1.5 rounded-lg transition-colors"
+                title="Download trade history as CSV"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export CSV
+              </button>
+              <button onClick={() => { setTrades([]); openTradeRef.current = null; toast.info("Trade log cleared"); }} className="text-white/30 hover:text-white/60 transition-colors" title="Clear trade log">
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
