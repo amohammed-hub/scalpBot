@@ -46,6 +46,14 @@ interface BotConfig {
   capital: number;
   riskPerTradePct: number;
   maxTradesPerDay: number;
+  // Risk & Stop-Loss parameters
+  stopLossMultiplier: number;   // ATR multiplier for stop-loss (e.g. 1.5 = 1.5× ATR)
+  targetMultiplier: number;     // ATR multiplier for target (e.g. 3.0 = 3× ATR)
+  dailyLossLimitPct: number;    // Max daily loss as % of capital before bot stops
+  trailingSlEnabled: boolean;   // Enable trailing stop-loss
+  trailingSlPct: number;        // Trailing SL distance as % of entry price
+  minConfidence: number;        // Minimum signal confidence (0–100%) to place trade
+  scanIntervalSec: number;      // How often bot scans for signals (seconds)
 }
 
 interface PricePoint { time: string; price: number; }
@@ -114,7 +122,8 @@ export default function Dashboard() {
 
   // Config state (persisted)
   const [config, setConfig] = useState<BotConfig>(() => {
-    try { return JSON.parse(localStorage.getItem(LS_CONFIG) ?? "null") ?? { instrumentToken: INSTRUMENTS[0].token, instrumentSymbol: INSTRUMENTS[0].symbol, mode: "paper", capital: 100000, riskPerTradePct: 1.0, maxTradesPerDay: 5 }; } catch { return { instrumentToken: INSTRUMENTS[0].token, instrumentSymbol: INSTRUMENTS[0].symbol, mode: "paper", capital: 100000, riskPerTradePct: 1.0, maxTradesPerDay: 5 }; }
+    const defaults: BotConfig = { instrumentToken: INSTRUMENTS[0].token, instrumentSymbol: INSTRUMENTS[0].symbol, mode: "paper", capital: 100000, riskPerTradePct: 1.0, maxTradesPerDay: 5, stopLossMultiplier: 1.5, targetMultiplier: 3.0, dailyLossLimitPct: 3.0, trailingSlEnabled: false, trailingSlPct: 0.5, minConfidence: 60, scanIntervalSec: 60 };
+    try { return { ...defaults, ...JSON.parse(localStorage.getItem(LS_CONFIG) ?? "null") }; } catch { return defaults; }
   });
 
   // Bot runtime state
@@ -366,52 +375,181 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Bot Configuration */}
+        {/* Bot Configuration + Risk Settings */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Bot className="w-5 h-5 text-teal-400" />
-            <span className="font-semibold text-white">Bot Configuration</span>
-            {isRunning && <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">Running</span>}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Bot className="w-5 h-5 text-teal-400" />
+              <span className="font-semibold text-white">Bot Configuration & Risk Settings</span>
+              {isRunning && <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">Running</span>}
+            </div>
+            <div className="flex gap-2">
+              {!isRunning ? (
+                <Button className="bg-teal-500 hover:bg-teal-600 text-white px-5" onClick={handleStart}>
+                  <Play className="w-4 h-4 mr-2" /> Start Bot
+                </Button>
+              ) : (
+                <Button className="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-5" onClick={handleStop}>
+                  <Square className="w-4 h-4 mr-2" /> Stop Bot
+                </Button>
+              )}
+            </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 items-end">
-            <div className="col-span-2">
+
+          {/* Row 1: Instrument + Mode + Capital */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+            <div>
               <label className="text-xs text-white/50 mb-1.5 block">Instrument</label>
-              <select
-                value={config.instrumentToken}
-                onChange={(e) => { const inst = INSTRUMENTS.find(i => i.token === e.target.value)!; setConfig(c => ({ ...c, instrumentToken: inst.token, instrumentSymbol: inst.symbol })); }}
-                disabled={isRunning}
-                className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-teal-500 disabled:opacity-50"
-              >
+              <select value={config.instrumentToken} onChange={(e) => { const inst = INSTRUMENTS.find(i => i.token === e.target.value)!; setConfig(c => ({ ...c, instrumentToken: inst.token, instrumentSymbol: inst.symbol })); }} disabled={isRunning} className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-teal-500 disabled:opacity-50">
                 {INSTRUMENTS.map(i => <option key={i.token} value={i.token} className="bg-gray-900">{i.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-xs text-white/50 mb-1.5 block">Mode</label>
-              <div className="flex rounded-lg overflow-hidden border border-white/20">
-                <button onClick={() => setConfig(c => ({ ...c, mode: "paper" }))} disabled={isRunning} className={`flex-1 py-2.5 text-sm font-medium transition-colors ${config.mode === "paper" ? "bg-amber-500/30 text-amber-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Paper</button>
-                <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning} className={`flex-1 py-2.5 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>
+              <label className="text-xs text-white/50 mb-1.5 block">Trading Mode</label>
+              <div className="flex rounded-lg overflow-hidden border border-white/20 h-[42px]">
+                <button onClick={() => setConfig(c => ({ ...c, mode: "paper" }))} disabled={isRunning} className={`flex-1 text-sm font-medium transition-colors ${config.mode === "paper" ? "bg-amber-500/30 text-amber-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Paper</button>
+                <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning} className={`flex-1 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>
               </div>
             </div>
             <div>
               <label className="text-xs text-white/50 mb-1.5 block">Capital (₹)</label>
               <input type="number" value={config.capital} onChange={(e) => setConfig(c => ({ ...c, capital: Number(e.target.value) }))} disabled={isRunning} className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-teal-500 disabled:opacity-50" />
             </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-white/10 mb-5" />
+          <div className="flex items-center gap-2 mb-4">
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <span className="text-sm font-semibold text-white">Risk & Stop-Loss Parameters</span>
+            <span className="text-xs text-white/40 ml-1">(saved automatically)</span>
+          </div>
+
+          {/* Sliders Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-5">
+
+            {/* Risk per Trade */}
             <div>
-              <label className="text-xs text-white/50 mb-1.5 block">Risk / Trade (%)</label>
-              <input type="number" step="0.1" value={config.riskPerTradePct} onChange={(e) => setConfig(c => ({ ...c, riskPerTradePct: Number(e.target.value) }))} disabled={isRunning} className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-teal-500 disabled:opacity-50" />
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs text-white/60">Risk per Trade</label>
+                <span className="text-sm font-bold text-teal-400">{config.riskPerTradePct.toFixed(1)}%</span>
+              </div>
+              <input type="range" min="0.1" max="5" step="0.1" value={config.riskPerTradePct} disabled={isRunning}
+                onChange={(e) => setConfig(c => ({ ...c, riskPerTradePct: Number(e.target.value) }))}
+                className="w-full accent-teal-500 disabled:opacity-50" />
+              <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>0.1%</span><span className="text-white/50">Recommended: 1%</span><span>5%</span></div>
             </div>
+
+            {/* Stop-Loss Multiplier */}
             <div>
-              {!isRunning ? (
-                <Button className="w-full bg-teal-500 hover:bg-teal-600 text-white py-2.5" onClick={handleStart}>
-                  <Play className="w-4 h-4 mr-2" /> Start Bot
-                </Button>
-              ) : (
-                <Button className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 py-2.5" onClick={handleStop}>
-                  <Square className="w-4 h-4 mr-2" /> Stop Bot
-                </Button>
-              )}
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs text-white/60">Stop-Loss (ATR ×)</label>
+                <span className="text-sm font-bold text-red-400">{config.stopLossMultiplier.toFixed(1)}×</span>
+              </div>
+              <input type="range" min="0.5" max="4" step="0.1" value={config.stopLossMultiplier} disabled={isRunning}
+                onChange={(e) => setConfig(c => ({ ...c, stopLossMultiplier: Number(e.target.value) }))}
+                className="w-full accent-red-500 disabled:opacity-50" />
+              <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>0.5× (tight)</span><span className="text-white/50">Recommended: 1.5×</span><span>4× (wide)</span></div>
+            </div>
+
+            {/* Target Multiplier */}
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs text-white/60">Target (ATR ×)</label>
+                <span className="text-sm font-bold text-emerald-400">{config.targetMultiplier.toFixed(1)}×</span>
+              </div>
+              <input type="range" min="1" max="8" step="0.1" value={config.targetMultiplier} disabled={isRunning}
+                onChange={(e) => setConfig(c => ({ ...c, targetMultiplier: Number(e.target.value) }))}
+                className="w-full accent-emerald-500 disabled:opacity-50" />
+              <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>1× (low)</span><span className="text-white/50">R:R = {(config.targetMultiplier / config.stopLossMultiplier).toFixed(1)}:1</span><span>8× (high)</span></div>
+            </div>
+
+            {/* Daily Loss Limit */}
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs text-white/60">Daily Loss Limit</label>
+                <span className="text-sm font-bold text-amber-400">{config.dailyLossLimitPct.toFixed(1)}% = ₹{(config.capital * config.dailyLossLimitPct / 100).toFixed(0)}</span>
+              </div>
+              <input type="range" min="0.5" max="10" step="0.5" value={config.dailyLossLimitPct} disabled={isRunning}
+                onChange={(e) => setConfig(c => ({ ...c, dailyLossLimitPct: Number(e.target.value) }))}
+                className="w-full accent-amber-500 disabled:opacity-50" />
+              <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>0.5%</span><span className="text-white/50">Bot stops at this loss</span><span>10%</span></div>
+            </div>
+
+            {/* Min Signal Confidence */}
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs text-white/60">Min Signal Confidence</label>
+                <span className="text-sm font-bold text-purple-400">{config.minConfidence}%</span>
+              </div>
+              <input type="range" min="40" max="95" step="5" value={config.minConfidence} disabled={isRunning}
+                onChange={(e) => setConfig(c => ({ ...c, minConfidence: Number(e.target.value) }))}
+                className="w-full accent-purple-500 disabled:opacity-50" />
+              <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>40% (more trades)</span><span className="text-white/50">Recommended: 60%</span><span>95% (fewer)</span></div>
+            </div>
+
+            {/* Scan Interval */}
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs text-white/60">Scan Interval</label>
+                <span className="text-sm font-bold text-blue-400">{config.scanIntervalSec}s</span>
+              </div>
+              <input type="range" min="15" max="300" step="15" value={config.scanIntervalSec} disabled={isRunning}
+                onChange={(e) => setConfig(c => ({ ...c, scanIntervalSec: Number(e.target.value) }))}
+                className="w-full accent-blue-500 disabled:opacity-50" />
+              <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>15s (fast)</span><span className="text-white/50">Recommended: 60s</span><span>5min (slow)</span></div>
+            </div>
+
+          </div>
+
+          {/* Trailing SL Toggle */}
+          <div className="mt-5 flex flex-col sm:flex-row sm:items-center gap-4 p-4 bg-white/5 rounded-xl border border-white/10">
+            <div className="flex items-center gap-3 flex-1">
+              <button
+                onClick={() => !isRunning && setConfig(c => ({ ...c, trailingSlEnabled: !c.trailingSlEnabled }))}
+                disabled={isRunning}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-50 ${
+                  config.trailingSlEnabled ? "bg-teal-500" : "bg-white/20"
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                  config.trailingSlEnabled ? "translate-x-5" : "translate-x-0"
+                }`} />
+              </button>
+              <div>
+                <div className="text-sm font-medium text-white">Trailing Stop-Loss</div>
+                <div className="text-xs text-white/40">Locks in profit as price moves in your favour</div>
+              </div>
+            </div>
+            {config.trailingSlEnabled && (
+              <div className="flex items-center gap-4 min-w-[220px]">
+                <div className="flex-1">
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs text-white/60">Trail Distance</label>
+                    <span className="text-sm font-bold text-teal-400">{config.trailingSlPct.toFixed(1)}%</span>
+                  </div>
+                  <input type="range" min="0.1" max="3" step="0.1" value={config.trailingSlPct} disabled={isRunning}
+                    onChange={(e) => setConfig(c => ({ ...c, trailingSlPct: Number(e.target.value) }))}
+                    className="w-full accent-teal-500 disabled:opacity-50" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Max Trades per Day */}
+          <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex-1">
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs text-white/60">Max Trades per Day</label>
+                <span className="text-sm font-bold text-white">{config.maxTradesPerDay}</span>
+              </div>
+              <input type="range" min="1" max="20" step="1" value={config.maxTradesPerDay} disabled={isRunning}
+                onChange={(e) => setConfig(c => ({ ...c, maxTradesPerDay: Number(e.target.value) }))}
+                className="w-full accent-white/60 disabled:opacity-50" />
+              <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>1</span><span className="text-white/50">Recommended: 5</span><span>20</span></div>
             </div>
           </div>
+
           {config.mode === "live" && (
             <div className="mt-4 flex items-start gap-2 text-amber-400 text-xs bg-amber-500/10 border border-amber-500/30 rounded-xl p-3">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
