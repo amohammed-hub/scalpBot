@@ -1,6 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
-import { Settings as SettingsIcon, Zap, Activity, Calculator, Key, ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle, AlertTriangle } from "lucide-react";
+import {
+  Settings as SettingsIcon, Zap, Activity, Calculator, Key,
+  ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle,
+  AlertTriangle, ChevronDown, ChevronUp, MousePointer,
+  LogIn, Copy, ClipboardPaste, RefreshCw, Info
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -14,8 +19,73 @@ interface Credentials {
 }
 
 function loadCreds(): Credentials {
-  try { return JSON.parse(localStorage.getItem(LS_CREDS) ?? "null") ?? { apiKey: "", apiSecret: "", accessToken: "", redirectUri: "http://127.0.0.1:8000/callback" }; }
-  catch { return { apiKey: "", apiSecret: "", accessToken: "", redirectUri: "http://127.0.0.1:8000/callback" }; }
+  try {
+    return JSON.parse(localStorage.getItem(LS_CREDS) ?? "null") ??
+      { apiKey: "", apiSecret: "", accessToken: "", redirectUri: "http://127.0.0.1:8000/callback" };
+  } catch {
+    return { apiKey: "", apiSecret: "", accessToken: "", redirectUri: "http://127.0.0.1:8000/callback" };
+  }
+}
+
+// Visual step card for the token guide
+function TokenStep({
+  step,
+  icon: Icon,
+  title,
+  description,
+  highlight,
+  link,
+  linkLabel,
+  note,
+}: {
+  step: number;
+  icon: React.ElementType;
+  title: string;
+  description: React.ReactNode;
+  highlight?: string;
+  link?: string;
+  linkLabel?: string;
+  note?: string;
+}) {
+  return (
+    <div className="flex gap-4 p-4 bg-white/5 rounded-xl border border-white/10 hover:border-teal-500/30 transition-colors">
+      <div className="flex flex-col items-center gap-2 shrink-0">
+        <div className="w-8 h-8 rounded-full bg-teal-500/20 border border-teal-500/40 flex items-center justify-center text-teal-400 font-bold text-sm">
+          {step}
+        </div>
+        <div className="w-px flex-1 bg-white/10 min-h-[16px]" />
+      </div>
+      <div className="flex-1 pb-2">
+        <div className="flex items-center gap-2 mb-1.5">
+          <Icon className="w-4 h-4 text-teal-400 shrink-0" />
+          <span className="font-semibold text-white text-sm">{title}</span>
+        </div>
+        <p className="text-white/60 text-sm leading-relaxed">{description}</p>
+        {highlight && (
+          <div className="mt-2 inline-flex items-center gap-2 bg-teal-500/10 border border-teal-500/30 rounded-lg px-3 py-1.5">
+            <span className="text-teal-300 text-xs font-mono">{highlight}</span>
+          </div>
+        )}
+        {link && linkLabel && (
+          <a
+            href={link}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 flex items-center gap-1.5 text-xs text-teal-400 hover:text-teal-300 bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/30 px-3 py-1.5 rounded-lg transition-colors w-fit"
+          >
+            <ExternalLink className="w-3 h-3" />
+            {linkLabel}
+          </a>
+        )}
+        {note && (
+          <p className="mt-2 text-amber-400/80 text-xs flex items-start gap-1.5">
+            <Info className="w-3 h-3 shrink-0 mt-0.5" />
+            {note}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function Settings() {
@@ -24,9 +94,13 @@ export default function Settings() {
   const [showSecret, setShowSecret] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showApiGuide, setShowApiGuide] = useState(false);
+  const [showTokenGuide, setShowTokenGuide] = useState(true);
 
   const handleSave = () => {
-    localStorage.setItem(LS_CREDS, JSON.stringify(creds));
+    // Save tokenSavedAt timestamp so Dashboard can check if token is from today
+    const toSave = { ...creds, tokenSavedAt: creds.accessToken ? Date.now() : undefined };
+    localStorage.setItem(LS_CREDS, JSON.stringify(toSave));
     setSaved(true);
     toast.success("Credentials saved securely in your browser.");
     setTimeout(() => setSaved(false), 3000);
@@ -43,7 +117,7 @@ export default function Settings() {
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
       {/* Sidebar */}
-      <aside className="w-64 border-r border-white/10 flex flex-col p-4 gap-2 shrink-0">
+      <aside className="w-64 border-r border-white/10 flex flex-col p-4 gap-2 shrink-0 hidden md:flex">
         <div className="flex items-center gap-2 mb-6 px-2">
           <div className="w-8 h-8 bg-teal-500 rounded-lg flex items-center justify-center">
             <Zap className="w-5 h-5 text-white" />
@@ -67,8 +141,8 @@ export default function Settings() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 p-6 max-w-2xl">
-        <div className="mb-8">
+      <main className="flex-1 p-4 md:p-6 max-w-2xl overflow-y-auto">
+        <div className="mb-6">
           <h1 className="text-2xl font-bold text-white mb-1">Settings</h1>
           <p className="text-white/50 text-sm">Your credentials are stored only in your browser — never sent to any server.</p>
         </div>
@@ -81,22 +155,120 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* How to get API keys */}
-        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
-          <h2 className="font-semibold text-white mb-3 flex items-center gap-2">
-            <Key className="w-4 h-4 text-teal-400" />
-            How to Get Your Upstox API Keys
-          </h2>
-          <ol className="space-y-2.5 text-sm text-white/60">
-            <li className="flex gap-3">
-              <span className="text-teal-400 font-bold shrink-0">1.</span>
-              Go to <a href="https://account.upstox.com/developer/apps" target="_blank" rel="noreferrer" className="text-teal-400 underline inline-flex items-center gap-1">Upstox Developer Apps <ExternalLink className="w-3 h-3" /></a>
-            </li>
-            <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">2.</span> Click <strong className="text-white">"Create New App"</strong> — give it any name</li>
-            <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">3.</span> Set Redirect URL to: <code className="bg-white/10 px-2 py-0.5 rounded text-teal-300">http://127.0.0.1:8000/callback</code></li>
-            <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">4.</span> Copy the <strong className="text-white">API Key</strong> and <strong className="text-white">API Secret</strong> shown on the app page</li>
-            <li className="flex gap-3"><span className="text-teal-400 font-bold shrink-0">5.</span> For Live trading: go to <a href="https://account.upstox.com/developer/apps" target="_blank" rel="noreferrer" className="text-teal-400 underline inline-flex items-center gap-1">your Upstox App <ExternalLink className="w-3 h-3" /></a>, click <strong className="text-white">"Get Token"</strong> → login → copy the <strong className="text-white">Access Token</strong> shown and paste it below. <span className="text-amber-400">(Token refreshes daily — repeat each morning)</span></li>
-          </ol>
+        {/* ── GUIDE 1: How to get API Keys ───────────────────────────── */}
+        <div className="bg-white/5 border border-white/10 rounded-2xl mb-4 overflow-hidden">
+          <button
+            onClick={() => setShowApiGuide(v => !v)}
+            className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Key className="w-4 h-4 text-teal-400" />
+              <span className="font-semibold text-white text-sm">How to Get Your API Key & Secret</span>
+              <span className="text-xs text-white/30">(one-time setup)</span>
+            </div>
+            {showApiGuide
+              ? <ChevronUp className="w-4 h-4 text-white/40" />
+              : <ChevronDown className="w-4 h-4 text-white/40" />
+            }
+          </button>
+
+          {showApiGuide && (
+            <div className="px-5 pb-5 space-y-3">
+              <TokenStep
+                step={1}
+                icon={ExternalLink}
+                title="Open Upstox Developer Portal"
+                description="Click the button below to open the Upstox Developer Apps page in a new tab."
+                link="https://account.upstox.com/developer/apps"
+                linkLabel="Open Upstox Developer Apps"
+              />
+              <TokenStep
+                step={2}
+                icon={MousePointer}
+                title='Click "Create New App"'
+                description='On the Developer Apps page, click the green "Create New App" button. Give your app any name (e.g. "My ScalpBot").'
+              />
+              <TokenStep
+                step={3}
+                icon={ClipboardPaste}
+                title="Set the Redirect URL"
+                description="In the app creation form, find the Redirect URL field and paste exactly this value:"
+                highlight="http://127.0.0.1:8000/callback"
+                note="This exact URL is required. Do not change it."
+              />
+              <TokenStep
+                step={4}
+                icon={Copy}
+                title="Copy API Key and API Secret"
+                description='After creating the app, you will see your API Key and API Secret on the app details page. Copy both and paste them into the fields below.'
+                note="Keep your API Secret private — never share it with anyone."
+              />
+            </div>
+          )}
+        </div>
+
+        {/* ── GUIDE 2: How to get Daily Access Token ─────────────────── */}
+        <div className="bg-white/5 border border-white/10 rounded-2xl mb-6 overflow-hidden">
+          <button
+            onClick={() => setShowTokenGuide(v => !v)}
+            className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 text-amber-400" />
+              <span className="font-semibold text-white text-sm">How to Get Your Daily Access Token</span>
+              <span className="text-xs text-amber-400/70">(refresh every morning)</span>
+            </div>
+            {showTokenGuide
+              ? <ChevronUp className="w-4 h-4 text-white/40" />
+              : <ChevronDown className="w-4 h-4 text-white/40" />
+            }
+          </button>
+
+          {showTokenGuide && (
+            <div className="px-5 pb-5 space-y-3">
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-start gap-2 mb-4">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-amber-300/90 text-xs">
+                  <strong>Important:</strong> The Access Token expires every day at midnight. You must repeat these steps each morning before starting Live trading. Paper trading works without a token.
+                </p>
+              </div>
+
+              <TokenStep
+                step={1}
+                icon={ExternalLink}
+                title="Open Your Upstox App Page"
+                description="Click the button below to go to your Upstox Developer Apps page where your app is listed."
+                link="https://account.upstox.com/developer/apps"
+                linkLabel="Open Upstox Developer Apps"
+              />
+              <TokenStep
+                step={2}
+                icon={MousePointer}
+                title='Click "Get Token" on Your App'
+                description='Find your app in the list and click the "Get Token" button next to it. This opens the Upstox login page.'
+              />
+              <TokenStep
+                step={3}
+                icon={LogIn}
+                title="Log In with Your Upstox Account"
+                description="Enter your Upstox username and password (or use the mobile OTP option). This is your regular Upstox trading account login."
+                note="You are logging into Upstox directly — not into this app."
+              />
+              <TokenStep
+                step={4}
+                icon={Copy}
+                title="Copy the Access Token"
+                description='After logging in, Upstox will show you a long string of characters — this is your Access Token. Select all of it and copy it (Ctrl+C or tap and hold → Copy).'
+                note="The token is a very long string, usually 200+ characters. Make sure you copy the entire thing."
+              />
+              <TokenStep
+                step={5}
+                icon={ClipboardPaste}
+                title="Paste It Below & Save"
+                description='Scroll down to the Access Token field below, paste the token (Ctrl+V or tap and hold → Paste), then click "Save Credentials". You are ready for Live trading!'
+              />
+            </div>
+          )}
         </div>
 
         {/* Credentials Form */}
@@ -141,7 +313,7 @@ export default function Settings() {
           </div>
 
           <div>
-            <label className="text-xs text-white/50 mb-1.5 block">Redirect URI</label>
+            <label className="text-xs text-white/50 mb-1.5 block">Redirect URI <span className="text-white/20">(do not change)</span></label>
             <input
               type="text"
               value={creds.redirectUri}
@@ -177,6 +349,12 @@ export default function Settings() {
                 {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+            {creds.accessToken && (
+              <p className="mt-1.5 text-xs text-emerald-400 flex items-center gap-1">
+                <CheckCircle className="w-3 h-3" />
+                Token entered ({creds.accessToken.length} characters) — remember to refresh it each morning
+              </p>
+            )}
           </div>
 
           <div className="flex gap-3 pt-2">

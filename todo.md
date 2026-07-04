@@ -61,3 +61,8 @@
 - [x] Updated Access Token placeholder text to be clear and non-technical
 - [x] Verified: no getLoginUrl/useAuth calls remain in any page or component
 - [x] Verified: no Python/coding references remain in any page
+
+## New Features — Token Guide, Morning Reminder, Token Expiry Indicator
+- [x] Settings: Add step-by-step visual guide for getting Upstox Access Token (numbered steps with icons, screenshots-style cards)
+- [x] Dashboard: Add morning reminder banner after 9 AM IST reminding user to refresh Access Token before Live mode
+- [x] Dashboard: Add token expiry/validity indicator (green/red dot) in Dashboard header showing if saved Access Token is valid

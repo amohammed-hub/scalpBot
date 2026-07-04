@@ -5,7 +5,7 @@ import QRModal from "@/components/QRModal";
 import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
-  Zap, Calculator, RefreshCw
+  Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
@@ -74,6 +74,54 @@ const BASE_PRICES: Record<string, number> = {
 
 const LS_TRADES = "scalpbot_trades";
 const LS_CONFIG = "scalpbot_config";
+const LS_CREDS = "scalpbot_credentials";
+const LS_REMINDER_DISMISSED = "scalpbot_reminder_dismissed";
+
+// Returns true if it is morning (9:00 AM – 10:30 AM IST) — prime reminder window
+function isMorningWindow(): boolean {
+  const now = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const istMs = now.getTime() + istOffsetMs + now.getTimezoneOffset() * 60 * 1000;
+  const ist = new Date(istMs);
+  const h = ist.getHours();
+  const m = ist.getMinutes();
+  const totalMin = h * 60 + m;
+  return totalMin >= 9 * 60 && totalMin <= 10 * 60 + 30;
+}
+
+// Returns the dismissal key for today (resets each day)
+function todayDismissKey(): string {
+  const now = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const istMs = now.getTime() + istOffsetMs + now.getTimezoneOffset() * 60 * 1000;
+  const ist = new Date(istMs);
+  return `${LS_REMINDER_DISMISSED}_${ist.getFullYear()}_${ist.getMonth()}_${ist.getDate()}`;
+}
+
+// Check if the saved access token looks valid:
+// - must be present and long enough (Upstox tokens are typically 200+ chars)
+// - must have been saved today (IST date) — tokens expire at midnight IST
+function getTokenStatus(): "valid" | "missing" | "short" {
+  try {
+    const creds = JSON.parse(localStorage.getItem(LS_CREDS) ?? "null");
+    if (!creds?.accessToken) return "missing";
+    if (creds.accessToken.length < 100) return "short";
+
+    // Check if token was saved today (IST)
+    if (creds.tokenSavedAt) {
+      const istOffsetMs = 5.5 * 60 * 60 * 1000;
+      const savedIst = new Date(creds.tokenSavedAt + istOffsetMs + new Date(creds.tokenSavedAt).getTimezoneOffset() * 60 * 1000);
+      const nowIst = new Date(Date.now() + istOffsetMs + new Date().getTimezoneOffset() * 60 * 1000);
+      const savedDay = `${savedIst.getFullYear()}-${savedIst.getMonth()}-${savedIst.getDate()}`;
+      const todayDay = `${nowIst.getFullYear()}-${nowIst.getMonth()}-${nowIst.getDate()}`;
+      if (savedDay !== todayDay) return "short"; // expired (saved on a previous day)
+    }
+
+    return "valid";
+  } catch {
+    return "missing";
+  }
+}
 
 // ── Simple EMA helper ─────────────────────────────────────────────────────────
 function ema(prices: number[], period: number): number {
@@ -138,6 +186,29 @@ export default function Dashboard() {
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const openTradeRef = useRef<Trade | null>(null);
+
+  // Morning reminder & token status state
+  const [showReminder, setShowReminder] = useState(false);
+  const [tokenStatus, setTokenStatus] = useState<"valid" | "missing" | "short">(getTokenStatus);
+
+  // Re-check both reminder visibility and token status every 30 seconds
+  // This ensures the banner appears even if the app was opened before 9 AM IST
+  useEffect(() => {
+    const check = () => {
+      setTokenStatus(getTokenStatus());
+      // Show reminder if: morning window AND not dismissed today
+      const shouldShow = isMorningWindow() && !localStorage.getItem(todayDismissKey());
+      setShowReminder(shouldShow);
+    };
+    check(); // run immediately on mount
+    const id = setInterval(check, 30_000); // re-check every 30s
+    return () => clearInterval(id);
+  }, []);
+
+  const dismissReminder = () => {
+    localStorage.setItem(todayDismissKey(), "1");
+    setShowReminder(false);
+  };
 
   // Persist config
   useEffect(() => { localStorage.setItem(LS_CONFIG, JSON.stringify(config)); }, [config]);
@@ -259,6 +330,32 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
+      {/* Morning Reminder Banner */}
+      {showReminder && (
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between gap-3 px-4 py-3 bg-amber-500 text-black text-sm font-medium shadow-lg">
+          <div className="flex items-center gap-2">
+            <Bell className="w-4 h-4 shrink-0" />
+            <span>
+              <strong>Good morning!</strong> Market opens soon — remember to{" "}
+              <button
+                onClick={() => navigate("/settings")}
+                className="underline font-bold hover:opacity-80"
+              >
+                refresh your Access Token
+              </button>{" "}
+              in Settings before switching to Live mode.
+            </span>
+          </div>
+          <button
+            onClick={dismissReminder}
+            className="shrink-0 p-1 hover:bg-black/10 rounded-full transition-colors"
+            title="Dismiss for today"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Sidebar */}
       <aside className="w-64 border-r border-white/10 flex flex-col p-4 gap-2 shrink-0">
         <div className="flex items-center gap-2 mb-6 px-2">
@@ -298,6 +395,27 @@ export default function Dashboard() {
             <p className="text-white/50 text-sm">Automated scalping — EMA + VWAP + ADX strategy</p>
           </div>
           <div className="flex items-center gap-3">
+            {/* Token Status Indicator */}
+            <button
+              onClick={() => navigate("/settings")}
+              title={tokenStatus === "valid" ? "Access Token: OK — click to manage" : tokenStatus === "missing" ? "No Access Token — click to add" : "Access Token looks incomplete — click to fix"}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                tokenStatus === "valid"
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                  : tokenStatus === "missing"
+                  ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 animate-pulse"
+                  : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
+              }`}
+            >
+              {tokenStatus === "valid" ? (
+                <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK</span></>
+              ) : tokenStatus === "missing" ? (
+                <><ShieldOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">No Token</span></>
+              ) : (
+                <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token?</span></>
+              )}
+            </button>
+
             <button
               onClick={() => setQrOpen(true)}
               className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-teal-500/15 border border-teal-500/30 text-teal-400 hover:bg-teal-500/25 transition-all"
@@ -311,6 +429,20 @@ export default function Dashboard() {
             </Badge>
           </div>
         </div>
+
+        {/* Token missing warning (outside morning hours) */}
+        {tokenStatus !== "valid" && config.mode === "live" && !showReminder && (
+          <div className="mb-4 flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
+            <ShieldOff className="w-4 h-4 shrink-0" />
+            <span>
+              <strong>Live mode requires an Access Token.</strong>{" "}
+              <button onClick={() => navigate("/settings")} className="underline hover:opacity-80">
+                Go to Settings to add it
+              </button>{" "}
+              — or switch to Paper mode to trade without a token.
+            </span>
+          </div>
+        )}
 
         {/* Stats Row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
