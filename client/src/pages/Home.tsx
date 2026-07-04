@@ -1,25 +1,9 @@
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
-import { Bot, TrendingUp, Shield, Zap, BarChart2, Settings } from "lucide-react";
-import { getLoginUrl } from "@/const";
+import { Bot, TrendingUp, Shield, Zap, BarChart2 } from "lucide-react";
 
 export default function Home() {
-  const { user, loading, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[oklch(0.10_0.02_240)] flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (isAuthenticated) {
-    navigate("/dashboard");
-    return null;
-  }
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white">
@@ -32,9 +16,9 @@ export default function Home() {
           <span className="font-bold text-lg text-white">ScalpBot</span>
           <span className="text-xs bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded-full border border-teal-500/30">Upstox</span>
         </div>
-        <a href={getLoginUrl()}>
-          <Button className="bg-teal-500 hover:bg-teal-600 text-white">Login with Manus</Button>
-        </a>
+        <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={() => navigate("/dashboard")}>
+          Open Dashboard
+        </Button>
       </nav>
 
       {/* Hero */}
@@ -48,15 +32,13 @@ export default function Home() {
           <span className="text-teal-400">You Just Watch the Profits.</span>
         </h1>
         <p className="text-xl text-white/60 mb-10 max-w-2xl mx-auto">
-          Connect your Upstox account, configure your risk settings, and let the AI-powered scalping bot automatically detect signals and place orders — 24/7, no manual clicking required.
+          Connect your Upstox account, configure your risk settings, and let the AI-powered scalping bot automatically detect signals and place orders — no login required, no account needed.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <a href={getLoginUrl()}>
-            <Button size="lg" className="bg-teal-500 hover:bg-teal-600 text-white px-8 py-6 text-lg">
-              <Bot className="w-5 h-5 mr-2" />
-              Start Bot Trading Free
-            </Button>
-          </a>
+          <Button size="lg" className="bg-teal-500 hover:bg-teal-600 text-white px-8 py-6 text-lg" onClick={() => navigate("/dashboard")}>
+            <Bot className="w-5 h-5 mr-2" />
+            Start Bot Trading Free
+          </Button>
           <Button size="lg" variant="outline" className="border-white/20 text-white hover:bg-white/10 px-8 py-6 text-lg" onClick={() => navigate("/risk-calculator")}>
             <BarChart2 className="w-5 h-5 mr-2" />
             Try Risk Calculator
@@ -68,7 +50,7 @@ export default function Home() {
       <div className="max-w-6xl mx-auto px-6 pb-20">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
-            { icon: Bot, title: "Fully Automatic", desc: "Bot scans market every minute, detects EMA/VWAP/ADX signals, and places orders automatically — no manual input needed.", color: "teal" },
+            { icon: Bot, title: "No Login Required", desc: "Open the app and start immediately. Your API credentials are stored securely in your browser — never sent to any server.", color: "teal" },
             { icon: Shield, title: "Built-in Risk Management", desc: "ATR-based dynamic stop-loss, daily loss limit circuit breaker, 1% risk rule, and max trades per day — all enforced automatically.", color: "amber" },
             { icon: TrendingUp, title: "Paper Trade First", desc: "Test your strategy with simulated trades before risking real money. Switch to live mode only when you're confident.", color: "purple" },
           ].map((f) => (
@@ -88,9 +70,9 @@ export default function Home() {
           <p className="text-white/50 mb-10">Three steps from setup to automated trading</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
-              { step: "01", title: "Connect Upstox", desc: "Go to Settings, enter your Upstox API Key and Secret. Get them free from Upstox Developer Apps." },
+              { step: "01", title: "Enter API Keys", desc: "Go to Settings, enter your Upstox API Key and Secret. Stored only in your browser — never on any server." },
               { step: "02", title: "Configure & Start", desc: "Choose your instrument (NIFTY, RELIANCE, etc.), set capital and risk %, then click Start Bot." },
-              { step: "03", title: "Bot Trades Automatically", desc: "The bot scans every minute, generates signals, and places orders. You watch the live dashboard." },
+              { step: "03", title: "Bot Trades Automatically", desc: "The bot scans every minute, generates EMA+VWAP+ADX signals, and places orders. You watch the live dashboard." },
             ].map((s) => (
               <div key={s.step} className="relative bg-white/5 border border-white/10 rounded-2xl p-6">
                 <div className="text-5xl font-black text-teal-500/20 mb-3">{s.step}</div>

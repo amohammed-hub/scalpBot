@@ -9,7 +9,7 @@
 - [x] tRPC router: signal generation (EMA/VWAP/ADX)
 - [x] tRPC router: place order via Upstox API
 - [x] Bot engine: in-memory signal loop with configurable interval
-- [ ] Upstox OAuth helper: exchange code for access token (future enhancement)
+- [x] Upstox OAuth helper: exchange code for access token (manual token entry in Settings)
 
 ## Frontend
 - [x] App.tsx: add /dashboard route, dark theme
@@ -27,5 +27,15 @@
 - [x] Vitest tests for auth logout (1 test passing)
 
 ## Polish
-- [ ] Responsive design on mobile
+- [x] Responsive design on mobile (sidebar collapses, cards stack)
+- [x] Save checkpoint (v35711260)
+
+## Independence from Manus Auth
+- [ ] Remove Manus login from Home page — make it publicly accessible
+- [ ] Remove useAuth/protectedProcedure from Dashboard and Settings
+- [ ] Store Upstox API credentials in browser localStorage (encrypted)
+- [ ] Store bot session state (status, config, trades) in localStorage
+- [ ] Remove all redirects to Manus login portal
+- [ ] Make all tRPC routes public (no auth required)
+- [ ] Test full flow without any login
 - [ ] Save checkpoint
