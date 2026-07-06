@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ScalpBot — Connecting Upstox...</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:16px;padding:32px 24px;max-width:420px;width:100%;text-align:center}
+.icon{font-size:48px;margin-bottom:16px}
+h1{font-size:20px;font-weight:700;margin-bottom:8px}
+p{font-size:14px;color:#8b949e;line-height:1.6;margin-bottom:16px}
+.status{font-size:13px;padding:10px 16px;border-radius:8px;margin-bottom:16px}
+.status-ok{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);color:#4ade80}
+.status-err{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:#f87171}
+.status-wait{background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.3);color:#60a5fa}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;border:none;width:100%;margin-top:8px;transition:all .15s}
+.btn-teal{background:#2dd4bf;color:#0d1117}
+.btn-teal:hover{background:#14b8a6}
+.btn-outline{background:transparent;color:#8b949e;border:1px solid #30363d}
+.btn-outline:hover{color:#e6edf3}
+.code-box{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 14px;font-family:monospace;font-size:12px;color:#2dd4bf;word-break:break-all;margin-bottom:12px;text-align:left}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid #30363d;border-top-color:#2dd4bf;border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="icon" id="icon">⚡</div>
+  <h1 id="title">Connecting to Upstox...</h1>
+  <p id="desc">Please wait while we capture your authorization code.</p>
+  <div class="status status-wait" id="status"><span class="spinner"></span>Processing...</div>
+  <div id="actions"></div>
+</div>
+
+<script>
+(async function() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const error = params.get('error');
+
+  const icon = document.getElementById('icon');
+  const title = document.getElementById('title');
+  const desc = document.getElementById('desc');
+  const status = document.getElementById('status');
+  const actions = document.getElementById('actions');
+
+  if (error) {
+    icon.textContent = '❌';
+    title.textContent = 'Authorization Denied';
+    desc.textContent = 'You cancelled the Upstox login or an error occurred. Please try again from ScalpBot Settings.';
+    status.className = 'status status-err';
+    status.textContent = 'Error: ' + error;
+    actions.innerHTML = '<button class="btn btn-outline" onclick="window.close()">Close this tab</button>';
+    return;
+  }
+
+  if (!code) {
+    icon.textContent = '⚠️';
+    title.textContent = 'No Code Found';
+    desc.textContent = 'This page should only be opened by Upstox after login. Please go back to ScalpBot and click "Get Token" again.';
+    status.className = 'status status-err';
+    status.textContent = 'No authorization code in URL';
+    actions.innerHTML = '<button class="btn btn-outline" onclick="window.close()">Close this tab</button>';
+    return;
+  }
+
+  status.className = 'status status-ok';
+  status.textContent = '✅ Authorization code received!';
+
+  // Try to send to opener (ScalpBot main tab) via postMessage
+  let sentToOpener = false;
+  if (window.opener && !window.opener.closed) {
+    try {
+      window.opener.postMessage({ type: 'UPSTOX_AUTH_CODE', code: code }, '*');
+      sentToOpener = true;
+    } catch(e) {}
+  }
+
+  if (sentToOpener) {
+    icon.textContent = '✅';
+    title.textContent = 'Token Sent to ScalpBot!';
+    desc.textContent = 'The authorization code has been sent to ScalpBot. Your token is being fetched automatically. You can close this tab.';
+    status.className = 'status status-ok';
+    status.textContent = '✅ Sent to ScalpBot tab successfully';
+    actions.innerHTML = '<button class="btn btn-teal" onclick="window.close()">✓ Close this tab</button>';
+    setTimeout(() => window.close(), 3000);
+  } else {
+    icon.textContent = '🔑';
+    title.textContent = 'Almost there!';
+    desc.textContent = 'Could not auto-send to ScalpBot (tab may have been closed). Copy the code below and paste it in ScalpBot Settings → Access Token field.';
+    status.className = 'status status-ok';
+    status.textContent = '✅ Code captured successfully';
+    actions.innerHTML = `
+      <div class="code-box" id="codeBox">${code}</div>
+      <button class="btn btn-teal" onclick="copyCode()">📋 Copy Code</button>
+      <button class="btn btn-outline" style="margin-top:8px" onclick="window.close()">Close this tab</button>
+    `;
+  }
+
+  function copyCode() {
+    navigator.clipboard.writeText(code).then(() => {
+      document.querySelector('.btn-teal').textContent = '✅ Copied!';
+      setTimeout(() => { document.querySelector('.btn-teal').textContent = '📋 Copy Code'; }, 2000);
+    }).catch(() => {
+      const box = document.getElementById('codeBox');
+      const range = document.createRange();
+      range.selectNode(box);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
+  }
+})();
+</script>
+</body>
+</html>
