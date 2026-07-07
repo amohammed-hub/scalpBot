@@ -119,3 +119,16 @@
 - [x] Dashboard: Balance widget showing available margin, used margin, total balance (equity + commodity)
 - [x] Dashboard: Auto-refresh balance every 30 seconds when bot is running
 - [x] Dashboard: Show "No Token" state gracefully if token not saved yet (widget hidden when no token)
+
+## Bot Engine Improvements — Phase 2 (All 6 + Power Hour)
+- [x] Multi-timeframe confirmation: fetch 5-min candles, only enter if 5-min trend aligns with 1-min signal
+- [x] Dynamic breakout threshold: replace fixed 0.0003 with ATR-relative threshold (atr/price * 0.5)
+- [x] MACD + Bollinger Band squeeze: add Layer 5 — detect BB compression then expansion breakout
+- [x] Support/Resistance proximity filter: calculate daily pivot points (prev day H/L/C), reject entries within 0.1% of S/R
+- [x] Time-of-day bias filter: skip 9:15–9:30 AM, boost confidence for 10:00–11:30 AM and 2:00–3:00 PM
+- [x] Re-entry logic: after SL hit, if signal still valid 2 candles later, allow second entry with tighter SL
+- [x] Power Hour strategy (3:00–3:20 PM): fetch whole-day candles, identify day trend/range/VWAP position, apply high-conviction directional trades in final 20 min
+- [x] Power Hour: separate generatePowerHourSignal() function using day-context (daily candles + day's VWAP, high, low, trend, 6-point scoring)
+- [x] Dashboard: show "Power Hour Mode" banner + sidebar badge when in 3:00–3:20 PM window
+- [x] Dashboard: show signal layer name including new Layer 5 (MACD/BB Squeeze) and Power Hour
+- [x] Update vitest tests to cover new signal layers and power hour logic (22 tests passing)

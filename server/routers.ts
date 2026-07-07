@@ -478,8 +478,11 @@ export const appRouter = router({
           ask: state.askPrice,
           signal: state.lastSignal,
           candles: state.candles.slice(-60),
+          candles5mCount: state.candles5m.length,
           nextScanAt: state.nextScanAt,
           openTrade: state.openTrade,
+          isPowerHourMode: state.isPowerHourMode,
+          reEntryCandles: state.reEntryCandles,
         };
       }),
 
