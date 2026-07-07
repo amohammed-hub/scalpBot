@@ -36,6 +36,38 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
   registerOAuthRoutes(app);
+
+  // Upstox token exchange proxy — called from standalone HTML to avoid CORS
+  app.post('/api/upstox-token', async (req, res) => {
+    try {
+      const { code, client_id, client_secret, redirect_uri } = req.body;
+      if (!code || !client_id || !client_secret || !redirect_uri) {
+        res.status(400).json({ error: 'Missing required fields: code, client_id, client_secret, redirect_uri' });
+        return;
+      }
+      const params = new URLSearchParams({ code, client_id, client_secret, redirect_uri, grant_type: 'authorization_code' });
+      const upstoxResp = await fetch('https://api.upstox.com/v2/login/authorization/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+        body: params.toString()
+      });
+      const data = await upstoxResp.json();
+      // Add CORS headers so the standalone HTML file can call this
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.status(upstoxResp.status).json(data);
+    } catch (err: any) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // CORS preflight for the token endpoint
+  app.options('/api/upstox-token', (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.sendStatus(204);
+  });
   // tRPC API
   app.use(
     "/api/trpc",
