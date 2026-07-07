@@ -68,6 +68,11 @@ async function startServer() {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.sendStatus(204);
   });
+  // Simple health check endpoint for Railway/uptime monitoring
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({ ok: true, timestamp: Date.now() });
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
@@ -83,15 +88,10 @@ async function startServer() {
     serveStatic(app);
   }
 
-  const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
+  const port = parseInt(process.env.PORT || "3000");
 
-  if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
-  }
-
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${port}/`);
   });
 }
 
