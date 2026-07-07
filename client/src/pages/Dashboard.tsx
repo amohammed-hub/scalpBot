@@ -194,6 +194,19 @@ export default function Dashboard() {
     { refetchInterval: 3000, staleTime: 1000 }
   );
 
+  // Multi-bot: all 3 slots
+  const { data: allBots } = trpc.multiBots.allStatus.useQuery(
+    { sessionToken },
+    { refetchInterval: 5000, staleTime: 2000 }
+  );
+  const stopSecondaryMutation = trpc.multiBots.stopSecondary.useMutation({
+    onSuccess: (_, vars) => {
+      toast.info(`Slot ${vars.slot} bot stopped.`);
+      utils.multiBots.allStatus.invalidate();
+    },
+    onError: (e) => toast.error(`Stop failed: ${e.message}`),
+  });
+
   // Upstox account profile & balance
   const { data: accountProfile } = trpc.account.profile.useQuery(
     { sessionToken },
@@ -1090,6 +1103,95 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+
+        {/* Parallel Bots Panel */}
+        {allBots && allBots.some(b => b.slot > 0) && (
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Bot className="w-5 h-5 text-purple-400" />
+                <span className="font-semibold text-white">Parallel Bots</span>
+                <span className="text-xs text-white/40">Running simultaneously on different instruments</span>
+              </div>
+              {/* Combined P&L across all slots */}
+              {(() => {
+                const combinedPnl = (allBots ?? []).reduce((sum, b) => sum + (b.dailyPnl ?? 0), 0);
+                return (
+                  <div className={`text-sm font-bold ${
+                    combinedPnl > 0 ? "text-emerald-400" : combinedPnl < 0 ? "text-red-400" : "text-white/40"
+                  }`}>
+                    Combined: {combinedPnl >= 0 ? "+" : ""}₹{combinedPnl.toFixed(0)}
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(allBots ?? []).map((bot) => {
+                const isActive = bot.status === "running";
+                const slotLabel = bot.slot === 0 ? "Primary" : `Slot ${bot.slot}`;
+                const slotColor = bot.slot === 0 ? "teal" : bot.slot === 1 ? "purple" : "amber";
+                const pnlPositive = (bot.dailyPnl ?? 0) > 0;
+                const pnlNegative = (bot.dailyPnl ?? 0) < 0;
+                const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
+                return (
+                  <div key={bot.sessionToken} className={`rounded-xl border p-4 ${
+                    isActive
+                      ? `border-${slotColor}-500/30 bg-${slotColor}-500/5`
+                      : "border-white/10 bg-white/3"
+                  }`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                          isActive ? `bg-${slotColor}-500/20 text-${slotColor}-300` : "bg-white/10 text-white/40"
+                        }`}>{slotLabel}</span>
+                        {isActive && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                      </div>
+                      {bot.slot > 0 && isActive && (
+                        <button
+                          onClick={() => stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
+                          className="text-red-400 hover:text-red-300 text-xs flex items-center gap-1"
+                        >
+                          <Square className="w-3 h-3" /> Stop
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-sm font-semibold text-white mb-1">
+                      {bot.instrumentLabel || (isActive ? "Scanning…" : "—")}
+                    </div>
+                    {modeTag && (
+                      <div className="text-xs text-amber-300 mb-1">{modeTag}</div>
+                    )}
+                    <div className="flex items-center justify-between text-xs text-white/50 mb-2">
+                      <span>₹{(bot.lastPrice ?? 0).toFixed(2)}</span>
+                      <span>{bot.tradesCount ?? 0} trades</span>
+                    </div>
+                    <div className={`text-base font-bold ${
+                      pnlPositive ? "text-emerald-400" : pnlNegative ? "text-red-400" : "text-white/40"
+                    }`}>
+                      {(bot.dailyPnl ?? 0) >= 0 ? "+" : ""}₹{(bot.dailyPnl ?? 0).toFixed(0)}
+                      <span className="text-xs font-normal text-white/30 ml-1">today</span>
+                    </div>
+                    {bot.openTrade && (
+                      <div className={`mt-2 text-xs px-2 py-1 rounded-lg ${
+                        bot.openTrade.direction === "BUY" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"
+                      }`}>
+                        {bot.openTrade.direction} @ ₹{bot.openTrade.entryPrice?.toFixed(2)} · SL ₹{(bot.openTrade as any).sl?.toFixed(2) ?? (bot.openTrade as any).stopLoss?.toFixed(2) ?? "—"}
+                      </div>
+                    )}
+                    {bot.lastSignal && !bot.openTrade && (
+                      <div className="mt-2 text-xs text-white/30">
+                        Last: {bot.lastSignal.direction} · {bot.lastSignal.confidence}%
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-white/30 mt-3">
+              Start additional bots from the <button className="underline text-purple-400" onClick={() => navigate("/hero-zero")}>Hero Zero Scanner</button> or Settings.
+            </p>
+          </div>
+        )}
 
         {/* Trade Log */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-5">

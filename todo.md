@@ -176,3 +176,29 @@
 - [x] HeroZeroScanner: selected candidate detail panel with all exit levels (2.5×, 3.5×, 5×, 50% cut)
 - [x] HeroZeroScanner: expiry day + trading window status banners
 - [x] HeroZeroScanner: strategy rules guide at bottom
+
+## Phase 5 — Telegram Test, Multi-Bot Panel, MCX Selector
+
+### Telegram Test Connection
+- [x] routers.ts: telegram.test procedure — sends a test message to the configured bot token + chat ID, returns success/error
+- [x] routers.ts: telegram.sendDailySummary procedure — sends today's trade summary (P&L, win/loss, best/worst trade)
+- [x] Settings.tsx: "Test Connection" button — calls telegram.test, shows green/red status badge
+- [x] Settings.tsx: "Send Daily Summary" button — calls telegram.sendDailySummary
+- [x] Settings.tsx: green/red badge indicating last test result (connected / failed)
+
+### Multi-Bot Dashboard Panel
+- [x] Dashboard.tsx: "Parallel Bots" card — shows all 3 slots side by side (instrument, status, day P&L, open trade, signal)
+- [x] Dashboard.tsx: per-slot Stop button for secondary bots (slot 1 and 2)
+- [x] Dashboard.tsx: combined total day P&L across all running bots shown at top of panel
+- [x] Dashboard.tsx: mode badges (Power Hour, MCX Evening, Hero Zero) per slot
+
+### MCX Instrument Selector
+- [x] shared/mcxInstruments.ts: MCX instrument registry (9 instruments) with Upstox tokens, lot sizes, tick values, margins, best times
+- [x] Settings.tsx: MCX Quick Launch section with category filter (All/Metals/Energy), slot selector (1/2), capital input
+- [x] Settings.tsx: instrument grid with lot size, tick value, margin, best times, and one-click Start MCX Bot button
+- [x] Settings.tsx: starts bot in Paper mode on selected slot with pre-configured MCX Evening risk parameters
+
+### Phase 5 Gap Fixes
+- [ ] Dashboard.tsx: add per-slot Quick Start button inside Parallel Bots panel (slot 1 and 2) with instrument/capital mini-form
+- [ ] Settings.tsx: add MCX instrument dropdown (single-select) as alternative to grid for quick token copy
+- [ ] shared/mcxInstruments.ts: add note that tokens are generic MCX_FO|SYMBOL format — user must verify active contract month from Upstox instrument master

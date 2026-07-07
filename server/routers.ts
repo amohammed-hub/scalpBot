@@ -1017,6 +1017,115 @@ export const appRouter = router({
         }
       }),
   }),
+
+  // ── Telegram ─────────────────────────────────────────────────────────────────────
+  telegram: router({
+    // Send a test message to verify bot token + chat ID are correct
+    test: publicProcedure
+      .input(z.object({
+        botToken: z.string().min(10),
+        chatId: z.string().min(1),
+      }))
+      .mutation(async ({ input }) => {
+        const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+        const message = [
+          `✅ <b>ScalpBot Telegram Connected!</b>`,
+          ``,
+          `📊 Your bot is now configured to send alerts for:`,
+          `• ⚡ NSE Power Hour (3:00–3:20 PM)`,
+          `• 🌙 MCX Evening (7:30–9:30 PM)`,
+          `• 🦸 Hero Zero signals`,
+          `• 💰 Partial profit bookings`,
+          `• ❌/✅ Trade close with P&L`,
+          ``,
+          `⏰ Test sent at: ${now} IST`,
+        ].join("\n");
+
+        try {
+          const res = await fetch(
+            `https://api.telegram.org/bot${input.botToken}/sendMessage`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: input.chatId,
+                text: message,
+                parse_mode: "HTML",
+              }),
+              signal: AbortSignal.timeout(10000),
+            },
+          );
+          const json = await res.json() as { ok: boolean; description?: string };
+          if (!json.ok) {
+            return { success: false, error: json.description ?? "Telegram API error" };
+          }
+          return { success: true };
+        } catch (e) {
+          return { success: false, error: String(e) };
+        }
+      }),
+
+    // Send a daily summary message manually
+    sendDailySummary: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        botToken: z.string().min(10),
+        chatId: z.string().min(1),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return { success: false, error: "DB unavailable" };
+
+        // Get today's trades for this session
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const trades = await db
+          .select()
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            eq(tradeLog.status, "closed"),
+          ))
+          .orderBy(desc(tradeLog.enteredAt))
+          .limit(20);
+
+        type TradeRow = typeof trades[number];
+        const todayTrades = trades.filter((t: TradeRow) => t.enteredAt && new Date(t.enteredAt) >= today);
+        const totalPnl = todayTrades.reduce((sum: number, t: TradeRow) => sum + (t.pnl ?? 0), 0);
+        const wins = todayTrades.filter((t: TradeRow) => (t.pnl ?? 0) > 0).length;
+        const losses = todayTrades.filter((t: TradeRow) => (t.pnl ?? 0) <= 0).length;
+        const winRate = todayTrades.length > 0 ? Math.round(wins / todayTrades.length * 100) : 0;
+        const pnlSign = totalPnl >= 0 ? "+" : "";
+        const dateStr = today.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
+        const message = [
+          `📊 <b>Daily Trading Summary — ${dateStr}</b>`,
+          ``,
+          `💰 Total P&L: <b>${pnlSign}₹${totalPnl.toFixed(0)}</b>`,
+          `📈 Trades: ${todayTrades.length} (W:${wins} / L:${losses} | ${winRate}% win rate)`,
+          todayTrades.length > 0 ? `🏆 Best trade: ₹${Math.max(...todayTrades.map((t: TradeRow) => t.pnl ?? 0)).toFixed(0)}` : "",
+          todayTrades.length > 0 ? `📉 Worst trade: ₹${Math.min(...todayTrades.map((t: TradeRow) => t.pnl ?? 0)).toFixed(0)}` : "",
+          ``,
+          `🤖 ScalpBot — ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`,
+        ].filter(Boolean).join("\n");
+
+        try {
+          const res = await fetch(
+            `https://api.telegram.org/bot${input.botToken}/sendMessage`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chat_id: input.chatId, text: message, parse_mode: "HTML" }),
+              signal: AbortSignal.timeout(10000),
+            },
+          );
+          const json = await res.json() as { ok: boolean; description?: string };
+          return json.ok ? { success: true } : { success: false, error: json.description };
+        } catch (e) {
+          return { success: false, error: String(e) };
+        }
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

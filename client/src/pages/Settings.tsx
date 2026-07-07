@@ -4,8 +4,9 @@ import {
   Settings as SettingsIcon, Zap, Activity, Calculator, Key,
   ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle,
   AlertTriangle, ChevronDown, ChevronUp, MousePointer,
-  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell
+  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame
 } from "lucide-react";
+import { MCX_INSTRUMENTS, getMCXByCategory } from "@shared/mcxInstruments";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -252,6 +253,74 @@ export default function Settings() {
   const [telegramSaved, setTelegramSaved] = useState(false);
   const [telegramTesting, setTelegramTesting] = useState(false);
   const [showTelegramGuide, setShowTelegramGuide] = useState(false);
+  const [telegramStatus, setTelegramStatus] = useState<"idle" | "connected" | "failed">("idle");
+
+  // MCX Quick Launch state
+  const [mcxCategory, setMcxCategory] = useState<"all" | "metal" | "energy" | "agri">("all");
+  const [mcxSlot, setMcxSlot] = useState<1 | 2>(1);
+  const [mcxCapital, setMcxCapital] = useState(50000);
+  const [mcxLaunching, setMcxLaunching] = useState<string | null>(null);
+
+  const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
+    onSuccess: (res) => {
+      toast.success(`🌙 MCX Evening bot started on Slot ${mcxSlot}!`);
+      setMcxLaunching(null);
+    },
+    onError: (e) => {
+      toast.error(`Failed to start MCX bot: ${e.message}`);
+      setMcxLaunching(null);
+    },
+  });
+
+  const handleLaunchMCX = (symbol: string) => {
+    const instr = MCX_INSTRUMENTS.find(i => i.symbol === symbol);
+    if (!instr) return;
+    const tg = JSON.parse(localStorage.getItem("scalpbot_telegram") ?? "{}");
+    setMcxLaunching(symbol);
+    startSecondaryMutation.mutate({
+      sessionToken,
+      slot: mcxSlot,
+      instrumentToken: instr.instrumentToken,
+      instrumentSymbol: instr.symbol,
+      instrumentLabel: instr.label,
+      mode: "paper",
+      capital: mcxCapital,
+      riskPerTradePct: 1.5,
+      maxTradesPerDay: 4,
+      dailyLossLimitPct: 3,
+      stopLossMultiplier: 1.5,
+      targetMultiplier: 2.5,
+      minConfidence: 60,
+      scanIntervalSec: 30,
+      telegramBotToken: tg.botToken ?? "",
+      telegramChatId: tg.chatId ?? "",
+      telegramEnabled: tg.enabled ?? false,
+    });
+  };
+
+  const telegramTestMutation = trpc.telegram.test.useMutation({
+    onSuccess: (result) => {
+      if (result.success) {
+        setTelegramStatus("connected");
+        toast.success("✅ Connected! Check your Telegram for the test message.");
+      } else {
+        setTelegramStatus("failed");
+        toast.error(`❌ Failed: ${result.error ?? "Unknown error"}`);
+      }
+    },
+    onError: () => {
+      setTelegramStatus("failed");
+      toast.error("❌ Network error — check your Bot Token and Chat ID.");
+    },
+  });
+
+  const telegramSummaryMutation = trpc.telegram.sendDailySummary.useMutation({
+    onSuccess: (result) => {
+      if (result.success) toast.success("📊 Daily summary sent to Telegram!");
+      else toast.error(`❌ Failed: ${result.error ?? "Unknown error"}`);
+    },
+    onError: () => toast.error("❌ Network error sending daily summary."),
+  });
 
   const handleSaveTelegram = () => {
     localStorage.setItem(LS_TELEGRAM, JSON.stringify(telegram));
@@ -260,23 +329,28 @@ export default function Settings() {
     setTimeout(() => setTelegramSaved(false), 3000);
   };
 
-  const handleTestTelegram = async () => {
+  const handleTestTelegram = () => {
     if (!telegram.botToken || !telegram.chatId) {
       toast.error("Enter Bot Token and Chat ID first.");
       return;
     }
     setTelegramTesting(true);
-    const ok = await sendTelegramMessage(
-      telegram.botToken,
-      telegram.chatId,
-      `⚡ <b>ScalpBot Test Alert</b>\n\nYour Telegram alerts are working correctly!\n\nYou will receive BUY/SELL signals here when the bot is running.`
+    telegramTestMutation.mutate(
+      { botToken: telegram.botToken, chatId: telegram.chatId },
+      { onSettled: () => setTelegramTesting(false) },
     );
-    setTelegramTesting(false);
-    if (ok) {
-      toast.success("✅ Test message sent! Check your Telegram.");
-    } else {
-      toast.error("❌ Failed to send. Check your Bot Token and Chat ID.");
+  };
+
+  const handleDailySummary = () => {
+    if (!telegram.botToken || !telegram.chatId) {
+      toast.error("Enter Bot Token and Chat ID first.");
+      return;
     }
+    telegramSummaryMutation.mutate({
+      sessionToken,
+      botToken: telegram.botToken,
+      chatId: telegram.chatId,
+    });
   };
 
   // Build the Upstox authorize URL for automatic token capture
@@ -707,16 +781,39 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div className="flex gap-3">
+                {/* Status badge */}
+                {telegramStatus !== "idle" && (
+                  <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg border ${
+                    telegramStatus === "connected"
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                      : "bg-red-500/10 border-red-500/30 text-red-400"
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${telegramStatus === "connected" ? "bg-emerald-400" : "bg-red-400"}`} />
+                    {telegramStatus === "connected" ? "✅ Telegram Connected — alerts will fire automatically" : "❌ Connection failed — check your Bot Token and Chat ID"}
+                  </div>
+                )}
+
+                <div className="flex gap-2 flex-wrap">
                   <Button
                     variant="outline"
                     className="flex-1 border-blue-500/30 text-blue-400 hover:bg-blue-500/10 bg-transparent"
                     onClick={handleTestTelegram}
-                    disabled={telegramTesting}
+                    disabled={telegramTesting || telegramTestMutation.isPending}
                   >
-                    {telegramTesting
+                    {telegramTesting || telegramTestMutation.isPending
+                      ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Testing…</>
+                      : <><Send className="w-4 h-4 mr-2" /> Test Connection</>
+                    }
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-purple-500/30 text-purple-400 hover:bg-purple-500/10 bg-transparent"
+                    onClick={handleDailySummary}
+                    disabled={telegramSummaryMutation.isPending}
+                  >
+                    {telegramSummaryMutation.isPending
                       ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Sending…</>
-                      : <><Send className="w-4 h-4 mr-2" /> Send Test Alert</>
+                      : <><Activity className="w-4 h-4 mr-2" /> Send Daily Summary</>
                     }
                   </Button>
                   <Button
@@ -725,13 +822,114 @@ export default function Settings() {
                   >
                     {telegramSaved
                       ? <><CheckCircle className="w-4 h-4 mr-2" /> Saved!</>
-                      : <><Save className="w-4 h-4 mr-2" /> Save Telegram Settings</>
+                      : <><Save className="w-4 h-4 mr-2" /> Save Settings</>
                     }
                   </Button>
                 </div>
               </div>
             </div>
           )}
+        </div>
+
+        {/* ── MCX Quick Launch ─────────────────────────────────────────────── */}
+        <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
+          <div className="p-5 border-b border-white/10">
+            <div className="flex items-center gap-2 mb-1">
+              <Flame className="w-5 h-5 text-orange-400" />
+              <span className="font-semibold text-white text-sm">🌙 MCX Evening Quick Launch</span>
+              <span className="text-xs text-orange-300/70 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded-full">7:30–9:30 PM IST</span>
+            </div>
+            <p className="text-xs text-white/40">One-click launch of an MCX Evening bot on a parallel slot. Starts in Paper mode — switch to Live in Dashboard after testing.</p>
+          </div>
+          <div className="p-5 space-y-4">
+            {/* Controls row */}
+            <div className="flex flex-wrap gap-3">
+              <div>
+                <label className="text-xs text-white/40 mb-1 block">Category</label>
+                <div className="flex gap-1">
+                  {(["all", "metal", "energy"] as const).map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setMcxCategory(cat)}
+                      className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                        mcxCategory === cat
+                          ? "bg-orange-500/20 border-orange-500/40 text-orange-300"
+                          : "bg-white/5 border-white/10 text-white/40 hover:text-white/70"
+                      }`}
+                    >
+                      {cat === "all" ? "All" : cat === "metal" ? "🧱 Metals" : "⚡ Energy"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-white/40 mb-1 block">Slot</label>
+                <div className="flex gap-1">
+                  {([1, 2] as const).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setMcxSlot(s)}
+                      className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                        mcxSlot === s
+                          ? "bg-purple-500/20 border-purple-500/40 text-purple-300"
+                          : "bg-white/5 border-white/10 text-white/40 hover:text-white/70"
+                      }`}
+                    >
+                      Slot {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-white/40 mb-1 block">Capital (₹)</label>
+                <input
+                  type="number"
+                  value={mcxCapital}
+                  onChange={e => setMcxCapital(Number(e.target.value))}
+                  min={10000}
+                  step={10000}
+                  className="w-28 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-orange-500/50"
+                />
+              </div>
+            </div>
+
+            {/* Instrument grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {getMCXByCategory(mcxCategory).map(instr => (
+                <div key={instr.symbol} className="bg-white/3 border border-white/10 rounded-xl p-3 flex flex-col gap-2">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-white">{instr.label}</div>
+                      <div className="text-xs text-white/30">{instr.symbol}</div>
+                    </div>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                      instr.category === "metal" ? "bg-yellow-500/20 text-yellow-300" : "bg-blue-500/20 text-blue-300"
+                    }`}>{instr.category}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-white/40">
+                    <span>Lot: {instr.lotSize.toLocaleString()} units</span>
+                    <span>Tick: ₹{instr.tickValue}</span>
+                    <span>Margin: ~₹{(instr.margin / 1000).toFixed(0)}K</span>
+                  </div>
+                  <div className="text-xs text-orange-300/60">⏰ {instr.bestTimes}</div>
+                  <Button
+                    size="sm"
+                    className="w-full bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 border border-orange-500/30 text-xs h-7"
+                    onClick={() => handleLaunchMCX(instr.symbol)}
+                    disabled={mcxLaunching === instr.symbol || startSecondaryMutation.isPending}
+                  >
+                    {mcxLaunching === instr.symbol
+                      ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Starting…</>
+                      : <>🌙 Start MCX Bot → Slot {mcxSlot}</>
+                    }
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-white/30">
+              Bots start in <strong className="text-white/50">Paper mode</strong>. Monitor on the Dashboard → Parallel Bots panel. Switch to Live after verifying signals.
+            </p>
+          </div>
         </div>
 
         <div className="mt-6 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
