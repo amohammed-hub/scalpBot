@@ -102,3 +102,12 @@
 - [x] Created .nixpacks.toml for pnpm + Node 22 build
 - [x] Created RAILWAY_DEPLOY.md with step-by-step deployment guide
 - [x] All 8 tests passing after changes
+
+## Fix — Auto Token Flow (Save to DB Before OAuth Redirect)
+- [x] Root cause: "Get Token Automatically" button was an <a> tag that redirected immediately without saving API Key/Secret to DB first — so when /upstox-callback tried to look up credentials, it found nothing
+- [x] Fixed: Converted auto-token button from <a> to <button> with handleGetTokenAuto handler
+- [x] handleGetTokenAuto: saves apiKey/apiSecret to DB via credentials.save first, then redirects to Upstox OAuth
+- [x] handleGetTokenAuto: shows clear error toast if DB save fails (no more silent swallowing)
+- [x] handleSave: shows clear error toast if DB save fails instead of silently swallowing with .catch(() => {})
+- [x] Button shows loading spinner while saving to DB before redirect
+- [ ] Push fix to GitHub and verify on Railway

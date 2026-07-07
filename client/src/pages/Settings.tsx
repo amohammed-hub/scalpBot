@@ -170,6 +170,38 @@ export default function Settings() {
 
   const saveTokenToServer = trpc.credentials.saveAccessToken.useMutation();
 
+  const [autoTokenLoading, setAutoTokenLoading] = useState(false);
+
+  // Save credentials to DB first, then redirect to Upstox OAuth
+  const handleGetTokenAuto = async () => {
+    if (!creds.apiKey || !creds.apiSecret) {
+      toast.error("Enter your API Key and API Secret first, then click Save Credentials.");
+      return;
+    }
+    setAutoTokenLoading(true);
+    try {
+      // Always save to DB before redirecting — this is required for the callback to work
+      await saveCredsMutation.mutateAsync({
+        sessionToken,
+        apiKey: creds.apiKey,
+        apiSecret: creds.apiSecret,
+        redirectUri: creds.redirectUri || getCallbackUrl(),
+      });
+      // Also save to localStorage
+      const toSave = { ...creds, redirectUri: creds.redirectUri || getCallbackUrl() };
+      localStorage.setItem(LS_CREDS, JSON.stringify(toSave));
+      toast.success("Credentials saved — opening Upstox login…");
+      // Small delay so toast is visible, then redirect
+      setTimeout(() => {
+        const url = buildUpstoxAuthUrl(creds.apiKey, creds.redirectUri || getCallbackUrl());
+        window.location.href = url;
+      }, 800);
+    } catch (err) {
+      setAutoTokenLoading(false);
+      toast.error("Failed to save credentials to server: " + String(err) + ". Check your internet connection and try again.");
+    }
+  };
+
   const handleSave = async () => {
     // Save tokenSavedAt timestamp so Dashboard can check if token is from today
     const toSave = { ...creds, tokenSavedAt: creds.accessToken ? Date.now() : undefined };
@@ -179,12 +211,17 @@ export default function Settings() {
 
     // Save API key/secret to DB
     if (creds.apiKey && creds.apiSecret) {
-      await saveCredsMutation.mutateAsync({
-        sessionToken,
-        apiKey: creds.apiKey,
-        apiSecret: creds.apiSecret,
-        redirectUri: creds.redirectUri,
-      }).catch(() => {});
+      try {
+        await saveCredsMutation.mutateAsync({
+          sessionToken,
+          apiKey: creds.apiKey,
+          apiSecret: creds.apiSecret,
+          redirectUri: creds.redirectUri,
+        });
+      } catch (err) {
+        toast.error("Warning: Could not save to server DB: " + String(err) + ". Auto-token may not work.");
+        return;
+      }
     }
 
     // If a real access token is pasted, also save it to the server DB
@@ -479,18 +516,22 @@ export default function Settings() {
             </div>
 
             {/* Auto-fetch button — primary method */}
-            {upstoxAuthUrl ? (
-              <a
-                href={upstoxAuthUrl}
-                className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-teal-500 hover:bg-teal-600 text-white font-semibold rounded-xl transition-colors mb-3 text-sm"
+            {creds.apiKey && creds.apiSecret ? (
+              <button
+                onClick={handleGetTokenAuto}
+                disabled={autoTokenLoading}
+                className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-teal-500 hover:bg-teal-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors mb-3 text-sm"
               >
-                <LogIn className="w-4 h-4" />
-                Get Token Automatically — Login with Upstox
-              </a>
+                {autoTokenLoading ? (
+                  <><RefreshCw className="w-4 h-4 animate-spin" /> Saving & Connecting to Upstox…</>
+                ) : (
+                  <><LogIn className="w-4 h-4" /> Get Token Automatically — Login with Upstox</>
+                )}
+              </button>
             ) : (
               <div className="flex items-center gap-2 w-full py-3 px-4 bg-white/5 border border-white/10 text-white/30 rounded-xl mb-3 text-sm">
                 <LogIn className="w-4 h-4" />
-                Enter your API Key above to enable auto-login
+                Enter your API Key &amp; Secret above to enable auto-login
               </div>
             )}
 
