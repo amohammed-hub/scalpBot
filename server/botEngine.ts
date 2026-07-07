@@ -468,6 +468,48 @@ async function tick(
   const price = state.lastPrice;
   state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
 
+  // ── Auto square-off at market close ───────────────────────────────────────
+  // NSE: square off at 15:25 IST (stop scanning at 15:20)
+  // MCX: square off at 23:25 IST (stop scanning at 23:20)
+  const now2 = new Date();
+  const istMin2 = ((now2.getUTCHours() * 60 + now2.getUTCMinutes()) + 330) % (24 * 60);
+  const isMCX = state.instrumentToken.startsWith("MCX");
+  const nseSquareOffMin = 15 * 60 + 25; // 15:25
+  const mcxSquareOffMin = 23 * 60 + 25; // 23:25
+  const nseStopScanMin  = 15 * 60 + 20; // 15:20
+  const mcxStopScanMin  = 23 * 60 + 20; // 23:20
+  const squareOffMin = isMCX ? mcxSquareOffMin : nseSquareOffMin;
+  const stopScanMin  = isMCX ? mcxStopScanMin  : nseStopScanMin;
+
+  if (istMin2 >= squareOffMin && state.openTrade) {
+    // Force-close open trade at market close price
+    const trade = state.openTrade;
+    // In live mode, only mark closed if exit order is confirmed
+    if (trade.mode === "live" && state.accessToken) {
+      const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
+      const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, trade.quantity);
+      if (!sqOffId) {
+        state.lastError = `Auto square-off order rejected — please close ${trade.symbolLabel} manually`;
+        console.error(`[BotEngine] ${state.sessionToken} — live square-off order rejected for ${trade.symbol}`);
+        return; // Don't mark closed — leave for manual action
+      }
+    }
+    const pnl = trade.direction === "BUY"
+      ? (price - trade.entryPrice) * trade.quantity
+      : (trade.entryPrice - price) * trade.quantity;
+    state.dailyPnl += pnl;
+    state.openTrade = null;
+    await onTradeClose(trade.dbId, price, pnl, "Market Close — Auto Square-Off");
+    console.log(`[BotEngine] ${state.sessionToken} — auto square-off at market close | P&L: ₹${pnl.toFixed(0)}`);
+    return;
+  }
+
+  // Stop opening new trades 5 minutes before market close (but still monitor existing trade)
+  const nearClose = istMin2 >= stopScanMin;
+  if (nearClose) {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Market closing soon — no new trades", layer: "None" };
+  }
+
   // ── Monitor open trade SL/Target ──────────────────────────────────────────
   if (state.openTrade) {
     const trade = state.openTrade;
@@ -513,6 +555,8 @@ async function tick(
   }
 
   // ── Generate signal and open new trade ───────────────────────────────────
+  if (nearClose) return; // No new entries within 5 min of market close
+
   if (state.tradesCount >= state.maxTradesPerDay) {
     state.status = "paused";
     state.lastError = `Max trades per day reached (${state.maxTradesPerDay})`;

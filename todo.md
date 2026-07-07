@@ -87,3 +87,9 @@
 - [x] Live P&L in trade log for open trades (updates every 3s)
 - [x] Bot auto-restores open trade on server restart via DB query in startBot
 - [x] All 8 vitest tests passing
+
+## Auto Square-Off at Market Close
+- [x] botEngine.ts: detect market close time (NSE 15:25 IST, MCX 23:25 IST) and auto-close open trade
+- [x] botEngine.ts: stop scanning new signals 5 minutes before market close
+- [ ] Dashboard: show "Market Closed" badge when outside trading hours
+- [ ] Dashboard: show "Auto square-off at 15:25" warning banner when open trade exists near close
