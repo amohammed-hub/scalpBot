@@ -6,19 +6,48 @@ import { ENV } from './_core/env';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _db: any = null;
+let _initAttempted = false;
+
+async function initDb() {
+  const url = process.env.DATABASE_URL;
+  console.log("[Database] DATABASE_URL present:", !!url, "length:", url?.length ?? 0);
+  
+  if (!url) {
+    console.error("[Database] DATABASE_URL is not set or empty");
+    return null;
+  }
+
+  try {
+    const pool = mysql.createPool({
+      uri: url,
+      waitForConnections: true,
+      connectionLimit: 10,
+      ssl: { rejectUnauthorized: false },
+    });
+    
+    // Test the connection immediately
+    const conn = await pool.getConnection();
+    conn.release();
+    
+    const db = drizzle(pool);
+    console.log("[Database] Connected successfully");
+    return db;
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    console.error("[Database] Failed to connect:", err.message, "code:", err.code);
+    return null;
+  }
+}
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    try {
-      // Pass the URL directly as a string — mysql2 supports this as the first argument
-      const pool = mysql.createPool(process.env.DATABASE_URL);
-      _db = drizzle(pool);
-      console.log("[Database] Connected successfully");
-    } catch (error) {
-      console.error("[Database] Failed to connect:", error);
-      _db = null;
-    }
+  if (!_db && !_initAttempted) {
+    _initAttempted = true;
+    _db = await initDb();
+  }
+  // If init failed, retry on next call (in case env var was set later)
+  if (!_db) {
+    _db = await initDb();
   }
   return _db;
 }
@@ -93,5 +122,3 @@ export async function getUserByOpenId(openId: string) {
 
   return result.length > 0 ? result[0] : undefined;
 }
-
-// TODO: add feature queries here as your schema grows.
