@@ -91,5 +91,5 @@
 ## Auto Square-Off at Market Close
 - [x] botEngine.ts: detect market close time (NSE 15:25 IST, MCX 23:25 IST) and auto-close open trade
 - [x] botEngine.ts: stop scanning new signals 5 minutes before market close
-- [ ] Dashboard: show "Market Closed" badge when outside trading hours
-- [ ] Dashboard: show "Auto square-off at 15:25" warning banner when open trade exists near close
+- [x] Dashboard: show "Market Closed" badge when outside trading hours
+- [x] Dashboard: show "Auto square-off at 15:25" warning banner when open trade exists near close

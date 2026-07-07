@@ -442,6 +442,35 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Market Status Badge + Auto Square-Off Warning */}
+        {(() => {
+          const now = new Date();
+          const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
+          const isMCX = config.instrumentToken.startsWith("MCX");
+          const inNSE = istMin >= 555 && istMin <= 930;
+          const inMCX = istMin >= 540 && istMin <= 1410;
+          const inSession = isMCX ? inMCX : inNSE;
+          const squareOffMin = isMCX ? (23 * 60 + 25) : (15 * 60 + 25);
+          const stopScanMin  = isMCX ? (23 * 60 + 20) : (15 * 60 + 20);
+          const nearClose = istMin >= stopScanMin && istMin < squareOffMin;
+          return (
+            <>
+              {!inSession && (
+                <div className="mb-4 flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white/40 text-sm">
+                  <span className="w-2 h-2 rounded-full bg-white/20 inline-block" />
+                  <span>Market is <strong>closed</strong> — bot will not generate signals until market opens</span>
+                </div>
+              )}
+              {nearClose && activeTrade && (
+                <div className="mb-4 flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2.5 text-amber-400 text-sm">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>Market closing soon — open trade will be <strong>auto squared-off at {isMCX ? "23:25" : "15:25"} IST</strong></span>
+                </div>
+              )}
+            </>
+          );
+        })()}
+
         {/* Stats Row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           {[
