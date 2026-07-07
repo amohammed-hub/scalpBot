@@ -205,6 +205,10 @@ export const appRouter = router({
         trailingSlPct: z.number().default(0.5),
         minConfidence: z.number().default(60),
         scanIntervalSec: z.number().default(60),
+        telegramBotToken: z.string().optional(),
+        telegramChatId: z.string().optional(),
+        telegramEnabled: z.boolean().default(false),
+        botSlot: z.number().default(0),
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -431,6 +435,10 @@ export const appRouter = router({
             tradesCount: 0,
             dailyPnl: 0,
             accessToken,
+            telegramBotToken: input.telegramBotToken ?? null,
+            telegramChatId: input.telegramChatId ?? null,
+            telegramEnabled: input.telegramEnabled,
+            botSlot: input.botSlot,
           },
           onTradeOpen,
           onTradeClose,
@@ -732,6 +740,280 @@ export const appRouter = router({
           return json.data ?? null;
         } catch {
           return null;
+        }
+      }),
+  }),
+
+  // ── Multi-bot: all running bots for a session prefix ──────────────────────────
+  multiBots: router({
+    // Returns live data for all running bot slots (primary + secondary + tertiary)
+    allStatus: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        // Load DB rows for all 3 slot tokens in one pass
+        const dbRows: Record<string, typeof botSessions.$inferSelect> = {};
+        if (db) {
+          for (const tok of slotTokens) {
+            const rows = await db.select().from(botSessions).where(eq(botSessions.sessionToken, tok)).limit(1);
+            if (rows.length > 0) dbRows[tok] = rows[0];
+          }
+        }
+        // Merge in-memory state with DB fallback — always return all 3 slots
+        return slotTokens.map(tok => {
+          const inMem = getBotState(tok);
+          const dbRow = dbRows[tok];
+          const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
+          return {
+            sessionToken: tok,
+            slot,
+            status: inMem?.status ?? dbRow?.status ?? "stopped",
+            instrumentSymbol: inMem?.instrumentSymbol ?? dbRow?.instrumentSymbol ?? "",
+            instrumentLabel: inMem?.instrumentLabel ?? dbRow?.instrumentLabel ?? "",
+            lastPrice: inMem?.lastPrice ?? dbRow?.lastPrice ?? 0,
+            dailyPnl: inMem?.dailyPnl ?? dbRow?.dailyPnl ?? 0,
+            tradesCount: inMem?.tradesCount ?? dbRow?.tradesCount ?? 0,
+            openTrade: inMem?.openTrade ?? null,
+            lastSignal: inMem?.lastSignal ?? null,
+            isPowerHourMode: inMem?.isPowerHourMode ?? false,
+            isMCXEveningMode: inMem?.isMCXEveningMode ?? false,
+            heroZeroMode: inMem?.heroZeroMode ?? false,
+          };
+        });
+      }),
+
+    // Start a secondary bot on a different instrument
+    startSecondary: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        slot: z.number().min(1).max(2).default(1),
+        instrumentToken: z.string(),
+        instrumentSymbol: z.string(),
+        instrumentLabel: z.string(),
+        mode: z.enum(["paper", "live"]).default("paper"),
+        capital: z.number().default(50000),
+        riskPerTradePct: z.number().default(1.0),
+        maxTradesPerDay: z.number().default(5),
+        dailyLossLimitPct: z.number().default(3.0),
+        stopLossMultiplier: z.number().default(1.5),
+        targetMultiplier: z.number().default(3.0),
+        trailingSlEnabled: z.boolean().default(false),
+        trailingSlPct: z.number().default(0.5),
+        minConfidence: z.number().default(60),
+        scanIntervalSec: z.number().default(60),
+        telegramBotToken: z.string().optional(),
+        telegramChatId: z.string().optional(),
+        telegramEnabled: z.boolean().default(false),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const slotToken = `${input.sessionToken}-slot${input.slot}`;
+        let accessToken: string | null = null;
+        if (input.mode === "live") {
+          const creds = await db
+            .select()
+            .from(upstoxCredentials)
+            .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+            .limit(1);
+          if (creds.length === 0 || !creds[0].accessToken) {
+            throw new Error("No Upstox access token. Connect your account first.");
+          }
+          accessToken = creds[0].accessToken;
+        }
+
+        // Insert or update a bot session for this slot
+        const existing = await db
+          .select({ id: botSessions.id })
+          .from(botSessions)
+          .where(eq(botSessions.sessionToken, slotToken))
+          .limit(1);
+        let sessionId: number;
+        if (existing.length > 0) {
+          sessionId = existing[0].id;
+          await db.update(botSessions).set({
+            status: "running", mode: input.mode,
+            instrumentToken: input.instrumentToken,
+            instrumentSymbol: input.instrumentSymbol,
+            instrumentLabel: input.instrumentLabel,
+            capital: input.capital, riskPerTradePct: input.riskPerTradePct,
+            maxTradesPerDay: input.maxTradesPerDay, dailyLossLimitPct: input.dailyLossLimitPct,
+            stopLossMultiplier: input.stopLossMultiplier, targetMultiplier: input.targetMultiplier,
+            trailingSlEnabled: input.trailingSlEnabled, trailingSlPct: input.trailingSlPct,
+            minConfidence: input.minConfidence, scanIntervalSec: input.scanIntervalSec,
+            telegramBotToken: input.telegramBotToken, telegramChatId: input.telegramChatId,
+            telegramEnabled: input.telegramEnabled, botSlot: input.slot,
+            tradesCount: 0, dailyPnl: 0, startedAt: new Date(), stoppedAt: null, lastError: null,
+          }).where(eq(botSessions.sessionToken, slotToken));
+        } else {
+          const result = await db.insert(botSessions).values({
+            sessionToken: slotToken, status: "running", mode: input.mode,
+            instrumentToken: input.instrumentToken, instrumentSymbol: input.instrumentSymbol,
+            instrumentLabel: input.instrumentLabel, capital: input.capital,
+            riskPerTradePct: input.riskPerTradePct, maxTradesPerDay: input.maxTradesPerDay,
+            dailyLossLimitPct: input.dailyLossLimitPct, stopLossMultiplier: input.stopLossMultiplier,
+            targetMultiplier: input.targetMultiplier, trailingSlEnabled: input.trailingSlEnabled,
+            trailingSlPct: input.trailingSlPct, minConfidence: input.minConfidence,
+            scanIntervalSec: input.scanIntervalSec, telegramBotToken: input.telegramBotToken,
+            telegramChatId: input.telegramChatId, telegramEnabled: input.telegramEnabled,
+            botSlot: input.slot, tradesCount: 0, dailyPnl: 0, startedAt: new Date(),
+          });
+          sessionId = Number((result as unknown as { insertId: number }).insertId);
+        }
+
+        const onTradeOpen = async (trade: Parameters<typeof startBot>[1] extends (t: infer T) => Promise<number> ? T : never): Promise<number> => {
+          const dbInner = await getDb();
+          if (!dbInner) return 0;
+          const result = await dbInner.insert(tradeLog).values({
+            sessionToken: slotToken, sessionId, botSlot: input.slot, ...trade,
+          });
+          return Number((result as unknown as { insertId: number }).insertId);
+        };
+        const onTradeClose = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
+          const dbInner = await getDb();
+          if (!dbInner) return;
+          await dbInner.update(tradeLog).set({
+            status: "closed", exitPrice, pnl,
+            pnlPct: (pnl / input.capital) * 100,
+            exitReason, exitedAt: new Date(),
+          }).where(eq(tradeLog.id, dbId));
+        };
+
+        startBot({
+          sessionToken: slotToken, sessionId, status: "running", mode: input.mode,
+          instrumentToken: input.instrumentToken, instrumentSymbol: input.instrumentSymbol,
+          instrumentLabel: input.instrumentLabel, capital: input.capital,
+          riskPerTradePct: input.riskPerTradePct, maxTradesPerDay: input.maxTradesPerDay,
+          dailyLossLimitPct: input.dailyLossLimitPct, stopLossMultiplier: input.stopLossMultiplier,
+          targetMultiplier: input.targetMultiplier, trailingSlEnabled: input.trailingSlEnabled,
+          trailingSlPct: input.trailingSlPct, minConfidence: input.minConfidence,
+          scanIntervalSec: input.scanIntervalSec, tradesCount: 0, dailyPnl: 0, accessToken,
+          telegramBotToken: input.telegramBotToken ?? null,
+          telegramChatId: input.telegramChatId ?? null,
+          telegramEnabled: input.telegramEnabled, botSlot: input.slot,
+        }, onTradeOpen, onTradeClose);
+
+        return { success: true, slotToken, sessionId };
+      }),
+
+    stopSecondary: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema, slot: z.number().min(1).max(2) }))
+      .mutation(async ({ input }) => {
+        const slotToken = `${input.sessionToken}-slot${input.slot}`;
+        stopBot(slotToken);
+        const db = await getDb();
+        if (db) {
+          await db.update(botSessions).set({ status: "stopped", stoppedAt: new Date() })
+            .where(eq(botSessions.sessionToken, slotToken));
+        }
+        return { success: true };
+      }),
+  }),
+
+  // ── Hero Zero Scanner ─────────────────────────────────────────────────────────
+  heroZero: router({
+    // Scan NIFTY and BANKNIFTY weekly option chains for Hero Zero candidates
+    scanStrikes: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        underlying: z.enum(["NIFTY", "BANKNIFTY", "FINNIFTY"]).default("NIFTY"),
+      }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return { candidates: [], expiryDate: null, underlyingPrice: null, scanTime: Date.now() };
+        const rows = await db
+          .select()
+          .from(upstoxCredentials)
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .limit(1);
+        if (rows.length === 0 || !rows[0].accessToken) {
+          return { candidates: [], expiryDate: null, underlyingPrice: null, scanTime: Date.now(), error: "No access token — connect Upstox first" };
+        }
+        const { accessToken } = rows[0];
+
+        // Get underlying spot price
+        const underlyingToken = input.underlying === "NIFTY" ? "NSE_INDEX|Nifty 50" : input.underlying === "BANKNIFTY" ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty Fin Service";
+        let underlyingPrice = 0;
+        try {
+          const quoteRes = await fetch(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(underlyingToken)}`, {
+            headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (quoteRes.ok) {
+            const qJson = await quoteRes.json() as { data?: Record<string, { last_price?: number }> };
+            const key = Object.keys(qJson.data ?? {})[0];
+            underlyingPrice = qJson.data?.[key]?.last_price ?? 0;
+          }
+        } catch { /* ignore */ }
+
+        if (!underlyingPrice) return { candidates: [], expiryDate: null, underlyingPrice: 0, scanTime: Date.now(), error: "Could not fetch underlying price" };
+
+        // Get weekly option chain
+        try {
+          const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=`, {
+            headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+            signal: AbortSignal.timeout(10000),
+          });
+          // Upstox option chain endpoint returns nearest expiry by default
+          if (!chainRes.ok) return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now(), error: "Option chain fetch failed" };
+          const chainJson = await chainRes.json() as {
+            data?: {
+              expiry?: string;
+              put_options?: Array<{ market_data?: { ltp?: number }; option_greeks?: { delta?: number }; instrument_key?: string; strike_price?: number }>;
+              call_options?: Array<{ market_data?: { ltp?: number }; option_greeks?: { delta?: number }; instrument_key?: string; strike_price?: number }>;
+            }[];
+          };
+          const chain = chainJson.data?.[0];
+          if (!chain) return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now() };
+
+          const expiryDate = chain.expiry ?? null;
+          const candidates: Array<{
+            instrumentKey: string; strikePrice: number; optionType: "CE" | "PE";
+            premium: number; strikeDistancePct: number; delta: number;
+            isHeroZeroRange: boolean; target5x: number; cut50pct: number;
+            directionScore: number; directionBias: "BUY" | "SELL" | "NEUTRAL";
+          }> = [];
+
+          const allOptions = [
+            ...(chain.call_options ?? []).map(o => ({ ...o, optionType: "CE" as const })),
+            ...(chain.put_options ?? []).map(o => ({ ...o, optionType: "PE" as const })),
+          ];
+
+          for (const opt of allOptions) {
+            const premium = opt.market_data?.ltp ?? 0;
+            if (premium < 1 || premium > 100) continue; // wider range for scanning
+            const strike = opt.strike_price ?? 0;
+            const distPct = Math.abs(strike - underlyingPrice) / underlyingPrice * 100;
+            if (distPct < 0.3 || distPct > 6) continue; // OTM range
+            const delta = Math.abs(opt.option_greeks?.delta ?? 0);
+            // Direction score: CE = bullish, PE = bearish
+            // Higher score = better Hero Zero candidate
+            let dirScore = 0;
+            if (premium >= 2 && premium <= 50) dirScore += 3; // sweet spot
+            if (distPct >= 1 && distPct <= 4) dirScore += 2; // ideal OTM distance
+            if (delta >= 0.05 && delta <= 0.25) dirScore += 2; // good delta range
+            if (premium <= 20) dirScore += 1; // cheaper = more upside
+            candidates.push({
+              instrumentKey: opt.instrument_key ?? "",
+              strikePrice: strike,
+              optionType: opt.optionType,
+              premium,
+              strikeDistancePct: Math.round(distPct * 100) / 100,
+              delta,
+              isHeroZeroRange: premium >= 2 && premium <= 50,
+              target5x: Math.round(premium * 5 * 10) / 10,
+              cut50pct: Math.round(premium * 0.5 * 10) / 10,
+              directionScore: dirScore,
+              directionBias: opt.optionType === "CE" ? "BUY" : "SELL",
+            });
+          }
+
+          // Sort by direction score descending, return top 10
+          candidates.sort((a, b) => b.directionScore - a.directionScore);
+          return { candidates: candidates.slice(0, 10), expiryDate, underlyingPrice, scanTime: Date.now() };
+        } catch (e) {
+          return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now(), error: String(e) };
         }
       }),
   }),

@@ -29,6 +29,13 @@
       "when": 1783438680048,
       "tag": "0003_tiny_pandemic",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1783464653976,
+      "tag": "0004_superb_famine",
+      "breakpoints": true
     }
   ]
 }

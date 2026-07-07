@@ -111,10 +111,32 @@ export interface BotState {
   isPowerHourMode: boolean;
   isMCXEveningMode: boolean;
   heroZeroMode: boolean; // true when Hero Zero panel is active
+  // Telegram alert config
+  telegramBotToken: string | null;
+  telegramChatId: string | null;
+  telegramEnabled: boolean;
+  // Multi-bot slot
+  botSlot: number;
+  // Track which alert types have already been sent this session (avoid spam)
+  alertsSent: Set<string>;
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
 const bots = new Map<string, BotState>();
+
+// ── Telegram alert helper ─────────────────────────────────────────────────────
+async function sendTelegramAlert(state: BotState, message: string): Promise<void> {
+  if (!state.telegramEnabled || !state.telegramBotToken || !state.telegramChatId) return;
+  try {
+    await axios.post(
+      `https://api.telegram.org/bot${state.telegramBotToken}/sendMessage`,
+      { chat_id: state.telegramChatId, text: message, parse_mode: "HTML" },
+      { timeout: 8000 },
+    );
+  } catch {
+    // Telegram errors are non-critical — don't crash the bot
+  }
+}
 
 // ── Indicator helpers ─────────────────────────────────────────────────────────
 function ema(values: number[], period: number): number[] {
@@ -934,19 +956,49 @@ async function tick(
   const powerHourStart = 15 * 60;
   const powerHourEnd   = 15 * 60 + 20;
   const inPowerHour = !isMCX && istMin2 >= powerHourStart && istMin2 < powerHourEnd;
+  // Send Telegram alert when Power Hour window opens (once per session)
+  if (inPowerHour && !state.alertsSent.has("powerHour")) {
+    state.alertsSent.add("powerHour");
+    const vwap = calcVWAP(state.candles);
+    const dayHigh = Math.max(...state.candles.map(c => c.high));
+    const dayLow  = Math.min(...state.candles.map(c => c.low));
+    const side = price > vwap ? "↑ BULLISH" : "↓ BEARISH";
+    const dayRange = dayHigh - dayLow;
+    const dayTrend = price > vwap && price > (dayLow + dayRange * 0.6) ? "🟢 BULLISH" : price < vwap && price < (dayHigh - dayRange * 0.6) ? "🔴 BEARISH" : "🟡 NEUTRAL";
+    const phScore = [price > vwap, dayRange > 0, state.candles5m.length >= 10].filter(Boolean).length;
+    sendTelegramAlert(state,
+      `⚡ <b>POWER HOUR ACTIVATED</b> ⚡\n` +
+      `📊 <b>${state.instrumentLabel}</b> | ₹${price.toFixed(2)}\n` +
+      `📈 Day: H₹${dayHigh.toFixed(0)} / L₹${dayLow.toFixed(0)} / VWAP₹${vwap.toFixed(0)}\n` +
+      `🧭 Trend: ${dayTrend} | ${side}\n` +
+      `💯 Institutional Score: ${phScore}/3\n` +
+      `⏰ Window: 3:00–3:20 PM IST | High-conviction institutional trades`,
+    );
+  }
   state.isPowerHourMode = inPowerHour;
-
-  // MCX Evening Power Hour: 7:30–9:30 PM IST (US market open)
-  const mcxEveningStart = 19 * 60 + 30;
-  const mcxEveningEnd   = 21 * 60 + 30;
-  const inMCXEvening = isMCX && istMin2 >= mcxEveningStart && istMin2 < mcxEveningEnd;
-  state.isMCXEveningMode = inMCXEvening;
 
   // EIA Crude Oil inventory: Wednesday ~8:00 PM IST — widen SL for Crude
   const isWednesday = now2.getUTCDay() === 3; // Wednesday UTC (IST Wed evening = UTC Wed)
   const isCrude = state.instrumentToken.includes("CRUDEOIL") || state.instrumentToken.includes("CRUDE");
   const isEIAWindow = isWednesday && istMin2 >= 19 * 60 + 55 && istMin2 <= 20 * 60 + 5;
   const isWednesdayCrude = isCrude && isEIAWindow;
+
+  // MCX Evening Power Hour: 7:30–9:30 PM IST (US market open)
+  const mcxEveningStart = 19 * 60 + 30;
+  const mcxEveningEnd   = 21 * 60 + 30;
+  const inMCXEvening = isMCX && istMin2 >= mcxEveningStart && istMin2 < mcxEveningEnd;
+  // Send Telegram alert when MCX Evening window opens (once per session)
+  if (inMCXEvening && !state.alertsSent.has("mcxEvening")) {
+    state.alertsSent.add("mcxEvening");
+    const eiaNote = isWednesdayCrude ? "\n⚠️ <b>EIA Wednesday</b> — SL widened 30% for Crude Oil" : "";
+    sendTelegramAlert(state,
+      `🌙 <b>MCX EVENING POWER HOUR</b> 🌙\n` +
+      `📊 <b>${state.instrumentLabel}</b> | ₹${price.toFixed(2)}\n` +
+      `🇺🇸 US Market Open window: 7:30–9:30 PM IST\n` +
+      `🔥 High-volatility institutional moves expected${eiaNote}`,
+    );
+  }
+  state.isMCXEveningMode = inMCXEvening;
 
   // Auto square-off at market close
   if (istMin2 >= squareOffMin && state.openTrade) {
@@ -1012,6 +1064,12 @@ async function tick(
         trade.currentSl = trade.entryPrice;
         state.dailyPnl += bookPnl;
         console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 50% @ ₹${trade.partial1RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→BE`);
+        sendTelegramAlert(state,
+          `💰 <b>PARTIAL PROFIT BOOKED (50%)</b>\n` +
+          `📊 <b>${state.instrumentLabel}</b> | ₹${trade.partial1RPrice.toFixed(2)}\n` +
+          `✅ Locked: ₹${bookPnl.toFixed(0)} | SL moved to Breakeven\n` +
+          `🎯 Remaining: ${trade.quantity} qty | Next target: 2R`,
+        );
       }
     } else if (trade.partialBooked === 1) {
       const hit2R = trade.direction === "BUY" ? price >= trade.partial2RPrice : price <= trade.partial2RPrice;
@@ -1032,6 +1090,12 @@ async function tick(
         trade.currentSl = trade.direction === "BUY" ? trade.partial1RPrice : trade.partial1RPrice;
         state.dailyPnl += bookPnl;
         console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 25% @ ₹${trade.partial2RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→1R`);
+        sendTelegramAlert(state,
+          `💰 <b>PARTIAL PROFIT BOOKED (25% more)</b>\n` +
+          `📊 <b>${state.instrumentLabel}</b> | ₹${trade.partial2RPrice.toFixed(2)}\n` +
+          `✅ Locked: ₹${bookPnl.toFixed(0)} | Total locked: ₹${trade.bookedPnl.toFixed(0)}\n` +
+          `🛑 SL moved to 1R | Trailing ${trade.quantity} qty to target`,
+        );
       }
     }
 
@@ -1063,6 +1127,16 @@ async function tick(
       state.openTrade = null;
       await onTradeClose(trade.dbId, price, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
       console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
+      // Telegram exit alert
+      const exitEmoji = totalPnl >= 0 ? "✅" : "❌";
+      const pnlSign = totalPnl >= 0 ? "+" : "";
+      sendTelegramAlert(state,
+        `${exitEmoji} <b>TRADE CLOSED — ${exitReason.toUpperCase()}</b>\n` +
+        `📊 <b>${state.instrumentLabel}</b> | Exit: ₹${price.toFixed(2)}\n` +
+        `💰 Total P&L: ${pnlSign}₹${totalPnl.toFixed(0)}` +
+        (trade.bookedPnl > 0 ? ` (locked: ₹${trade.bookedPnl.toFixed(0)})` : "") +
+        `\n📈 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Trades: ${state.tradesCount}`,
+      );
     }
     return;
   }
@@ -1173,6 +1247,28 @@ async function tick(
   state.tradesCount += 1;
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${signal.entryPrice.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
+
+  // Telegram: send trade alert
+  const dirEmoji = signal.direction === "BUY" ? "🟢" : "🔴";
+  const layerTag = signal.isHeroZero ? "🦸 HERO ZERO" : signal.isPowerHour ? "⚡ POWER HOUR" : signal.isMCXEvening ? "🌙 MCX EVENING" : isReEntry ? "↩ RE-ENTRY" : `📊 ${signal.layer}`;
+  if (signal.isHeroZero) {
+    sendTelegramAlert(state,
+      `🦸 <b>HERO ZERO SIGNAL</b> ${dirEmoji}\n` +
+      `📊 <b>${state.instrumentLabel}</b>\n` +
+      `💰 Premium: ₹${signal.entryPrice.toFixed(1)} | Target: ₹${signal.targetPrice.toFixed(1)} (5×)\n` +
+      `✂️ Cut: ₹${signal.slPrice.toFixed(1)} (50% loss)\n` +
+      `📊 Book 50% at ₹${(signal.partial1RPrice ?? signal.entryPrice * 2.5).toFixed(1)} | 25% at ₹${(signal.partial2RPrice ?? signal.entryPrice * 3.5).toFixed(1)}\n` +
+      `💯 Confidence: ${(signal.confidence * 100).toFixed(0)}%`,
+    );
+  } else {
+    sendTelegramAlert(state,
+      `${dirEmoji} <b>${signal.direction} SIGNAL</b> — ${layerTag}\n` +
+      `📊 <b>${state.instrumentLabel}</b> | ₹${signal.entryPrice.toFixed(2)}\n` +
+      `🛑 SL: ₹${signal.slPrice.toFixed(2)} | 🎯 Target: ₹${signal.targetPrice.toFixed(2)}\n` +
+      `💯 Confidence: ${(signal.confidence * 100).toFixed(0)}% | Qty: ${quantity}\n` +
+      `📝 ${signal.reason}`,
+    );
+  }
 }
 
 type TradeInsert = {
@@ -1185,7 +1281,7 @@ type TradeInsert = {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 export function startBot(
-  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode" | "isMCXEveningMode" | "heroZeroMode">,
+  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode" | "isMCXEveningMode" | "heroZeroMode" | "alertsSent">,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
@@ -1199,7 +1295,7 @@ export function startBot(
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
     lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0, isPowerHourMode: false,
-    isMCXEveningMode: false, heroZeroMode: false,
+    isMCXEveningMode: false, heroZeroMode: false, alertsSent: new Set<string>(),
   };
 
   const intervalMs = Math.max(15, config.scanIntervalSec) * 1000;

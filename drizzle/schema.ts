@@ -64,6 +64,12 @@ export const botSessions = mysqlTable("bot_sessions", {
   askPrice: float("askPrice").default(0),
   nextScanAt: bigint("nextScanAt", { mode: "number" }).default(0),
   lastError: text("lastError"),
+  // Telegram alert config (server-side, so bot can send alerts directly)
+  telegramBotToken: varchar("telegramBotToken", { length: 256 }),
+  telegramChatId: varchar("telegramChatId", { length: 64 }),
+  telegramEnabled: boolean("telegramEnabled").default(false),
+  // Multi-bot slot (0 = primary, 1 = secondary, 2 = tertiary)
+  botSlot: int("botSlot").default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -92,6 +98,7 @@ export const tradeLog = mysqlTable("trade_log", {
   pnlPct: float("pnlPct"),
   upstoxOrderId: varchar("upstoxOrderId", { length: 64 }),
   signalReason: text("signalReason"),
+  botSlot: int("botSlot").default(0),
   enteredAt: timestamp("enteredAt").defaultNow().notNull(),
   exitedAt: timestamp("exitedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

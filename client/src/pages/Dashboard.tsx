@@ -403,6 +403,11 @@ export default function Dashboard() {
             {item.label}
           </button>
         ))}
+        <button onClick={() => navigate("/hero-zero")}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-purple-400 hover:bg-purple-500/10 border border-purple-500/20">
+          <span className="text-base">🦸</span>
+          Hero Zero Scanner
+        </button>
         <div className="mt-auto px-2 pb-2 space-y-2">
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${isRunning ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-white/40"}`}>
             <span className={`w-2 h-2 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />

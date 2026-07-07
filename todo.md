@@ -148,3 +148,31 @@
 - [x] Dashboard: MCXEvening + HeroZero layer badge colors in signal card
 - [x] Dashboard sidebar: MCX Evening amber badge, Hero Zero purple badge
 - [x] 22 vitest tests passing (all existing tests still green)
+
+## Phase 4 — Telegram Alerts + Multi-Bot + Hero Zero Scanner
+
+### Telegram Power Hour + Hero Zero Alerts
+- [x] botEngine.ts: send Telegram alert when Power Hour mode activates (3:00 PM IST) — message includes instrument, day trend, VWAP position, score
+- [x] botEngine.ts: send Telegram alert when MCX Evening mode activates (7:30 PM IST) — message includes instrument, US-open context, EIA note if Wednesday
+- [x] botEngine.ts: send Telegram alert when Hero Zero signal fires — message includes option type, premium, 5× target, 50% cut
+- [x] botEngine.ts: send Telegram alert when partial booking triggers (1R booked, 2R booked) — message includes locked P&L and remaining position
+- [x] botEngine.ts: send Telegram alert on trade close — includes exit reason, total P&L, day P&L
+- [x] routers.ts: telegramBotToken, telegramChatId, telegramEnabled added to bot.start and multiBots.startSecondary
+- [x] Settings.tsx: Telegram Bot Token + Chat ID already exists in Settings page (localStorage-based client test)
+
+### Multi-Instrument Parallel Bot
+- [x] botEngine.ts: supports multiple simultaneous bot instances via Map<string, BotState> keyed by slotToken
+- [x] routers.ts: multiBots.startSecondary, multiBots.stopSecondary, multiBots.allStatus procedures added
+- [x] routers.ts: multiBots.allStatus returns live data for all 3 slots (primary + slot1 + slot2)
+- [x] drizzle/schema.ts: botSlot column added to bot_sessions and trade_log, migration pushed
+- [x] Dashboard: Hero Zero Scanner nav link in sidebar (purple, 🦸 icon)
+
+### Hero Zero Option Scanner Panel
+- [x] routers.ts: heroZero.scanStrikes — scans NIFTY/BANKNIFTY/FINNIFTY weekly option chain, returns top 10 candidates with direction score (0–8)
+- [x] client/src/pages/HeroZeroScanner.tsx — new page with option chain table, direction badges, premium tracker, score badges
+- [x] App.tsx: /hero-zero route added
+- [x] HeroZeroScanner: auto-refresh toggle (60s interval during expiry window)
+- [x] HeroZeroScanner: one-click "Start Bot on This Strike" button (launches Hero Zero bot on slot 1)
+- [x] HeroZeroScanner: selected candidate detail panel with all exit levels (2.5×, 3.5×, 5×, 50% cut)
+- [x] HeroZeroScanner: expiry day + trading window status banners
+- [x] HeroZeroScanner: strategy rules guide at bottom
