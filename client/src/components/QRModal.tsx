@@ -8,7 +8,7 @@ import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { X, Smartphone, Monitor, Copy, Check, Download, Wifi, QrCode } from "lucide-react";
 
-const LIVE_URL = "https://upstox-scalp-ys6fujba.manus.space";
+const LIVE_URL = window.location.origin;
 
 interface QRModalProps {
   open: boolean;

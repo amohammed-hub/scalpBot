@@ -326,7 +326,7 @@ export default function Settings() {
                 icon={ClipboardPaste}
                 title="Set the Redirect URL"
                 description="In the app creation form, find the Redirect URL field. Copy the Redirect URI shown in the credentials form below and paste it there."
-                note="The Redirect URI is shown in the credentials form below — use the copy button next to it. It looks like: https://upstox-scalp-ys6fujba.manus.space/upstox-callback"
+                note={`The Redirect URI is shown in the credentials form below — use the copy button next to it. It looks like: ${window.location.origin}/upstox-callback`}
               />
               <TokenStep
                 step={4}

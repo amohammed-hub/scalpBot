@@ -93,3 +93,12 @@
 - [x] botEngine.ts: stop scanning new signals 5 minutes before market close
 - [x] Dashboard: show "Market Closed" badge when outside trading hours
 - [x] Dashboard: show "Auto square-off at 15:25" warning banner when open trade exists near close
+
+## Railway Deployment — Independent from Manus
+- [x] Removed vitePluginManusRuntime from vite.config.ts (was forcing Manus login on all visitors)
+- [x] Made QRModal LIVE_URL dynamic (window.location.origin) — works on any domain
+- [x] Made Settings redirect URI note dynamic (window.location.origin) — correct for any domain
+- [x] Created railway.json with build/deploy config
+- [x] Created .nixpacks.toml for pnpm + Node 22 build
+- [x] Created RAILWAY_DEPLOY.md with step-by-step deployment guide
+- [x] All 8 tests passing after changes
