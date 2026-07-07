@@ -5,7 +5,7 @@ import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
-  Download, QrCode, LogOut
+  Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
@@ -192,6 +192,16 @@ export default function Dashboard() {
   const { data: openTrade } = trpc.trades.openTrade.useQuery(
     { sessionToken },
     { refetchInterval: 3000, staleTime: 1000 }
+  );
+
+  // Upstox account profile & balance
+  const { data: accountProfile } = trpc.account.profile.useQuery(
+    { sessionToken },
+    { refetchInterval: 60000, staleTime: 30000, retry: false }
+  );
+  const { data: accountBalance, refetch: refetchBalance } = trpc.account.balance.useQuery(
+    { sessionToken },
+    { refetchInterval: 30000, staleTime: 15000, retry: false }
   );
 
   // ── Mutations ────────────────────────────────────────────────────────────────
@@ -489,6 +499,114 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+
+        {/* Account Balance & Profile Widget */}
+        {(accountProfile || accountBalance) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            {/* Profile Card */}
+            {accountProfile && (
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <User className="w-4 h-4 text-teal-400" />
+                  <span className="text-xs text-white/40 uppercase tracking-wider">Account Profile</span>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-full bg-teal-500/20 border border-teal-500/30 flex items-center justify-center shrink-0">
+                    <span className="text-teal-400 font-bold text-sm">
+                      {accountProfile.user_name?.charAt(0)?.toUpperCase() ?? "U"}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-white font-semibold text-sm truncate">{accountProfile.user_name ?? "—"}</div>
+                    <div className="text-white/40 text-xs truncate">{accountProfile.email ?? "—"}</div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {accountProfile.user_id && (
+                        <span className="text-xs bg-white/5 border border-white/10 rounded-md px-2 py-0.5 text-white/50">
+                          UCC: {accountProfile.user_id}
+                        </span>
+                      )}
+                      {accountProfile.broker && (
+                        <span className="text-xs bg-teal-500/10 border border-teal-500/20 rounded-md px-2 py-0.5 text-teal-400">
+                          {accountProfile.broker}
+                        </span>
+                      )}
+                      {accountProfile.user_type && (
+                        <span className="text-xs bg-white/5 border border-white/10 rounded-md px-2 py-0.5 text-white/40">
+                          {accountProfile.user_type}
+                        </span>
+                      )}
+                    </div>
+                    {accountProfile.exchanges && accountProfile.exchanges.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {accountProfile.exchanges.map(ex => (
+                          <span key={ex} className="text-[10px] bg-blue-500/10 border border-blue-500/20 rounded px-1.5 py-0.5 text-blue-400">{ex}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Balance Card */}
+            {accountBalance && (
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs text-white/40 uppercase tracking-wider">Funds & Margin</span>
+                  </div>
+                  <button
+                    onClick={() => refetchBalance()}
+                    className="p-1 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/60 transition-colors"
+                    title="Refresh balance"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {accountBalance.equity && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-white/50 text-xs">Available Margin</span>
+                      <span className="text-emerald-400 font-bold text-base">
+                        ₹{(accountBalance.equity.available_margin ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-white/50 text-xs">Used Margin</span>
+                      <span className="text-amber-400 font-semibold text-sm">
+                        ₹{(accountBalance.equity.used_margin ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-white/50 text-xs">Available Cash</span>
+                      <span className="text-white/70 text-sm">
+                        ₹{(accountBalance.equity.available_cash ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                    {(accountBalance.equity.available_margin ?? 0) > 0 && (accountBalance.equity.used_margin ?? 0) > 0 && (
+                      <div className="mt-2">
+                        <div className="flex justify-between text-[10px] text-white/30 mb-1">
+                          <span>Used</span>
+                          <span>
+                            {(((accountBalance.equity.used_margin ?? 0) /
+                              ((accountBalance.equity.available_margin ?? 0) + (accountBalance.equity.used_margin ?? 0))) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-emerald-500 to-amber-500 rounded-full transition-all"
+                            style={{ width: `${Math.min(100, ((accountBalance.equity.used_margin ?? 0) / ((accountBalance.equity.available_margin ?? 0) + (accountBalance.equity.used_margin ?? 0))) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Signal + Chart Row */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-6">

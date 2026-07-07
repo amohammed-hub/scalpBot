@@ -111,3 +111,11 @@
 - [x] handleSave: shows clear error toast if DB save fails instead of silently swallowing with .catch(() => {})
 - [x] Button shows loading spinner while saving to DB before redirect
 - [x] Push fix to GitHub and verify on Railway
+
+## Feature — Upstox Account Balance & Profile on Dashboard
+- [x] Server: tRPC procedure account.profile — calls GET /v2/user/profile with stored access token
+- [x] Server: tRPC procedure account.balance — calls GET /v2/user/get-funds-and-margin with stored access token
+- [x] Dashboard: Account widget showing profile name, email, broker, UCC
+- [x] Dashboard: Balance widget showing available margin, used margin, total balance (equity + commodity)
+- [x] Dashboard: Auto-refresh balance every 30 seconds when bot is running
+- [x] Dashboard: Show "No Token" state gracefully if token not saved yet (widget hidden when no token)

@@ -639,6 +639,91 @@ export const appRouter = router({
         };
       }),
   }),
+
+  // Account — Upstox profile & funds
+  account: router({
+    profile: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return null;
+        const rows = await db
+          .select()
+          .from(upstoxCredentials)
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .limit(1);
+        if (rows.length === 0 || !rows[0].accessToken) return null;
+        const { accessToken } = rows[0];
+        try {
+          const res = await fetch("https://api.upstox.com/v2/user/profile", {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "application/json",
+            },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!res.ok) return null;
+          const json = await res.json() as { data?: {
+            user_id?: string;
+            user_name?: string;
+            email?: string;
+            mobile_number?: string;
+            broker?: string;
+            user_type?: string;
+            exchanges?: string[];
+            products?: string[];
+            order_types?: string[];
+          } };
+          return json.data ?? null;
+        } catch {
+          return null;
+        }
+      }),
+
+    balance: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return null;
+        const rows = await db
+          .select()
+          .from(upstoxCredentials)
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .limit(1);
+        if (rows.length === 0 || !rows[0].accessToken) return null;
+        const { accessToken } = rows[0];
+        try {
+          const res = await fetch("https://api.upstox.com/v2/user/get-funds-and-margin", {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "application/json",
+            },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!res.ok) return null;
+          const json = await res.json() as { data?: {
+            equity?: {
+              available_margin?: number;
+              used_margin?: number;
+              payin_amount?: number;
+              span_margin?: number;
+              adhoc_margin?: number;
+              notional_cash?: number;
+              available_cash?: number;
+              exposure_margin?: number;
+            };
+            commodity?: {
+              available_margin?: number;
+              used_margin?: number;
+              available_cash?: number;
+            };
+          } };
+          return json.data ?? null;
+        } catch {
+          return null;
+        }
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
