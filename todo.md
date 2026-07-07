@@ -110,4 +110,4 @@
 - [x] handleGetTokenAuto: shows clear error toast if DB save fails (no more silent swallowing)
 - [x] handleSave: shows clear error toast if DB save fails instead of silently swallowing with .catch(() => {})
 - [x] Button shows loading spinner while saving to DB before redirect
-- [ ] Push fix to GitHub and verify on Railway
+- [x] Push fix to GitHub and verify on Railway
