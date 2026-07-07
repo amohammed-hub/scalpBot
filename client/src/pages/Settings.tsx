@@ -168,22 +168,36 @@ export default function Settings() {
   // Save credentials to DB via tRPC (for server-side token exchange)
   const saveCredsMutation = trpc.credentials.save.useMutation();
 
-  const handleSave = () => {
+  const saveTokenToServer = trpc.credentials.saveAccessToken.useMutation();
+
+  const handleSave = async () => {
     // Save tokenSavedAt timestamp so Dashboard can check if token is from today
     const toSave = { ...creds, tokenSavedAt: creds.accessToken ? Date.now() : undefined };
     localStorage.setItem(LS_CREDS, JSON.stringify(toSave));
     setSaved(true);
-    toast.success("Credentials saved securely in your browser.");
     setTimeout(() => setSaved(false), 3000);
 
-    // Also save API key/secret to DB so the server can exchange codes automatically
+    // Save API key/secret to DB
     if (creds.apiKey && creds.apiSecret) {
-      saveCredsMutation.mutate({
+      await saveCredsMutation.mutateAsync({
         sessionToken,
         apiKey: creds.apiKey,
         apiSecret: creds.apiSecret,
         redirectUri: creds.redirectUri,
-      });
+      }).catch(() => {});
+    }
+
+    // If a real access token is pasted, also save it to the server DB
+    // so it works from any device (not just this browser)
+    if (creds.accessToken && creds.accessToken !== "[auto-fetched]") {
+      try {
+        await saveTokenToServer.mutateAsync({ sessionToken, accessToken: creds.accessToken });
+        toast.success("✅ Credentials & token saved — ready from any device!");
+      } catch {
+        toast.success("Credentials saved in browser.");
+      }
+    } else {
+      toast.success("Credentials saved.");
     }
   };
 
@@ -498,11 +512,46 @@ export default function Settings() {
                 {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            {creds.accessToken && (
-              <p className="mt-1.5 text-xs text-emerald-400 flex items-center gap-1">
-                <CheckCircle className="w-3 h-3" />
-                Token saved ({creds.accessToken.length} characters) — remember to refresh it each morning
-              </p>
+            {creds.accessToken && creds.accessToken !== "[auto-fetched]" && (
+              <>
+                <p className="mt-1.5 text-xs text-emerald-400 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3" />
+                  Token ready ({creds.accessToken.length} chars) — click Save Credentials to activate
+                </p>
+                <button
+                  onClick={async () => {
+                    if (!creds.accessToken || creds.accessToken === "[auto-fetched]") return;
+                    try {
+                      await saveCredsMutation.mutateAsync({
+                        sessionToken,
+                        apiKey: creds.apiKey || "manual",
+                        apiSecret: creds.apiSecret || "manual",
+                        redirectUri: creds.redirectUri,
+                      });
+                      // Also save the token itself to DB
+                      const res = await fetch("/api/trpc/credentials.saveAccessToken", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({ json: { sessionToken, accessToken: creds.accessToken } }),
+                      });
+                      if (res.ok) {
+                        const toSave = { ...creds, tokenSavedAt: Date.now() };
+                        localStorage.setItem(LS_CREDS, JSON.stringify(toSave));
+                        toast.success("✅ Token saved to server — works from any device now!");
+                      } else {
+                        toast.error("Failed to save token to server. Try again.");
+                      }
+                    } catch (e) {
+                      toast.error("Error saving token: " + String(e));
+                    }
+                  }}
+                  className="mt-2 flex items-center gap-2 w-full py-2.5 px-4 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-400 rounded-xl text-sm font-medium transition-colors"
+                >
+                  <Save className="w-4 h-4" />
+                  Save Token to Server (works from any device)
+                </button>
+              </>
             )}
           </div>
 
