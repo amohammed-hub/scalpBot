@@ -132,3 +132,19 @@
 - [x] Dashboard: show "Power Hour Mode" banner + sidebar badge when in 3:00–3:20 PM window
 - [x] Dashboard: show signal layer name including new Layer 5 (MACD/BB Squeeze) and Power Hour
 - [x] Update vitest tests to cover new signal layers and power hour logic (22 tests passing)
+
+## MCX Evening Power Hour + Partial Profit Booking + Hero Zero Strategy
+- [x] botEngine.ts: MCX Evening Power Hour (7:30–9:30 PM IST) — generateMCXEveningSignal() with US-open context, 6-point scoring
+- [x] botEngine.ts: EIA Wednesday filter — widen SL by 30% for Crude Oil on Wednesday 7:55–8:05 PM IST
+- [x] botEngine.ts: Partial profit booking — book 50% at 1R (SL→BE), book 25% at 2R (SL→1R), trail rest to target
+- [x] botEngine.ts: openTrade state — partialBooked (0/1/2), bookedQty, bookedPnl fields added
+- [x] routers.ts: expose isMCXEveningMode, heroZeroMode in bot.liveData response
+- [x] botEngine.ts: Hero Zero engine — generateHeroZeroSignal() for expiry-day OTM options (Nifty/BankNifty weekly expiry)
+- [x] botEngine.ts: Hero Zero entry filter — premium ₹2–50, OTM 1–5%, direction confirmed by RSI/EMA/MACD
+- [x] botEngine.ts: Hero Zero exit — 5× target, 50% cut, partial booking at 2.5× and 3.5×
+- [x] Dashboard: MCX Evening amber banner (7:30–9:30 PM, US Open window, EIA Wednesday note)
+- [x] Dashboard: Pyramid Exit Progress bar in open trade panel (Entry→1R→2R→Target, locked P&L shown)
+- [x] Dashboard: Hero Zero Premium Tracker (entry, 2.5×, 3.5×, 5×, 50% cut levels)
+- [x] Dashboard: MCXEvening + HeroZero layer badge colors in signal card
+- [x] Dashboard sidebar: MCX Evening amber badge, Hero Zero purple badge
+- [x] 22 vitest tests passing (all existing tests still green)

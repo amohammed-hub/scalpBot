@@ -243,6 +243,8 @@ export default function Dashboard() {
   const inMemOpenTrade = liveData?.openTrade ?? null;
   const nextScanAt = liveData?.nextScanAt ?? 0;
   const isPowerHourMode = liveData?.isPowerHourMode ?? false;
+  const isMCXEveningMode = liveData?.isMCXEveningMode ?? false;
+  const heroZeroMode = liveData?.heroZeroMode ?? false;
   const reEntryCandles = liveData?.reEntryCandles ?? 0;
 
   // Countdown to next scan
@@ -412,7 +414,19 @@ export default function Dashboard() {
           {isPowerHourMode && (
             <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-orange-500/15 border border-orange-500/30 text-orange-400 animate-pulse">
               <Flame className="w-3.5 h-3.5" />
-              Power Hour Active
+              NSE Power Hour
+            </div>
+          )}
+          {isMCXEveningMode && (
+            <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 animate-pulse">
+              <Flame className="w-3.5 h-3.5" />
+              MCX Evening (US Open)
+            </div>
+          )}
+          {heroZeroMode && (
+            <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-400 animate-pulse">
+              <span className="text-xs font-bold">0→H</span>
+              Hero Zero Active
             </div>
           )}
           {reEntryCandles > 0 && (
@@ -627,12 +641,42 @@ export default function Dashboard() {
           <div className="mb-4 flex items-center gap-3 bg-gradient-to-r from-orange-500/15 to-amber-500/10 border border-orange-500/30 rounded-2xl px-5 py-3.5">
             <Flame className="w-5 h-5 text-orange-400 shrink-0 animate-pulse" />
             <div className="flex-1 min-w-0">
-              <div className="text-orange-300 font-semibold text-sm">⚡ Power Hour — 3:00 to 3:20 PM IST</div>
-              <div className="text-orange-400/70 text-xs mt-0.5">Institutional close/build window active. Bot is reading full-day candles (VWAP, day trend, volume surge, MACD 5m) for high-conviction entries. SL tightened by 20%.</div>
+              <div className="text-orange-300 font-semibold text-sm">⚡ NSE Power Hour — 3:00 to 3:20 PM IST</div>
+              <div className="text-orange-400/70 text-xs mt-0.5">Institutional close/build window active. Bot reads full-day candles (VWAP, day trend, volume surge, MACD 5m) for high-conviction entries.</div>
             </div>
             <div className="shrink-0 text-right">
               <div className="text-xs text-orange-400/60">Strategy</div>
               <div className="text-orange-300 font-bold text-sm">PowerHour</div>
+            </div>
+          </div>
+        )}
+
+        {/* MCX Evening Power Hour Banner */}
+        {isMCXEveningMode && (
+          <div className="mb-4 flex items-center gap-3 bg-gradient-to-r from-amber-500/15 to-yellow-500/10 border border-amber-500/30 rounded-2xl px-5 py-3.5">
+            <Flame className="w-5 h-5 text-amber-400 shrink-0 animate-pulse" />
+            <div className="flex-1 min-w-0">
+              <div className="text-amber-300 font-semibold text-sm">🇺🇸 MCX Evening Power Hour — 7:30 to 9:30 PM IST</div>
+              <div className="text-amber-400/70 text-xs mt-0.5">US market open window. Crude Oil, Gold &amp; Silver move sharply as NY opens. Bot reads full-day MCX candles + VWAP + MACD 5m for directional bias. EIA Crude data on Wednesdays — SL auto-widened 30%.</div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-xs text-amber-400/60">Strategy</div>
+              <div className="text-amber-300 font-bold text-sm">MCXEvening</div>
+            </div>
+          </div>
+        )}
+
+        {/* Hero Zero Banner */}
+        {heroZeroMode && (
+          <div className="mb-4 flex items-center gap-3 bg-gradient-to-r from-purple-500/15 to-violet-500/10 border border-purple-500/30 rounded-2xl px-5 py-3.5">
+            <div className="w-5 h-5 text-purple-400 shrink-0 font-black text-sm flex items-center justify-center animate-pulse">0→H</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-purple-300 font-semibold text-sm">🎯 Hero Zero Mode — Expiry Day OTM Options</div>
+              <div className="text-purple-400/70 text-xs mt-0.5">Buying deep OTM options at ₹2–50 premium. Target: 5× premium. Cut: 50% loss. Partial booking at 2.5× and 3.5×. Works on NIFTY &amp; BANKNIFTY weekly expiry.</div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-xs text-purple-400/60">Strategy</div>
+              <div className="text-purple-300 font-bold text-sm">HeroZero</div>
             </div>
           </div>
         )}
@@ -645,12 +689,14 @@ export default function Dashboard() {
               <div className="text-xs text-white/40 uppercase tracking-wider">Latest Signal</div>
               {latestSignal?.layer && latestSignal.layer !== "None" && (
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  latestSignal.layer === "PowerHour" ? "bg-orange-500/20 border-orange-500/30 text-orange-400" :
-                  latestSignal.layer === "Breakout"  ? "bg-yellow-500/20 border-yellow-500/30 text-yellow-400" :
-                  latestSignal.layer === "MACD_BB"   ? "bg-purple-500/20 border-purple-500/30 text-purple-400" :
-                  latestSignal.layer === "Pattern"   ? "bg-blue-500/20 border-blue-500/30 text-blue-400" :
-                  latestSignal.layer === "Trend"     ? "bg-teal-500/20 border-teal-500/30 text-teal-400" :
-                  latestSignal.layer === "Momentum"  ? "bg-pink-500/20 border-pink-500/30 text-pink-400" :
+                  latestSignal.layer === "PowerHour"  ? "bg-orange-500/20 border-orange-500/30 text-orange-400" :
+                  latestSignal.layer === "MCXEvening" ? "bg-amber-500/20 border-amber-500/30 text-amber-400" :
+                  latestSignal.layer === "HeroZero"   ? "bg-purple-500/20 border-purple-500/30 text-purple-400" :
+                  latestSignal.layer === "Breakout"   ? "bg-yellow-500/20 border-yellow-500/30 text-yellow-400" :
+                  latestSignal.layer === "MACD_BB"    ? "bg-violet-500/20 border-violet-500/30 text-violet-400" :
+                  latestSignal.layer === "Pattern"    ? "bg-blue-500/20 border-blue-500/30 text-blue-400" :
+                  latestSignal.layer === "Trend"      ? "bg-teal-500/20 border-teal-500/30 text-teal-400" :
+                  latestSignal.layer === "Momentum"   ? "bg-pink-500/20 border-pink-500/30 text-pink-400" :
                   "bg-white/10 border-white/20 text-white/50"
                 }`}>
                   {latestSignal.layer}
@@ -764,6 +810,70 @@ export default function Dashboard() {
                   <span>▼ SL ₹{activeTrade.slPrice ? (currentPrice - activeTrade.slPrice).toFixed(0) : "—"} away</span>
                   <span className="text-white/50">Potential: +₹{activeTrade.targetPrice ? (Math.abs(activeTrade.targetPrice - activeTrade.entryPrice) * activeTrade.quantity).toFixed(0) : "—"}</span>
                   <span>▲ Target ₹{activeTrade.targetPrice ? (activeTrade.targetPrice - currentPrice).toFixed(0) : "—"} away</span>
+                </div>
+              </div>
+            )}
+
+            {/* Partial Booking Progress */}
+            {(activeTrade as any).partialBooked !== undefined && (
+              <div className="mb-3 bg-white/5 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-white/50 font-medium">Pyramid Exit Progress</span>
+                  <span className="text-xs text-emerald-400 font-mono">
+                    {(activeTrade as any).bookedPnl > 0 ? `+₹${(activeTrade as any).bookedPnl.toFixed(0)} locked` : "No partial yet"}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  {["Entry", "1R (50% booked)", "2R (25% booked)", "Full Target"].map((label, i) => (
+                    <div key={i} className="flex-1 text-center">
+                      <div className={`h-1.5 rounded-full mb-1 ${
+                        i === 0 ? "bg-teal-500" :
+                        (activeTrade as any).partialBooked >= i ? "bg-emerald-500" : "bg-white/10"
+                      }`} />
+                      <div className={`text-[9px] leading-tight ${
+                        (activeTrade as any).partialBooked >= i ? "text-emerald-400" : "text-white/30"
+                      }`}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+                {(activeTrade as any).partialBooked > 0 && (
+                  <div className="mt-2 text-xs text-amber-400/70">
+                    SL moved to {(activeTrade as any).partialBooked === 1 ? "breakeven" : "1R level"} — remaining qty: {activeTrade.quantity}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Hero Zero Premium Tracker */}
+            {(activeTrade as any).isHeroZero && (activeTrade as any).heroZeroPremiumEntry && (
+              <div className="mb-3 bg-purple-500/10 border border-purple-500/20 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-purple-300 font-medium">Hero Zero Premium Tracker</span>
+                  <span className="text-xs text-purple-400 font-mono">
+                    {currentPrice > 0 ? `${(currentPrice / (activeTrade as any).heroZeroPremiumEntry).toFixed(1)}×` : "—"}
+                  </span>
+                </div>
+                <div className="flex gap-1 text-[10px]">
+                  <div className="flex-1 text-center">
+                    <div className="text-white/40">Entry</div>
+                    <div className="text-white font-mono">₹{(activeTrade as any).heroZeroPremiumEntry.toFixed(1)}</div>
+                  </div>
+                  <div className="flex-1 text-center">
+                    <div className="text-amber-400/70">2.5× (book 50%)</div>
+                    <div className="text-amber-400 font-mono">₹{((activeTrade as any).heroZeroPremiumEntry * 2.5).toFixed(1)}</div>
+                  </div>
+                  <div className="flex-1 text-center">
+                    <div className="text-amber-400/70">3.5× (book 25%)</div>
+                    <div className="text-amber-400 font-mono">₹{((activeTrade as any).heroZeroPremiumEntry * 3.5).toFixed(1)}</div>
+                  </div>
+                  <div className="flex-1 text-center">
+                    <div className="text-emerald-400/70">5× Target</div>
+                    <div className="text-emerald-400 font-mono">₹{((activeTrade as any).heroZeroPremiumEntry * 5).toFixed(1)}</div>
+                  </div>
+                  <div className="flex-1 text-center">
+                    <div className="text-red-400/70">50% Cut</div>
+                    <div className="text-red-400 font-mono">₹{((activeTrade as any).heroZeroPremiumEntry * 0.5).toFixed(1)}</div>
+                  </div>
                 </div>
               </div>
             )}

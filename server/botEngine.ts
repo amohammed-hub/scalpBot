@@ -35,8 +35,13 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "HeroZero" | "None";
   isPowerHour?: boolean;
+  isMCXEvening?: boolean;
+  isHeroZero?: boolean;
+  // Partial profit booking levels
+  partial1RPrice?: number;  // price at which to book 50%
+  partial2RPrice?: number;  // price at which to book next 25%
 }
 
 export interface OpenTrade {
@@ -58,6 +63,14 @@ export interface OpenTrade {
   trailingSlPct: number;
   currentSl: number;
   isReEntry?: boolean;
+  // Partial profit booking
+  partial1RPrice: number;   // book 50% at this price
+  partial2RPrice: number;   // book 25% at this price
+  partialBooked: 0 | 1 | 2; // 0=none, 1=50% booked, 2=75% booked
+  bookedQty: number;        // units already closed
+  bookedPnl: number;        // P&L from closed portion
+  isHeroZero?: boolean;
+  heroZeroPremiumEntry?: number; // premium paid for OTM option
 }
 
 export interface BotState {
@@ -96,6 +109,8 @@ export interface BotState {
   lastSlDirection: "BUY" | "SELL" | null;
   reEntryCandles: number;
   isPowerHourMode: boolean;
+  isMCXEveningMode: boolean;
+  heroZeroMode: boolean; // true when Hero Zero panel is active
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -573,7 +588,190 @@ export function generatePowerHourSignal(
   return { direction, confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "PowerHour", isPowerHour: true };
 }
 
-// ── Fetch 1-min candles from Upstox ──────────────────────────────────────────
+// ── MCX Evening Power Hour Signal (7:30–9:30 PM IST) ────────────────────────
+/**
+ * Reads whole-day 1m candles + 5m MACD to identify the day's directional bias,
+ * then applies a high-conviction entry for the US market open window.
+ * Crude Oil, Natural Gas, Gold, Silver all move sharply when NY opens.
+ */
+export function generateMCXEveningSignal(
+  candles1m: Candle[],
+  candles5m: Candle[],
+  isWednesdayCrude = false,  // EIA data day — widen SL
+  slMultiplier = 1.2,
+  tpMultiplier = 2.5,
+): Signal {
+  if (candles1m.length < 30 || candles5m.length < 6) {
+    return { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Insufficient data for MCX Evening", layer: "None", isMCXEvening: true };
+  }
+
+  const price = candles1m[candles1m.length - 1].close;
+  const atr = calcATR(candles1m, 14);
+  const slMult = isWednesdayCrude ? slMultiplier * 1.3 : slMultiplier;  // EIA day: wider SL
+
+  // Day context from all 1m candles accumulated since MCX 9:00 AM
+  const dayHigh = Math.max(...candles1m.map(c => c.high));
+  const dayLow  = Math.min(...candles1m.map(c => c.low));
+  const dayVwap = calcVWAP(candles1m);
+  const dayRange = dayHigh - dayLow;
+
+  // Day trend: first quarter vs last quarter
+  const q1 = candles1m.slice(0, Math.max(1, Math.floor(candles1m.length / 4)));
+  const q4 = candles1m.slice(-Math.max(1, Math.floor(candles1m.length / 4)));
+  const q1Avg = q1.reduce((a, c) => a + c.close, 0) / q1.length;
+  const q4Avg = q4.reduce((a, c) => a + c.close, 0) / q4.length;
+  const dayTrendStrength = (q4Avg - q1Avg) / q1Avg;
+
+  // Price position in day range
+  const pricePos = dayRange > 0 ? (price - dayLow) / dayRange : 0.5;
+
+  // Volume: US open surge (last 30 candles vs day avg)
+  const avgDayVol = candles1m.reduce((a, c) => a + c.volume, 0) / candles1m.length;
+  const last30Vol = candles1m.slice(-30).reduce((a, c) => a + c.volume, 0) / 30;
+  const volSurge  = avgDayVol > 0 ? last30Vol / avgDayVol : 1;
+
+  // 5m MACD for medium-term momentum
+  const closes5m = candles5m.map(c => c.close);
+  const macd5m   = calcMACD(closes5m);
+
+  // 1m short-term indicators
+  const closes1m = candles1m.map(c => c.close);
+  const rsi1m    = calcRSI(closes1m, 14);
+  const e9arr    = ema(closes1m, 9);
+  const e21arr   = ema(closes1m, 21);
+  const e9 = e9arr[e9arr.length - 1];
+  const e21 = e21arr[e21arr.length - 1];
+
+  // 6-point scoring (same structure as NSE Power Hour but tuned for MCX)
+  const bullConditions = [
+    dayTrendStrength > 0.001,           // day is up >0.1% (MCX moves smaller %)
+    price > dayVwap,                    // above day VWAP
+    pricePos > 0.45,                    // in upper half of day range
+    e9 > e21 && rsi1m > 48 && rsi1m < 80, // 1m momentum bullish
+    macd5m.histogram > 0,               // 5m MACD bullish
+    volSurge >= 1.15,                   // US open volume surge
+  ];
+  const bearConditions = [
+    dayTrendStrength < -0.001,
+    price < dayVwap,
+    pricePos < 0.55,
+    e9 < e21 && rsi1m < 52 && rsi1m > 20,
+    macd5m.histogram < 0,
+    volSurge >= 1.15,
+  ];
+
+  const bullScore = bullConditions.filter(Boolean).length;
+  const bearScore = bearConditions.filter(Boolean).length;
+
+  let direction: "BUY" | "SELL" | "HOLD" = "HOLD";
+  let confidence = 0;
+  let reason = "";
+
+  if (bullScore >= 4 && bullScore > bearScore) {
+    if (pricePos > 0.93) {
+      return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMult, targetPrice: price + atr * tpMultiplier, atr, reason: `[MCXEvening] At day high — range exhausted`, layer: "None", isMCXEvening: true };
+    }
+    direction = "BUY";
+    confidence = Math.min(0.95, 0.62 + bullScore * 0.05 + Math.max(0, dayTrendStrength * 8));
+    reason = `[MCXEvening] Bullish day(${(dayTrendStrength * 100).toFixed(2)}%) | Above VWAP(${dayVwap.toFixed(1)}) | VolSurge:${volSurge.toFixed(1)}x | Score:${bullScore}/6 | RSI(${rsi1m.toFixed(0)})${isWednesdayCrude ? " | EIA-day SL widened" : ""}`;
+  } else if (bearScore >= 4 && bearScore > bullScore) {
+    if (pricePos < 0.07) {
+      return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price + atr * slMult, targetPrice: price - atr * tpMultiplier, atr, reason: `[MCXEvening] At day low — range exhausted`, layer: "None", isMCXEvening: true };
+    }
+    direction = "SELL";
+    confidence = Math.min(0.95, 0.62 + bearScore * 0.05 + Math.max(0, Math.abs(dayTrendStrength) * 8));
+    reason = `[MCXEvening] Bearish day(${(dayTrendStrength * 100).toFixed(2)}%) | Below VWAP(${dayVwap.toFixed(1)}) | VolSurge:${volSurge.toFixed(1)}x | Score:${bearScore}/6 | RSI(${rsi1m.toFixed(0)})${isWednesdayCrude ? " | EIA-day SL widened" : ""}`;
+  }
+
+  if (direction === "HOLD") {
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMult, targetPrice: price + atr * tpMultiplier, atr, reason: `[MCXEvening] No clear setup | Bull:${bullScore} Bear:${bearScore} | DayTrend:${(dayTrendStrength * 100).toFixed(2)}%`, layer: "None", isMCXEvening: true };
+  }
+
+  const slPrice = direction === "BUY" ? price - atr * slMult : price + atr * slMult;
+  const targetPrice = direction === "BUY" ? price + atr * tpMultiplier : price - atr * tpMultiplier;
+  return { direction, confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "MCXEvening", isMCXEvening: true };
+}
+
+// ── Hero Zero Signal (Expiry-day OTM options) ────────────────────────────────
+/**
+ * Hero Zero: buy deep OTM options on weekly expiry day when premium is ₹2–50.
+ * Target: 5× premium. Cut: 50% loss. Window: 11:00 AM – 1:30 PM IST.
+ * Works on NIFTY and BANKNIFTY weekly expiry options.
+ *
+ * NOTE: This function receives the current OTM option premium as `price`
+ * (i.e., candles1m are the option's own 1m candles, not the index).
+ * The caller must pass the underlying index candles separately for direction.
+ */
+export function generateHeroZeroSignal(
+  optionPremium: number,       // current OTM option premium (₹)
+  underlyingCandles: Candle[], // index 1m candles for direction bias
+  optionType: "CE" | "PE",     // call or put
+  strikeDistance: number,      // how far OTM in points (e.g., 200 for Nifty)
+  slMultiplier = 1.0,
+): Signal {
+  // Entry filter: premium must be ₹2–50 (deep OTM, near-zero)
+  if (optionPremium < 2 || optionPremium > 50) {
+    return { direction: "HOLD", confidence: 0, entryPrice: optionPremium, slPrice: optionPremium * 0.5, targetPrice: optionPremium * 5, atr: 0, reason: `[HeroZero] Premium ₹${optionPremium.toFixed(1)} outside ₹2–50 range`, layer: "None", isHeroZero: true };
+  }
+
+  if (underlyingCandles.length < 20) {
+    return { direction: "HOLD", confidence: 0, entryPrice: optionPremium, slPrice: optionPremium * 0.5, targetPrice: optionPremium * 5, atr: 0, reason: "[HeroZero] Insufficient underlying data", layer: "None", isHeroZero: true };
+  }
+
+  const closes = underlyingCandles.map(c => c.close);
+  const rsi = calcRSI(closes, 14);
+  const e9arr = ema(closes, 9);
+  const e21arr = ema(closes, 21);
+  const e9 = e9arr[e9arr.length - 1];
+  const e21 = e21arr[e21arr.length - 1];
+  const macd = calcMACD(closes);
+  const price = closes[closes.length - 1];
+
+  // Volume surge in last 10 candles
+  const avgVol = underlyingCandles.reduce((a, c) => a + c.volume, 0) / underlyingCandles.length;
+  const last10Vol = underlyingCandles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
+  const volSurge = avgVol > 0 ? last10Vol / avgVol : 1;
+
+  // Strike distance filter: 1–5% OTM for Nifty (50pt = 0.2%, 500pt = 2%)
+  const otmPct = (strikeDistance / price) * 100;
+  if (otmPct > 5) {
+    return { direction: "HOLD", confidence: 0, entryPrice: optionPremium, slPrice: optionPremium * 0.5, targetPrice: optionPremium * 5, atr: 0, reason: `[HeroZero] Strike too far OTM (${otmPct.toFixed(1)}% > 5%)`, layer: "None", isHeroZero: true };
+  }
+
+  // Direction check: CE needs bullish underlying, PE needs bearish
+  const isBullish = e9 > e21 && rsi > 52 && macd.histogram > 0;
+  const isBearish = e9 < e21 && rsi < 48 && macd.histogram < 0;
+
+  const directionOk = optionType === "CE" ? isBullish : isBearish;
+  if (!directionOk) {
+    return { direction: "HOLD", confidence: 0, entryPrice: optionPremium, slPrice: optionPremium * 0.5, targetPrice: optionPremium * 5, atr: 0, reason: `[HeroZero] ${optionType} direction not confirmed | RSI:${rsi.toFixed(0)} | EMA:${e9 > e21 ? "bull" : "bear"} | MACD:${macd.histogram > 0 ? "+" : "-"}`, layer: "None", isHeroZero: true };
+  }
+
+  // Confidence: based on how strongly directional + volume
+  const baseConf = 0.55;
+  const volBonus = volSurge >= 1.5 ? 0.1 : volSurge >= 1.2 ? 0.05 : 0;
+  const rsiBonus = optionType === "CE" ? Math.max(0, (rsi - 52) / 100) : Math.max(0, (48 - rsi) / 100);
+  const confidence = Math.min(0.90, baseConf + volBonus + rsiBonus);
+
+  const direction = "BUY"; // Hero Zero is always a buy (buying cheap OTM option)
+  const reason = `[HeroZero] ${optionType} ₹${optionPremium.toFixed(1)} | OTM:${otmPct.toFixed(1)}% | RSI:${rsi.toFixed(0)} | VolSurge:${volSurge.toFixed(1)}x | Target:₹${(optionPremium * 5).toFixed(0)} | Cut:₹${(optionPremium * 0.5).toFixed(0)}`;
+
+  return {
+    direction,
+    confidence,
+    entryPrice: optionPremium,
+    slPrice: optionPremium * 0.5,          // 50% loss cut
+    targetPrice: optionPremium * 5,        // 5× target
+    atr: optionPremium * 0.2,             // ATR proxy for options
+    reason,
+    layer: "HeroZero",
+    isHeroZero: true,
+    partial1RPrice: optionPremium * 2.5,   // book 50% at 2.5× (halfway to 5×)
+    partial2RPrice: optionPremium * 3.5,   // book 25% at 3.5×
+  };
+}
+
+// ── Fetch 1-min candles from Upstox ───────────────────────────────────────────
 async function fetchUpstoxCandles(instrumentToken: string, accessToken: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
@@ -731,10 +929,24 @@ async function tick(
   const isMCX = state.instrumentToken.startsWith("MCX");
   const squareOffMin = isMCX ? 23 * 60 + 25 : 15 * 60 + 25;
   const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 20;
+
+  // NSE Power Hour: 3:00–3:20 PM IST
   const powerHourStart = 15 * 60;
   const powerHourEnd   = 15 * 60 + 20;
   const inPowerHour = !isMCX && istMin2 >= powerHourStart && istMin2 < powerHourEnd;
   state.isPowerHourMode = inPowerHour;
+
+  // MCX Evening Power Hour: 7:30–9:30 PM IST (US market open)
+  const mcxEveningStart = 19 * 60 + 30;
+  const mcxEveningEnd   = 21 * 60 + 30;
+  const inMCXEvening = isMCX && istMin2 >= mcxEveningStart && istMin2 < mcxEveningEnd;
+  state.isMCXEveningMode = inMCXEvening;
+
+  // EIA Crude Oil inventory: Wednesday ~8:00 PM IST — widen SL for Crude
+  const isWednesday = now2.getUTCDay() === 3; // Wednesday UTC (IST Wed evening = UTC Wed)
+  const isCrude = state.instrumentToken.includes("CRUDEOIL") || state.instrumentToken.includes("CRUDE");
+  const isEIAWindow = isWednesday && istMin2 >= 19 * 60 + 55 && istMin2 <= 20 * 60 + 5;
+  const isWednesdayCrude = isCrude && isEIAWindow;
 
   // Auto square-off at market close
   if (istMin2 >= squareOffMin && state.openTrade) {
@@ -759,30 +971,98 @@ async function tick(
   // Monitor open trade SL/Target
   if (state.openTrade) {
     const trade = state.openTrade;
+
+    // ── Hero Zero exit: 5× premium = take profit; 50% loss = cut ─────────────
+    if (trade.isHeroZero && trade.heroZeroPremiumEntry) {
+      const heroTarget = trade.heroZeroPremiumEntry * 5;
+      const heroCut    = trade.heroZeroPremiumEntry * 0.5;
+      let heroExit: string | null = null;
+      if (price >= heroTarget) heroExit = "Hero Zero — 5× Target Hit";
+      else if (price <= heroCut) heroExit = "Hero Zero — 50% Cut";
+      if (heroExit) {
+        const pnl = (price - trade.entryPrice) * trade.quantity;
+        if (trade.mode === "live" && state.accessToken) {
+          await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", trade.quantity);
+        }
+        state.dailyPnl += pnl + trade.bookedPnl;
+        state.openTrade = null;
+        await onTradeClose(trade.dbId, price, pnl + trade.bookedPnl, heroExit);
+        console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
+      }
+      return;
+    }
+
+    // ── Partial profit booking (pyramid exit) ────────────────────────────────
+    if (trade.partialBooked === 0) {
+      const hit1R = trade.direction === "BUY" ? price >= trade.partial1RPrice : price <= trade.partial1RPrice;
+      if (hit1R) {
+        // Book 50% of position at 1R
+        const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
+        const bookPnl = trade.direction === "BUY"
+          ? (trade.partial1RPrice - trade.entryPrice) * bookQty
+          : (trade.entryPrice - trade.partial1RPrice) * bookQty;
+        if (trade.mode === "live" && state.accessToken) {
+          await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
+        }
+        trade.bookedQty += bookQty;
+        trade.bookedPnl += bookPnl;
+        trade.quantity   -= bookQty;
+        trade.partialBooked = 1;
+        // Move SL to breakeven
+        trade.currentSl = trade.entryPrice;
+        state.dailyPnl += bookPnl;
+        console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 50% @ ₹${trade.partial1RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→BE`);
+      }
+    } else if (trade.partialBooked === 1) {
+      const hit2R = trade.direction === "BUY" ? price >= trade.partial2RPrice : price <= trade.partial2RPrice;
+      if (hit2R) {
+        // Book another 25% (half of remaining) at 2R
+        const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
+        const bookPnl = trade.direction === "BUY"
+          ? (trade.partial2RPrice - trade.entryPrice) * bookQty
+          : (trade.entryPrice - trade.partial2RPrice) * bookQty;
+        if (trade.mode === "live" && state.accessToken) {
+          await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
+        }
+        trade.bookedQty += bookQty;
+        trade.bookedPnl += bookPnl;
+        trade.quantity   -= bookQty;
+        trade.partialBooked = 2;
+        // Trail SL to 1R level
+        trade.currentSl = trade.direction === "BUY" ? trade.partial1RPrice : trade.partial1RPrice;
+        state.dailyPnl += bookPnl;
+        console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 25% @ ₹${trade.partial2RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→1R`);
+      }
+    }
+
+    // ── Trailing SL ──────────────────────────────────────────────────────────
     if (trade.trailingSlEnabled) {
       const trailDist = trade.entryPrice * (trade.trailingSlPct / 100);
       if (trade.direction === "BUY") { const newSl = price - trailDist; if (newSl > trade.currentSl) trade.currentSl = newSl; }
       else { const newSl = price + trailDist; if (newSl < trade.currentSl) trade.currentSl = newSl; }
     }
+
+    // ── Full exit: SL or Target ───────────────────────────────────────────────
     let exitReason: string | null = null;
     if (trade.direction === "BUY") { if (price <= trade.currentSl) exitReason = "Stop Loss"; else if (price >= trade.targetPrice) exitReason = "Target Hit"; }
     else { if (price >= trade.currentSl) exitReason = "Stop Loss"; else if (price <= trade.targetPrice) exitReason = "Target Hit"; }
 
     if (exitReason) {
-      const pnl = trade.direction === "BUY" ? (price - trade.entryPrice) * trade.quantity : (trade.entryPrice - price) * trade.quantity;
+      const remainPnl = trade.direction === "BUY" ? (price - trade.entryPrice) * trade.quantity : (trade.entryPrice - price) * trade.quantity;
+      const totalPnl  = remainPnl + trade.bookedPnl;
       if (trade.mode === "live" && state.accessToken) {
         await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
       }
-      // Track SL hit for re-entry
-      if (exitReason === "Stop Loss") {
+      // Track SL hit for re-entry (only on full SL, not BE)
+      if (exitReason === "Stop Loss" && trade.partialBooked === 0) {
         state.lastSlHitAt = Date.now();
         state.lastSlDirection = trade.direction;
         state.reEntryCandles = 0;
       }
-      state.dailyPnl += pnl;
+      state.dailyPnl += remainPnl;
       state.openTrade = null;
-      await onTradeClose(trade.dbId, price, pnl, exitReason);
-      console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | P&L: ₹${pnl.toFixed(0)}`);
+      await onTradeClose(trade.dbId, price, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
+      console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
     }
     return;
   }
@@ -818,8 +1098,32 @@ async function tick(
   const prevDayLow   = prevDayCandle?.low   ?? 0;
   const prevDayClose = prevDayCandle?.close ?? 0;
 
+  // Hero Zero: expiry-day OTM options (11:00 AM – 1:30 PM IST, NIFTY/BANKNIFTY option instruments)
+  const isOptionInstrument = state.instrumentToken.includes("_CE") || state.instrumentToken.includes("_PE");
+  const optionType: "CE" | "PE" = state.instrumentToken.includes("_CE") ? "CE" : "PE";
+  // Expiry day detection: Thursday for NIFTY weekly, Wednesday for BANKNIFTY weekly
+  const dayOfWeek = now2.getUTCDay(); // 0=Sun, 1=Mon, ... 4=Thu, 3=Wed
+  const isBankNiftyOption = state.instrumentToken.includes("BNF") || state.instrumentToken.includes("BANKNIFTY");
+  const isExpiryDay = isOptionInstrument && (isBankNiftyOption ? dayOfWeek === 3 : dayOfWeek === 4);
+  const heroZeroWindowStart = 11 * 60;
+  const heroZeroWindowEnd   = 13 * 60 + 30;
+  const inHeroZeroWindow = isExpiryDay && istMin2 >= heroZeroWindowStart && istMin2 < heroZeroWindowEnd;
+  state.heroZeroMode = inHeroZeroWindow;
+
   if (inPowerHour) {
     signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, state.targetMultiplier);
+  } else if (inMCXEvening) {
+    signal = generateMCXEveningSignal(state.candles, state.candles5m, isWednesdayCrude, slMult, state.targetMultiplier);
+  } else if (inHeroZeroWindow && state.candles.length > 0) {
+    // Hero Zero: current price IS the option premium (bot is tracking the option instrument)
+    const optionPremium = price;
+    // Strike distance: approximate from instrument token (e.g. NIFTY_25000CE → |25000 - spot|)
+    // For simplicity, use 1% of current price as proxy when exact strike not parseable
+    const strikeMatch = state.instrumentToken.match(/(\d{4,6})(CE|PE)/);
+    const strikePrice = strikeMatch ? parseInt(strikeMatch[1]) : 0;
+    const underlyingApprox = strikePrice > 0 ? strikePrice : price * 1.02; // fallback
+    const strikeDistance = Math.abs(underlyingApprox - price);
+    signal = generateHeroZeroSignal(optionPremium, state.candles, optionType, strikeDistance, slMult);
   } else {
     signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
   }
@@ -850,6 +1154,11 @@ async function tick(
     upstoxOrderId: orderId, signalReason: signalLabel, enteredAt: new Date(),
   });
 
+  // Compute partial profit levels from signal
+  const slDist = Math.abs(signal.entryPrice - signal.slPrice);
+  const partial1RPrice = signal.partial1RPrice ?? (signal.direction === "BUY" ? signal.entryPrice + slDist : signal.entryPrice - slDist);
+  const partial2RPrice = signal.partial2RPrice ?? (signal.direction === "BUY" ? signal.entryPrice + slDist * 2 : signal.entryPrice - slDist * 2);
+
   state.openTrade = {
     dbId, symbol: state.instrumentSymbol, symbolLabel: state.instrumentLabel,
     instrumentToken: state.instrumentToken, direction: signal.direction, mode: state.mode,
@@ -857,6 +1166,8 @@ async function tick(
     atr: signal.atr, confidence: signal.confidence, upstoxOrderId: orderId,
     enteredAt: new Date(), trailingSlEnabled: state.trailingSlEnabled,
     trailingSlPct: state.trailingSlPct, currentSl: signal.slPrice, isReEntry,
+    partial1RPrice, partial2RPrice, partialBooked: 0, bookedQty: 0, bookedPnl: 0,
+    isHeroZero: signal.isHeroZero, heroZeroPremiumEntry: signal.isHeroZero ? signal.entryPrice : undefined,
   };
 
   state.tradesCount += 1;
@@ -874,7 +1185,7 @@ type TradeInsert = {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 export function startBot(
-  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode">,
+  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode" | "isMCXEveningMode" | "heroZeroMode">,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
@@ -888,6 +1199,7 @@ export function startBot(
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
     lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0, isPowerHourMode: false,
+    isMCXEveningMode: false, heroZeroMode: false,
   };
 
   const intervalMs = Math.max(15, config.scanIntervalSec) * 1000;

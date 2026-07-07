@@ -236,6 +236,7 @@ export const appRouter = router({
         let existingOpenTrade = null;
         if (existingOpenTrades.length > 0) {
           const t = existingOpenTrades[0];
+          const slDist0 = Math.abs((t.entryPrice ?? 0) - (t.slPrice ?? 0));
           existingOpenTrade = {
             dbId: t.id,
             symbol: t.symbol,
@@ -254,6 +255,11 @@ export const appRouter = router({
             trailingSlEnabled: input.trailingSlEnabled,
             trailingSlPct: input.trailingSlPct,
             currentSl: t.slPrice ?? 0,
+            partial1RPrice: t.direction === "BUY" ? t.entryPrice + slDist0 : t.entryPrice - slDist0,
+            partial2RPrice: t.direction === "BUY" ? t.entryPrice + slDist0 * 2 : t.entryPrice - slDist0 * 2,
+            partialBooked: 0 as 0 | 1 | 2,
+            bookedQty: 0,
+            bookedPnl: 0,
           };
         }
 
@@ -482,6 +488,8 @@ export const appRouter = router({
           nextScanAt: state.nextScanAt,
           openTrade: state.openTrade,
           isPowerHourMode: state.isPowerHourMode,
+          isMCXEveningMode: state.isMCXEveningMode,
+          heroZeroMode: state.heroZeroMode,
           reEntryCandles: state.reEntryCandles,
         };
       }),
