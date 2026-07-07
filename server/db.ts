@@ -11,16 +11,12 @@ let _db: any = null;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      const pool = mysql.createPool({
-        uri: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false },
-        waitForConnections: true,
-        connectionLimit: 5,
-      });
+      // Pass the URL directly as a string — mysql2 supports this as the first argument
+      const pool = mysql.createPool(process.env.DATABASE_URL);
       _db = drizzle(pool);
       console.log("[Database] Connected successfully");
     } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
+      console.error("[Database] Failed to connect:", error);
       _db = null;
     }
   }
