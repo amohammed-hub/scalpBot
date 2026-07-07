@@ -204,17 +204,17 @@
 - [x] shared/mcxInstruments.ts: added contract month warning comment with Upstox instrument master CSV download URL
 
 ## Phase 6 — P&L Analytics & Export
-- [ ] routers.ts: trades.pnlByDay — group all trades by date, return daily P&L, trades count, win/loss, best/worst trade
-- [ ] routers.ts: trades.pnlByWeek — group by ISO week, return weekly summary
-- [ ] routers.ts: trades.pnlByMonth — group by month, return monthly summary
-- [ ] routers.ts: trades.exportData — return full trade data formatted for export (all fields, all time)
-- [ ] client/src/pages/PnLAnalytics.tsx — new page with 3 tabs: Daily / Weekly / Monthly
-- [ ] Daily tab: table with date, trades, wins, losses, win rate, gross P&L, net P&L, best trade, worst trade
-- [ ] Weekly tab: table with week range, trades, win rate, P&L, best day
-- [ ] Monthly tab: table with month, trades, win rate, P&L, best week, consistency score
-- [ ] Summary cards at top: total P&L, best day, worst day, avg daily P&L, overall win rate
-- [ ] Bar chart: daily P&L for last 30 days (green/red bars)
-- [ ] Export CSV button: downloads full trade log as CSV
-- [ ] Export Excel button: downloads XLSX with 4 sheets (All Trades, Daily, Weekly, Monthly)
-- [ ] App.tsx: add /pnl route and sidebar nav link
-- [ ] Dashboard: update Export CSV button to link to PnL Analytics page
+- [x] routers.ts: trades.pnlByDay — group all trades by date, return daily P&L, trades count, win/loss, best/worst trade
+- [x] routers.ts: trades.pnlByWeek — group by ISO week, return weekly summary with best day
+- [x] routers.ts: trades.pnlByMonth — group by month, return monthly summary with consistency %
+- [x] routers.ts: trades.exportData — return full trade data formatted for export (all fields, all time)
+- [x] client/src/pages/PnLAnalytics.tsx — new page with 3 tabs: Daily / Weekly / Monthly
+- [x] Daily tab: table with date, trades, wins, losses, win rate, total P&L, best trade, worst trade, avg P&L, instruments
+- [x] Weekly tab: table with week range, trades, win rate, P&L, best trade, worst trade, best day
+- [x] Monthly tab: table with month, trades, win rate, P&L, avg daily P&L, trading days, consistency %
+- [x] Summary cards at top: total P&L, total trades, win rate, avg daily P&L, best day, worst day, trading days
+- [x] Bar chart: daily P&L for last 30 days (green/red bars, recharts)
+- [x] Export CSV button: downloads full trade log as CSV
+- [x] Export Excel button: downloads XLSX with 4 sheets (All Trades, Daily, Weekly, Monthly)
+- [x] App.tsx: /pnl-analytics route and sidebar nav link (green 📊)
+- [x] Dashboard sidebar: P&L Analytics link added next to Hero Zero Scanner
