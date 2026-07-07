@@ -76,3 +76,14 @@
 - [x] Dashboard: Add F&O options instruments (Nifty weekly options, Bank Nifty options) to instrument dropdown
 - [x] Settings + Dashboard: Add Telegram alert integration — bot sends BUY/SELL/STOP signals to Telegram chat
 - [x] Dashboard: Add CSV export button to trade log section for downloading trade history to Excel
+
+## Database Migration — Trade Persistence Across Devices
+- [x] Upgraded botEngine.ts: open trade tracking, SL/Target monitoring, trailing SL, MCX instruments, candle-based signal engine
+- [x] Updated schema.ts: added symbolLabel, stopLossMultiplier, targetMultiplier, trailingSlEnabled, trailingSlPct, minConfidence, scanIntervalSec, instrumentLabel, bidPrice, askPrice, nextScanAt fields
+- [x] Ran db:push — all new columns applied to MySQL
+- [x] Added tRPC procedures: trades.openTrade, trades.todayStats, bot.manualExit, bot.liveData (with bid/ask/signal/openTrade)
+- [x] Rewrote Dashboard.tsx — all state (trades, bot status, live data, open trade) from tRPC/DB, zero localStorage for trade data
+- [x] Open trade panel: progress bar, SL/Target display, unrealized P&L, Exit button (paper + live)
+- [x] Live P&L in trade log for open trades (updates every 3s)
+- [x] Bot auto-restores open trade on server restart via DB query in startBot
+- [x] All 8 vitest tests passing
