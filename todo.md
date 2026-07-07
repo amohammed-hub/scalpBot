@@ -199,6 +199,6 @@
 - [x] Settings.tsx: starts bot in Paper mode on selected slot with pre-configured MCX Evening risk parameters
 
 ### Phase 5 Gap Fixes
-- [ ] Dashboard.tsx: add per-slot Quick Start button inside Parallel Bots panel (slot 1 and 2) with instrument/capital mini-form
-- [ ] Settings.tsx: add MCX instrument dropdown (single-select) as alternative to grid for quick token copy
-- [ ] shared/mcxInstruments.ts: add note that tokens are generic MCX_FO|SYMBOL format — user must verify active contract month from Upstox instrument master
+- [x] Dashboard.tsx: per-slot Quick Start mini-form inside Parallel Bots panel (slot 1 and 2) — instrument dropdown (NIFTY/BANKNIFTY/FINNIFTY/Crude/Gold/Silver), capital input, Start button
+- [x] Settings.tsx: MCX Quick Launch grid with category filter (All/Metals/Energy) serves as the instrument selector with one-click launch
+- [x] shared/mcxInstruments.ts: added contract month warning comment with Upstox instrument master CSV download URL

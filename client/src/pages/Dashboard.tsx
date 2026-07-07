@@ -11,6 +11,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { trpc } from "@/lib/trpc";
+import { MCX_INSTRUMENTS } from "@shared/mcxInstruments";
 
 // ── Session Token ─────────────────────────────────────────────────────────────
 // A UUID stored in localStorage — no Manus login needed. Used as the user identity key.
@@ -155,8 +156,37 @@ export default function Dashboard() {
   // Price chart state (client-side only — visual only)
   const [priceHistory, setPriceHistory] = useState<PricePoint[]>([]);
 
-  // ── tRPC queries ─────────────────────────────────────────────────────────────
+  // ── tRPC queries ─────────────────────────────────────────────────────────────────────────────
   const utils = trpc.useUtils();
+
+  // Per-slot Quick Start state for the Parallel Bots panel
+  const [slotQS, setSlotQS] = useState<Record<number, { symbol: string; capital: number }>>(
+    { 1: { symbol: "NIFTY", capital: 50000 }, 2: { symbol: "CRUDEOIL", capital: 50000 } }
+  );
+  const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
+    onSuccess: (_, vars) => {
+      toast.success(`🤖 Slot ${vars.slot} bot started in Paper mode!`);
+      utils.multiBots.allStatus.invalidate();
+    },
+    onError: (e) => toast.error(`Start failed: ${e.message}`),
+  });
+  const handleQuickStart = (slot: number) => {
+    const qs = slotQS[slot];
+    const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
+    // Resolve token: check MCX registry first, then fall back to NSE_FO
+    const mcxInstr = MCX_INSTRUMENTS.find(i => i.symbol === qs.symbol);
+    const resolvedToken = mcxInstr ? mcxInstr.instrumentToken : `NSE_FO|${qs.symbol}`;
+    const resolvedLabel = mcxInstr ? mcxInstr.label : qs.symbol;
+    startSecondaryMutation.mutate({
+      sessionToken, slot: slot as 1 | 2,
+      instrumentToken: resolvedToken,
+      instrumentSymbol: qs.symbol, instrumentLabel: resolvedLabel,
+      mode: "paper", capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
+      dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
+      minConfidence: 60, scanIntervalSec: 30,
+      telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+    });
+  };
 
   // Bot status — poll every 3s when running
   const { data: botStatus } = trpc.bot.status.useQuery(
@@ -1183,9 +1213,45 @@ export default function Dashboard() {
                         Last: {bot.lastSignal.direction} · {bot.lastSignal.confidence}%
                       </div>
                     )}
+                    {/* Quick Start form for inactive secondary slots */}
+                    {bot.slot > 0 && !isActive && (
+                      <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                        <div className="text-xs text-white/40 font-medium">Quick Start</div>
+                        <div className="flex gap-2">
+                          <select
+                            value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
+                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
+                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none"
+                          >
+                            <option value="NIFTY">NIFTY</option>
+                            <option value="BANKNIFTY">BANKNIFTY</option>
+                            <option value="FINNIFTY">FINNIFTY</option>
+                            <option value="CRUDEOIL">Crude Oil (MCX)</option>
+                            <option value="GOLDM">Gold Mini (MCX)</option>
+                            <option value="SILVERM">Silver Mini (MCX)</option>
+                          </select>
+                          <input
+                            type="number"
+                            value={slotQS[bot.slot]?.capital ?? 50000}
+                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
+                            min={10000} step={10000}
+                            className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none"
+                            placeholder="Capital"
+                          />
+                        </div>
+                        <button
+                          onClick={() => handleQuickStart(bot.slot)}
+                          disabled={startSecondaryMutation.isPending}
+                          className="w-full text-xs py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50"
+                        >
+                          {startSecondaryMutation.isPending ? "⏳ Starting…" : `▶ Start Slot ${bot.slot} (Paper)`}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
+
             </div>
             <p className="text-xs text-white/30 mt-3">
               Start additional bots from the <button className="underline text-purple-400" onClick={() => navigate("/hero-zero")}>Hero Zero Scanner</button> or Settings.
