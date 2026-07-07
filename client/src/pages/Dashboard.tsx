@@ -948,7 +948,7 @@ export default function Dashboard() {
                 onClick={() => {
                   if (trades.length === 0) { toast.info("No trades to export."); return; }
                   const headers = ["Date", "Symbol", "Direction", "Mode", "Entry Price", "Exit Price", "Quantity", "P&L (INR)", "Status", "Exit Reason"];
-                  const rows = trades.map(t => [
+                  const rows = trades.map((t: typeof trades[0]) => [
                     new Date(t.enteredAt).toLocaleString("en-IN"),
                     t.symbolLabel ?? t.symbol,
                     t.direction,
@@ -960,7 +960,7 @@ export default function Dashboard() {
                     t.status,
                     t.exitReason ?? "",
                   ]);
-                  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+                  const csv = [headers, ...rows].map((r: (string | number | null | undefined)[]) => r.map((v: string | number | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
                   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
@@ -995,7 +995,7 @@ export default function Dashboard() {
                 {trades.length === 0 ? (
                   <tr><td colSpan={8} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
                 ) : (
-                  trades.slice(0, 30).map((t) => {
+                  trades.slice(0, 30).map((t: typeof trades[0]) => {
                     // Compute live P&L for open trades
                     const livePnl = t.status === "open" && currentPrice > 0
                       ? t.direction === "BUY"

@@ -599,9 +599,9 @@ export const appRouter = router({
             eq(tradeLog.status, "closed"),
           ));
         const totalTrades = trades.length;
-        const wins = trades.filter((t) => (t.pnl ?? 0) > 0).length;
-        const losses = trades.filter((t) => (t.pnl ?? 0) < 0).length;
-        const totalPnl = trades.reduce((a, t) => a + (t.pnl ?? 0), 0);
+        const wins = trades.filter((t: typeof trades[0]) => (t.pnl ?? 0) > 0).length;
+        const losses = trades.filter((t: typeof trades[0]) => (t.pnl ?? 0) < 0).length;
+        const totalPnl = trades.reduce((a: number, t: typeof trades[0]) => a + (t.pnl ?? 0), 0);
         return {
           totalTrades,
           wins,
@@ -626,10 +626,10 @@ export const appRouter = router({
             eq(tradeLog.sessionToken, input.sessionToken),
             eq(tradeLog.status, "closed"),
           ));
-        const todayTrades = trades.filter(t => new Date(t.enteredAt) >= today);
-        const wins = todayTrades.filter(t => (t.pnl ?? 0) > 0).length;
-        const losses = todayTrades.filter(t => (t.pnl ?? 0) < 0).length;
-        const todayPnl = todayTrades.reduce((a, t) => a + (t.pnl ?? 0), 0);
+        const todayTrades = trades.filter((t: typeof trades[0]) => new Date(t.enteredAt) >= today);
+        const wins = todayTrades.filter((t: typeof trades[0]) => (t.pnl ?? 0) > 0).length;
+        const losses = todayTrades.filter((t: typeof trades[0]) => (t.pnl ?? 0) < 0).length;
+        const todayPnl = todayTrades.reduce((a: number, t: typeof trades[0]) => a + (t.pnl ?? 0), 0);
         return {
           todayTrades: todayTrades.length,
           todayPnl,
