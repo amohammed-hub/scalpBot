@@ -10,6 +10,7 @@ import RiskCalculator from "./pages/RiskCalculator";
 import Settings from "./pages/Settings";
 import UpstoxCallback from "./pages/UpstoxCallback";
 import HeroZeroScanner from "./pages/HeroZeroScanner";
+import PnLAnalytics from "./pages/PnLAnalytics";
 
 function Router() {
   return (
@@ -20,6 +21,7 @@ function Router() {
       <Route path="/settings" component={Settings} />
       <Route path="/upstox-callback" component={UpstoxCallback} />
       <Route path="/hero-zero" component={HeroZeroScanner} />
+      <Route path="/pnl-analytics" component={PnLAnalytics} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

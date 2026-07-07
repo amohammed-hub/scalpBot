@@ -2,7 +2,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { getDb } from "./db";
-import { upstoxCredentials, botSessions, tradeLog } from "../drizzle/schema";
+import { upstoxCredentials, botSessions, tradeLog, type TradeLog } from "../drizzle/schema";
 import { eq, desc, and } from "drizzle-orm";
 import { startBot, stopBot, getBotState, placeUpstoxOrder } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
@@ -656,6 +656,216 @@ export const appRouter = router({
           losses,
           winRate: todayTrades.length > 0 ? (wins / todayTrades.length) * 100 : 0,
         };
+      }),
+
+    // ── P&L Aggregation ──────────────────────────────────────────────
+    pnlByDay: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return [];
+        const trades = await db
+          .select()
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            eq(tradeLog.status, "closed"),
+          ))
+          .orderBy(desc(tradeLog.enteredAt));
+
+        // Group by date string YYYY-MM-DD (IST)
+        const byDay = new Map<string, typeof trades>();
+        for (const t of trades) {
+          const d = new Date(t.enteredAt);
+          // Convert to IST (UTC+5:30)
+          const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+          const key = ist.toISOString().slice(0, 10);
+          if (!byDay.has(key)) byDay.set(key, []);
+          byDay.get(key)!.push(t);
+        }
+
+        return Array.from(byDay.entries()).map(([date, ts]) => {
+          const pnls = ts.map((t: TradeLog) => t.pnl ?? 0);
+          const wins = ts.filter((t: TradeLog) => (t.pnl ?? 0) > 0).length;
+          const losses = ts.filter((t: TradeLog) => (t.pnl ?? 0) < 0).length;
+          const totalPnl = pnls.reduce((a: number, b: number) => a + b, 0);
+          return {
+            date,
+            trades: ts.length,
+            wins,
+            losses,
+            winRate: ts.length > 0 ? Math.round((wins / ts.length) * 100) : 0,
+            totalPnl: Math.round(totalPnl * 100) / 100,
+            bestTrade: pnls.length > 0 ? Math.max(...pnls) : 0,
+            worstTrade: pnls.length > 0 ? Math.min(...pnls) : 0,
+            avgPnl: ts.length > 0 ? Math.round((totalPnl / ts.length) * 100) / 100 : 0,
+            instruments: Array.from(new Set(ts.map((t: TradeLog) => t.symbolLabel ?? t.symbol ?? ""))).join(", "),
+          };
+        }).sort((a, b) => b.date.localeCompare(a.date));
+      }),
+
+    pnlByWeek: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return [];
+        const trades = await db
+          .select()
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            eq(tradeLog.status, "closed"),
+          ))
+          .orderBy(desc(tradeLog.enteredAt));
+
+        // Get ISO week key: YYYY-Www
+        const getWeekKey = (d: Date) => {
+          const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+          const jan4 = new Date(ist.getFullYear(), 0, 4);
+          const startOfWeek1 = new Date(jan4);
+          startOfWeek1.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+          const weekNum = Math.ceil(((ist.getTime() - startOfWeek1.getTime()) / 86400000 + 1) / 7);
+          return `${ist.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+        };
+
+        const getWeekRange = (weekKey: string) => {
+          const [year, wStr] = weekKey.split("-W");
+          const jan4 = new Date(Number(year), 0, 4);
+          const startOfWeek1 = new Date(jan4);
+          startOfWeek1.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+          const weekStart = new Date(startOfWeek1);
+          weekStart.setDate(startOfWeek1.getDate() + (Number(wStr) - 1) * 7);
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekStart.getDate() + 6);
+          return {
+            start: weekStart.toISOString().slice(0, 10),
+            end: weekEnd.toISOString().slice(0, 10),
+          };
+        };
+
+        const byWeek = new Map<string, typeof trades>();
+        for (const t of trades) {
+          const key = getWeekKey(new Date(t.enteredAt));
+          if (!byWeek.has(key)) byWeek.set(key, []);
+          byWeek.get(key)!.push(t);
+        }
+
+        return Array.from(byWeek.entries()).map(([weekKey, ts]) => {
+          const pnls = ts.map((t: TradeLog) => t.pnl ?? 0);
+          const wins = ts.filter((t: TradeLog) => (t.pnl ?? 0) > 0).length;
+          const losses = ts.filter((t: TradeLog) => (t.pnl ?? 0) < 0).length;
+          const totalPnl = pnls.reduce((a: number, b: number) => a + b, 0);
+          const range = getWeekRange(weekKey);
+          // Find best day within week
+          const dayMap = new Map<string, number>();
+          for (const t of ts) {
+            const ist = new Date(new Date(t.enteredAt).getTime() + 5.5 * 60 * 60 * 1000);
+            const day = ist.toISOString().slice(0, 10);
+            dayMap.set(day, (dayMap.get(day) ?? 0) + (t.pnl ?? 0));
+          }
+          const bestDay = dayMap.size > 0 ? Array.from(dayMap.entries()).sort((a, b) => b[1] - a[1])[0][0] : "—";
+          return {
+            weekKey,
+            weekRange: `${range.start} → ${range.end}`,
+            trades: ts.length,
+            wins,
+            losses,
+            winRate: ts.length > 0 ? Math.round((wins / ts.length) * 100) : 0,
+            totalPnl: Math.round(totalPnl * 100) / 100,
+            bestTrade: pnls.length > 0 ? Math.max(...pnls) : 0,
+            worstTrade: pnls.length > 0 ? Math.min(...pnls) : 0,
+            avgPnl: ts.length > 0 ? Math.round((totalPnl / ts.length) * 100) / 100 : 0,
+            bestDay,
+          };
+        }).sort((a, b) => b.weekKey.localeCompare(a.weekKey));
+      }),
+
+    pnlByMonth: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return [];
+        const trades = await db
+          .select()
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            eq(tradeLog.status, "closed"),
+          ))
+          .orderBy(desc(tradeLog.enteredAt));
+
+        const byMonth = new Map<string, typeof trades>();
+        for (const t of trades) {
+          const ist = new Date(new Date(t.enteredAt).getTime() + 5.5 * 60 * 60 * 1000);
+          const key = ist.toISOString().slice(0, 7); // YYYY-MM
+          if (!byMonth.has(key)) byMonth.set(key, []);
+          byMonth.get(key)!.push(t);
+        }
+
+        const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+        return Array.from(byMonth.entries()).map(([monthKey, ts]) => {
+          const pnls = ts.map((t: TradeLog) => t.pnl ?? 0);
+          const wins = ts.filter((t: TradeLog) => (t.pnl ?? 0) > 0).length;
+          const losses = ts.filter((t: TradeLog) => (t.pnl ?? 0) < 0).length;
+          const totalPnl = pnls.reduce((a: number, b: number) => a + b, 0);
+          // Consistency: % of days with positive P&L
+          const dayMap = new Map<string, number>();
+          for (const t of ts) {
+            const ist = new Date(new Date(t.enteredAt).getTime() + 5.5 * 60 * 60 * 1000);
+            const day = ist.toISOString().slice(0, 10);
+            dayMap.set(day, (dayMap.get(day) ?? 0) + (t.pnl ?? 0));
+          }
+          const positiveDays = Array.from(dayMap.values()).filter((v: number) => v > 0).length;
+          const consistency = dayMap.size > 0 ? Math.round((positiveDays / dayMap.size) * 100) : 0;
+          const [year, mon] = monthKey.split("-");
+          return {
+            monthKey,
+            monthLabel: `${MONTHS[Number(mon) - 1]} ${year}`,
+            trades: ts.length,
+            wins,
+            losses,
+            winRate: ts.length > 0 ? Math.round((wins / ts.length) * 100) : 0,
+            totalPnl: Math.round(totalPnl * 100) / 100,
+            bestTrade: pnls.length > 0 ? Math.max(...pnls) : 0,
+            worstTrade: pnls.length > 0 ? Math.min(...pnls) : 0,
+            avgDailyPnl: dayMap.size > 0 ? Math.round((totalPnl / dayMap.size) * 100) / 100 : 0,
+            tradingDays: dayMap.size,
+            consistency,
+          };
+        }).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+      }),
+
+    exportData: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return [];
+        const trades = await db
+          .select()
+          .from(tradeLog)
+          .where(eq(tradeLog.sessionToken, input.sessionToken))
+          .orderBy(desc(tradeLog.enteredAt));
+        return trades.map((t: TradeLog) => ({
+          id: t.id,
+          date: new Date(t.enteredAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }),
+          time: new Date(t.enteredAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }),
+          symbol: t.symbolLabel ?? t.symbol ?? "",
+          direction: t.direction ?? "",
+          mode: t.mode ?? "",
+          entryPrice: t.entryPrice ?? 0,
+          exitPrice: t.exitPrice ?? 0,
+          quantity: t.quantity ?? 0,
+          stopLoss: t.slPrice ?? 0,
+          target: t.targetPrice ?? 0,
+          pnl: t.pnl ?? 0,
+          status: t.status ?? "",
+          exitReason: t.exitReason ?? "",
+          confidence: t.confidence ?? 0,
+          botSlot: t.botSlot ?? 0,
+          enteredAt: t.enteredAt,
+          exitedAt: t.exitedAt,
+        }));
       }),
   }),
 

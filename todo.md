@@ -202,3 +202,19 @@
 - [x] Dashboard.tsx: per-slot Quick Start mini-form inside Parallel Bots panel (slot 1 and 2) — instrument dropdown (NIFTY/BANKNIFTY/FINNIFTY/Crude/Gold/Silver), capital input, Start button
 - [x] Settings.tsx: MCX Quick Launch grid with category filter (All/Metals/Energy) serves as the instrument selector with one-click launch
 - [x] shared/mcxInstruments.ts: added contract month warning comment with Upstox instrument master CSV download URL
+
+## Phase 6 — P&L Analytics & Export
+- [ ] routers.ts: trades.pnlByDay — group all trades by date, return daily P&L, trades count, win/loss, best/worst trade
+- [ ] routers.ts: trades.pnlByWeek — group by ISO week, return weekly summary
+- [ ] routers.ts: trades.pnlByMonth — group by month, return monthly summary
+- [ ] routers.ts: trades.exportData — return full trade data formatted for export (all fields, all time)
+- [ ] client/src/pages/PnLAnalytics.tsx — new page with 3 tabs: Daily / Weekly / Monthly
+- [ ] Daily tab: table with date, trades, wins, losses, win rate, gross P&L, net P&L, best trade, worst trade
+- [ ] Weekly tab: table with week range, trades, win rate, P&L, best day
+- [ ] Monthly tab: table with month, trades, win rate, P&L, best week, consistency score
+- [ ] Summary cards at top: total P&L, best day, worst day, avg daily P&L, overall win rate
+- [ ] Bar chart: daily P&L for last 30 days (green/red bars)
+- [ ] Export CSV button: downloads full trade log as CSV
+- [ ] Export Excel button: downloads XLSX with 4 sheets (All Trades, Daily, Weekly, Monthly)
+- [ ] App.tsx: add /pnl route and sidebar nav link
+- [ ] Dashboard: update Export CSV button to link to PnL Analytics page
