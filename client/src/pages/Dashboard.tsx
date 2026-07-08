@@ -790,6 +790,11 @@ export default function Dashboard() {
                   <span className="text-white/30 text-lg font-bold">HOLD</span>
                 </div>
                 <div className="text-white/30 text-sm">{isRunning ? `Scanning... next in ${countdown}s` : "Start the bot to see signals"}</div>
+                {isRunning && latestSignal?.reason && (
+                  <div className="mt-2 text-xs text-white/20 leading-relaxed font-mono bg-white/5 rounded-lg px-3 py-2 break-words">
+                    {latestSignal.reason}
+                  </div>
+                )}
               </div>
             ) : (
               <div>
