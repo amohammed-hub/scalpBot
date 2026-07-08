@@ -304,7 +304,9 @@ export function calcORBSignal(
   const price   = candles[candles.length - 1].close;
   const avgVol  = orbCandles.reduce((a, c) => a + c.volume, 0) / orbCandles.length;
   const lastVol = candles[candles.length - 1].volume;
-  const volRatio = avgVol > 0 ? lastVol / avgVol : 1;
+  // Index instruments have volume=0 — bypass volume check
+  const isIndex = avgVol === 0 && lastVol === 0;
+  const volRatio = isIndex ? volThreshold : (avgVol > 0 ? lastVol / avgVol : 1);
   if (price > orbHigh && volRatio >= volThreshold) {
     return { direction: "BUY",  orbHigh, orbLow, breakoutPct: (price - orbHigh) / orbHigh };
   }
@@ -380,7 +382,8 @@ export function calcInstitutionalFootprint(
   if (candles.length < 10) return { detected: false, direction: "HOLD", strength: 0, reason: "Insufficient data" };
   const last = candles[candles.length - 1];
   const avgVol = candles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
-  const volRatio = avgVol > 0 ? last.volume / avgVol : 1;
+  const isIndex = avgVol === 0 && last.volume === 0;
+  const volRatio = isIndex ? 2.5 : (avgVol > 0 ? last.volume / avgVol : 1);
   const body = Math.abs(last.close - last.open);
   const range = last.high - last.low;
   const bodyRatio = range > 0 ? body / range : 0;
@@ -388,7 +391,8 @@ export function calcInstitutionalFootprint(
   const isBullish = last.close > last.open;
   const isBearish = last.close < last.open;
   // Institutional candle: volume > 2×, body > 70% of range
-  if (volRatio >= 2.0 && bodyRatio >= 0.70) {
+  // For index instruments (volume=0), rely on body strength alone (bodyRatio >= 0.80)
+  if ((isIndex ? bodyRatio >= 0.80 : (volRatio >= 2.0 && bodyRatio >= 0.70))) {
     if (isBullish && last.close > vwap) {
       return { detected: true, direction: "BUY",  strength: Math.min(1, volRatio / 4), reason: `Inst footprint BUY | vol ${volRatio.toFixed(1)}x | body ${(bodyRatio * 100).toFixed(0)}%` };
     }
@@ -468,7 +472,11 @@ export function generateSignal(
 
   const avgVol = candles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
   const lastVol = candles[candles.length - 1].volume;
-  const volRatio = avgVol > 0 ? lastVol / avgVol : 1;
+  // NSE/BSE index instruments (Nifty, BankNifty, Sensex) return volume=0 from Upstox
+  // because they are calculated values, not traded instruments. When all volume is 0,
+  // bypass volume filters by treating volRatio as 1.5 (passes all vol checks).
+  const isIndexInstrument = avgVol === 0 && lastVol === 0;
+  const volRatio = isIndexInstrument ? 1.5 : (avgVol > 0 ? lastVol / avgVol : 1);
 
   const now = new Date();
   const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
