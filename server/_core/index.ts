@@ -122,7 +122,20 @@ async function startServer() {
       }
 
       const { apiKey, apiSecret } = rows[0];
-      const redirectUri = `${req.protocol}://${req.get('host')}/api/upstox-callback`;
+      // Always build the redirect_uri from the actual request headers.
+      // Behind a reverse proxy (Manus hosting), X-Forwarded-Proto gives us 'https'.
+      // This MUST match exactly what the user registered in their Upstox Developer App:
+      //   https://<domain>/api/upstox-callback
+      const proto = (req.headers['x-forwarded-proto'] as string || req.protocol).split(',')[0].trim();
+      const host = (req.headers['x-forwarded-host'] as string || req.get('host') || '');
+      const redirectUri = `${proto}://${host}/api/upstox-callback`;
+
+      // Log for debugging — visible in server logs
+      console.log('[upstox-callback] token exchange redirect_uri:', redirectUri);
+      console.log('[upstox-callback] x-forwarded-proto:', req.headers['x-forwarded-proto']);
+      console.log('[upstox-callback] x-forwarded-host:', req.headers['x-forwarded-host']);
+      console.log('[upstox-callback] req.protocol:', req.protocol);
+      console.log('[upstox-callback] req.host:', req.get('host'));
 
       const params = new URLSearchParams({
         code,
