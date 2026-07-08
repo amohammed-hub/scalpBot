@@ -33,9 +33,18 @@ export default function UpstoxCallback() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
+    const upstoxError = params.get("error");
+    const upstoxErrorDesc = params.get("error_description");
 
     if (!code) {
-      setStatus("no_code");
+      if (upstoxError) {
+        // Upstox returned an error instead of a code
+        setErrorMsg(`Upstox error: ${upstoxError}${upstoxErrorDesc ? ` — ${upstoxErrorDesc}` : ''}\n\nFull URL: ${window.location.href}`);
+        setStatus("error");
+      } else {
+        setErrorMsg(`No ?code= found in URL.\n\nFull URL received: ${window.location.href}`);
+        setStatus("no_code");
+      }
       return;
     }
 
@@ -174,10 +183,15 @@ export default function UpstoxCallback() {
             <>
               <XCircle className="w-12 h-12 text-amber-400 mx-auto mb-4" />
               <h2 className="text-xl font-bold text-white mb-2">No Authorization Code</h2>
-              <p className="text-white/60 text-sm mb-6">
-                This page is the callback URL for Upstox OAuth. It should only be opened after
-                logging in through Upstox. Please use the "Get Token Automatically" button in Settings.
+              <p className="text-white/60 text-sm mb-4">
+                Upstox did not return a <code className="text-amber-400">?code=</code> parameter.
+                This usually means the login was cancelled, or Upstox returned an error.
               </p>
+              {errorMsg && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-4 text-left">
+                  <p className="text-amber-400 text-xs font-mono break-all whitespace-pre-wrap">{errorMsg}</p>
+                </div>
+              )}
               <Button
                 className="bg-teal-500 hover:bg-teal-600 text-white w-full"
                 onClick={() => navigate("/settings")}

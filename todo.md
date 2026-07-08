@@ -229,9 +229,9 @@
 - [x] Settings.tsx: QR code warning added before Get Token Automatically button (critical OAuth fix)
 
 ## Phase 8 — Auto Token Refresh, Daily P&L Chart, Backtesting
-- [ ] Auto access token refresh at 8:30 AM daily (heartbeat job)
-- [ ] Daily P&L chart on Dashboard (7-day/30-day bar chart)
-- [ ] Backtesting tab (replay historical 1m candles)
+- [x] Auto access token refresh at 8:30 AM daily (heartbeat job)
+- [x] Daily P&L chart on Dashboard (7-day/30-day bar chart)
+- [x] Backtesting tab (replay historical 1m candles)
 
 ## Phase 8 — Auto Token Refresh, Daily P&L Chart, Backtester
 - [x] Settings.tsx: AutoRefreshSection component — daily 8:30 AM IST cron toggle with Telegram reminder
