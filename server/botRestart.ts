@@ -1,9 +1,14 @@
 /**
  * botRestart.ts
  * On server startup, query the DB for any botSessions with status="running"
- * and restart the bot engine for each one, restoring any open trade.
- * This ensures the live price feed and SL/Target monitoring resume
- * automatically after a server restart or code deploy.
+ * AND a confirmed open trade. Only restart bots that have an active trade to protect.
+ * Sessions without an open trade are marked "stopped" — they do NOT restart automatically
+ * because there is nothing to protect and restarting them could generate phantom signals.
+ *
+ * SAFETY RULES:
+ * 1. Only restart if there is an open trade in trade_log for this session.
+ * 2. partial1RPrice and partial2RPrice MUST be recalculated from entry/SL — never 0.
+ * 3. If the bot key is already in memory, skip it.
  */
 import { getDb } from "./db";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
@@ -28,7 +33,7 @@ export async function restartRunningBots(): Promise<void> {
     return;
   }
 
-  console.log(`[BotRestart] Found ${runningSessions.length} session(s) to restore`);
+  console.log(`[BotRestart] Found ${runningSessions.length} session(s) marked running — checking for open trades...`);
 
   for (const session of runningSessions) {
     try {
@@ -38,15 +43,10 @@ export async function restartRunningBots(): Promise<void> {
         continue;
       }
 
-      // Look up access token
-      const credRows = await db
-        .select()
-        .from(upstoxCredentials)
-        .where(eq(upstoxCredentials.sessionToken, session.sessionToken))
-        .limit(1);
-      const accessToken = credRows[0]?.accessToken ?? null;
-
-      // Look up any open trade for this session
+      // SAFETY RULE 1: Only restart if there is a confirmed open trade.
+      // A session without an open trade has nothing to protect. Restarting it
+      // would let the bot generate new signals immediately, which is unexpected
+      // behaviour after a server restart. The user should restart it manually.
       const openTradeRows = await db
         .select()
         .from(tradeLog)
@@ -56,48 +56,65 @@ export async function restartRunningBots(): Promise<void> {
         ))
         .limit(1);
 
-      let existingOpenTrade: OpenTrade | null = null;
-      if (openTradeRows.length > 0) {
-        const t = openTradeRows[0];
-        existingOpenTrade = {
-          dbId: t.id,
-          symbol: t.symbol,
-          symbolLabel: t.symbolLabel ?? t.symbol,
-          instrumentToken: t.instrumentToken ?? session.instrumentToken ?? "",
-          direction: t.direction,
-          mode: t.mode,
-          entryPrice: t.entryPrice,
-          quantity: t.quantity,
-          slPrice: t.slPrice ?? 0,
-          targetPrice: t.targetPrice ?? 0,
-          atr: t.atr ?? 0,
-          confidence: t.confidence ?? 0,
-          upstoxOrderId: t.upstoxOrderId ?? undefined,
-          enteredAt: t.enteredAt,
-          trailingSlEnabled: session.trailingSlEnabled ?? false,
-          trailingSlPct: session.trailingSlPct ?? 0.5,
-          currentSl: t.slPrice ?? 0,
-          isReEntry: false,
-          // Recompute partial profit levels from entry/SL distance
-          // CRITICAL: must NOT be 0 — a 0 value triggers immediate false partial booking
-          // Formula mirrors botEngine.ts line ~1455: 1R = entry ± slDist, 2R = entry ± slDist*2
-          partial1RPrice: (() => {
-            const slDist = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice));
-            return t.direction === "BUY" ? t.entryPrice + slDist : t.entryPrice - slDist;
-          })(),
-          partial2RPrice: (() => {
-            const slDist = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice));
-            return t.direction === "BUY" ? t.entryPrice + slDist * 2 : t.entryPrice - slDist * 2;
-          })(),
-          partialBooked: 0,
-          bookedQty: 0,
-          bookedPnl: 0,
-        };
-        console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — restoring open trade #${t.id} ${t.direction} ${t.symbol} @ ₹${t.entryPrice}`);
+      if (openTradeRows.length === 0) {
+        // No open trade — mark session as stopped so it doesn't restart again
+        await db.update(botSessions)
+          .set({ status: "stopped" })
+          .where(eq(botSessions.sessionToken, session.sessionToken));
+        console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — no open trade, marked stopped (restart manually)`);
+        continue;
       }
 
-      // Build onTradeOpen callback — TradeInsert type does NOT include sessionToken/sessionId/botSlot
-      // Those come from the session closure variable
+      const t = openTradeRows[0];
+
+      // SAFETY RULE 2: Recalculate partial profit levels from entry/SL distance.
+      // These are NOT stored in the DB. Setting them to 0 causes immediate false
+      // partial booking on the first tick (price >= 0 is always true).
+      const slDist = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice));
+      const partial1RPrice = t.direction === "BUY"
+        ? t.entryPrice + slDist
+        : t.entryPrice - slDist;
+      const partial2RPrice = t.direction === "BUY"
+        ? t.entryPrice + slDist * 2
+        : t.entryPrice - slDist * 2;
+
+      const existingOpenTrade: OpenTrade = {
+        dbId: t.id,
+        symbol: t.symbol,
+        symbolLabel: t.symbolLabel ?? t.symbol,
+        instrumentToken: t.instrumentToken ?? session.instrumentToken ?? "",
+        direction: t.direction,
+        mode: t.mode,
+        entryPrice: t.entryPrice,
+        quantity: t.quantity,
+        slPrice: t.slPrice ?? 0,
+        targetPrice: t.targetPrice ?? 0,
+        atr: t.atr ?? 0,
+        confidence: t.confidence ?? 0,
+        upstoxOrderId: t.upstoxOrderId ?? undefined,
+        enteredAt: t.enteredAt,
+        trailingSlEnabled: session.trailingSlEnabled ?? false,
+        trailingSlPct: session.trailingSlPct ?? 0.5,
+        currentSl: t.slPrice ?? 0,
+        isReEntry: false,
+        partial1RPrice,
+        partial2RPrice,
+        partialBooked: 0,
+        bookedQty: 0,
+        bookedPnl: 0,
+      };
+
+      console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — restoring open trade #${t.id} ${t.direction} ${t.symbol} @ ₹${t.entryPrice} | SL: ₹${t.slPrice} | 1R: ₹${partial1RPrice.toFixed(2)}`);
+
+      // Look up access token
+      const credRows = await db
+        .select()
+        .from(upstoxCredentials)
+        .where(eq(upstoxCredentials.sessionToken, session.sessionToken))
+        .limit(1);
+      const accessToken = credRows[0]?.accessToken ?? null;
+
+      // Build onTradeOpen callback
       const onTradeOpen = async (trade: {
         symbol: string; symbolLabel: string; instrumentToken: string;
         direction: "BUY" | "SELL"; mode: "paper" | "live";
@@ -195,7 +212,7 @@ export async function restartRunningBots(): Promise<void> {
         onTick,
       );
 
-      console.log(`[BotRestart] ✅ Restarted bot for session ${session.sessionToken.slice(0, 8)} — ${session.instrumentSymbol} ${session.mode} mode`);
+      console.log(`[BotRestart] ✅ Restarted bot for session ${session.sessionToken.slice(0, 8)} — ${session.instrumentSymbol} ${session.mode} mode — protecting open trade #${t.id}`);
     } catch (err) {
       console.error(`[BotRestart] ❌ Failed to restart session ${session.sessionToken.slice(0, 8)}:`, err);
     }
