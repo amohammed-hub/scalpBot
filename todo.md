@@ -265,9 +265,9 @@
 - [x] Dashboard.tsx: added red warning banner inside open trade panel when bot is not running — warns user that SL/Target are not being monitored
 
 ## Improvements Batch (Jul 9)
-- [ ] schema: add partial1RPrice and partial2RPrice float columns to trade_log
-- [ ] botEngine.ts: persist partial1RPrice/partial2RPrice to DB when trade opens
-- [ ] botRestart.ts: restore partial1RPrice/partial2RPrice exactly from DB (not recalculated)
-- [ ] Dashboard.tsx / TradeLog: add clickable Upstox hyperlink on each trade row (order ID links to Upstox order page)
-- [ ] Dashboard.tsx open trade panel: add Upstox order link next to the manual exit button
-- [ ] vitest: add botRestart safety rule tests (no open trade → marked stopped, partial1RPrice > entry for BUY)
+- [x] schema: add partial1RPrice and partial2RPrice float columns to trade_log
+- [x] botEngine.ts: persist partial1RPrice/partial2RPrice to DB when trade opens
+- [x] botRestart.ts: restore partial1RPrice/partial2RPrice exactly from DB (not recalculated)
+- [x] Dashboard.tsx / TradeLog: add clickable Upstox hyperlink on each trade row (order ID links to Upstox order page)
+- [x] Dashboard.tsx open trade panel: add Upstox order link next to the manual exit button
+- [x] vitest: add botRestart safety rule tests (no open trade → marked stopped, partial1RPrice > entry for BUY)
