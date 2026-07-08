@@ -319,27 +319,39 @@ export default function Dashboard() {
     }
   }, [currentPrice, isRunning]);
 
-  // Token status check
-  const [tokenStatus, setTokenStatus] = useState<"valid" | "missing" | "short">(() => {
-    try {
-      const creds = JSON.parse(localStorage.getItem("scalpbot_credentials") ?? "null");
-      if (!creds?.accessToken) return "missing";
-      if (creds.accessToken.length < 100) return "short";
-      return "valid";
-    } catch { return "missing"; }
-  });
+  // Token status — check server DB (authoritative) with localStorage as fallback
+  const { data: serverCreds } = trpc.credentials.get.useQuery(
+    { sessionToken },
+    { refetchInterval: 60000, staleTime: 30000 }
+  );
+  const [tokenStatus, setTokenStatus] = useState<"valid" | "missing" | "short">("missing");
   useEffect(() => {
-    const check = () => {
+    if (serverCreds !== undefined) {
+      // Server DB is the source of truth — covers auto-fetched tokens
+      if (serverCreds?.hasAccessToken) {
+        setTokenStatus("valid");
+        // Keep localStorage in sync so other components see the token
+        try {
+          const creds = JSON.parse(localStorage.getItem("scalpbot_credentials") ?? "null") ?? {};
+          if (!creds.accessToken || creds.accessToken === "[auto-fetched]") {
+            localStorage.setItem("scalpbot_credentials", JSON.stringify({
+              ...creds,
+              accessToken: "[auto-fetched]",
+              tokenSavedAt: Date.now(),
+            }));
+          }
+        } catch { /* ignore */ }
+        return;
+      }
+      // Server says no token — fall back to localStorage
       try {
         const creds = JSON.parse(localStorage.getItem("scalpbot_credentials") ?? "null");
         if (!creds?.accessToken) setTokenStatus("missing");
-        else if (creds.accessToken.length < 100) setTokenStatus("short");
+        else if (creds.accessToken.length < 100 && creds.accessToken !== "[auto-fetched]") setTokenStatus("short");
         else setTokenStatus("valid");
       } catch { setTokenStatus("missing"); }
-    };
-    const id = setInterval(check, 30000);
-    return () => clearInterval(id);
-  }, []);
+    }
+  }, [serverCreds]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleStart = () => {
