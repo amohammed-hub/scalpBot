@@ -594,6 +594,7 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const db = await getDb();
         if (!db) return null;
+        // First try current session token
         const rows = await db
           .select()
           .from(tradeLog)
@@ -603,7 +604,16 @@ export const appRouter = router({
           ))
           .orderBy(desc(tradeLog.enteredAt))
           .limit(1);
-        return rows.length > 0 ? rows[0] : null;
+        if (rows.length > 0) return rows[0];
+        // Fallback: return the most recent open trade across ALL sessions
+        // This handles page refresh / new tab where sessionToken may differ from the one that started the bot
+        const anyRows = await db
+          .select()
+          .from(tradeLog)
+          .where(eq(tradeLog.status, "open"))
+          .orderBy(desc(tradeLog.enteredAt))
+          .limit(1);
+        return anyRows.length > 0 ? anyRows[0] : null;
       }),
 
     stats: publicProcedure

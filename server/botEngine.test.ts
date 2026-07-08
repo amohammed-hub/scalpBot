@@ -46,7 +46,7 @@ describe("generateSignal", () => {
   });
 
   it("layer field is always present and valid", () => {
-    const validLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "PowerHour", "None"];
+    const validLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "PowerHour", "VWAPReversion", "ORB", "InstitutionalFootprint", "None"];
     const candles = makeCandles(80, 2000, "flat");
     const signal = generateSignal(candles);
     expect(validLayers).toContain(signal.layer);
