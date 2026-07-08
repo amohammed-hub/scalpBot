@@ -749,7 +749,10 @@ export default function Dashboard() {
                   latestSignal.layer === "MACD_BB"    ? "bg-violet-500/20 border-violet-500/30 text-violet-400" :
                   latestSignal.layer === "Pattern"    ? "bg-blue-500/20 border-blue-500/30 text-blue-400" :
                   latestSignal.layer === "Trend"      ? "bg-teal-500/20 border-teal-500/30 text-teal-400" :
-                  latestSignal.layer === "Momentum"   ? "bg-pink-500/20 border-pink-500/30 text-pink-400" :
+                  latestSignal.layer === "Momentum"      ? "bg-pink-500/20 border-pink-500/30 text-pink-400" :
+                  latestSignal.layer === "ORB"            ? "bg-lime-500/20 border-lime-500/30 text-lime-400" :
+                  latestSignal.layer === "VWAPReversion"  ? "bg-cyan-500/20 border-cyan-500/30 text-cyan-400" :
+                  latestSignal.layer === "InstFootprint"  ? "bg-rose-500/20 border-rose-500/30 text-rose-400" :
                   "bg-white/10 border-white/20 text-white/50"
                 }`}>
                   {latestSignal.layer}
@@ -778,6 +781,24 @@ export default function Dashboard() {
                   <div className="flex justify-between"><span className="text-white/50">Stop Loss</span><span className="text-red-400 font-mono">₹{latestSignal.slPrice?.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-white/50">Target</span><span className="text-emerald-400 font-mono">₹{latestSignal.targetPrice?.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span className="text-white/50">ATR</span><span className="text-white/70 font-mono">₹{latestSignal.atr?.toFixed(2)}</span></div>
+                  {(latestSignal as any).marketRegime && (
+                    <div className="flex justify-between">
+                      <span className="text-white/50">Regime</span>
+                      <span className="text-white/60 text-xs font-mono max-w-[180px] text-right leading-tight">{(latestSignal as any).marketRegime}</span>
+                    </div>
+                  )}
+                  {(latestSignal as any).orbHigh > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-white/50">ORB Range</span>
+                      <span className="text-lime-400 font-mono text-xs">₹{(latestSignal as any).orbLow?.toFixed(1)}–₹{(latestSignal as any).orbHigh?.toFixed(1)}</span>
+                    </div>
+                  )}
+                  {(latestSignal as any).vwapZScore !== undefined && (latestSignal as any).vwapZScore !== 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-white/50">VWAP z-score</span>
+                      <span className="text-cyan-400 font-mono">{(latestSignal as any).vwapZScore?.toFixed(2)}σ</span>
+                    </div>
+                  )}
                 </div>
                 <div className="mt-3 text-xs text-white/30 leading-relaxed">{latestSignal.reason}</div>
               </div>

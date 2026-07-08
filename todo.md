@@ -218,3 +218,17 @@
 - [x] Export Excel button: downloads XLSX with 4 sheets (All Trades, Daily, Weekly, Monthly)
 - [x] App.tsx: /pnl-analytics route and sidebar nav link (green 📊)
 - [x] Dashboard sidebar: P&L Analytics link added next to Hero Zero Scanner
+
+## Phase 7 — Institutional Strategies (ORB, VWAP, Market Regime, Institutional Footprint)
+- [x] botEngine.ts: calcORBSignal — Opening Range Breakout with volume confirmation (15-min ORB, 1.5× volume threshold)
+- [x] botEngine.ts: calcVWAPDeviation — VWAP deviation bands with z-score (mean reversion when |z| > 1.5)
+- [x] botEngine.ts: classifyMarketRegime — 5-regime classifier (strong_trend, weak_trend, ranging, high_vol, low_vol)
+- [x] botEngine.ts: calcInstitutionalFootprint — volume-weighted momentum (2× vol + 70% body + VWAP alignment)
+- [x] botEngine.ts: calcDayMomentumScore — intraday time-series momentum (last-half-hour effect)
+- [x] botEngine.test.ts: 21 new tests for all 4 institutional strategy functions (64 total tests passing)
+- [x] Settings.tsx: QR code warning added before Get Token Automatically button (critical OAuth fix)
+
+## Phase 8 — Auto Token Refresh, Daily P&L Chart, Backtesting
+- [ ] Auto access token refresh at 8:30 AM daily (heartbeat job)
+- [ ] Daily P&L chart on Dashboard (7-day/30-day bar chart)
+- [ ] Backtesting tab (replay historical 1m candles)

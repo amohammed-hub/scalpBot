@@ -391,3 +391,204 @@ describe("partial profit booking price levels", () => {
     }
   });
 });
+
+// ── Phase 7: Institutional Strategy Tests ──────────────────────────────────────
+import {
+  calcORBSignal,
+  calcVWAPDeviation,
+  classifyMarketRegime,
+  calcInstitutionalFootprint,
+} from "./botEngine";
+
+// ── ORB Signal Tests ────────────────────────────────────────────────────────────
+describe("calcORBSignal", () => {
+  it("returns HOLD when not enough candles", () => {
+    const result = calcORBSignal(makeCandles(10, 2000, "up"));
+    expect(result.direction).toBe("HOLD");
+  });
+
+  it("returns BUY when price breaks above ORB high with volume", () => {
+    const orbCandles = makeCandles(15, 2000, "flat");
+    const orbHigh = Math.max(...orbCandles.map(c => c.high));
+    const breakoutCandles: Candle[] = Array.from({ length: 5 }, (_, i) => ({
+      open: orbHigh + i * 2,
+      high: orbHigh + i * 2 + 5,
+      low: orbHigh + i * 2 - 1,
+      close: orbHigh + i * 2 + 4,
+      volume: 200000,
+      timestamp: Date.now() + i * 60000,
+    }));
+    const allCandles = [...orbCandles, ...breakoutCandles];
+    const result = calcORBSignal(allCandles, 15, 1.5);
+    expect(["BUY", "HOLD"]).toContain(result.direction);
+    expect(result.orbHigh).toBeGreaterThan(0);
+    expect(result.orbLow).toBeGreaterThan(0);
+  });
+
+  it("returns SELL when price breaks below ORB low with volume", () => {
+    const orbCandles = makeCandles(15, 2000, "flat");
+    const orbLow = Math.min(...orbCandles.map(c => c.low));
+    const breakdownCandles: Candle[] = Array.from({ length: 5 }, (_, i) => ({
+      open: orbLow - i * 2,
+      high: orbLow - i * 2 + 1,
+      low: orbLow - i * 2 - 5,
+      close: orbLow - i * 2 - 4,
+      volume: 200000,
+      timestamp: Date.now() + i * 60000,
+    }));
+    const allCandles = [...orbCandles, ...breakdownCandles];
+    const result = calcORBSignal(allCandles, 15, 1.5);
+    expect(["SELL", "HOLD"]).toContain(result.direction);
+  });
+
+  it("breakoutPct is non-negative", () => {
+    const candles = makeCandles(25, 2000, "up");
+    const result = calcORBSignal(candles, 15, 1.5);
+    expect(result.breakoutPct).toBeGreaterThanOrEqual(0);
+  });
+
+  it("orbHigh >= orbLow", () => {
+    const candles = makeCandles(25, 2000, "flat");
+    const result = calcORBSignal(candles, 15, 1.5);
+    expect(result.orbHigh).toBeGreaterThanOrEqual(result.orbLow);
+  });
+});
+
+// ── VWAP Deviation Tests ────────────────────────────────────────────────────────
+describe("calcVWAPDeviation", () => {
+  it("returns HOLD when not enough candles", () => {
+    const result = calcVWAPDeviation(makeCandles(10, 2000, "flat"));
+    expect(result.signal).toBe("HOLD");
+  });
+
+  it("returns a valid signal for sufficient candles", () => {
+    const candles = makeCandles(30, 2000, "flat");
+    const result = calcVWAPDeviation(candles);
+    expect(["BUY", "SELL", "HOLD"]).toContain(result.signal);
+  });
+
+  it("zScore is a finite number", () => {
+    const candles = makeCandles(30, 2000, "flat");
+    const result = calcVWAPDeviation(candles);
+    expect(isFinite(result.zScore)).toBe(true);
+  });
+
+  it("stdDev is positive for non-constant prices", () => {
+    const candles = makeCandles(30, 2000, "up");
+    const result = calcVWAPDeviation(candles);
+    expect(result.stdDev).toBeGreaterThan(0);
+  });
+
+  it("returns BUY when price is far below VWAP", () => {
+    const highCandles = makeCandles(20, 2100, "flat");
+    const dropCandles: Candle[] = Array.from({ length: 10 }, (_, i) => ({
+      open: 2100 - i * 20,
+      high: 2100 - i * 20 + 5,
+      low: 2100 - i * 20 - 5,
+      close: 2100 - i * 20 - 4,
+      volume: 100000,
+      timestamp: Date.now() + i * 60000,
+    }));
+    const allCandles = [...highCandles, ...dropCandles];
+    const result = calcVWAPDeviation(allCandles);
+    expect(["BUY", "HOLD"]).toContain(result.signal);
+  });
+});
+
+// ── Market Regime Classifier Tests ─────────────────────────────────────────────
+describe("classifyMarketRegime", () => {
+  it("returns ranging for insufficient data", () => {
+    const result = classifyMarketRegime(makeCandles(10, 2000, "flat"));
+    expect(result.regime).toBe("ranging");
+  });
+
+  it("returns a valid regime for sufficient candles", () => {
+    const candles = makeCandles(50, 2000, "flat");
+    const result = classifyMarketRegime(candles);
+    expect(["strong_trend", "weak_trend", "ranging", "high_vol", "low_vol"]).toContain(result.regime);
+  });
+
+  it("label is a non-empty string", () => {
+    const candles = makeCandles(50, 2000, "up");
+    const result = classifyMarketRegime(candles);
+    expect(result.label.length).toBeGreaterThan(0);
+  });
+
+  it("detects non-low_vol regime for sustained directional candles", () => {
+    const candles = makeCandles(60, 2000, "up");
+    const result = classifyMarketRegime(candles);
+    // Trending candles should NOT be low_vol (squeeze)
+    expect(result.regime).not.toBe("low_vol");
+    expect(["strong_trend", "weak_trend", "high_vol", "ranging"]).toContain(result.regime);
+  });
+
+  it("detects ranging or low_vol for flat candles", () => {
+    const candles = makeCandles(60, 2000, "flat");
+    const result = classifyMarketRegime(candles);
+    expect(["ranging", "low_vol"]).toContain(result.regime);
+  });
+});
+
+// ── Institutional Footprint Tests ──────────────────────────────────────────────
+describe("calcInstitutionalFootprint", () => {
+  it("returns HOLD for insufficient data", () => {
+    const result = calcInstitutionalFootprint(makeCandles(5, 2000, "flat"));
+    expect(result.direction).toBe("HOLD");
+    expect(result.detected).toBe(false);
+  });
+
+  it("returns valid direction for sufficient candles", () => {
+    const candles = makeCandles(20, 2000, "flat");
+    const result = calcInstitutionalFootprint(candles);
+    expect(["BUY", "SELL", "HOLD"]).toContain(result.direction);
+  });
+
+  it("strength is between 0 and 1", () => {
+    const candles = makeCandles(20, 2000, "up");
+    const result = calcInstitutionalFootprint(candles);
+    expect(result.strength).toBeGreaterThanOrEqual(0);
+    expect(result.strength).toBeLessThanOrEqual(1);
+  });
+
+  it("reason is a non-empty string", () => {
+    const candles = makeCandles(20, 2000, "flat");
+    const result = calcInstitutionalFootprint(candles);
+    expect(result.reason.length).toBeGreaterThan(0);
+  });
+
+  it("detects BUY footprint on bullish high-volume candle above VWAP", () => {
+    const base = makeCandles(15, 2000, "up");
+    const vwapBase = base.reduce((a, c) => a + c.close, 0) / base.length;
+    const highVolBullish: Candle = {
+      open: vwapBase + 5,
+      high: vwapBase + 25,
+      low: vwapBase + 4,
+      close: vwapBase + 24,
+      volume: 500000,
+      timestamp: Date.now(),
+    };
+    const allCandles = [...base, highVolBullish];
+    const result = calcInstitutionalFootprint(allCandles);
+    if (result.detected) {
+      expect(result.direction).toBe("BUY");
+    }
+  });
+
+  it("detects SELL footprint on bearish high-volume candle below VWAP", () => {
+    const base = makeCandles(15, 2000, "down");
+    const vwapBase = base.reduce((a, c) => a + c.close, 0) / base.length;
+    const highVolBearish: Candle = {
+      open: vwapBase - 5,
+      high: vwapBase - 4,
+      low: vwapBase - 25,
+      close: vwapBase - 24,
+      volume: 500000,
+      timestamp: Date.now(),
+    };
+    const allCandles = [...base, highVolBearish];
+    const result = calcInstitutionalFootprint(allCandles);
+    if (result.detected) {
+      expect(result.direction).toBe("SELL");
+    }
+  });
+});

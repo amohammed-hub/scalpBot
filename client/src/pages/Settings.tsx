@@ -589,6 +589,14 @@ export default function Settings() {
               </label>
             </div>
 
+            {/* QR code warning — critical for OAuth to work */}
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-amber-300/90 space-y-1">
+                <p><strong>⚠️ QR code login does NOT work with the Upstox API.</strong></p>
+                <p>On the Upstox login page, use: <strong>Mobile Number → OTP/TOTP → 6-digit PIN</strong>. Do NOT scan the QR code — it will redirect you back without the authorization code.</p>
+              </div>
+            </div>
             {/* Auto-fetch button — primary method */}
             {creds.apiKey && creds.apiSecret ? (
               <button

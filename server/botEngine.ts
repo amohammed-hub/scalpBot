@@ -35,7 +35,12 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "HeroZero" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "HeroZero" | "ORB" | "VWAPReversion" | "InstFootprint" | "None";
+  // Institutional strategy metadata
+  orbHigh?: number;
+  orbLow?: number;
+  vwapZScore?: number;
+  marketRegime?: string;
   isPowerHour?: boolean;
   isMCXEvening?: boolean;
   isHeroZero?: boolean;
@@ -278,6 +283,155 @@ function get5mTrend(candles5m: Candle[]): "bullish" | "bearish" | "neutral" {
   return "neutral";
 }
 
+// ── Institutional Strategy Helpers ──────────────────────────────────────────
+
+/**
+ * Strategy 1: Opening Range Breakout (ORB)
+ * Source: SSRN #5198458 — Optimizing Intraday Breakout Strategies on the NSE
+ * The first 15 minutes of trading establish the day's range. A close outside
+ * that range with volume surge (1.5×) is a high-conviction directional trade.
+ * Best for: 9:30–11:30 AM NSE, 9:15–10:00 AM MCX
+ */
+export function calcORBSignal(
+  candles: Candle[],
+  orbMinutes = 15,
+  volThreshold = 1.5,
+): { direction: "BUY" | "SELL" | "HOLD"; orbHigh: number; orbLow: number; breakoutPct: number } {
+  if (candles.length < orbMinutes + 2) return { direction: "HOLD", orbHigh: 0, orbLow: 0, breakoutPct: 0 };
+  const orbCandles = candles.slice(0, orbMinutes);
+  const orbHigh = Math.max(...orbCandles.map(c => c.high));
+  const orbLow  = Math.min(...orbCandles.map(c => c.low));
+  const price   = candles[candles.length - 1].close;
+  const avgVol  = orbCandles.reduce((a, c) => a + c.volume, 0) / orbCandles.length;
+  const lastVol = candles[candles.length - 1].volume;
+  const volRatio = avgVol > 0 ? lastVol / avgVol : 1;
+  if (price > orbHigh && volRatio >= volThreshold) {
+    return { direction: "BUY",  orbHigh, orbLow, breakoutPct: (price - orbHigh) / orbHigh };
+  }
+  if (price < orbLow && volRatio >= volThreshold) {
+    return { direction: "SELL", orbHigh, orbLow, breakoutPct: (orbLow - price) / orbLow };
+  }
+  return { direction: "HOLD", orbHigh, orbLow, breakoutPct: 0 };
+}
+
+/**
+ * Strategy 2: VWAP Deviation Bands (Institutional Mean Reversion)
+ * Source: SSRN #4631351 — VWAP: The Holy Grail for Day Trading Systems
+ * Price stretched >1.5 standard deviations from VWAP tends to revert.
+ * Institutions use VWAP as their benchmark — they buy below and sell above.
+ * Best for: 10:30 AM–2:30 PM (trending days excluded via ADX filter)
+ */
+export function calcVWAPDeviation(
+  candles: Candle[],
+): { deviation: number; stdDev: number; zScore: number; signal: "BUY" | "SELL" | "HOLD" } {
+  if (candles.length < 20) return { deviation: 0, stdDev: 0, zScore: 0, signal: "HOLD" };
+  const vwap = calcVWAP(candles);
+  const price = candles[candles.length - 1].close;
+  // Compute rolling std dev of (close - vwap) over last 20 candles
+  const diffs = candles.slice(-20).map(c => c.close - vwap);
+  const mean  = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+  const variance = diffs.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / diffs.length;
+  const stdDev = Math.sqrt(variance) || 1;
+  const deviation = price - vwap;
+  const zScore = deviation / stdDev;
+  // Mean reversion: fade extreme deviations (|z| > 1.5) — price will snap back
+  if (zScore < -1.5) return { deviation, stdDev, zScore, signal: "BUY" };  // too far below VWAP
+  if (zScore >  1.5) return { deviation, stdDev, zScore, signal: "SELL" }; // too far above VWAP
+  return { deviation, stdDev, zScore, signal: "HOLD" };
+}
+
+/**
+ * Strategy 3: Market Regime Classifier
+ * Source: SSRN #6769178 — Regime-Adaptive Trading Framework for Indian Equities
+ * Classifies market into 5 regimes and routes to the best strategy.
+ * Regime detection uses ADX (trend strength), BB width (volatility), and
+ * RSI (momentum direction) — all available from 1-min candles.
+ */
+export type MarketRegime = "strong_trend" | "weak_trend" | "ranging" | "high_vol" | "low_vol";
+export function classifyMarketRegime(candles: Candle[]): { regime: MarketRegime; label: string } {
+  if (candles.length < 30) return { regime: "ranging", label: "Insufficient data" };
+  const closes = candles.map(c => c.close);
+  const adx = calcADX(candles, 14);
+  const bb  = calcBollingerBands(closes, 20, 2);
+  const rsi = calcRSI(closes, 14);
+  // High volatility: BB width > 3% of price (explosive moves)
+  if (bb.width > 0.03) return { regime: "high_vol",    label: "High Volatility — widen SL, reduce size" };
+  // Strong trend: ADX > 30, RSI not extreme
+  if (adx > 30 && rsi > 40 && rsi < 70) return { regime: "strong_trend", label: "Strong Trend — ride momentum, no mean reversion" };
+  // Weak trend: ADX 20–30
+  if (adx >= 20 && adx <= 30) return { regime: "weak_trend",   label: "Weak Trend — use breakout + momentum" };
+  // Low volatility: BB width < 0.8% (squeeze forming)
+  if (bb.width < 0.008) return { regime: "low_vol",     label: "Low Volatility / Squeeze — wait for BB expansion" };
+  // Default: ranging
+  return { regime: "ranging", label: "Ranging — use VWAP mean reversion" };
+}
+
+/**
+ * Strategy 4: Volume-Weighted Momentum (Institutional Footprint)
+ * Source: QuantInsti — Momentum Trading Strategies; FII/DII volume analysis
+ * Large institutional players leave a volume footprint when they enter.
+ * A candle with volume > 2× average AND strong body (>70% of range) AND
+ * aligned with VWAP direction = institutional directional bet.
+ * Best for: any time, especially 10:00–11:30 AM and 2:00–3:00 PM
+ */
+export function calcInstitutionalFootprint(
+  candles: Candle[],
+): { detected: boolean; direction: "BUY" | "SELL" | "HOLD"; strength: number; reason: string } {
+  if (candles.length < 10) return { detected: false, direction: "HOLD", strength: 0, reason: "Insufficient data" };
+  const last = candles[candles.length - 1];
+  const avgVol = candles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
+  const volRatio = avgVol > 0 ? last.volume / avgVol : 1;
+  const body = Math.abs(last.close - last.open);
+  const range = last.high - last.low;
+  const bodyRatio = range > 0 ? body / range : 0;
+  const vwap = calcVWAP(candles);
+  const isBullish = last.close > last.open;
+  const isBearish = last.close < last.open;
+  // Institutional candle: volume > 2×, body > 70% of range
+  if (volRatio >= 2.0 && bodyRatio >= 0.70) {
+    if (isBullish && last.close > vwap) {
+      return { detected: true, direction: "BUY",  strength: Math.min(1, volRatio / 4), reason: `Inst footprint BUY | vol ${volRatio.toFixed(1)}x | body ${(bodyRatio * 100).toFixed(0)}%` };
+    }
+    if (isBearish && last.close < vwap) {
+      return { detected: true, direction: "SELL", strength: Math.min(1, volRatio / 4), reason: `Inst footprint SELL | vol ${volRatio.toFixed(1)}x | body ${(bodyRatio * 100).toFixed(0)}%` };
+    }
+  }
+  return { detected: false, direction: "HOLD", strength: 0, reason: "No institutional footprint" };
+}
+
+/**
+ * Strategy 5: Intraday Time-Series Momentum (Last-Half-Hour Effect)
+ * Source: CentAUR — Intraday Time Series Momentum: International Evidence
+ * The last 30 minutes of NSE trading (3:00–3:30 PM) exhibits strong
+ * continuation of the day's direction. If the day is up >0.3%, the last
+ * 30 min is statistically more likely to close higher. This is the academic
+ * basis for the Power Hour strategy already implemented.
+ * This helper provides the day-direction score used by Power Hour.
+ */
+export function calcDayMomentumScore(
+  candles1m: Candle[],
+): { score: number; direction: "BUY" | "SELL" | "HOLD"; dayReturnPct: number; label: string } {
+  if (candles1m.length < 30) return { score: 0, direction: "HOLD", dayReturnPct: 0, label: "Insufficient data" };
+  const open  = candles1m[0].open;
+  const price = candles1m[candles1m.length - 1].close;
+  const dayReturnPct = (price - open) / open * 100;
+  const vwap = calcVWAP(candles1m);
+  const adx  = calcADX(candles1m, 14);
+  const rsi  = calcRSI(candles1m.map(c => c.close), 14);
+  let score = 0;
+  let direction: "BUY" | "SELL" | "HOLD" = "HOLD";
+  if (dayReturnPct > 0.3)  { score += 2; direction = "BUY"; }
+  if (dayReturnPct < -0.3) { score += 2; direction = "SELL"; }
+  if (price > vwap && direction === "BUY")  score += 1;
+  if (price < vwap && direction === "SELL") score += 1;
+  if (adx > 20) score += 1;
+  if (direction === "BUY"  && rsi > 50 && rsi < 75) score += 1;
+  if (direction === "SELL" && rsi < 50 && rsi > 25) score += 1;
+  const label = direction === "HOLD" ? "No day momentum" :
+    `Day ${dayReturnPct > 0 ? "+" : ""}${dayReturnPct.toFixed(2)}% | ADX(${adx.toFixed(0)}) | RSI(${rsi.toFixed(0)}) | score:${score}/5`;
+  return { score, direction, dayReturnPct, label };
+}
+
 function getTimeOfDayMultiplier(istMin: number): { multiplier: number; label: string; skip: boolean } {
   if (istMin >= 555 && istMin < 570)  return { multiplier: 0,    label: "Opening Volatility",    skip: true  };
   if (istMin >= 570 && istMin < 600)  return { multiplier: 0.75, label: "Settling",               skip: false };
@@ -473,6 +627,53 @@ export function generateSignal(
     }
   }
 
+  // ── Layer 6: Opening Range Breakout (ORB) ─────────────────────────────────
+  // Only valid in the first 3 hours of NSE session (9:30–12:30 PM)
+  if (direction === "HOLD" && istMin >= 570 && istMin <= 750 && candles.length >= 17) {
+    const orb = calcORBSignal(candles, 15, 1.5);
+    if (orb.direction !== "HOLD") {
+      const regime = classifyMarketRegime(candles);
+      // ORB works best in trending and weak-trend regimes, not in ranging/high-vol
+      if (regime.regime !== "ranging" && regime.regime !== "high_vol") {
+        direction = orb.direction;
+        confidence = Math.min(0.92, 0.72 + orb.breakoutPct * 500);
+        reason = `[ORB] ${orb.direction === "BUY" ? "Above" : "Below"} 15-min range | ${(orb.breakoutPct * 100).toFixed(3)}% | ${regime.label} | 5m:${trend5m}`;
+        layer = "ORB";
+      }
+    }
+  }
+
+  // ── Layer 7: VWAP Deviation Mean Reversion ───────────────────────────────────
+  // Only valid in midday lull (10:30 AM–2:30 PM) when market is ranging (ADX < 25)
+  if (direction === "HOLD" && istMin >= 630 && istMin <= 870 && candles.length >= 20) {
+    const vwapDev = calcVWAPDeviation(candles);
+    const regime = classifyMarketRegime(candles);
+    // Mean reversion only works in ranging/low-vol regimes, NOT in strong trends
+    if (vwapDev.signal !== "HOLD" && (regime.regime === "ranging" || regime.regime === "low_vol")) {
+      const revDir = vwapDev.signal;
+      if ((revDir === "BUY" && allow5mBuy) || (revDir === "SELL" && allow5mSell)) {
+        direction = revDir;
+        confidence = Math.min(0.85, 0.62 + Math.abs(vwapDev.zScore) * 0.08);
+        reason = `[VWAPRev] z=${vwapDev.zScore.toFixed(2)} | dev=${vwapDev.deviation.toFixed(1)} | ${regime.label} | 5m:${trend5m}`;
+        layer = "VWAPReversion";
+      }
+    }
+  }
+
+  // ── Layer 8: Institutional Footprint ─────────────────────────────────────────
+  // Valid all day — detects large institutional candles (vol >2×, body >70%)
+  if (direction === "HOLD" && candles.length >= 10) {
+    const inst = calcInstitutionalFootprint(candles);
+    if (inst.detected && inst.direction !== "HOLD") {
+      if ((inst.direction === "BUY" && allow5mBuy) || (inst.direction === "SELL" && allow5mSell)) {
+        direction = inst.direction;
+        confidence = Math.min(0.93, 0.70 + inst.strength * 0.3);
+        reason = `[InstFootprint] ${inst.reason} | 5m:${trend5m}`;
+        layer = "InstFootprint";
+      }
+    }
+  }
+
   // S/R proximity filter — reject entries near major levels
   if (direction !== "HOLD" && nearSR) {
     return {
@@ -497,8 +698,14 @@ export function generateSignal(
   const adjustedConfidence = Math.min(0.98, confidence * tod.multiplier);
   const slPrice = direction === "BUY" ? price - atr * slMultiplier : price + atr * slMultiplier;
   const targetPrice = direction === "BUY" ? price + atr * tpMultiplier : price - atr * tpMultiplier;
+  const regime = classifyMarketRegime(candles);
 
-  return { direction, confidence: adjustedConfidence, entryPrice: price, slPrice, targetPrice, atr, reason: `${reason} | ${tod.label}`, layer };
+  return {
+    direction, confidence: adjustedConfidence, entryPrice: price, slPrice, targetPrice, atr,
+    reason: `${reason} | ${tod.label}`,
+    layer,
+    marketRegime: regime.label,
+  };
 }
 
 // ── Power Hour Signal (3:00–3:20 PM) — whole-day context ─────────────────────
