@@ -110,6 +110,8 @@ export interface BotState {
   intervalHandle: ReturnType<typeof setInterval> | null;
   lastError: string | null;
   nextScanAt: number;
+  // Timestamp of the last completed tick (unix ms) — used for staleness detection
+  lastTickAt: number;
   lastSlHitAt: number | null;
   lastSlDirection: "BUY" | "SELL" | null;
   reEntryCandles: number;
@@ -1162,6 +1164,8 @@ async function tick(
 
   const price = state.lastPrice;
   state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
+  // Update lastTickAt so Dashboard can detect staleness
+  state.lastTickAt = Date.now();
 
   // Persist live price to DB on every tick — fires regardless of open trade state
   // This is the primary mechanism for keeping the Dashboard current price updated
@@ -1511,7 +1515,7 @@ type TradeInsert = {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 export function startBot(
-  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode" | "isMCXEveningMode" | "heroZeroMode" | "alertsSent">,
+  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastTickAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode" | "isMCXEveningMode" | "heroZeroMode" | "alertsSent">,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
@@ -1525,6 +1529,7 @@ export function startBot(
     lastSignal: null, lastPrice: 0, bidPrice: 0, askPrice: 0,
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
+    lastTickAt: 0,
     lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0, isPowerHourMode: false,
     isMCXEveningMode: false, heroZeroMode: false, alertsSent: new Set<string>(),
   };

@@ -67,16 +67,16 @@ export async function restartRunningBots(): Promise<void> {
 
       const t = openTradeRows[0];
 
-      // SAFETY RULE 2: Recalculate partial profit levels from entry/SL distance.
-      // These are NOT stored in the DB. Setting them to 0 causes immediate false
-      // partial booking on the first tick (price >= 0 is always true).
+      // SAFETY RULE 2: Use stored partial profit levels from DB (written at trade open).
+      // Fall back to calculation ONLY if the DB values are null.
+      // Setting them to 0 causes immediate false partial booking on the first tick.
       const slDist = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice));
-      const partial1RPrice = t.direction === "BUY"
+      const partial1RPrice = t.partial1RPrice ?? (t.direction === "BUY"
         ? t.entryPrice + slDist
-        : t.entryPrice - slDist;
-      const partial2RPrice = t.direction === "BUY"
+        : t.entryPrice - slDist);
+      const partial2RPrice = t.partial2RPrice ?? (t.direction === "BUY"
         ? t.entryPrice + slDist * 2
-        : t.entryPrice - slDist * 2;
+        : t.entryPrice - slDist * 2);
 
       const existingOpenTrade: OpenTrade = {
         dbId: t.id,
@@ -95,7 +95,9 @@ export async function restartRunningBots(): Promise<void> {
         enteredAt: t.enteredAt,
         trailingSlEnabled: session.trailingSlEnabled ?? false,
         trailingSlPct: session.trailingSlPct ?? 0.5,
-        currentSl: t.slPrice ?? 0,
+        // Use currentSl from bot_sessions (written by onTick — reflects trailing SL)
+        // Fall back to original slPrice if not yet written
+        currentSl: session.currentSl ?? t.slPrice ?? 0,
         isReEntry: false,
         partial1RPrice,
         partial2RPrice,
@@ -165,7 +167,7 @@ export async function restartRunningBots(): Promise<void> {
         }).where(eq(botSessions.sessionToken, session.sessionToken));
       };
 
-      // Build onTick callback — persist live price to DB on every scan
+      // Build onTick callback — persist live price, trailing SL, and tick timestamp to DB on every scan
       const onTick = async (state: import("./botEngine").BotState): Promise<void> => {
         const dbInner = await getDb();
         if (!dbInner) return;
@@ -176,6 +178,10 @@ export async function restartRunningBots(): Promise<void> {
           nextScanAt: state.nextScanAt,
           lastSignal: state.lastSignal?.direction ?? null,
           lastSignalAt: state.lastSignal ? new Date() : undefined,
+          // Trailing SL — written every tick so it survives the next restart
+          currentSl: state.openTrade?.currentSl ?? null,
+          // Staleness detection — Dashboard shows warning if this is too old
+          lastTickAt: Date.now(),
         }).where(eq(botSessions.sessionToken, state.sessionToken));
       };
 

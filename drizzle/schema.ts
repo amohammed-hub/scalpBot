@@ -69,6 +69,10 @@ export const botSessions = mysqlTable("bot_sessions", {
   telegramBotToken: varchar("telegramBotToken", { length: 256 }),
   telegramChatId: varchar("telegramChatId", { length: 64 }),
   telegramEnabled: boolean("telegramEnabled").default(false),
+  // Trailing SL — updated on every tick so it survives server restarts
+  currentSl: float("currentSl"),
+  // Last tick timestamp (unix ms) — used for staleness detection on Dashboard
+  lastTickAt: bigint("lastTickAt", { mode: "number" }).default(0),
   // Multi-bot slot (0 = primary, 1 = secondary, 2 = tertiary)
   botSlot: int("botSlot").default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

@@ -296,6 +296,20 @@ export default function Dashboard() {
   const isMCXEveningMode = liveData?.isMCXEveningMode ?? false;
   const heroZeroMode = liveData?.heroZeroMode ?? false;
   const reEntryCandles = liveData?.reEntryCandles ?? 0;
+  const lastTickAt = liveData?.lastTickAt ?? 0;
+
+  // Staleness: track how many seconds since last tick
+  const [secondsSinceLastTick, setSecondsSinceLastTick] = useState(0);
+  useEffect(() => {
+    if (!isRunning || !lastTickAt) { setSecondsSinceLastTick(0); return; }
+    const update = () => setSecondsSinceLastTick(Math.floor((Date.now() - lastTickAt) / 1000));
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [isRunning, lastTickAt]);
+  // Stale if bot is running but last tick was more than 2× the scan interval ago
+  const scanIntervalSec = botStatus?.scanIntervalSec ?? 30;
+  const isStale = isRunning && lastTickAt > 0 && secondsSinceLastTick > scanIntervalSec * 2;
 
   // Countdown to next scan
   const [countdown, setCountdown] = useState(0);
@@ -583,8 +597,36 @@ export default function Dashboard() {
 
         {/* Stats Row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {/* Live Price card — special: shows staleness indicator */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-white/50 text-xs">Live Price</span>
+              <div className="flex items-center gap-1.5">
+                {isStale && (
+                  <span className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 animate-pulse">
+                    Stale
+                  </span>
+                )}
+                <TrendingUp className="w-4 h-4 text-teal-400" />
+              </div>
+            </div>
+            <div className="text-xl font-bold text-white">
+              {currentPrice > 0 ? `₹${currentPrice.toFixed(2)}` : "—"}
+            </div>
+            {bidPrice > 0 && (
+              <div className="text-xs text-white/30 mt-0.5">
+                B:₹{bidPrice.toFixed(0)} A:₹{askPrice.toFixed(0)}
+              </div>
+            )}
+            {isRunning && lastTickAt > 0 && (
+              <div className={`text-xs mt-0.5 ${isStale ? "text-amber-400/70" : "text-white/20"}`}>
+                {isStale
+                  ? `⚠ No update for ${secondsSinceLastTick}s`
+                  : `Updated ${secondsSinceLastTick}s ago`}
+              </div>
+            )}
+          </div>
           {[
-            { label: "Live Price", value: currentPrice > 0 ? `₹${currentPrice.toFixed(2)}` : "—", sub: bidPrice > 0 ? `B:₹${bidPrice.toFixed(0)} A:₹${askPrice.toFixed(0)}` : null, icon: TrendingUp, color: "teal" },
             { label: "Today P&L", value: `${todayPnl >= 0 ? "+" : ""}₹${todayPnl.toFixed(0)}`, sub: unrealizedPnl !== null ? `Unrealized: ${unrealizedPnl >= 0 ? "+" : ""}₹${unrealizedPnl.toFixed(0)}` : null, icon: DollarSign, color: todayPnl >= 0 ? "emerald" : "red" },
             { label: "Trades Today", value: `${todayTradesCount} / ${config.maxTradesPerDay}`, sub: null, icon: Activity, color: "blue" },
             { label: "Win Rate", value: winRate, sub: allStats ? `${allStats.wins}W / ${allStats.losses}L` : null, icon: CheckCircle, color: "purple" },

@@ -271,3 +271,35 @@
 - [x] Dashboard.tsx / TradeLog: add clickable Upstox hyperlink on each trade row (order ID links to Upstox order page)
 - [x] Dashboard.tsx open trade panel: add Upstox order link next to the manual exit button
 - [x] vitest: add botRestart safety rule tests (no open trade → marked stopped, partial1RPrice > entry for BUY)
+
+## Feature Batch — Jul 9 (All with E2E tests)
+
+### Feature 1: Persist currentSl to DB on every tick
+- [ ] schema: add currentSl float column to bot_sessions (written by onTick)
+- [ ] routers.ts onTick: write state.openTrade.currentSl to bot_sessions.currentSl
+- [ ] routers.ts liveData DB fallback: read currentSl from bot_sessions and use it when restoring open trade
+- [ ] botRestart.ts: restore currentSl from bot_sessions (not slPrice) so trailing SL survives restart
+- [ ] E2E test: trailing SL updated in state after tick, and restored correctly from DB
+
+### Feature 2: Last-tick timestamp + staleness warning on Dashboard
+- [ ] schema: add lastTickAt bigint column to bot_sessions (unix ms, written by onTick)
+- [ ] routers.ts onTick: write Date.now() to bot_sessions.lastTickAt
+- [ ] routers.ts liveData: return lastTickAt in both in-memory and DB fallback paths
+- [ ] Dashboard.tsx: show "Last updated X seconds ago" next to live price
+- [ ] Dashboard.tsx: show amber warning badge when lastTickAt is stale (> 2x scanInterval)
+- [ ] E2E test: lastTickAt is set after tick and increases on subsequent ticks
+
+### Feature 3: Restore dailyPnl from DB on bot restart
+- [ ] routers.ts bot.start: query today's closed trades sum for this sessionToken and use as initial dailyPnl (not 0)
+- [ ] botRestart.ts: same — restore dailyPnl from today's closed trades sum
+- [ ] E2E test: dailyPnl is correctly restored from DB trade history
+
+### Feature 4: Paper-trade safety gate before going live
+- [ ] routers.ts bot.start: if mode=live and sessionToken has zero closed paper trades, return error "Complete at least 3 paper trades before going live"
+- [ ] Dashboard.tsx: show clear warning in the mode selector when switching to live with insufficient paper trades
+- [ ] E2E test: live mode blocked with 0 paper trades, allowed after 3+ paper trades
+
+### Feature 5: Bot health watchdog
+- [ ] server/botWatchdog.ts: runs every 60s, checks all running bot sessions in DB, restarts any that are marked running but have no in-memory state (missed by botRestart)
+- [ ] server/_core/index.ts: start watchdog after server starts
+- [ ] E2E test: watchdog detects missing in-memory state and triggers restart

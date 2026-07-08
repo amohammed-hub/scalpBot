@@ -238,7 +238,7 @@ export const appRouter = router({
           .orderBy(desc(tradeLog.enteredAt))
           .limit(1);
 
-        // Count today's trades to restore tradesCount on restart
+        // Count today's trades and sum today's P&L to restore on restart
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
         const todayTradeCountRows = await db
@@ -249,6 +249,17 @@ export const appRouter = router({
             gte(tradeLog.enteredAt, todayStart),
           ));
         const todayTradesCount = todayTradeCountRows[0]?.count ?? 0;
+
+        // Restore dailyPnl from today's closed trades so loss-limit circuit breaker is accurate
+        const todayPnlRows = await db
+          .select({ pnl: tradeLog.pnl })
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            eq(tradeLog.status, "closed"),
+            gte(tradeLog.enteredAt, todayStart),
+          ));
+        const restoredDailyPnl = todayPnlRows.reduce((sum: number, r: { pnl: number | null }) => sum + (r.pnl ?? 0), 0);
 
         let existingOpenTrade = null;
         if (existingOpenTrades.length > 0) {
@@ -451,7 +462,8 @@ export const appRouter = router({
             minConfidence: input.minConfidence,
             scanIntervalSec: input.scanIntervalSec,
             tradesCount: todayTradesCount,
-            dailyPnl: 0,
+            // Restore today's P&L from DB so daily loss-limit circuit breaker is accurate across restarts
+            dailyPnl: restoredDailyPnl,
             accessToken,
             telegramBotToken: input.telegramBotToken ?? null,
             telegramChatId: input.telegramChatId ?? null,
@@ -471,6 +483,10 @@ export const appRouter = router({
               nextScanAt: tickState.nextScanAt,
               lastSignal: tickState.lastSignal?.direction ?? null,
               lastSignalAt: tickState.lastSignal ? new Date() : undefined,
+              // Trailing SL — written every tick so it survives server restarts
+              currentSl: tickState.openTrade?.currentSl ?? null,
+              // Staleness detection — Dashboard shows warning if this is too old
+              lastTickAt: Date.now(),
             }).where(eq(botSessions.sessionToken, tickState.sessionToken));
           },
         );
@@ -525,6 +541,8 @@ export const appRouter = router({
             signal: null,
             candles: [],
             nextScanAt: rows[0].nextScanAt ?? 0,
+            // Last tick timestamp for staleness detection
+            lastTickAt: rows[0].lastTickAt ?? 0,
             openTrade: dbOpenTrade ? (() => {
               const slDist = Math.abs(dbOpenTrade.entryPrice - (dbOpenTrade.slPrice ?? dbOpenTrade.entryPrice));
               const p1 = dbOpenTrade.partial1RPrice ?? (dbOpenTrade.direction === "BUY" ? dbOpenTrade.entryPrice + slDist : dbOpenTrade.entryPrice - slDist);
@@ -546,7 +564,8 @@ export const appRouter = router({
                 enteredAt: dbOpenTrade.enteredAt,
                 trailingSlEnabled: false,
                 trailingSlPct: 0.5,
-                currentSl: dbOpenTrade.slPrice ?? 0,
+                // Use currentSl from bot_sessions (written by onTick — reflects trailing SL)
+                currentSl: rows[0].currentSl ?? dbOpenTrade.slPrice ?? 0,
                 partial1RPrice: p1,
                 partial2RPrice: p2,
                 partialBooked: 0 as 0 | 1 | 2,
@@ -564,6 +583,8 @@ export const appRouter = router({
           candles: state.candles.slice(-60),
           candles5mCount: state.candles5m.length,
           nextScanAt: state.nextScanAt,
+          // Last tick timestamp — Dashboard uses this for staleness warning
+          lastTickAt: state.lastTickAt ?? Date.now(),
           openTrade: state.openTrade,
           isPowerHourMode: state.isPowerHourMode,
           isMCXEveningMode: state.isMCXEveningMode,
@@ -1205,6 +1226,8 @@ export const appRouter = router({
             nextScanAt: tickState.nextScanAt,
             lastSignal: tickState.lastSignal?.direction ?? null,
             lastSignalAt: tickState.lastSignal ? new Date() : undefined,
+            currentSl: tickState.openTrade?.currentSl ?? null,
+            lastTickAt: Date.now(),
           }).where(eq(botSessions.sessionToken, tickState.sessionToken));
         });
 
