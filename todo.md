@@ -244,8 +244,16 @@
 - [x] Dashboard.tsx: Backtester sidebar link added (blue 🔬 icon)
 - [x] botEngine.test.ts: Fixed flaky classifyMarketRegime test (64 tests passing)
 
-## End-to-End Audit Fixes (Jul 8)
+## End-to-End Audit Fixes (Jul 8) — Round 1
 - [x] botEngine.ts: add onTick callback to startBot — called after every scan to persist lastPrice/bidPrice/askPrice/nextScanAt to DB
 - [x] routers.ts: restore tradesCount from today's DB trade count on bot restart (not hardcoded 0)
 - [x] routers.ts: fix openTrade cross-session query to filter by botSlot to avoid showing wrong slot's trade
 - [x] Dashboard.tsx: remove dead progressPct variable (replaced by inline calculation)
+
+## Real Root Cause Fixes (Jul 8) — Round 2
+- [x] botEngine.ts: onTick moved to fire IMMEDIATELY after price fetch — was only firing when no open trade existed (critical bug: price never updated during active trade)
+- [x] botEngine.ts: added getBotStateByPrefix() export to find running bot even when sessionToken doesn't exactly match
+- [x] routers.ts: liveData now uses getBotStateByPrefix() fallback + fetches open trade from DB when bot not in memory
+- [x] routers.ts: manualExit now finds trade by ID alone (not requiring sessionToken match) to support cross-session exits
+- [x] routers.ts: manualExit clears in-memory state using trade's actual sessionToken (not just input sessionToken)
+- [x] Dashboard.tsx: activeTrade now prefers inMemOpenTrade (live trailing SL, partial bookings) over DB openTrade

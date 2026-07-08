@@ -384,7 +384,9 @@ export default function Dashboard() {
   };
 
   // ── Open trade panel helpers ──────────────────────────────────────────────────
-  const activeTrade = openTrade ?? (inMemOpenTrade ? {
+  // Prefer inMemOpenTrade (from liveData — has live trailing SL, partial booking state)
+  // Fall back to DB openTrade (from trades.openTrade — used after server restart)
+  const activeTrade = inMemOpenTrade ? {
     id: inMemOpenTrade.dbId,
     symbolLabel: inMemOpenTrade.symbolLabel,
     direction: inMemOpenTrade.direction,
@@ -394,7 +396,11 @@ export default function Dashboard() {
     targetPrice: inMemOpenTrade.targetPrice,
     confidence: inMemOpenTrade.confidence,
     mode: inMemOpenTrade.mode,
-  } : null);
+    partialBooked: (inMemOpenTrade as any).partialBooked ?? 0,
+    bookedPnl: (inMemOpenTrade as any).bookedPnl ?? 0,
+    bookedQty: (inMemOpenTrade as any).bookedQty ?? 0,
+    currentSl: (inMemOpenTrade as any).currentSl ?? inMemOpenTrade.slPrice,
+  } : openTrade ?? null;
 
   // Only calculate unrealized P&L when we have a real live price (not 0, not same as entry)
   const unrealizedPnl = activeTrade && currentPrice > 0

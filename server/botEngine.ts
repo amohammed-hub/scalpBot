@@ -1163,6 +1163,10 @@ async function tick(
   const price = state.lastPrice;
   state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
 
+  // Persist live price to DB on every tick — fires regardless of open trade state
+  // This is the primary mechanism for keeping the Dashboard current price updated
+  if (onTick) onTick(state).catch(() => {});
+
   // Time calculations
   const now2 = new Date();
   const istMin2 = ((now2.getUTCHours() * 60 + now2.getUTCMinutes()) + 330) % (24 * 60);
@@ -1421,8 +1425,6 @@ async function tick(
   }
 
   state.lastSignal = signal;
-  // Persist live price/signal to DB on every tick so Dashboard always shows fresh data
-  if (onTick) await onTick(state).catch(() => {});
   if (signal.direction === "HOLD" || signal.confidence < state.minConfidence / 100) return;
 
   // Position sizing
@@ -1537,4 +1539,17 @@ export function getBotState(sessionToken: string): BotState | undefined {
 
 export function getLivePrice(sessionToken: string): number {
   return bots.get(sessionToken)?.lastPrice ?? 0;
+}
+
+// Returns the first running bot whose sessionToken starts with the given prefix
+// Used to find the primary bot when the client sessionToken matches the bot's base token
+export function getBotStateByPrefix(sessionToken: string): BotState | undefined {
+  // Exact match first
+  const exact = bots.get(sessionToken);
+  if (exact) return exact;
+  // Then try prefix match (e.g. sessionToken is the base, bot key is sessionToken-slot1)
+  for (const [key, state] of Array.from(bots.entries())) {
+    if (key.startsWith(sessionToken) && state.status === 'running') return state;
+  }
+  return undefined;
 }

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "./db";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog } from "../drizzle/schema";
 import { eq, desc, and, gte, count } from "drizzle-orm";
-import { startBot, stopBot, getBotState, placeUpstoxOrder, generateSignal, type Candle } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, placeUpstoxOrder, generateSignal, type Candle } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
 
@@ -490,9 +490,10 @@ export const appRouter = router({
     liveData: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
-        const state = getBotState(input.sessionToken);
+        // Try exact match first, then any running bot for this session prefix
+        const state = getBotState(input.sessionToken) ?? getBotStateByPrefix(input.sessionToken);
         if (!state) {
-          // Fallback: read last known price from DB
+          // Fallback: read last known price from DB (written by onTick on every scan)
           const db = await getDb();
           if (!db) return { price: 0, bid: 0, ask: 0, signal: null, candles: [], nextScanAt: 0, openTrade: null };
           const rows = await db
@@ -501,6 +502,17 @@ export const appRouter = router({
             .where(eq(botSessions.sessionToken, input.sessionToken))
             .limit(1);
           if (rows.length === 0) return { price: 0, bid: 0, ask: 0, signal: null, candles: [], nextScanAt: 0, openTrade: null };
+          // Also fetch the open trade from DB so the panel shows correct data after server restart
+          const openTradeRows = await db
+            .select()
+            .from(tradeLog)
+            .where(and(
+              eq(tradeLog.sessionToken, input.sessionToken),
+              eq(tradeLog.status, "open"),
+            ))
+            .orderBy(desc(tradeLog.enteredAt))
+            .limit(1);
+          const dbOpenTrade = openTradeRows.length > 0 ? openTradeRows[0] : null;
           return {
             price: rows[0].lastPrice ?? 0,
             bid: rows[0].bidPrice ?? 0,
@@ -508,7 +520,29 @@ export const appRouter = router({
             signal: null,
             candles: [],
             nextScanAt: rows[0].nextScanAt ?? 0,
-            openTrade: null,
+            openTrade: dbOpenTrade ? {
+              dbId: dbOpenTrade.id,
+              symbol: dbOpenTrade.symbol,
+              symbolLabel: dbOpenTrade.symbolLabel ?? dbOpenTrade.symbol,
+              instrumentToken: dbOpenTrade.instrumentToken ?? "",
+              direction: dbOpenTrade.direction,
+              mode: dbOpenTrade.mode,
+              entryPrice: dbOpenTrade.entryPrice,
+              quantity: dbOpenTrade.quantity,
+              slPrice: dbOpenTrade.slPrice ?? 0,
+              targetPrice: dbOpenTrade.targetPrice ?? 0,
+              atr: dbOpenTrade.atr ?? 0,
+              confidence: dbOpenTrade.confidence ?? 0,
+              enteredAt: dbOpenTrade.enteredAt,
+              trailingSlEnabled: false,
+              trailingSlPct: 0.5,
+              currentSl: dbOpenTrade.slPrice ?? 0,
+              partial1RPrice: 0,
+              partial2RPrice: 0,
+              partialBooked: 0 as 0 | 1 | 2,
+              bookedQty: 0,
+              bookedPnl: 0,
+            } : null,
           };
         }
         return {
@@ -537,13 +571,15 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
 
-        // Load trade
+        // Load trade — search by ID first, then verify it belongs to this session or is an open trade
+        // We use ID-only lookup to support cross-session fallback (page refresh with new sessionToken)
         const trades = await db
           .select()
           .from(tradeLog)
-          .where(and(eq(tradeLog.id, input.tradeId), eq(tradeLog.sessionToken, input.sessionToken)))
+          .where(eq(tradeLog.id, input.tradeId))
           .limit(1);
         if (trades.length === 0) throw new Error("Trade not found");
+        if (trades[0].status !== "open") throw new Error("Trade is already closed");
         const trade = trades[0];
 
         const pnl = trade.direction === "BUY"
@@ -584,11 +620,18 @@ export const appRouter = router({
           })
           .where(eq(tradeLog.id, input.tradeId));
 
-        // Clear from in-memory bot state
-        const state = getBotState(input.sessionToken);
-        if (state?.openTrade?.dbId === input.tradeId) {
-          state.openTrade = null;
-          state.dailyPnl += pnl;
+        // Clear from in-memory bot state — try both the input sessionToken and the trade's actual sessionToken
+        const stateByInput = getBotState(input.sessionToken);
+        if (stateByInput?.openTrade?.dbId === input.tradeId) {
+          stateByInput.openTrade = null;
+          stateByInput.dailyPnl += pnl;
+        } else {
+          // Trade may belong to a different sessionToken (cross-session fallback)
+          const stateByTrade = getBotState(trade.sessionToken);
+          if (stateByTrade?.openTrade?.dbId === input.tradeId) {
+            stateByTrade.openTrade = null;
+            stateByTrade.dailyPnl += pnl;
+          }
         }
 
         return { success: true, pnl, orderId };
