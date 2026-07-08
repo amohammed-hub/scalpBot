@@ -1,91 +1,46 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { trpc } from "@/lib/trpc";
 import { CheckCircle, XCircle, Loader2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const LS_SESSION = "scalpbot_session";
 const LS_CREDS = "scalpbot_credentials";
 
-function getSessionToken(): string {
-  let token = localStorage.getItem(LS_SESSION);
-  if (!token) {
-    token = crypto.randomUUID();
-    localStorage.setItem(LS_SESSION, token);
-  }
-  return token;
-}
-
-function getRedirectUri(): string {
-  // Use the live app URL as redirect URI (same origin)
-  return `${window.location.origin}/upstox-callback`;
-}
-
-type Status = "loading" | "success" | "error" | "no_code";
+type Status = "loading" | "success" | "error";
 
 export default function UpstoxCallback() {
   const [, navigate] = useLocation();
   const [status, setStatus] = useState<Status>("loading");
   const [errorMsg, setErrorMsg] = useState("");
 
-  const exchangeCode = trpc.credentials.exchangeCode.useMutation();
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const upstoxError = params.get("error");
-    const upstoxErrorDesc = params.get("error_description");
+    const serverStatus = params.get("status");
+    const msg = params.get("msg");
 
-    if (!code) {
-      if (upstoxError) {
-        // Upstox returned an error instead of a code
-        setErrorMsg(`Upstox error: ${upstoxError}${upstoxErrorDesc ? ` — ${upstoxErrorDesc}` : ''}\n\nFull URL: ${window.location.href}`);
-        setStatus("error");
-      } else {
-        setErrorMsg(`No ?code= found in URL.\n\nFull URL received: ${window.location.href}`);
-        setStatus("no_code");
+    if (serverStatus === "success") {
+      // Server already exchanged the code and saved the token to DB.
+      // Update localStorage so Dashboard token indicator turns green.
+      try {
+        const creds = JSON.parse(localStorage.getItem(LS_CREDS) ?? "null") ?? {};
+        localStorage.setItem(LS_CREDS, JSON.stringify({
+          ...creds,
+          accessToken: creds.accessToken || "[auto-fetched]",
+          tokenSavedAt: Date.now(),
+        }));
+      } catch {
+        // ignore
       }
-      return;
+      setStatus("success");
+      // Auto-redirect to settings after 3 seconds
+      setTimeout(() => navigate("/settings"), 3000);
+    } else if (serverStatus === "error") {
+      setErrorMsg(msg ? decodeURIComponent(msg) : "Unknown error from server.");
+      setStatus("error");
+    } else {
+      // No status param — page was opened directly without going through Upstox
+      setErrorMsg(`This page should only be opened after completing Upstox login.\n\nURL received: ${window.location.href}`);
+      setStatus("error");
     }
-
-    const sessionToken = getSessionToken();
-    const redirectUri = getRedirectUri();
-
-    // Also save the redirect URI to localStorage so Settings shows the correct one
-    try {
-      const creds = JSON.parse(localStorage.getItem(LS_CREDS) ?? "null") ?? {};
-      localStorage.setItem(LS_CREDS, JSON.stringify({ ...creds, redirectUri }));
-    } catch {
-      // ignore
-    }
-
-    exchangeCode.mutate(
-      { sessionToken, code, redirectUri },
-      {
-        onSuccess: () => {
-          // Mark tokenSavedAt so Dashboard token indicator turns green immediately
-          // The actual token is stored server-side in the DB; we just record the timestamp
-          try {
-            const creds = JSON.parse(localStorage.getItem(LS_CREDS) ?? "null") ?? {};
-            localStorage.setItem(LS_CREDS, JSON.stringify({
-              ...creds,
-              // Mark token as fetched today via OAuth (actual token is in DB)
-              accessToken: creds.accessToken || "[auto-fetched]",
-              tokenSavedAt: Date.now(),
-            }));
-          } catch {
-            // ignore
-          }
-          setStatus("success");
-          // Auto-redirect to settings after 3 seconds
-          setTimeout(() => navigate("/settings"), 3000);
-        },
-        onError: (err) => {
-          setErrorMsg(err.message);
-          setStatus("error");
-        },
-      }
-    );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -104,10 +59,9 @@ export default function UpstoxCallback() {
           {status === "loading" && (
             <>
               <Loader2 className="w-12 h-12 text-teal-400 animate-spin mx-auto mb-4" />
-              <h2 className="text-xl font-bold text-white mb-2">Fetching Your Access Token…</h2>
+              <h2 className="text-xl font-bold text-white mb-2">Processing…</h2>
               <p className="text-white/50 text-sm">
-                Connecting to Upstox and exchanging your authorization code for an access token.
-                This takes just a second.
+                Checking your Upstox authorization status.
               </p>
             </>
           )}
@@ -149,16 +103,17 @@ export default function UpstoxCallback() {
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-red-400 mt-0.5">•</span>
-                  The authorization code has already been used (each code is single-use)
+                  The Redirect URI in your Upstox Developer App is not set to{" "}
+                  <code className="text-red-300 text-xs">{window.location.origin}/api/upstox-callback</code>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-red-400 mt-0.5">•</span>
-                  The redirect URI in your Upstox app does not match this page's URL
+                  The authorization code has already been used (each code is single-use)
                 </li>
               </ul>
               {errorMsg && (
                 <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 mb-6 text-left">
-                  <p className="text-red-400 text-xs font-mono break-all">{errorMsg}</p>
+                  <p className="text-red-400 text-xs font-mono break-all whitespace-pre-wrap">{errorMsg}</p>
                 </div>
               )}
               <div className="flex gap-3">
@@ -176,28 +131,6 @@ export default function UpstoxCallback() {
                   Go to Dashboard
                 </Button>
               </div>
-            </>
-          )}
-
-          {status === "no_code" && (
-            <>
-              <XCircle className="w-12 h-12 text-amber-400 mx-auto mb-4" />
-              <h2 className="text-xl font-bold text-white mb-2">No Authorization Code</h2>
-              <p className="text-white/60 text-sm mb-4">
-                Upstox did not return a <code className="text-amber-400">?code=</code> parameter.
-                This usually means the login was cancelled, or Upstox returned an error.
-              </p>
-              {errorMsg && (
-                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-4 text-left">
-                  <p className="text-amber-400 text-xs font-mono break-all whitespace-pre-wrap">{errorMsg}</p>
-                </div>
-              )}
-              <Button
-                className="bg-teal-500 hover:bg-teal-600 text-white w-full"
-                onClick={() => navigate("/settings")}
-              >
-                Go to Settings
-              </Button>
             </>
           )}
         </div>

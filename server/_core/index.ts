@@ -77,6 +77,87 @@ async function startServer() {
     res.status(200).json({ ok: true, timestamp: Date.now() });
   });
 
+  // ── Server-side Upstox OAuth Callback ──────────────────────────────────────────
+  // Upstox redirects here with ?code= after PIN entry.
+  // We handle it server-side so the query params are never stripped by the platform.
+  // After exchanging the code for a token, we redirect to the frontend /upstox-callback
+  // with a ?status= param so the UI can show success/error.
+  app.get('/api/upstox-callback', async (req, res) => {
+    const code = req.query.code as string | undefined;
+    const error = req.query.error as string | undefined;
+    const errorDesc = req.query.error_description as string | undefined;
+
+    if (error || !code) {
+      const msg = encodeURIComponent(error ? `${error}${errorDesc ? ': ' + errorDesc : ''}` : 'No code returned by Upstox');
+      res.redirect(302, `/upstox-callback?status=error&msg=${msg}`);
+      return;
+    }
+
+    try {
+      const db = await getDb();
+      if (!db) {
+        res.redirect(302, `/upstox-callback?status=error&msg=${encodeURIComponent('DB unavailable')}`);
+        return;
+      }
+
+      // The session token is passed as the OAuth `state` parameter so the server
+      // can look up credentials without needing cookies or localStorage.
+      const state = req.query.state as string | undefined;
+      const sessionToken = state ? decodeURIComponent(state) : undefined;
+
+      if (!sessionToken) {
+        res.redirect(302, `/upstox-callback?status=error&msg=${encodeURIComponent('Session not found. Please save credentials first.')}`);
+        return;
+      }
+
+      const rows = await db
+        .select()
+        .from(upstoxCredentials)
+        .where(eq(upstoxCredentials.sessionToken, sessionToken))
+        .limit(1);
+
+      if (!rows.length || !rows[0].apiKey || !rows[0].apiSecret) {
+        res.redirect(302, `/upstox-callback?status=error&msg=${encodeURIComponent('API Key/Secret not found. Save credentials in Settings first.')}`);
+        return;
+      }
+
+      const { apiKey, apiSecret } = rows[0];
+      const redirectUri = `${req.protocol}://${req.get('host')}/api/upstox-callback`;
+
+      const params = new URLSearchParams({
+        code,
+        client_id: apiKey,
+        client_secret: apiSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      });
+
+      const tokenResp = await fetch('https://api.upstox.com/v2/login/authorization/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+        body: params.toString(),
+      });
+
+      const tokenData = await tokenResp.json() as { access_token?: string; error?: string; error_description?: string };
+
+      if (!tokenResp.ok || !tokenData.access_token) {
+        const errMsg = tokenData.error_description || tokenData.error || `HTTP ${tokenResp.status}`;
+        res.redirect(302, `/upstox-callback?status=error&msg=${encodeURIComponent('Token exchange failed: ' + errMsg)}`);
+        return;
+      }
+
+      const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await db
+        .update(upstoxCredentials)
+        .set({ accessToken: tokenData.access_token, tokenExpiresAt: expires })
+        .where(eq(upstoxCredentials.sessionToken, sessionToken));
+
+      res.redirect(302, `/upstox-callback?status=success`);
+    } catch (err: any) {
+      res.redirect(302, `/upstox-callback?status=error&msg=${encodeURIComponent(err.message || 'Unknown error')}`);
+    }
+  });
+
   // ── Scheduled: Daily Upstox Token Refresh (8:30 AM IST = 03:00 UTC) ──────────
   // This endpoint is called by the Manus heartbeat cron system.
   // It re-initiates the Upstox OAuth flow by sending a Telegram reminder

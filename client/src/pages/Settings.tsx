@@ -53,13 +53,18 @@ function getSessionToken(): string {
 }
 
 // Build the Upstox authorize URL for automatic token capture
-function buildUpstoxAuthUrl(apiKey: string, redirectUri: string): string {
+function buildUpstoxAuthUrl(apiKey: string, redirectUri: string, sessionToken?: string): string {
   const base = "https://api.upstox.com/v2/login/authorization/dialog";
   const params = new URLSearchParams({
     response_type: "code",
     client_id: apiKey,
     redirect_uri: redirectUri,
   });
+  // Pass session token as `state` so the server-side callback can look up credentials
+  // without needing cookies or localStorage (which aren't available server-side).
+  if (sessionToken) {
+    params.set("state", encodeURIComponent(sessionToken));
+  }
   return `${base}?${params.toString()}`;
 }
 
@@ -72,8 +77,11 @@ interface Credentials {
 }
 
 function getCallbackUrl(): string {
-  // Use the current origin so it works on both localhost and the live domain
-  return `${window.location.origin}/upstox-callback`;
+  // Use the SERVER-SIDE /api/upstox-callback route.
+  // The hosting platform's edge layer strips query params from client-side routes,
+  // but server-side /api/* routes receive the full URL including ?code=.
+  // The server exchanges the code and redirects to /upstox-callback?status=success|error.
+  return `${window.location.origin}/api/upstox-callback`;
 }
 
 function loadCreds(): Credentials {
@@ -261,7 +269,7 @@ export default function Settings() {
       toast.success("Credentials saved — opening Upstox login…");
       // Small delay so toast is visible, then redirect
       setTimeout(() => {
-        const url = buildUpstoxAuthUrl(creds.apiKey, creds.redirectUri || getCallbackUrl());
+        const url = buildUpstoxAuthUrl(creds.apiKey, creds.redirectUri || getCallbackUrl(), sessionToken);
         window.location.href = url;
       }, 800);
     } catch (err) {
@@ -422,7 +430,7 @@ export default function Settings() {
 
   // Build the Upstox authorize URL for automatic token capture
   const upstoxAuthUrl = creds.apiKey
-    ? buildUpstoxAuthUrl(creds.apiKey, creds.redirectUri || getCallbackUrl())
+    ? buildUpstoxAuthUrl(creds.apiKey, creds.redirectUri || getCallbackUrl(), sessionToken)
     : null;
 
   return (
