@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
 import { trpc } from "@/lib/trpc";
 import { MCX_INSTRUMENTS } from "@shared/mcxInstruments";
 
@@ -216,6 +216,13 @@ export default function Dashboard() {
   const { data: allStats } = trpc.trades.stats.useQuery(
     { sessionToken },
     { refetchInterval: 10000, staleTime: 5000 }
+  );
+
+  // Daily P&L chart data
+  const [pnlRange, setPnlRange] = useState<7 | 30>(7);
+  const { data: pnlByDay = [] } = trpc.trades.pnlByDay.useQuery(
+    { sessionToken },
+    { refetchInterval: 30000, staleTime: 15000 }
   );
 
   // Open trade from DB
@@ -455,6 +462,11 @@ export default function Dashboard() {
           className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-emerald-400 hover:bg-emerald-500/10 border border-emerald-500/20">
           <span className="text-base">📊</span>
           P&amp;L Analytics
+        </button>
+        <button onClick={() => navigate("/backtest")}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-blue-400 hover:bg-blue-500/10 border border-blue-500/20">
+          <span className="text-base">🔬</span>
+          Backtester
         </button>
         <div className="mt-auto px-2 pb-2 space-y-2">
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${isRunning ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-white/40"}`}>
@@ -1284,6 +1296,81 @@ export default function Dashboard() {
             </p>
           </div>
         )}
+
+        {/* Daily P&L Chart */}
+        {(() => {
+          const days = pnlRange;
+          const sorted = [...pnlByDay].sort((a, b) => a.date.localeCompare(b.date));
+          const sliced = sorted.slice(-days);
+          // Fill missing days with 0
+          const filled: { date: string; totalPnl: number; trades: number; wins: number; losses: number }[] = [];
+          const today = new Date();
+          for (let i = days - 1; i >= 0; i--) {
+            const d = new Date(today);
+            d.setDate(d.getDate() - i);
+            const key = d.toISOString().slice(0, 10);
+            const found = sliced.find(x => x.date === key);
+            filled.push(found ? { date: key, totalPnl: found.totalPnl, trades: found.trades, wins: found.wins, losses: found.losses } : { date: key, totalPnl: 0, trades: 0, wins: 0, losses: 0 });
+          }
+          const cumPnl = filled.reduce((a, b) => a + b.totalPnl, 0);
+          const tradingDays = filled.filter(d => d.trades > 0).length;
+          const greenDays = filled.filter(d => d.totalPnl > 0).length;
+          return (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <BarChart2 className="w-5 h-5 text-teal-400" />
+                  <span className="font-semibold text-white">Daily P&amp;L</span>
+                  <span className={`text-sm font-bold ml-1 ${cumPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {cumPnl >= 0 ? '+' : ''}₹{cumPnl.toFixed(0)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-white/30">{tradingDays} trading days · {greenDays} green</span>
+                  <div className="flex rounded-lg overflow-hidden border border-white/10">
+                    {([7, 30] as const).map(r => (
+                      <button key={r} onClick={() => setPnlRange(r)}
+                        className={`px-3 py-1 text-xs transition-colors ${
+                          pnlRange === r ? 'bg-teal-500/30 text-teal-300' : 'text-white/40 hover:text-white/70'
+                        }`}>{r}D</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {filled.every(d => d.trades === 0) ? (
+                <div className="flex items-center justify-center h-32 text-white/30 text-sm">
+                  No closed trades yet — start the bot to see P&amp;L history
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart data={filled} margin={{ top: 4, right: 4, left: 4, bottom: 4 }} barSize={pnlRange === 7 ? 28 : 14}>
+                    <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 10 }}
+                      tickFormatter={d => { const parts = d.split('-'); return `${parts[2]}/${parts[1]}`; }}
+                      axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 10 }}
+                      tickFormatter={v => v === 0 ? '0' : `${v >= 0 ? '+' : ''}${(v/1000).toFixed(1)}K`}
+                      axisLine={false} tickLine={false} width={48} />
+                    <Tooltip
+                      contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }}
+                      labelStyle={{ color: 'rgba(255,255,255,0.6)' }}
+                      formatter={(value: number, _name: string, props: { payload?: { trades?: number; wins?: number; losses?: number } }) => [
+                        `${value >= 0 ? '+' : ''}₹${value.toFixed(0)} (${props.payload?.trades ?? 0}T ${props.payload?.wins ?? 0}W/${props.payload?.losses ?? 0}L)`,
+                        'P&L'
+                      ]}
+                      labelFormatter={d => { const parts = d.split('-'); return `${parts[2]}/${parts[1]}/${parts[0]}`; }}
+                    />
+                    <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" />
+                    <Bar dataKey="totalPnl" radius={[3, 3, 0, 0]}>
+                      {filled.map((entry, idx) => (
+                        <Cell key={idx} fill={entry.totalPnl > 0 ? '#10b981' : entry.totalPnl < 0 ? '#ef4444' : 'rgba(255,255,255,0.1)'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Trade Log */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-5">

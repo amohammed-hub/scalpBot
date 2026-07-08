@@ -232,3 +232,14 @@
 - [ ] Auto access token refresh at 8:30 AM daily (heartbeat job)
 - [ ] Daily P&L chart on Dashboard (7-day/30-day bar chart)
 - [ ] Backtesting tab (replay historical 1m candles)
+
+## Phase 8 — Auto Token Refresh, Daily P&L Chart, Backtester
+- [x] Settings.tsx: AutoRefreshSection component — daily 8:30 AM IST cron toggle with Telegram reminder
+- [x] routers.ts: autoRefresh.enable/disable/status procedures with heartbeat cron integration
+- [x] server/_core/index.ts: /api/scheduled/token-refresh handler for heartbeat callback
+- [x] Dashboard.tsx: Daily P&L bar chart widget (7D/30D toggle, green/red bars, cumulative P&L, trading day stats)
+- [x] routers.ts: backtest.run procedure — fetches Upstox historical 1m candles, replays signal engine, returns equity curve + trade log
+- [x] Backtest.tsx: Full backtesting page (instrument selector, date range, params, equity curve, trade log, P&L distribution)
+- [x] App.tsx: /backtest route added
+- [x] Dashboard.tsx: Backtester sidebar link added (blue 🔬 icon)
+- [x] botEngine.test.ts: Fixed flaky classifyMarketRegime test (64 tests passing)

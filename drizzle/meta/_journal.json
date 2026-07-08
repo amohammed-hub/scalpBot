@@ -36,6 +36,13 @@
       "when": 1783464653976,
       "tag": "0004_superb_famine",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1783471350340,
+      "tag": "0005_striped_thunderbolts",
+      "breakpoints": true
     }
   ]
 }

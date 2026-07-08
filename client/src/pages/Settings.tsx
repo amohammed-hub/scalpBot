@@ -147,6 +147,73 @@ function TokenStep({
   );
 }
 
+// ── Auto Refresh Section ──────────────────────────────────────────────────────
+function AutoRefreshSection({ sessionToken }: { sessionToken: string }) {
+  const { data: status, refetch } = trpc.autoRefresh.status.useQuery({ sessionToken });
+  const enableMutation = trpc.autoRefresh.enable.useMutation({
+    onSuccess: () => { refetch(); toast.success("Auto-refresh enabled! Token will be refreshed at 8:30 AM IST daily."); },
+    onError: (e) => toast.error(e.message),
+  });
+  const disableMutation = trpc.autoRefresh.disable.useMutation({
+    onSuccess: () => { refetch(); toast.success("Auto-refresh disabled."); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const isEnabled = status?.enabled ?? false;
+  const isPending = enableMutation.isPending || disableMutation.isPending;
+
+  return (
+    <div className="mt-6 bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+      <div className="p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-teal-400" />
+            <span className="font-semibold text-white text-sm">Daily Token Refresh Reminder</span>
+            {isEnabled
+              ? <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">Active</span>
+              : <span className="text-xs text-white/30 bg-white/5 px-2 py-0.5 rounded-full">Disabled</span>
+            }
+          </div>
+          <button
+            onClick={() => isEnabled
+              ? disableMutation.mutate({ sessionToken })
+              : enableMutation.mutate({ sessionToken })
+            }
+            disabled={isPending}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              isEnabled ? 'bg-teal-500' : 'bg-white/20'
+            } ${isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              isEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`} />
+          </button>
+        </div>
+        <p className="mt-2 text-white/50 text-xs leading-relaxed">
+          When enabled, a daily cron runs at <strong className="text-white/70">8:30 AM IST</strong> and sends a Telegram reminder to refresh your Upstox token before market open.
+          Upstox access tokens expire at midnight — this ensures you never miss a trading day.
+        </p>
+        {isEnabled && (
+          <div className="mt-3 flex items-start gap-2 bg-teal-500/10 border border-teal-500/20 rounded-xl p-3">
+            <CheckCircle className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+            <p className="text-teal-300/80 text-xs">
+              Reminder active. Make sure Telegram Alerts are configured below so you receive the daily notification.
+            </p>
+          </div>
+        )}
+        {!isEnabled && (
+          <div className="mt-3 flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-amber-300/70 text-xs">
+              Enable this after publishing the site. The cron requires a live URL to call back.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const [, navigate] = useLocation();
   const [creds, setCreds] = useState<Credentials>(loadCreds);
@@ -939,6 +1006,9 @@ export default function Settings() {
             </p>
           </div>
         </div>
+
+        {/* ── Auto Token Refresh ─────────────────────────────────────── */}
+        <AutoRefreshSection sessionToken={sessionToken} />
 
         <div className="mt-6 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
           <div className="flex items-start gap-2">

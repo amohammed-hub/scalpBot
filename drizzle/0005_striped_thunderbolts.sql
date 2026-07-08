@@ -1,0 +1,1 @@
+ALTER TABLE `upstox_credentials` ADD `autoRefreshCronTaskUid` varchar(128);

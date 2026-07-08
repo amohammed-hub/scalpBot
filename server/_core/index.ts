@@ -8,6 +8,10 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { sdk } from "./sdk";
+import { getDb } from "../db";
+import { upstoxCredentials } from "../../drizzle/schema";
+import { eq } from "drizzle-orm";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -71,6 +75,78 @@ async function startServer() {
   // Simple health check endpoint for Railway/uptime monitoring
   app.get('/api/health', (_req, res) => {
     res.status(200).json({ ok: true, timestamp: Date.now() });
+  });
+
+  // ── Scheduled: Daily Upstox Token Refresh (8:30 AM IST = 03:00 UTC) ──────────
+  // This endpoint is called by the Manus heartbeat cron system.
+  // It re-initiates the Upstox OAuth flow by sending a Telegram reminder
+  // (since Upstox requires manual login — no refresh token is available).
+  app.post('/api/scheduled/token-refresh', async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req as any);
+      if (!user.isCron || !user.taskUid) {
+        res.status(403).json({ error: 'cron-only endpoint' });
+        return;
+      }
+      const db = await getDb();
+      if (!db) {
+        res.status(500).json({ error: 'DB unavailable' });
+        return;
+      }
+      // Look up credentials by cronTaskUid
+      const rows = await db
+        .select()
+        .from(upstoxCredentials)
+        .where(eq(upstoxCredentials.autoRefreshCronTaskUid, user.taskUid))
+        .limit(1);
+      if (!rows.length) {
+        // Orphan cron — return 200 so platform stops retrying
+        res.json({ ok: true, skipped: 'orphan' });
+        return;
+      }
+      const creds = rows[0];
+      // Upstox does NOT support refresh tokens — every day requires a new OAuth login.
+      // We send a Telegram reminder to the user to log in and get a new token.
+      // If Telegram is not configured, we log a reminder to the server console.
+      const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+      const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+      const loginUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${creds.apiKey}&redirect_uri=${encodeURIComponent(creds.redirectUri || '')}`;
+      const message = [
+        '\u23F0 <b>Daily Token Refresh Reminder</b>',
+        '',
+        'Your Upstox access token expires at midnight. Please refresh it now:',
+        '',
+        `1. Open your ScalpBot app`,
+        `2. Go to Settings \u2192 Get Token Automatically`,
+        `3. Log in with Mobile Number \u2192 OTP \u2192 PIN (NOT QR code)`,
+        '',
+        '\u26a0\ufe0f Token must be refreshed before 9:15 AM for Live trading.',
+        '',
+        `\u{1F916} ScalpBot \u2014 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`,
+      ].join('\n');
+      if (telegramBotToken && telegramChatId) {
+        try {
+          await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: telegramChatId, text: message, parse_mode: 'HTML' }),
+            signal: AbortSignal.timeout(10000),
+          });
+        } catch (e) {
+          console.error('[token-refresh] Telegram send failed:', e);
+        }
+      } else {
+        console.log('[token-refresh] No Telegram configured. Reminder: refresh Upstox token for session', creds.sessionToken.slice(0, 8));
+      }
+      res.json({ ok: true, sessionToken: creds.sessionToken.slice(0, 8), reminded: true });
+    } catch (err: any) {
+      res.status(500).json({
+        error: err.message,
+        stack: err.stack,
+        context: { url: req.url, taskUid: req.headers['x-task-uid'] },
+        timestamp: new Date().toISOString(),
+      });
+    }
   });
 
   // tRPC API

@@ -29,6 +29,7 @@ export const upstoxCredentials = mysqlTable("upstox_credentials", {
   accessToken: text("accessToken"),
   tokenExpiresAt: timestamp("tokenExpiresAt"),
   redirectUri: varchar("redirectUri", { length: 512 }).default("http://localhost:8000/callback"),
+  autoRefreshCronTaskUid: varchar("autoRefreshCronTaskUid", { length: 128 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
