@@ -403,19 +403,6 @@ export default function Dashboard() {
       : (activeTrade.entryPrice - currentPrice) * activeTrade.quantity
     : null;
 
-  const progressPct = activeTrade && currentPrice
-    ? (() => {
-        const sl = activeTrade.slPrice ?? 0;
-        const tgt = activeTrade.targetPrice ?? 0;
-        if (!sl || !tgt || sl === tgt) return 50;
-        const range = Math.abs(tgt - sl);
-        const pos = activeTrade.direction === "BUY"
-          ? currentPrice - sl
-          : sl - currentPrice;
-        return Math.max(0, Math.min(100, (pos / range) * 100));
-      })()
-    : null;
-
   // ── Stats ─────────────────────────────────────────────────────────────────────
   const todayTradesCount = todayStats?.todayTrades ?? 0;
   const todayPnl = todayStats?.todayPnl ?? 0;

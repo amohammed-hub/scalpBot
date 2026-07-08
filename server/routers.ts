@@ -3,7 +3,7 @@ import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { getDb } from "./db";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog } from "../drizzle/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, gte, count } from "drizzle-orm";
 import { startBot, stopBot, getBotState, placeUpstoxOrder, generateSignal, type Candle } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
@@ -238,6 +238,18 @@ export const appRouter = router({
           .orderBy(desc(tradeLog.enteredAt))
           .limit(1);
 
+        // Count today's trades to restore tradesCount on restart
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayTradeCountRows = await db
+          .select({ count: count() })
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            gte(tradeLog.enteredAt, todayStart),
+          ));
+        const todayTradesCount = todayTradeCountRows[0]?.count ?? 0;
+
         let existingOpenTrade = null;
         if (existingOpenTrades.length > 0) {
           const t = existingOpenTrades[0];
@@ -433,7 +445,7 @@ export const appRouter = router({
             trailingSlPct: input.trailingSlPct,
             minConfidence: input.minConfidence,
             scanIntervalSec: input.scanIntervalSec,
-            tradesCount: 0,
+            tradesCount: todayTradesCount,
             dailyPnl: 0,
             accessToken,
             telegramBotToken: input.telegramBotToken ?? null,
@@ -444,6 +456,18 @@ export const appRouter = router({
           onTradeOpen,
           onTradeClose,
           existingOpenTrade,
+          async (tickState) => {
+            const db = await getDb();
+            if (!db) return;
+            await db.update(botSessions).set({
+              lastPrice: tickState.lastPrice,
+              bidPrice: tickState.bidPrice,
+              askPrice: tickState.askPrice,
+              nextScanAt: tickState.nextScanAt,
+              lastSignal: tickState.lastSignal?.direction ?? null,
+              lastSignalAt: tickState.lastSignal ? new Date() : undefined,
+            }).where(eq(botSessions.sessionToken, tickState.sessionToken));
+          },
         );
 
         return { success: true, sessionId };
@@ -605,12 +629,16 @@ export const appRouter = router({
           .orderBy(desc(tradeLog.enteredAt))
           .limit(1);
         if (rows.length > 0) return rows[0];
-        // Fallback: return the most recent open trade across ALL sessions
+        // Fallback: return the most recent open trade for primary slot (botSlot=0) across sessions
         // This handles page refresh / new tab where sessionToken may differ from the one that started the bot
+        // Filter by botSlot=0 to avoid showing a secondary/tertiary slot's trade in the main panel
         const anyRows = await db
           .select()
           .from(tradeLog)
-          .where(eq(tradeLog.status, "open"))
+          .where(and(
+            eq(tradeLog.status, "open"),
+            eq(tradeLog.botSlot, 0),
+          ))
           .orderBy(desc(tradeLog.enteredAt))
           .limit(1);
         return anyRows.length > 0 ? anyRows[0] : null;
@@ -1113,7 +1141,18 @@ export const appRouter = router({
           telegramBotToken: input.telegramBotToken ?? null,
           telegramChatId: input.telegramChatId ?? null,
           telegramEnabled: input.telegramEnabled, botSlot: input.slot,
-        }, onTradeOpen, onTradeClose);
+        }, onTradeOpen, onTradeClose, undefined, async (tickState) => {
+          const db = await getDb();
+          if (!db) return;
+          await db.update(botSessions).set({
+            lastPrice: tickState.lastPrice,
+            bidPrice: tickState.bidPrice,
+            askPrice: tickState.askPrice,
+            nextScanAt: tickState.nextScanAt,
+            lastSignal: tickState.lastSignal?.direction ?? null,
+            lastSignalAt: tickState.lastSignal ? new Date() : undefined,
+          }).where(eq(botSessions.sessionToken, tickState.sessionToken));
+        });
 
         return { success: true, slotToken, sessionId };
       }),

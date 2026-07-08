@@ -1117,6 +1117,7 @@ async function tick(
   state: BotState,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
+  onTick?: (state: BotState) => Promise<void>,
 ) {
   if (state.status !== "running") return;
 
@@ -1420,6 +1421,8 @@ async function tick(
   }
 
   state.lastSignal = signal;
+  // Persist live price/signal to DB on every tick so Dashboard always shows fresh data
+  if (onTick) await onTick(state).catch(() => {});
   if (signal.direction === "HOLD" || signal.confidence < state.minConfidence / 100) return;
 
   // Position sizing
@@ -1502,6 +1505,7 @@ export function startBot(
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
+  onTick?: (state: BotState) => Promise<void>,
 ) {
   const existing = bots.get(config.sessionToken);
   if (existing?.intervalHandle) clearInterval(existing.intervalHandle);
@@ -1516,10 +1520,10 @@ export function startBot(
   };
 
   const intervalMs = Math.max(15, config.scanIntervalSec) * 1000;
-  const handle = setInterval(() => tick(state, onTradeOpen, onTradeClose), intervalMs);
+  const handle = setInterval(() => tick(state, onTradeOpen, onTradeClose, onTick), intervalMs);
   state.intervalHandle = handle;
   bots.set(config.sessionToken, state);
-  tick(state, onTradeOpen, onTradeClose);
+  tick(state, onTradeOpen, onTradeClose, onTick);
 }
 
 export function stopBot(sessionToken: string) {

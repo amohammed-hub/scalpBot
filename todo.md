@@ -243,3 +243,9 @@
 - [x] App.tsx: /backtest route added
 - [x] Dashboard.tsx: Backtester sidebar link added (blue 🔬 icon)
 - [x] botEngine.test.ts: Fixed flaky classifyMarketRegime test (64 tests passing)
+
+## End-to-End Audit Fixes (Jul 8)
+- [x] botEngine.ts: add onTick callback to startBot — called after every scan to persist lastPrice/bidPrice/askPrice/nextScanAt to DB
+- [x] routers.ts: restore tradesCount from today's DB trade count on bot restart (not hardcoded 0)
+- [x] routers.ts: fix openTrade cross-session query to filter by botSlot to avoid showing wrong slot's trade
+- [x] Dashboard.tsx: remove dead progressPct variable (replaced by inline calculation)
