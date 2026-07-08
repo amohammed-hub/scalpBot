@@ -396,7 +396,8 @@ export default function Dashboard() {
     mode: inMemOpenTrade.mode,
   } : null);
 
-  const unrealizedPnl = activeTrade && currentPrice
+  // Only calculate unrealized P&L when we have a real live price (not 0, not same as entry)
+  const unrealizedPnl = activeTrade && currentPrice > 0
     ? activeTrade.direction === "BUY"
       ? (currentPrice - activeTrade.entryPrice) * activeTrade.quantity
       : (activeTrade.entryPrice - currentPrice) * activeTrade.quantity
@@ -885,7 +886,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-4 gap-3 mb-4">
               {[
                 { label: "Entry", value: activeTrade.entryPrice, color: "text-white" },
-                { label: "Current", value: currentPrice, color: currentPrice > activeTrade.entryPrice ? "text-emerald-400" : "text-red-400" },
+                { label: "Current", value: currentPrice > 0 ? currentPrice : null, color: currentPrice > activeTrade.entryPrice ? "text-emerald-400" : currentPrice > 0 && currentPrice < activeTrade.entryPrice ? "text-red-400" : "text-white/40" },
                 { label: "Stop Loss", value: activeTrade.slPrice, color: "text-red-400" },
                 { label: "Target", value: activeTrade.targetPrice, color: "text-emerald-400" },
               ].map(item => (
@@ -898,22 +899,51 @@ export default function Dashboard() {
               ))}
             </div>
 
-            {/* Progress bar */}
-            {progressPct !== null && (
+            {/* Progress bar — SL on left, Entry in middle, Target on right */}
+            {activeTrade.slPrice && activeTrade.targetPrice && (
               <div className="mb-3">
-                <div className="relative h-3 bg-white/10 rounded-full overflow-hidden">
-                  <div className="absolute left-0 top-0 h-full w-1/3 bg-red-500/30 rounded-l-full" />
-                  <div className="absolute right-0 top-0 h-full w-1/3 bg-emerald-500/30 rounded-r-full" />
-                  <div
-                    className="absolute top-0 h-full w-1 bg-white rounded-full shadow-lg transition-all duration-1000"
-                    style={{ left: `${progressPct}%`, transform: "translateX(-50%)" }}
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-white/30 mt-1">
-                  <span>▼ SL ₹{activeTrade.slPrice ? (currentPrice - activeTrade.slPrice).toFixed(0) : "—"} away</span>
-                  <span className="text-white/50">Potential: +₹{activeTrade.targetPrice ? (Math.abs(activeTrade.targetPrice - activeTrade.entryPrice) * activeTrade.quantity).toFixed(0) : "—"}</span>
-                  <span>▲ Target ₹{activeTrade.targetPrice ? (activeTrade.targetPrice - currentPrice).toFixed(0) : "—"} away</span>
-                </div>
+                {(() => {
+                  const sl = activeTrade.slPrice!;
+                  const tgt = activeTrade.targetPrice!;
+                  const entry = activeTrade.entryPrice;
+                  const range = Math.abs(tgt - sl);
+                  // Entry position as % of SL→Target range
+                  const entryPct = Math.max(5, Math.min(95, (Math.abs(entry - sl) / range) * 100));
+                  // Current price position (only show cursor when we have a real price)
+                  const hasCurrent = currentPrice > 0 && currentPrice !== entry;
+                  const curPct = hasCurrent
+                    ? Math.max(0, Math.min(100, (activeTrade.direction === "BUY"
+                        ? (currentPrice - sl) / range
+                        : (sl - currentPrice) / range) * 100))
+                    : entryPct;
+                  // SL distance and Target distance
+                  const slDist = Math.abs(entry - sl);
+                  const tgtDist = Math.abs(tgt - entry);
+                  const slDistFromCurrent = currentPrice > 0 ? Math.abs(currentPrice - sl) : slDist;
+                  const tgtDistFromCurrent = currentPrice > 0 ? Math.abs(tgt - currentPrice) : tgtDist;
+                  return (
+                    <>
+                      <div className="relative h-3 bg-white/10 rounded-full overflow-hidden">
+                        {/* Red zone: SL side (left of entry) */}
+                        <div className="absolute left-0 top-0 h-full bg-red-500/25 rounded-l-full" style={{ width: `${entryPct}%` }} />
+                        {/* Green zone: Target side (right of entry) */}
+                        <div className="absolute top-0 h-full bg-emerald-500/25 rounded-r-full" style={{ left: `${entryPct}%`, right: 0 }} />
+                        {/* Entry marker */}
+                        <div className="absolute top-0 h-full w-0.5 bg-white/40" style={{ left: `${entryPct}%` }} />
+                        {/* Current price cursor */}
+                        <div
+                          className="absolute top-0 h-full w-1.5 bg-white rounded-full shadow-lg transition-all duration-1000"
+                          style={{ left: `${curPct}%`, transform: "translateX(-50%)" }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-xs text-white/30 mt-1">
+                        <span className="text-red-400/70">▼ SL ₹{slDistFromCurrent.toFixed(0)} away</span>
+                        <span className="text-white/50">Potential: +₹{(tgtDist * activeTrade.quantity).toFixed(0)}</span>
+                        <span className="text-emerald-400/70">▲ Target ₹{tgtDistFromCurrent.toFixed(0)} away</span>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
