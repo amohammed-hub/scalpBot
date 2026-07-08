@@ -509,7 +509,9 @@ export function generateSignal(
     const pivots = calcPivotPoints(prevDayHigh, prevDayLow, prevDayClose);
     srLevels = [pivots.pp, pivots.r1, pivots.r2, pivots.s1, pivots.s2];
   }
-  const nearSR = srLevels.length > 0 && isNearSupportResistance(price, srLevels, 0.001);
+  // Tightened S/R proximity filter: 0.05% (was 0.1%) — 0.1% was too wide for BankNifty
+  // e.g. BankNifty at 53000: 0.1% = ±53 pts (too many rejections), 0.05% = ±26 pts
+  const nearSR = srLevels.length > 0 && isNearSupportResistance(price, srLevels, 0.0005);
 
   let direction: "BUY" | "SELL" | "HOLD" = "HOLD";
   let confidence = 0;
@@ -585,7 +587,7 @@ export function generateSignal(
   }
 
   // ── Layer 3: EMA/VWAP Trend ───────────────────────────────────────────────
-  if (direction === "HOLD" && candles.length >= 21 && adx > 18) {
+  if (direction === "HOLD" && candles.length >= 21 && adx > 12) {
     const emaDiffPct = Math.abs(e9 - e21) / e21;
     if (e9 > e21 && price > vwap && rsi > 50 && rsi < 72 && allow5mBuy) {
       direction = "BUY";
@@ -603,14 +605,14 @@ export function generateSignal(
   // ── Layer 4: Momentum ─────────────────────────────────────────────────────
   if (direction === "HOLD" && candles.length >= 5) {
     const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
-    if (rsi > 62 && roc3 > 0.0008 && price > vwap && allow5mBuy) {
+    if (rsi > 58 && roc3 > 0.0005 && price > vwap && allow5mBuy) {
       direction = "BUY";
-      confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 62) * 0.005);
+      confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 58) * 0.005);
       reason = `[Momentum] RSI(${rsi.toFixed(0)}) | +${(roc3 * 100).toFixed(2)}% in 3c | Above VWAP | 5m:${trend5m}`;
       layer = "Momentum";
-    } else if (rsi < 38 && roc3 < -0.0008 && price < vwap && allow5mSell) {
+    } else if (rsi < 42 && roc3 < -0.0005 && price < vwap && allow5mSell) {
       direction = "SELL";
-      confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (38 - rsi) * 0.005);
+      confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (42 - rsi) * 0.005);
       reason = `[Momentum] RSI(${rsi.toFixed(0)}) | ${(roc3 * 100).toFixed(2)}% in 3c | Below VWAP | 5m:${trend5m}`;
       layer = "Momentum";
     }
@@ -636,8 +638,8 @@ export function generateSignal(
   }
 
   // ── Layer 6: Opening Range Breakout (ORB) ─────────────────────────────────
-  // Only valid in the first 3 hours of NSE session (9:30–12:30 PM)
-  if (direction === "HOLD" && istMin >= 570 && istMin <= 750 && candles.length >= 17) {
+  // Valid from 9:30 AM to 3:00 PM (extended from 12:30 PM — ORB levels remain valid all day)
+  if (direction === "HOLD" && istMin >= 570 && istMin <= 900 && candles.length >= 17) {
     const orb = calcORBSignal(candles, 15, 1.5);
     if (orb.direction !== "HOLD") {
       const regime = classifyMarketRegime(candles);
