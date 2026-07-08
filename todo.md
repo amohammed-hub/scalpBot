@@ -257,3 +257,9 @@
 - [x] routers.ts: manualExit now finds trade by ID alone (not requiring sessionToken match) to support cross-session exits
 - [x] routers.ts: manualExit clears in-memory state using trade's actual sessionToken (not just input sessionToken)
 - [x] Dashboard.tsx: activeTrade now prefers inMemOpenTrade (live trailing SL, partial bookings) over DB openTrade
+
+## Critical Fix: Bot Auto-Restart + Unrealized P&L (Jul 8) — Round 3
+- [x] Root cause identified: bot process dies on every server restart/deploy, liveData returns price:0, unrealizedPnl shows nothing
+- [x] server/botRestart.ts: new module — on server startup, queries DB for status="running" sessions and restarts each bot engine with its open trade restored
+- [x] server/_core/index.ts: calls restartRunningBots() after server.listen so bots auto-resume after every deploy
+- [x] Dashboard.tsx: added red warning banner inside open trade panel when bot is not running — warns user that SL/Target are not being monitored

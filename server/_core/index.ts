@@ -12,6 +12,7 @@ import { sdk } from "./sdk";
 import { getDb } from "../db";
 import { upstoxCredentials } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
+import { restartRunningBots } from "../botRestart";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -262,6 +263,9 @@ async function startServer() {
 
   server.listen(port, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${port}/`);
+    // Auto-restart any bots that were running before the server went down.
+    // This ensures live price feed and SL/Target monitoring resume after deploys.
+    restartRunningBots().catch(err => console.error('[BotRestart] Startup error:', err));
   });
 }
 
