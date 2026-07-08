@@ -100,6 +100,9 @@ export const tradeLog = mysqlTable("trade_log", {
   upstoxOrderId: varchar("upstoxOrderId", { length: 64 }),
   signalReason: text("signalReason"),
   botSlot: int("botSlot").default(0),
+  // Partial profit booking levels — stored so they survive server restarts exactly
+  partial1RPrice: float("partial1RPrice"),
+  partial2RPrice: float("partial2RPrice"),
   enteredAt: timestamp("enteredAt").defaultNow().notNull(),
   exitedAt: timestamp("exitedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

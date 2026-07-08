@@ -253,7 +253,10 @@ export const appRouter = router({
         let existingOpenTrade = null;
         if (existingOpenTrades.length > 0) {
           const t = existingOpenTrades[0];
+          // Use stored partial levels from DB if available; fall back to calculation only if null
           const slDist0 = Math.abs((t.entryPrice ?? 0) - (t.slPrice ?? 0));
+          const p1 = t.partial1RPrice ?? (t.direction === "BUY" ? t.entryPrice + slDist0 : t.entryPrice - slDist0);
+          const p2 = t.partial2RPrice ?? (t.direction === "BUY" ? t.entryPrice + slDist0 * 2 : t.entryPrice - slDist0 * 2);
           existingOpenTrade = {
             dbId: t.id,
             symbol: t.symbol,
@@ -272,8 +275,8 @@ export const appRouter = router({
             trailingSlEnabled: input.trailingSlEnabled,
             trailingSlPct: input.trailingSlPct,
             currentSl: t.slPrice ?? 0,
-            partial1RPrice: t.direction === "BUY" ? t.entryPrice + slDist0 : t.entryPrice - slDist0,
-            partial2RPrice: t.direction === "BUY" ? t.entryPrice + slDist0 * 2 : t.entryPrice - slDist0 * 2,
+            partial1RPrice: p1,
+            partial2RPrice: p2,
             partialBooked: 0 as 0 | 1 | 2,
             bookedQty: 0,
             bookedPnl: 0,
@@ -356,6 +359,8 @@ export const appRouter = router({
           upstoxOrderId?: string;
           signalReason: string;
           enteredAt: Date;
+          partial1RPrice: number;
+          partial2RPrice: number;
         }): Promise<number> => {
           const dbInner = await getDb();
           if (!dbInner) return 0;
@@ -520,29 +525,35 @@ export const appRouter = router({
             signal: null,
             candles: [],
             nextScanAt: rows[0].nextScanAt ?? 0,
-            openTrade: dbOpenTrade ? {
-              dbId: dbOpenTrade.id,
-              symbol: dbOpenTrade.symbol,
-              symbolLabel: dbOpenTrade.symbolLabel ?? dbOpenTrade.symbol,
-              instrumentToken: dbOpenTrade.instrumentToken ?? "",
-              direction: dbOpenTrade.direction,
-              mode: dbOpenTrade.mode,
-              entryPrice: dbOpenTrade.entryPrice,
-              quantity: dbOpenTrade.quantity,
-              slPrice: dbOpenTrade.slPrice ?? 0,
-              targetPrice: dbOpenTrade.targetPrice ?? 0,
-              atr: dbOpenTrade.atr ?? 0,
-              confidence: dbOpenTrade.confidence ?? 0,
-              enteredAt: dbOpenTrade.enteredAt,
-              trailingSlEnabled: false,
-              trailingSlPct: 0.5,
-              currentSl: dbOpenTrade.slPrice ?? 0,
-              partial1RPrice: 0,
-              partial2RPrice: 0,
-              partialBooked: 0 as 0 | 1 | 2,
-              bookedQty: 0,
-              bookedPnl: 0,
-            } : null,
+            openTrade: dbOpenTrade ? (() => {
+              const slDist = Math.abs(dbOpenTrade.entryPrice - (dbOpenTrade.slPrice ?? dbOpenTrade.entryPrice));
+              const p1 = dbOpenTrade.partial1RPrice ?? (dbOpenTrade.direction === "BUY" ? dbOpenTrade.entryPrice + slDist : dbOpenTrade.entryPrice - slDist);
+              const p2 = dbOpenTrade.partial2RPrice ?? (dbOpenTrade.direction === "BUY" ? dbOpenTrade.entryPrice + slDist * 2 : dbOpenTrade.entryPrice - slDist * 2);
+              return {
+                dbId: dbOpenTrade.id,
+                symbol: dbOpenTrade.symbol,
+                symbolLabel: dbOpenTrade.symbolLabel ?? dbOpenTrade.symbol,
+                instrumentToken: dbOpenTrade.instrumentToken ?? "",
+                direction: dbOpenTrade.direction,
+                mode: dbOpenTrade.mode,
+                entryPrice: dbOpenTrade.entryPrice,
+                quantity: dbOpenTrade.quantity,
+                slPrice: dbOpenTrade.slPrice ?? 0,
+                targetPrice: dbOpenTrade.targetPrice ?? 0,
+                atr: dbOpenTrade.atr ?? 0,
+                confidence: dbOpenTrade.confidence ?? 0,
+                upstoxOrderId: dbOpenTrade.upstoxOrderId ?? undefined,
+                enteredAt: dbOpenTrade.enteredAt,
+                trailingSlEnabled: false,
+                trailingSlPct: 0.5,
+                currentSl: dbOpenTrade.slPrice ?? 0,
+                partial1RPrice: p1,
+                partial2RPrice: p2,
+                partialBooked: 0 as 0 | 1 | 2,
+                bookedQty: 0,
+                bookedPnl: 0,
+              };
+            })() : null,
           };
         }
         return {

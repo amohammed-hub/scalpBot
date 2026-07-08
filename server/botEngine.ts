@@ -1447,18 +1447,18 @@ async function tick(
     ? signal.reason
     : isReEntry ? `[Re-entry] ${signal.reason}` : signal.reason;
 
+    // Compute partial profit levels BEFORE calling onTradeOpen so they are stored in DB
+  const slDist = Math.abs(signal.entryPrice - signal.slPrice);
+  const partial1RPrice = signal.partial1RPrice ?? (signal.direction === "BUY" ? signal.entryPrice + slDist : signal.entryPrice - slDist);
+  const partial2RPrice = signal.partial2RPrice ?? (signal.direction === "BUY" ? signal.entryPrice + slDist * 2 : signal.entryPrice - slDist * 2);
   const dbId = await onTradeOpen({
     symbol: state.instrumentSymbol, symbolLabel: state.instrumentLabel,
     instrumentToken: state.instrumentToken, direction: signal.direction, mode: state.mode,
     entryPrice: signal.entryPrice, quantity, slPrice: signal.slPrice, targetPrice: signal.targetPrice,
     atr: signal.atr, confidence: signal.confidence, status: "open",
     upstoxOrderId: orderId, signalReason: signalLabel, enteredAt: new Date(),
+    partial1RPrice, partial2RPrice,
   });
-
-  // Compute partial profit levels from signal
-  const slDist = Math.abs(signal.entryPrice - signal.slPrice);
-  const partial1RPrice = signal.partial1RPrice ?? (signal.direction === "BUY" ? signal.entryPrice + slDist : signal.entryPrice - slDist);
-  const partial2RPrice = signal.partial2RPrice ?? (signal.direction === "BUY" ? signal.entryPrice + slDist * 2 : signal.entryPrice - slDist * 2);
 
   state.openTrade = {
     dbId, symbol: state.instrumentSymbol, symbolLabel: state.instrumentLabel,
@@ -1504,6 +1504,9 @@ type TradeInsert = {
   entryPrice: number; quantity: number; slPrice: number; targetPrice: number;
   atr: number; confidence: number; status: "open" | "closed" | "cancelled";
   upstoxOrderId?: string; signalReason: string; enteredAt: Date;
+  // Partial profit levels — stored in DB so they survive server restarts exactly
+  partial1RPrice: number;
+  partial2RPrice: number;
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────

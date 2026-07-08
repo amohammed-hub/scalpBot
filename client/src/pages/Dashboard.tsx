@@ -5,7 +5,7 @@ import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
-  Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw
+  Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
@@ -396,11 +396,12 @@ export default function Dashboard() {
     targetPrice: inMemOpenTrade.targetPrice,
     confidence: inMemOpenTrade.confidence,
     mode: inMemOpenTrade.mode,
+    upstoxOrderId: (inMemOpenTrade as any).upstoxOrderId ?? null,
     partialBooked: (inMemOpenTrade as any).partialBooked ?? 0,
     bookedPnl: (inMemOpenTrade as any).bookedPnl ?? 0,
     bookedQty: (inMemOpenTrade as any).bookedQty ?? 0,
     currentSl: (inMemOpenTrade as any).currentSl ?? inMemOpenTrade.slPrice,
-  } : openTrade ?? null;
+  } : openTrade ? { ...openTrade, upstoxOrderId: openTrade.upstoxOrderId ?? null } : null;
 
   // Only calculate unrealized P&L when we have a real live price (not 0, not same as entry)
   const unrealizedPnl = activeTrade && currentPrice > 0
@@ -873,6 +874,21 @@ export default function Dashboard() {
                   <span className={`text-lg font-bold ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                     {unrealizedPnl >= 0 ? "+" : ""}₹{unrealizedPnl.toFixed(0)}
                   </span>
+                )}
+                {/* Upstox order link — only shown for live trades */}
+                {activeTrade.mode === "live" && (
+                  <a
+                    href={activeTrade.upstoxOrderId
+                      ? `https://upstox.com/orders/${activeTrade.upstoxOrderId}`
+                      : "https://upstox.com/orders"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/5 hover:bg-white/10 text-white/60 hover:text-white border border-white/10 transition-colors"
+                    title={activeTrade.upstoxOrderId ? `View order ${activeTrade.upstoxOrderId} on Upstox` : "View orders on Upstox"}
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    View on Upstox
+                  </a>
                 )}
                 <button
                   onClick={handleManualExit}
@@ -1501,7 +1517,34 @@ export default function Dashboard() {
                       : t.pnl;
                     return (
                       <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                        <td className="py-2.5 pr-4 font-medium text-white text-xs">{t.symbolLabel ?? t.symbol}</td>
+                        <td className="py-2.5 pr-4 font-medium text-white text-xs">
+                          {/* Symbol — clickable link to Upstox order if live, or portfolio if paper */}
+                          {t.mode === "live" && t.upstoxOrderId ? (
+                            <a
+                              href={`https://upstox.com/orders/${t.upstoxOrderId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 hover:text-emerald-400 transition-colors group"
+                              title={`View order ${t.upstoxOrderId} on Upstox`}
+                            >
+                              {t.symbolLabel ?? t.symbol}
+                              <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
+                            </a>
+                          ) : t.mode === "live" ? (
+                            <a
+                              href="https://upstox.com/orders"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 hover:text-emerald-400 transition-colors group"
+                              title="View orders on Upstox"
+                            >
+                              {t.symbolLabel ?? t.symbol}
+                              <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
+                            </a>
+                          ) : (
+                            t.symbolLabel ?? t.symbol
+                          )}
+                        </td>
                         <td className="py-2.5 pr-4">
                           <span className={`flex items-center gap-1 ${t.direction === "BUY" ? "text-emerald-400" : "text-red-400"}`}>
                             {t.direction === "BUY" ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
