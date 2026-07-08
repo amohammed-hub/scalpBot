@@ -78,8 +78,17 @@ export async function restartRunningBots(): Promise<void> {
           trailingSlPct: session.trailingSlPct ?? 0.5,
           currentSl: t.slPrice ?? 0,
           isReEntry: false,
-          partial1RPrice: 0,
-          partial2RPrice: 0,
+          // Recompute partial profit levels from entry/SL distance
+          // CRITICAL: must NOT be 0 — a 0 value triggers immediate false partial booking
+          // Formula mirrors botEngine.ts line ~1455: 1R = entry ± slDist, 2R = entry ± slDist*2
+          partial1RPrice: (() => {
+            const slDist = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice));
+            return t.direction === "BUY" ? t.entryPrice + slDist : t.entryPrice - slDist;
+          })(),
+          partial2RPrice: (() => {
+            const slDist = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice));
+            return t.direction === "BUY" ? t.entryPrice + slDist * 2 : t.entryPrice - slDist * 2;
+          })(),
           partialBooked: 0,
           bookedQty: 0,
           bookedPnl: 0,

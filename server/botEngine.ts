@@ -1268,7 +1268,12 @@ async function tick(
 
     // ── Partial profit booking (pyramid exit) ────────────────────────────────
     if (trade.partialBooked === 0) {
-      const hit1R = trade.direction === "BUY" ? price >= trade.partial1RPrice : price <= trade.partial1RPrice;
+      // Safety guard: partial1RPrice must be a valid non-zero price above/below entry
+      // A value of 0 would immediately trigger on any price (e.g. after DB restore without recalculation)
+      const partial1Valid = trade.partial1RPrice > 0 &&
+        (trade.direction === "BUY" ? trade.partial1RPrice > trade.entryPrice : trade.partial1RPrice < trade.entryPrice);
+      const hit1R = partial1Valid &&
+        (trade.direction === "BUY" ? price >= trade.partial1RPrice : price <= trade.partial1RPrice);
       if (hit1R) {
         // Book 50% of position at 1R
         const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
