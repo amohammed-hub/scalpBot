@@ -128,6 +128,15 @@ export interface BotState {
   lotSize: number;
   // Track which alert types have already been sent this session (avoid spam)
   alertsSent: Set<string>;
+  // Options mode: when set, bot reads candles from underlyingToken but trades optionTradeToken
+  // underlyingToken: NSE_INDEX|Nifty Bank, NSE_INDEX|Nifty 50, etc.
+  // optionTradeToken: the actual CE/PE instrument key resolved at runtime (e.g. NFO_OPT|BANKNIFTY...)
+  // optionType: "CE" | "PE" | "auto" — auto = CE for BUY signal, PE for SELL signal
+  isIndexOptions: boolean; // true = auto-resolve ATM CE/PE at trade time
+  underlyingToken?: string;
+  optionType?: "CE" | "PE" | "auto";
+  optionTradeToken?: string; // resolved at runtime from option chain
+  optionPremiumPrice?: number; // last fetched option premium (for quantity sizing)
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -1099,6 +1108,54 @@ function build5mFromMock(candles1m: Candle[]): Candle[] {
   return result;
 }
 
+// ── Fetch option chain and resolve ATM CE/PE token ─────────────────────────
+async function resolveAtmOptionToken(
+  underlyingToken: string,
+  optionType: "CE" | "PE",
+  accessToken: string,
+): Promise<{ token: string; premium: number; strike: number } | null> {
+  try {
+    // Step 1: get current underlying price
+    const quoteResp = await axios.get(
+      `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(underlyingToken)}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
+    );
+    const qData = quoteResp.data?.data;
+    const qKey = qData ? Object.keys(qData)[0] : null;
+    const underlyingPrice: number = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
+    if (!underlyingPrice) return null;
+
+    // Step 2: fetch option chain (nearest expiry)
+    const chainResp = await axios.get(
+      `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
+    );
+    const chain = chainResp.data?.data?.[0];
+    if (!chain) return null;
+
+    const options = optionType === "CE"
+      ? (chain.call_options ?? []) as Array<{ instrument_key?: string; strike_price?: number; market_data?: { ltp?: number } }>
+      : (chain.put_options ?? []) as Array<{ instrument_key?: string; strike_price?: number; market_data?: { ltp?: number } }>;
+
+    // Find ATM: option whose strike is closest to underlying price
+    let best: { token: string; premium: number; strike: number } | null = null;
+    let bestDist = Infinity;
+    for (const opt of options) {
+      const strike = opt.strike_price ?? 0;
+      const dist = Math.abs(strike - underlyingPrice);
+      const premium = opt.market_data?.ltp ?? 0;
+      if (dist < bestDist && premium > 0.5 && opt.instrument_key) {
+        bestDist = dist;
+        best = { token: opt.instrument_key, premium, strike };
+      }
+    }
+    return best;
+  } catch (err) {
+    console.error("[BotEngine] resolveAtmOptionToken failed:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 // ── Place order via Upstox API ────────────────────────────────────────────────
 export async function placeUpstoxOrder(
   accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number,
@@ -1132,15 +1189,28 @@ async function tick(
     return;
   }
 
+  // ── Options mode: determine which token to use for candle/signal vs which to trade ──
+  // isOptionsMode = true when user selected an index (NIFTY/BANKNIFTY) and wants to trade options.
+  // In this mode:
+  //   - Candles + signals come from underlyingToken (the futures/index)
+  //   - Orders are placed on optionTradeToken (the ATM CE or PE resolved from option chain)
+  //   - lastPrice shown on Dashboard = underlying price (for context)
+  //   - optionPremiumPrice = current option premium (used for quantity sizing)
+  // isOptionsMode: triggered by isIndexOptions flag OR by presence of underlyingToken
+  // When isIndexOptions=true, the instrument IS the underlying (NSE_INDEX|...) and we must
+  // use it for signals while trading the ATM CE/PE option.
+  const isOptionsMode = state.isIndexOptions || !!(state.underlyingToken);
+  const signalToken = isOptionsMode && state.underlyingToken ? state.underlyingToken : state.instrumentToken;
+
   // Fetch candles + quote
   let newCandle: Candle;
   if (state.accessToken) {
     const [candles1m, candles5m, dayCandles, quote] = await Promise.all([
-      fetchUpstoxCandles(state.instrumentToken, state.accessToken),
-      fetchUpstox5mCandles(state.instrumentToken, state.accessToken),
+      fetchUpstoxCandles(signalToken, state.accessToken),
+      fetchUpstox5mCandles(signalToken, state.accessToken),
       // Only re-fetch daily candles once per session (they don't change intraday)
-      state.candlesDay.length < 2 ? fetchUpstoxDayCandles(state.instrumentToken, state.accessToken) : Promise.resolve(state.candlesDay),
-      fetchFullQuote(state.instrumentToken, state.accessToken),
+      state.candlesDay.length < 2 ? fetchUpstoxDayCandles(signalToken, state.accessToken) : Promise.resolve(state.candlesDay),
+      fetchFullQuote(signalToken, state.accessToken),
     ]);
     if (candles1m.length > 0) {
       state.candles = candles1m.slice(-400); // full day
@@ -1438,17 +1508,78 @@ async function tick(
   state.lastSignal = signal;
   if (signal.direction === "HOLD" || signal.confidence < state.minConfidence / 100) return;
 
-  // Position sizing — quantity must be a multiple of lotSize
-  const riskAmount = (state.capital * state.riskPerTradePct) / 100;
-  const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
-  const lotSize = state.lotSize ?? 1;
-  const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
-  // Round DOWN to nearest lot (never exceed risk budget)
-  const quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
+  // ── Options mode: resolve ATM option token based on signal direction ──────────────────────
+  // When isOptionsMode=true, the bot reads the underlying (Nifty/BankNifty futures) for signals
+  // but places the actual order on the ATM CE (for BUY) or ATM PE (for SELL).
+  // The option premium price is used for quantity sizing, NOT the underlying price.
+  let tradeInstrumentToken = state.instrumentToken;
+  let tradeSymbol = state.instrumentSymbol;
+  let tradeLabel = state.instrumentLabel;
+  let optionPremiumForSizing: number | null = null;
 
+  if (isOptionsMode && state.accessToken) {
+    // Determine CE or PE based on signal direction (or explicit optionType override)
+    const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
+      : state.optionType === "PE" ? "PE"
+      : signal.direction === "BUY" ? "CE" : "PE";
+
+    const resolved = await resolveAtmOptionToken(state.underlyingToken!, ceOrPe, state.accessToken);
+    if (!resolved) {
+      console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option. Skipping trade.`);
+      return;
+    }
+    tradeInstrumentToken = resolved.token;
+    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${resolved.strike}`;
+    tradeLabel = `${state.instrumentLabel} ${resolved.strike} ${ceOrPe}`;
+    optionPremiumForSizing = resolved.premium;
+    state.optionTradeToken = resolved.token;
+    state.optionPremiumPrice = resolved.premium;
+    console.log(`[BotEngine] ${state.sessionToken} — Options mode: ${ceOrPe} @ strike ${resolved.strike}, premium ₹${resolved.premium.toFixed(2)}, token: ${resolved.token}`);
+  } else if (isOptionsMode && !state.accessToken) {
+    // Paper mode with options: simulate option premium from mock prices
+    const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
+      : state.optionType === "PE" ? "PE"
+      : signal.direction === "BUY" ? "CE" : "PE";
+    const mockPremium = ceOrPe === "CE" ? (mockPrices["BNF_CE"] ?? 250) : (mockPrices["BNF_PE"] ?? 200);
+    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_ATM`;
+    tradeLabel = `${state.instrumentLabel} ATM ${ceOrPe} (paper)`;
+    optionPremiumForSizing = mockPremium;
+    state.optionPremiumPrice = mockPremium;
+  }
+
+  // ── Position sizing ───────────────────────────────────────────────────────────────
+  // For options: use option premium price for SL distance (not underlying price).
+  // SL for options = 50% of premium (standard options risk management).
+  // For futures/equity: use signal SL distance as before.
+  const riskAmount = (state.capital * state.riskPerTradePct) / 100;
+  const lotSize = state.lotSize ?? 1;
+  let quantity: number;
+
+  if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
+    // Options quantity: risk ₹X, SL = 50% of premium, so loss per unit = 0.5 * premium
+    // quantity = riskAmount / (0.5 * premium), rounded to nearest lot
+    const slPerUnit = optionPremiumForSizing * 0.5; // 50% stop loss on premium
+    const rawQty = slPerUnit > 0 ? Math.floor(riskAmount / slPerUnit) : lotSize;
+    quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
+    // Safety cap: max quantity such that total premium outlay <= 2x risk amount
+    const maxQtyByCost = Math.floor((riskAmount * 2) / optionPremiumForSizing / lotSize) * lotSize;
+    quantity = Math.min(quantity, Math.max(lotSize, maxQtyByCost));
+  } else {
+    const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
+    const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
+    quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
+  }
+
+  // ── Place order ─────────────────────────────────────────────────────────────────────────────
+  // For options mode: always BUY the option (CE or PE) regardless of signal direction.
+  // The direction (BUY/SELL) in the trade log refers to the underlying signal direction.
+  // The actual order placed is always a BUY of the option contract.
   let orderId: string | undefined;
   if (state.mode === "live" && state.accessToken) {
-    const oid = await placeUpstoxOrder(state.accessToken, state.instrumentToken, signal.direction, quantity);
+    // Options: always BUY the option (CE for bullish, PE for bearish)
+    // Futures/equity: use signal direction directly
+    const orderDirection = isOptionsMode ? "BUY" : signal.direction;
+    const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity);
     orderId = oid ?? undefined;
   }
 
@@ -1456,26 +1587,38 @@ async function tick(
     ? signal.reason
     : isReEntry ? `[Re-entry] ${signal.reason}` : signal.reason;
 
-    // Compute partial profit levels BEFORE calling onTradeOpen so they are stored in DB
-  const slDist = Math.abs(signal.entryPrice - signal.slPrice);
-  const partial1RPrice = signal.partial1RPrice ?? (signal.direction === "BUY" ? signal.entryPrice + slDist : signal.entryPrice - slDist);
-  const partial2RPrice = signal.partial2RPrice ?? (signal.direction === "BUY" ? signal.entryPrice + slDist * 2 : signal.entryPrice - slDist * 2);
+  // Compute partial profit levels BEFORE calling onTradeOpen so they are stored in DB
+  // For options: use option premium price for partial levels (not underlying SL distance)
+  const slDist = isOptionsMode && optionPremiumForSizing
+    ? optionPremiumForSizing * 0.5  // 50% of premium = SL distance for options
+    : Math.abs(signal.entryPrice - signal.slPrice);
+  const optionEntry = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
+  const partial1RPrice = signal.partial1RPrice ?? (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist);
+  const partial2RPrice = signal.partial2RPrice ?? (signal.direction === "BUY" ? optionEntry + slDist * 2 : optionEntry - slDist * 2);
+
+  // For options: entry/SL/target are based on option premium, not underlying price
+  const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
+  const tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.5 : signal.slPrice;
+  const tradeTarget = isOptionsMode && optionPremiumForSizing
+    ? optionPremiumForSizing * (1 + (state.targetMultiplier * 0.5)) // target = premium * (1 + 0.5*targetMult)
+    : signal.targetPrice;
+
   const dbId = await onTradeOpen({
-    symbol: state.instrumentSymbol, symbolLabel: state.instrumentLabel,
-    instrumentToken: state.instrumentToken, direction: signal.direction, mode: state.mode,
-    entryPrice: signal.entryPrice, quantity, slPrice: signal.slPrice, targetPrice: signal.targetPrice,
+    symbol: tradeSymbol, symbolLabel: tradeLabel,
+    instrumentToken: tradeInstrumentToken, direction: signal.direction, mode: state.mode,
+    entryPrice: tradeEntryPrice, quantity, slPrice: tradeSl, targetPrice: tradeTarget,
     atr: signal.atr, confidence: signal.confidence, status: "open",
-    upstoxOrderId: orderId, signalReason: signalLabel, enteredAt: new Date(),
+    upstoxOrderId: orderId, signalReason: signalLabel + (isOptionsMode ? ` [${tradeSymbol}]` : ""), enteredAt: new Date(),
     partial1RPrice, partial2RPrice,
   });
 
   state.openTrade = {
-    dbId, symbol: state.instrumentSymbol, symbolLabel: state.instrumentLabel,
-    instrumentToken: state.instrumentToken, direction: signal.direction, mode: state.mode,
-    entryPrice: signal.entryPrice, quantity, slPrice: signal.slPrice, targetPrice: signal.targetPrice,
+    dbId, symbol: tradeSymbol, symbolLabel: tradeLabel,
+    instrumentToken: tradeInstrumentToken, direction: signal.direction, mode: state.mode,
+    entryPrice: tradeEntryPrice, quantity, slPrice: tradeSl, targetPrice: tradeTarget,
     atr: signal.atr, confidence: signal.confidence, upstoxOrderId: orderId,
     enteredAt: new Date(), trailingSlEnabled: state.trailingSlEnabled,
-    trailingSlPct: state.trailingSlPct, currentSl: signal.slPrice, isReEntry,
+    trailingSlPct: state.trailingSlPct, currentSl: tradeSl, isReEntry,
     partial1RPrice, partial2RPrice, partialBooked: 0, bookedQty: 0, bookedPnl: 0,
     isHeroZero: signal.isHeroZero, heroZeroPremiumEntry: signal.isHeroZero ? signal.entryPrice : undefined,
   };

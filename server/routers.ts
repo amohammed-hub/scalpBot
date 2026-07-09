@@ -211,6 +211,10 @@ export const appRouter = router({
         telegramEnabled: z.boolean().default(false),
         botSlot: z.number().default(0),
         lotSize: z.number().default(1),
+        // Options mode: when set, bot reads underlying for signals and trades ATM CE/PE
+        isIndexOptions: z.boolean().default(false), // true = auto-resolve ATM CE/PE at trade time
+        underlyingToken: z.string().optional(), // e.g. "NSE_INDEX|Nifty Bank"
+        optionType: z.enum(["CE", "PE", "auto"]).optional(), // "auto" = CE for BUY, PE for SELL
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -489,6 +493,9 @@ export const appRouter = router({
             telegramEnabled: input.telegramEnabled,
             botSlot: input.botSlot,
             lotSize: input.lotSize,
+            isIndexOptions: input.isIndexOptions,
+            underlyingToken: input.underlyingToken,
+            optionType: input.optionType,
           },
           onTradeOpen,
           onTradeClose,
@@ -1150,6 +1157,9 @@ export const appRouter = router({
         telegramChatId: z.string().optional(),
         telegramEnabled: z.boolean().default(false),
         lotSize: z.number().default(1),
+        isIndexOptions: z.boolean().default(false),
+        underlyingToken: z.string().optional(),
+        optionType: z.enum(["CE", "PE", "auto"]).optional(),
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -1246,6 +1256,9 @@ export const appRouter = router({
           telegramChatId: input.telegramChatId ?? null,
           telegramEnabled: input.telegramEnabled, botSlot: input.slot,
           lotSize: input.lotSize ?? 1,
+          isIndexOptions: input.isIndexOptions ?? false,
+          underlyingToken: input.underlyingToken,
+          optionType: input.optionType,
         }, onTradeOpen, onTradeClose, undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;

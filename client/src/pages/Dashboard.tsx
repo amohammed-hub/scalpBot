@@ -51,19 +51,27 @@ interface PricePoint { time: string; price: number; }
 // ── Instruments ───────────────────────────────────────────────────────────────
 // lotSize: minimum tradeable quantity per lot. Quantity is always rounded to nearest lot.
 // spotOnly: true means the index cannot be directly traded — shown for reference/signal only.
+// isIndexOptions: when true, bot reads underlying (underlyingToken) for signals and auto-resolves ATM CE/PE at runtime.
+// underlyingToken: the index token used to fetch candles and generate signals (only for isIndexOptions instruments).
 const INSTRUMENTS = [
-  // NSE F&O Futures — TRADEABLE (listed first as recommended defaults)
-  { token: "NFO_FUT|BANKNIFTY30JUL2026FUT",    symbol: "BNF_FUT",     label: "BankNifty Jul 2026 Futures",  segment: "NSE F&O Futures", lotSize: 15,  spotOnly: false },
-  { token: "NFO_FUT|NIFTY30JUL2026FUT",        symbol: "NIFTY_FUT",   label: "Nifty Jul 2026 Futures",      segment: "NSE F&O Futures", lotSize: 25,  spotOnly: false },
-  // NSE F&O Options
-  { token: "NFO_OPT|NIFTY10JUL202624800CE",  symbol: "NIFTY_CE",      label: "Nifty 24800 CE (10 Jul)",  segment: "NSE F&O Options", lotSize: 25,  spotOnly: false },
-  { token: "NFO_OPT|NIFTY10JUL202624800PE",  symbol: "NIFTY_PE",      label: "Nifty 24800 PE (10 Jul)",  segment: "NSE F&O Options", lotSize: 25,  spotOnly: false },
-  { token: "NFO_OPT|NIFTY10JUL202625000CE",  symbol: "NIFTY_25000CE", label: "Nifty 25000 CE (10 Jul)",  segment: "NSE F&O Options", lotSize: 25,  spotOnly: false },
-  { token: "NFO_OPT|NIFTY10JUL202625000PE",  symbol: "NIFTY_25000PE", label: "Nifty 25000 PE (10 Jul)",  segment: "NSE F&O Options", lotSize: 25,  spotOnly: false },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653000CE", symbol: "BNF_CE",     label: "BankNifty 53000 CE (9 Jul)",  segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653000PE", symbol: "BNF_PE",     label: "BankNifty 53000 PE (9 Jul)",  segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653500CE", symbol: "BNF_53500CE", label: "BankNifty 53500 CE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653500PE", symbol: "BNF_53500PE", label: "BankNifty 53500 PE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
+  // ── Index Options — Auto-ATM (RECOMMENDED for Nifty/BankNifty) ─────────────────────────────────
+  // Bot reads the index for trend signals, then auto-resolves ATM CE (BUY) or PE (SELL) at trade time.
+  // Quantity is sized using the option premium price, NOT the underlying index price.
+  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ATM Options (Auto)",  segment: "Index Options (Auto-ATM)", lotSize: 15, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
+  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options (Auto)",   segment: "Index Options (Auto-ATM)", lotSize: 25, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
+  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options (Auto)",   segment: "Index Options (Auto-ATM)", lotSize: 40, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
+  // ── NSE F&O Futures — TRADEABLE ──────────────────────────────────────────────
+  { token: "NFO_FUT|BANKNIFTY30JUL2026FUT", symbol: "BNF_FUT",   label: "BankNifty Jul 2026 Futures", segment: "NSE F&O Futures", lotSize: 15, spotOnly: false },
+  { token: "NFO_FUT|NIFTY30JUL2026FUT",     symbol: "NIFTY_FUT", label: "Nifty Jul 2026 Futures",     segment: "NSE F&O Futures", lotSize: 25, spotOnly: false },
+  // ── NSE F&O Options — Fixed Strike (manual selection) ────────────────────────
+  { token: "NFO_OPT|NIFTY10JUL202624800CE",    symbol: "NIFTY_CE",      label: "Nifty 24800 CE (10 Jul)",    segment: "NSE F&O Options", lotSize: 25, spotOnly: false },
+  { token: "NFO_OPT|NIFTY10JUL202624800PE",    symbol: "NIFTY_PE",      label: "Nifty 24800 PE (10 Jul)",    segment: "NSE F&O Options", lotSize: 25, spotOnly: false },
+  { token: "NFO_OPT|NIFTY10JUL202625000CE",    symbol: "NIFTY_25000CE", label: "Nifty 25000 CE (10 Jul)",    segment: "NSE F&O Options", lotSize: 25, spotOnly: false },
+  { token: "NFO_OPT|NIFTY10JUL202625000PE",    symbol: "NIFTY_25000PE", label: "Nifty 25000 PE (10 Jul)",    segment: "NSE F&O Options", lotSize: 25, spotOnly: false },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653000CE", symbol: "BNF_CE",       label: "BankNifty 53000 CE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653000PE", symbol: "BNF_PE",       label: "BankNifty 53000 PE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653500CE", symbol: "BNF_53500CE",  label: "BankNifty 53500 CE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653500PE", symbol: "BNF_53500PE",  label: "BankNifty 53500 PE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
   // MCX Commodities
   { token: "MCX_FO|552720", symbol: "MCX_GOLD",     label: "Gold (GOLDGUINEA FUT 31 Jul)",    segment: "MCX Commodities", lotSize: 10,    spotOnly: false },
   { token: "MCX_FO|574822", symbol: "MCX_SILVER",   label: "Silver (SILVER100 FUT 31 Jul)",   segment: "MCX Commodities", lotSize: 100,   spotOnly: false },
@@ -373,6 +381,8 @@ export default function Dashboard() {
   const handleStart = () => {
     const selectedInstr = INSTRUMENTS.find(i => i.token === config.instrumentToken);
     const lotSize = selectedInstr?.lotSize ?? 1;
+    const isIndexOptions = !!(selectedInstr as any)?.isIndexOptions;
+    const underlyingToken = (selectedInstr as any)?.underlyingToken as string | undefined;
     startMutation.mutate({
       sessionToken,
       instrumentToken: config.instrumentToken,
@@ -390,6 +400,8 @@ export default function Dashboard() {
       minConfidence: config.minConfidence,
       scanIntervalSec: config.scanIntervalSec,
       lotSize,
+      isIndexOptions,
+      underlyingToken,
     });
   };
 
@@ -1141,6 +1153,14 @@ export default function Dashboard() {
                   </optgroup>
                 ))}
               </select>
+              {/* Show info badge when an Index Options (Auto-ATM) instrument is selected */}
+              {(INSTRUMENTS.find(i => i.token === config.instrumentToken) as any)?.isIndexOptions && (
+                <div className="mt-1.5 flex items-start gap-1.5 bg-teal-500/10 border border-teal-500/30 rounded-lg px-2.5 py-1.5">
+                  <span className="text-teal-400 text-[10px] leading-tight">
+                    <strong>Auto-ATM Options Mode:</strong> Bot reads the index price for signals, then automatically buys the ATM CE (on BUY signal) or ATM PE (on SELL signal). Capital is sized using the option premium price.
+                  </span>
+                </div>
+              )}
             </div>
             <div>
               <label className="text-xs text-white/50 mb-1.5 block">Trading Mode</label>

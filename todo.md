@@ -310,3 +310,20 @@
 - [x] instrument selector: replace BankNifty Spot / Nifty Spot with their futures contracts (BANKNIFTY Jul Fut, NIFTY Jul Fut) — spot index is not directly tradeable
 - [x] instrument definitions: add lotSize field to all instruments so quantity calculator uses it
 - [x] integration tests: verify lot-size rounding, duplicate trade prevention, and futures instrument tokens
+
+## Options Trading Fix — Jul 9 (Critical)
+
+### Problem
+- Bot was trading BankNifty/Nifty futures directly instead of reading them as trend and trading options
+- Quantity calculation used underlying futures price (₹57,000) for SL distance → absurd lot sizes
+- "Bank Nifty (Spot)" appearing in trade log — spot index is not tradeable
+
+### Fix Plan
+- [ ] schema: add underlyingToken, underlyingSymbol, optionType (CE/PE/auto) columns to bot_sessions
+- [ ] botEngine.ts: add underlyingToken + optionTradeToken to BotState — fetch candles from underlying, place orders on option token
+- [ ] botEngine.ts: fix quantity calc for options — use option premium price (not underlying price) for SL distance
+- [ ] botEngine.ts: auto-select CE for BUY signal, PE for SELL signal when optionType="auto"
+- [ ] routers.ts: extend bot.start schema to accept underlyingToken, optionType, tradeToken
+- [ ] Dashboard.tsx: redesign instrument selector — "Index Options" group: user picks BankNifty/Nifty, bot auto-resolves ATM strike at runtime
+- [ ] botRestart.ts: restore underlyingToken + tradeToken from DB on restart
+- [ ] Tests: verify option quantity uses premium price, CE selected for BUY, PE for SELL
