@@ -186,6 +186,9 @@ export const appRouter = router({
           lastSignal: inMem?.lastSignal ?? null,
           nextScanAt: inMem?.nextScanAt ?? row.nextScanAt ?? 0,
           openTrade: inMem?.openTrade ?? null,
+          // Health indicator fields
+          lastTickAt: inMem?.lastTickAt ?? (row.lastTickAt ? Number(row.lastTickAt) : 0),
+          lastError: inMem?.lastError ?? row.lastError ?? null,
         };
       }),
 
@@ -1241,6 +1244,10 @@ export const appRouter = router({
             isPowerHourMode: inMem?.isPowerHourMode ?? false,
             isMCXEveningMode: inMem?.isMCXEveningMode ?? false,
             heroZeroMode: inMem?.heroZeroMode ?? false,
+            // Health indicator fields
+            lastTickAt: inMem?.lastTickAt ?? (dbRow?.lastTickAt ? Number(dbRow.lastTickAt) : 0),
+            scanIntervalSec: inMem?.scanIntervalSec ?? dbRow?.scanIntervalSec ?? 60,
+            lastError: inMem?.lastError ?? dbRow?.lastError ?? null,
           };
         });
       }),

@@ -365,3 +365,10 @@
 - [x] botEngine.ts: in tick(), auto-detect MCX vs NSE and use correct option resolver path
 - [x] botEngine.ts: add placeholder token detection — if underlyingToken is MCX_FO|SYMBOL (no numeric ID), resolve real token before first scan
 - [x] botEngine.test.ts: add tests for MCX resolver functions (covered by 97 passing tests)
+
+## Feature: Bot Health Indicator (Jul 9)
+- [x] Dashboard.tsx: add getBotHealth(lastTickAt, status, scanIntervalSec) helper — returns "green" | "amber" | "red" | "idle"
+- [x] Dashboard.tsx: add HealthDot component — green = scanned within 2× scanInterval, amber = 2–5× scanInterval, red = >5× or error, idle = stopped/never ran
+- [x] Dashboard.tsx: show HealthDot next to primary bot status badge in the Bot Control Panel
+- [x] Dashboard.tsx: show HealthDot next to each slot's status badge in the Parallel Bots panel
+- [x] Dashboard.tsx: add tooltip on hover showing last scan time (e.g. "Last scan: 45s ago")

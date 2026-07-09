@@ -132,6 +132,68 @@ async function fireTelegramAlert(text: string): Promise<void> {
   } catch { /* silent */ }
 }
 
+// ── Bot Health Indicator ──────────────────────────────────────────────────────
+type BotHealth = "green" | "amber" | "red" | "idle";
+
+/**
+ * Compute health based on how long ago the last tick fired.
+ * green  = last tick within 2× scanInterval (healthy)
+ * amber  = 2–5× scanInterval (possibly stalled)
+ * red    = >5× scanInterval OR lastError set (tick died)
+ * idle   = bot is stopped / never ran
+ */
+function getBotHealth(
+  status: string,
+  lastTickAt: number,
+  scanIntervalSec: number,
+  lastError: string | null,
+): BotHealth {
+  if (status !== "running") return "idle";
+  if (lastTickAt === 0) return "amber"; // running but no tick yet (just started)
+  const elapsedMs = Date.now() - lastTickAt;
+  const intervalMs = Math.max(15, scanIntervalSec) * 1000;
+  if (lastError && elapsedMs > intervalMs * 3) return "red";
+  if (elapsedMs <= intervalMs * 2) return "green";
+  if (elapsedMs <= intervalMs * 5) return "amber";
+  return "red";
+}
+
+function HealthDot({
+  status,
+  lastTickAt,
+  scanIntervalSec,
+  lastError,
+}: {
+  status: string;
+  lastTickAt: number;
+  scanIntervalSec: number;
+  lastError: string | null;
+}) {
+  const health = getBotHealth(status, lastTickAt, scanIntervalSec, lastError);
+  const elapsedSec = lastTickAt > 0 ? Math.round((Date.now() - lastTickAt) / 1000) : null;
+
+  const colorClass = {
+    green: "bg-emerald-400 shadow-[0_0_6px_2px_rgba(52,211,153,0.5)]",
+    amber: "bg-amber-400 shadow-[0_0_6px_2px_rgba(251,191,36,0.5)]",
+    red:   "bg-red-500 shadow-[0_0_6px_2px_rgba(239,68,68,0.5)]",
+    idle:  "bg-white/20",
+  }[health];
+
+  const label = {
+    green: `Healthy — last scan ${elapsedSec !== null ? `${elapsedSec}s ago` : "just now"}`,
+    amber: `Slow — last scan ${elapsedSec !== null ? `${elapsedSec}s ago` : "unknown"}`,
+    red:   lastError ? `Error: ${lastError}` : `Stalled — last scan ${elapsedSec !== null ? `${elapsedSec}s ago` : "unknown"}`,
+    idle:  "Bot is stopped",
+  }[health];
+
+  return (
+    <span
+      title={label}
+      className={`inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 transition-all duration-500 cursor-help ${colorClass}`}
+    />
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [, navigate] = useLocation();
@@ -385,6 +447,14 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [isRunning, nextScanAt]);
 
+  // Health dot refresh — force re-render every 10s so elapsed time in tooltip stays current
+  const [, setHealthTick] = useState(0);
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setHealthTick(t => t + 1), 10000);
+    return () => clearInterval(id);
+  }, [isRunning]);
+
   // Update price chart from live data
   useEffect(() => {
     if (currentPrice > 0 && isRunning) {
@@ -563,7 +633,12 @@ export default function Dashboard() {
         </button>
         <div className="mt-auto px-2 pb-2 space-y-2">
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${isRunning ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-white/40"}`}>
-            <span className={`w-2 h-2 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
+            <HealthDot
+              status={botStatus?.status ?? "stopped"}
+              lastTickAt={(botStatus as any)?.lastTickAt ?? 0}
+              scanIntervalSec={(botStatus as any)?.scanIntervalSec ?? 60}
+              lastError={(botStatus as any)?.lastError ?? null}
+            />
             {isRunning ? "Bot Running" : "Bot Stopped"}
           </div>
           {isRunning && countdown > 0 && (
@@ -1435,7 +1510,14 @@ export default function Dashboard() {
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
                           isActive ? `bg-${slotColor}-500/20 text-${slotColor}-300` : "bg-white/10 text-white/40"
                         }`}>{slotLabel}</span>
-                        {isActive && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                        {isActive && (
+                          <HealthDot
+                            status={bot.status}
+                            lastTickAt={(bot as any).lastTickAt ?? 0}
+                            scanIntervalSec={(bot as any).scanIntervalSec ?? 60}
+                            lastError={(bot as any).lastError ?? null}
+                          />
+                        )}
                       </div>
                       {bot.slot > 0 && isActive && (
                         <button
