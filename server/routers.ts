@@ -731,10 +731,17 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const db = await getDb();
         if (!db) return [];
+        // Include trades from all 3 slots: primary + slot1 + slot2
+        const { inArray } = await import("drizzle-orm");
+        const allTokens = [
+          input.sessionToken,
+          `${input.sessionToken}-slot1`,
+          `${input.sessionToken}-slot2`,
+        ];
         return db
           .select()
           .from(tradeLog)
-          .where(eq(tradeLog.sessionToken, input.sessionToken))
+          .where(inArray(tradeLog.sessionToken, allTokens))
           .orderBy(desc(tradeLog.enteredAt))
           .limit(input.limit);
       }),
@@ -775,11 +782,13 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const db = await getDb();
         if (!db) return { totalTrades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
+        const { inArray: inArrayStats } = await import("drizzle-orm");
+        const statsTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
         const trades = await db
           .select()
           .from(tradeLog)
           .where(and(
-            eq(tradeLog.sessionToken, input.sessionToken),
+            inArrayStats(tradeLog.sessionToken, statsTokens),
             eq(tradeLog.status, "closed"),
           ));
         const totalTrades = trades.length;
@@ -801,13 +810,15 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const db = await getDb();
         if (!db) return { todayTrades: 0, todayPnl: 0, wins: 0, losses: 0, winRate: 0 };
+        const { inArray: inArrayToday } = await import("drizzle-orm");
+        const todayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const trades = await db
           .select()
           .from(tradeLog)
           .where(and(
-            eq(tradeLog.sessionToken, input.sessionToken),
+            inArrayToday(tradeLog.sessionToken, todayTokens),
             eq(tradeLog.status, "closed"),
           ));
         const todayTrades = trades.filter((t: typeof trades[0]) => new Date(t.enteredAt) >= today);
@@ -828,16 +839,17 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
         const db = await getDb();
-        if (!db) return [];
+                if (!db) return [];
+        const { inArray: inArrayDay } = await import("drizzle-orm");
+        const dayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
         const trades = await db
           .select()
           .from(tradeLog)
           .where(and(
-            eq(tradeLog.sessionToken, input.sessionToken),
+            inArrayDay(tradeLog.sessionToken, dayTokens),
             eq(tradeLog.status, "closed"),
           ))
           .orderBy(desc(tradeLog.enteredAt));
-
         // Group by date string YYYY-MM-DD (IST)
         const byDay = new Map<string, typeof trades>();
         for (const t of trades) {
@@ -873,16 +885,17 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
         const db = await getDb();
-        if (!db) return [];
+                if (!db) return [];
+        const { inArray: inArrayWeek } = await import("drizzle-orm");
+        const weekTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
         const trades = await db
           .select()
           .from(tradeLog)
           .where(and(
-            eq(tradeLog.sessionToken, input.sessionToken),
+            inArrayWeek(tradeLog.sessionToken, weekTokens),
             eq(tradeLog.status, "closed"),
           ))
           .orderBy(desc(tradeLog.enteredAt));
-
         // Get ISO week key: YYYY-Www
         const getWeekKey = (d: Date) => {
           const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
@@ -950,11 +963,13 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const db = await getDb();
         if (!db) return [];
+        const { inArray: inArrayMonth } = await import("drizzle-orm");
+        const monthTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
         const trades = await db
           .select()
           .from(tradeLog)
           .where(and(
-            eq(tradeLog.sessionToken, input.sessionToken),
+            inArrayMonth(tradeLog.sessionToken, monthTokens),
             eq(tradeLog.status, "closed"),
           ))
           .orderBy(desc(tradeLog.enteredAt));
@@ -1011,10 +1026,13 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
+        // Allow deleting trades from primary or any slot
+        const { inArray: inArrayDel } = await import("drizzle-orm");
+        const delTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
         await db.delete(tradeLog).where(
           and(
             eq(tradeLog.id, input.tradeId),
-            eq(tradeLog.sessionToken, input.sessionToken),
+            inArrayDel(tradeLog.sessionToken, delTokens),
           )
         );
         return { success: true };
@@ -1069,10 +1087,16 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const db = await getDb();
         if (!db) return [];
+        const { inArray } = await import("drizzle-orm");
+        const allTokens = [
+          input.sessionToken,
+          `${input.sessionToken}-slot1`,
+          `${input.sessionToken}-slot2`,
+        ];
         const trades = await db
           .select()
           .from(tradeLog)
-          .where(eq(tradeLog.sessionToken, input.sessionToken))
+          .where(inArray(tradeLog.sessionToken, allTokens))
           .orderBy(desc(tradeLog.enteredAt));
         return trades.map((t: TradeLog) => ({
           id: t.id,
@@ -1273,6 +1297,26 @@ export const appRouter = router({
           accessToken = creds[0].accessToken;
         }
 
+        // Restore today's P&L from closed trades (same logic as primary bot.start)
+        const slotTodayStart = new Date();
+        slotTodayStart.setHours(0, 0, 0, 0);
+        const slotTodayPnlRows = await db
+          .select({ pnl: tradeLog.pnl })
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, slotToken),
+            eq(tradeLog.status, "closed"),
+            gte(tradeLog.enteredAt, slotTodayStart),
+          ));
+        const slotRestoredDailyPnl = slotTodayPnlRows.reduce((sum: number, r: { pnl: number | null }) => sum + (r.pnl ?? 0), 0);
+        const slotTodayCountRows = await db
+          .select({ count: count() })
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, slotToken),
+            gte(tradeLog.enteredAt, slotTodayStart),
+          ));
+        const slotTodayCount = slotTodayCountRows[0]?.count ?? 0;
         // Insert or update a bot session for this slot
         const existing = await db
           .select({ id: botSessions.id })
@@ -1294,7 +1338,8 @@ export const appRouter = router({
             minConfidence: input.minConfidence, scanIntervalSec: input.scanIntervalSec,
             telegramBotToken: input.telegramBotToken, telegramChatId: input.telegramChatId,
             telegramEnabled: input.telegramEnabled, botSlot: input.slot,
-            tradesCount: 0, dailyPnl: 0, startedAt: new Date(), stoppedAt: null, lastError: null,
+            tradesCount: slotTodayCount, dailyPnl: slotRestoredDailyPnl,
+            startedAt: new Date(), stoppedAt: null, lastError: null,
           }).where(eq(botSessions.sessionToken, slotToken));
         } else {
           const result = await db.insert(botSessions).values({
@@ -1307,7 +1352,8 @@ export const appRouter = router({
             trailingSlPct: input.trailingSlPct, minConfidence: input.minConfidence,
             scanIntervalSec: input.scanIntervalSec, telegramBotToken: input.telegramBotToken,
             telegramChatId: input.telegramChatId, telegramEnabled: input.telegramEnabled,
-            botSlot: input.slot, tradesCount: 0, dailyPnl: 0, startedAt: new Date(),
+            botSlot: input.slot, tradesCount: slotTodayCount, dailyPnl: slotRestoredDailyPnl,
+            startedAt: new Date(),
           });
           sessionId = Number((result as unknown as { insertId: number }).insertId);
         }
@@ -1328,6 +1374,16 @@ export const appRouter = router({
             pnlPct: (pnl / input.capital) * 100,
             exitReason, exitedAt: new Date(),
           }).where(eq(tradeLog.id, dbId));
+          // Persist dailyPnl and tradesCount to DB so they survive server restarts
+          const slotState = getBotState(slotToken);
+          if (slotState) {
+            await dbInner.update(botSessions).set({
+              tradesCount: slotState.tradesCount,
+              dailyPnl: slotState.dailyPnl,
+              status: slotState.status,
+              lastError: slotState.lastError,
+            }).where(eq(botSessions.sessionToken, slotToken));
+          }
         };
 
         startBot({
@@ -1338,7 +1394,7 @@ export const appRouter = router({
           dailyLossLimitPct: input.dailyLossLimitPct, stopLossMultiplier: input.stopLossMultiplier,
           targetMultiplier: input.targetMultiplier, trailingSlEnabled: input.trailingSlEnabled,
           trailingSlPct: input.trailingSlPct, minConfidence: input.minConfidence,
-          scanIntervalSec: input.scanIntervalSec, tradesCount: 0, dailyPnl: 0, accessToken,
+          scanIntervalSec: input.scanIntervalSec, tradesCount: slotTodayCount, dailyPnl: slotRestoredDailyPnl, accessToken,
           telegramBotToken: input.telegramBotToken ?? null,
           telegramChatId: input.telegramChatId ?? null,
           telegramEnabled: input.telegramEnabled, botSlot: input.slot,
