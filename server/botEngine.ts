@@ -1169,6 +1169,95 @@ async function resolveAtmOptionToken(
   }
 }
 
+// ── MCX: Resolve front-month futures instrument_key ─────────────────────────
+// MCX futures tokens are numeric IDs that change every month (e.g. MCX_FO|226593).
+// Placeholder tokens like MCX_FO|GOLDM (no numeric ID) must be resolved before use.
+async function resolveMcxFuturesToken(
+  symbol: string,
+  accessToken: string,
+): Promise<string | null> {
+  try {
+    const url = `https://api.upstox.com/v2/instruments/search` +
+      `?query=${encodeURIComponent(symbol)}` +
+      `&exchanges=MCX&segments=COMM&instrument_types=FUTCOM` +
+      `&expiry=current_month&records=10`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      timeout: 8000,
+    });
+    const items: Array<{ instrument_key: string; trading_symbol: string }> =
+      resp.data?.data ?? [];
+    // Find the entry whose trading_symbol starts with the symbol (e.g. "GOLDM")
+    const match = items.find(i =>
+      i.trading_symbol.toUpperCase().startsWith(symbol.toUpperCase())
+    );
+    if (match) {
+      console.log(`[BotEngine] Resolved MCX futures token: ${symbol} → ${match.instrument_key} (${match.trading_symbol})`);
+      return match.instrument_key;
+    }
+    return null;
+  } catch (err) {
+    console.error(`[BotEngine] resolveMcxFuturesToken(${symbol}) failed:`, err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+// ── MCX: Resolve ATM option using /v2/option/contract (MCX-specific path) ────
+// Note: /v2/option/chain does NOT work for MCX. Use /v2/option/contract instead.
+async function resolveAtmMcxOptionToken(
+  futuresToken: string,
+  optionType: "CE" | "PE",
+  accessToken: string,
+): Promise<{ token: string; premium: number; strike: number } | null> {
+  try {
+    // Step 1: get current futures price
+    const quoteResp = await axios.get(
+      `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(futuresToken)}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
+    );
+    const qData = quoteResp.data?.data;
+    const qKey = qData ? Object.keys(qData)[0] : null;
+    const underlyingPrice: number = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
+    if (!underlyingPrice) return null;
+
+    // Step 2: fetch option contracts for this futures instrument
+    const contractResp = await axios.get(
+      `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(futuresToken)}&expiry_date=`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
+    );
+    const contracts: Array<{
+      instrument_key?: string;
+      strike_price?: number;
+      instrument_type?: string;
+      market_data?: { ltp?: number };
+    }> = contractResp.data?.data ?? [];
+
+    // Filter by option type (CE or PE) and find ATM strike
+    const filtered = contracts.filter(c =>
+      (c.instrument_type ?? "").toUpperCase() === optionType
+    );
+
+    let best: { token: string; premium: number; strike: number } | null = null;
+    let bestDist = Infinity;
+    for (const opt of filtered) {
+      const strike = opt.strike_price ?? 0;
+      const dist = Math.abs(strike - underlyingPrice);
+      const premium = opt.market_data?.ltp ?? 0;
+      if (dist < bestDist && premium > 0.5 && opt.instrument_key) {
+        bestDist = dist;
+        best = { token: opt.instrument_key, premium, strike };
+      }
+    }
+    if (best) {
+      console.log(`[BotEngine] MCX ATM ${optionType} resolved: strike ${best.strike}, premium ₹${best.premium.toFixed(2)}, token: ${best.token}`);
+    }
+    return best;
+  } catch (err) {
+    console.error(`[BotEngine] resolveAtmMcxOptionToken(${futuresToken}) failed:`, err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 // ── Place order via Upstox API ────────────────────────────────────────────────
 export async function placeUpstoxOrder(
   accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number,
@@ -1564,7 +1653,34 @@ async function tick(
       : state.optionType === "PE" ? "PE"
       : signal.direction === "BUY" ? "CE" : "PE";
 
-    const resolved = await resolveAtmOptionToken(state.underlyingToken!, ceOrPe, state.accessToken);
+    // Detect MCX placeholder token (e.g. MCX_FO|GOLDM — no numeric ID)
+    // MCX uses /v2/option/contract; NSE/NFO uses /v2/option/chain
+    const rawUnderlying = state.underlyingToken!;
+    const isMcxPlaceholder = rawUnderlying.startsWith("MCX_FO|") && !/\|\d+$/.test(rawUnderlying);
+    let resolvedUnderlying = rawUnderlying;
+
+    if (isMcxPlaceholder) {
+      // Extract symbol from placeholder (e.g. "MCX_FO|GOLDM" → "GOLDM")
+      const symbol = rawUnderlying.split("|")[1];
+      const realToken = await resolveMcxFuturesToken(symbol, state.accessToken);
+      if (realToken) {
+        resolvedUnderlying = realToken;
+        // Cache resolved token back into state so subsequent ticks skip the search call
+        state.underlyingToken = realToken;
+        emitActivity(state.sessionToken, "signal", `✅ MCX futures resolved: ${symbol} → ${realToken}`);
+      } else {
+        console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping trade.`);
+        emitActivity(state.sessionToken, "error", `⚠ MCX token resolve failed for ${symbol} — check access token or market hours`);
+        return;
+      }
+    }
+
+    // Use MCX-specific resolver for MCX tokens, NSE chain resolver for everything else
+    const isMcxToken = resolvedUnderlying.startsWith("MCX_FO|");
+    const resolved = isMcxToken
+      ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken)
+      : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken);
+
     if (!resolved) {
       console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option. Skipping trade.`);
       return;
@@ -1768,11 +1884,23 @@ export function startBot(
   };
 
   const intervalMs = Math.max(15, config.scanIntervalSec) * 1000;
-  const handle = setInterval(() => tick(state, onTradeOpen, onTradeClose, onTick), intervalMs);
+  const handle = setInterval(() => {
+    tick(state, onTradeOpen, onTradeClose, onTick).catch(err => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[BotEngine] Tick error (${config.sessionToken}):`, msg);
+      state.lastError = `Tick error: ${msg}`;
+      emitActivity(config.sessionToken, "error", `⚠ Tick error: ${msg}`);
+    });
+  }, intervalMs);
   state.intervalHandle = handle;
-    bots.set(config.sessionToken, state);
+  bots.set(config.sessionToken, state);
   emitActivity(config.sessionToken, "bot_start", `Bot started — ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s`);
-  tick(state, onTradeOpen, onTradeClose, onTick);
+  tick(state, onTradeOpen, onTradeClose, onTick).catch(err => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[BotEngine] Initial tick error (${config.sessionToken}):`, msg);
+    state.lastError = `Tick error: ${msg}`;
+    emitActivity(config.sessionToken, "error", `⚠ Initial tick error: ${msg}`);
+  });
 }
 export function stopBot(sessionToken: string) {
   const state = bots.get(sessionToken);

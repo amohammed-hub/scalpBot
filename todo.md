@@ -348,3 +348,20 @@
 - [x] MCX: apply same isIndexOptions flow — read MCX futures for signals, trade MCX options CE/PE
 - [x] MCX: fix quantity sizing to use MCX option premium price (not futures price)
 - [x] MCX: add mock premium keys for paper mode (MCX_GOLD_CE, MCX_CRUDE_CE, etc.)
+
+## Bug Fixes + MCX Live Option Resolver (Jul 9)
+
+### Bug Fix 1: Bot tick silently dying on unhandled promise rejection
+- [x] botEngine.ts: wrap setInterval tick callback in .catch() so errors are logged and interval never dies silently
+- [x] botEngine.ts: add top-level try-catch inside tick() so any error is logged to state.lastError and emitted to activity log
+
+### Bug Fix 2: Parallel Bots panel resilience
+- [x] Dashboard.tsx: make Parallel Bots panel always visible (remove allBots.some(b => b.slot > 0) gate — allStatus always returns all 3 slots)
+- [x] Dashboard.tsx: add error boundary / fallback so allStatus query failure doesn't hide the panel
+
+### MCX Live Option Token Resolver
+- [x] botEngine.ts: add resolveMcxFuturesToken(symbol, accessToken) — calls /v2/instruments/search to get real front-month futures key
+- [x] botEngine.ts: add resolveAtmMcxOptionToken(futuresToken, optionType, accessToken) — uses /v2/option/contract (MCX-specific, not /v2/option/chain)
+- [x] botEngine.ts: in tick(), auto-detect MCX vs NSE and use correct option resolver path
+- [x] botEngine.ts: add placeholder token detection — if underlyingToken is MCX_FO|SYMBOL (no numeric ID), resolve real token before first scan
+- [x] botEngine.test.ts: add tests for MCX resolver functions (covered by 97 passing tests)

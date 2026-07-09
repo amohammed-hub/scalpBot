@@ -1395,8 +1395,8 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Parallel Bots Panel */}
-        {allBots && allBots.some(b => b.slot > 0) && (
+        {/* Parallel Bots Panel — always visible since allStatus always returns all 3 slots */}
+        {(
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -1528,12 +1528,12 @@ export default function Dashboard() {
               })}
 
             </div>
-            <p className="text-xs text-white/30 mt-3">
+                        <p className="text-xs text-white/30 mt-3">
               Start additional bots from the <button className="underline text-purple-400" onClick={() => navigate("/hero-zero")}>Hero Zero Scanner</button> or Settings.
             </p>
           </div>
-        )}
-
+        )
+        }
         {/* Daily P&L Chart */}
         {(() => {
           const days = pnlRange;
