@@ -380,3 +380,6 @@
 ## Features: Restart Button + Unrealised P&L (Jul 9)
 - [x] Dashboard.tsx: HealthDot shows a "Restart" button when health is red — calls bot.stop then bot.start with same config
 - [x] Dashboard.tsx: Parallel Bots slot cards show live unrealised P&L of open trade next to entry price
+
+## Fix: Candle Pre-warm on Bot Start (Jul 9)
+- [x] botEngine.ts: on startBot, fetch last 60 historical 1m candles from Upstox (live mode) or generate synthetic history (paper mode) so signals fire immediately without 20-min warmup

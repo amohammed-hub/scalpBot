@@ -1873,8 +1873,26 @@ export function startBot(
   const existing = bots.get(config.sessionToken);
   if (existing?.intervalHandle) clearInterval(existing.intervalHandle);
 
+  // ── Pre-warm candle buffer (paper mode only) ──────────────────────────────
+  // In live mode, fetchUpstoxCandles returns the full day's history on the first tick.
+  // In paper mode there is no API call, so we seed 60 synthetic candles so the signal
+  // engine has enough data to fire immediately without a 20-minute warmup.
+  const prewarmCandles: Candle[] = [];
+  if (!config.accessToken) {
+    const PREWARM = 60;
+    const now0 = Date.now();
+    for (let i = PREWARM; i >= 1; i--) {
+      const c = buildMockCandle(config.instrumentSymbol);
+      c.timestamp = now0 - i * 60_000; // back-date each candle 1 min apart
+      prewarmCandles.push(c);
+    }
+  }
+
   const state: BotState = {
-    ...config, candles: [], candles5m: [], candlesDay: [],
+    ...config,
+    candles: prewarmCandles,
+    candles5m: prewarmCandles.length > 0 ? build5mFromMock(prewarmCandles) : [],
+    candlesDay: [],
     lastSignal: null, lastPrice: 0, bidPrice: 0, askPrice: 0,
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
