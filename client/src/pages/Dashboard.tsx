@@ -1066,12 +1066,26 @@ export default function Dashboard() {
           <div className="bg-white/5 border border-teal-500/30 rounded-2xl p-5 mb-6">
             {/* Warning: bot not running — SL/Target not being monitored */}
             {!isRunning && (
-              <div className="flex items-start gap-3 bg-red-500/15 border border-red-500/40 rounded-xl p-3 mb-4">
-                <span className="text-red-400 text-lg mt-0.5">&#9888;</span>
-                <div>
-                  <p className="text-red-400 font-semibold text-sm">Bot is not running — SL &amp; Target are NOT being monitored</p>
-                  <p className="text-red-300/70 text-xs mt-0.5">Live price and unrealized P&amp;L will not update until you restart the bot. In live mode this means your stop-loss will not trigger automatically.</p>
+              <div className="flex items-start justify-between gap-3 bg-red-500/15 border border-red-500/40 rounded-xl p-3 mb-4">
+                <div className="flex items-start gap-3">
+                  <span className="text-red-400 text-lg mt-0.5">&#9888;</span>
+                  <div>
+                    <p className="text-red-400 font-semibold text-sm">Bot is not running — SL &amp; Target are NOT being monitored</p>
+                    <p className="text-red-300/70 text-xs mt-0.5">Live price and unrealized P&amp;L will not update until you restart the bot. In live mode this means your stop-loss will not trigger automatically.</p>
+                  </div>
                 </div>
+                <button
+                  onClick={() => restartMutation.mutate({ sessionToken })}
+                  disabled={restartMutation.isPending}
+                  className="shrink-0 flex items-center gap-1.5 bg-red-500/20 hover:bg-red-500/35 border border-red-500/50 text-red-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {restartMutation.isPending ? (
+                    <span className="animate-spin text-xs">↻</span>
+                  ) : (
+                    <span>↻</span>
+                  )}
+                  Restart Bot
+                </button>
               </div>
             )}
             <div className="flex items-center justify-between mb-4">

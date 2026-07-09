@@ -206,6 +206,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       isIndexOptions: !!(session.isIndexOptions),
       underlyingToken: session.underlyingToken ?? undefined,
       optionType: (session.optionType ?? undefined) as "CE" | "PE" | "auto" | undefined,
+      consecutiveTickErrors: 0,
     },
     onTradeOpen,
     onTradeClose,

@@ -115,6 +115,7 @@ export interface BotState {
   accessToken: string | null;
   intervalHandle: ReturnType<typeof setInterval> | null;
   lastError: string | null;
+  consecutiveTickErrors: number; // auto-restart after 3 consecutive failures
   nextScanAt: number;
   // Timestamp of the last completed tick (unix ms) — used for staleness detection
   lastTickAt: number;
@@ -1932,12 +1933,34 @@ export function startBot(
 
   const intervalMs = Math.max(15, config.scanIntervalSec) * 1000;
   const handle = setInterval(() => {
-    tick(state, onTradeOpen, onTradeClose, onTick).catch(err => {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[BotEngine] Tick error (${config.sessionToken}):`, msg);
-      state.lastError = `Tick error: ${msg}`;
-      emitActivity(config.sessionToken, "error", `⚠ Tick error: ${msg}`);
-    });
+    tick(state, onTradeOpen, onTradeClose, onTick)
+      .then(() => {
+        // Reset consecutive error counter on successful tick
+        state.consecutiveTickErrors = 0;
+      })
+      .catch(err => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[BotEngine] Tick error (${config.sessionToken}):`, msg);
+        state.lastError = `Tick error: ${msg}`;
+        state.consecutiveTickErrors = (state.consecutiveTickErrors ?? 0) + 1;
+        emitActivity(config.sessionToken, "error", `⚠ Tick error (${state.consecutiveTickErrors}/3): ${msg}`);
+        // Auto-restart after 3 consecutive failures
+        if (state.consecutiveTickErrors >= 3) {
+          console.warn(`[BotEngine] Auto-restarting bot ${config.sessionToken} after 3 consecutive tick failures`);
+          emitActivity(config.sessionToken, "bot_start", `🔄 Auto-restarting bot after 3 consecutive tick errors — preserving open trade`);
+          sendTelegramAlert(state,
+            `🔄 <b>BOT AUTO-RESTARTED</b> — ${state.instrumentLabel}\n` +
+            `Reason: 3 consecutive tick errors\nLast error: ${msg}\nMode: ${state.mode}`
+          ).catch(() => {});
+          // Clear the old interval and restart
+          clearInterval(handle);
+          state.intervalHandle = null;
+          state.consecutiveTickErrors = 0;
+          state.lastError = null;
+          // Re-start the bot with same config (preserves open trade)
+          startBot(config, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
+        }
+      });
   }, intervalMs);
   state.intervalHandle = handle;
   bots.set(config.sessionToken, state);

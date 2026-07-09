@@ -520,6 +520,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions,
             underlyingToken: input.underlyingToken,
             optionType: input.optionType,
+            consecutiveTickErrors: 0,
           },
           onTradeOpen,
           onTradeClose,
@@ -684,6 +685,7 @@ export const appRouter = router({
             isIndexOptions: row.isIndexOptions ?? false,
             underlyingToken: row.underlyingToken ?? undefined,
             optionType: (row.optionType as "CE" | "PE" | "auto" | undefined) ?? undefined,
+            consecutiveTickErrors: 0,
           },
           onTradeOpen,
           onTradeClose,
@@ -1552,6 +1554,7 @@ export const appRouter = router({
           isIndexOptions: input.isIndexOptions ?? false,
           underlyingToken: input.underlyingToken,
           optionType: input.optionType,
+          consecutiveTickErrors: 0,
         }, onTradeOpen, onTradeClose, undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;
