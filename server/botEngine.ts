@@ -1592,8 +1592,21 @@ async function tick(
     else if (sym.includes("FIN") || sym.includes("FINNIFTY")) mockKey = ceOrPe === "CE" ? "NIFTY_CE" : "NIFTY_PE";
     else                             mockKey = ceOrPe === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
     const mockPremium = mockPrices[mockKey] ?? (ceOrPe === "CE" ? 150 : 120);
-    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_ATM`;
-    tradeLabel = `${state.instrumentLabel} ATM ${ceOrPe} (paper)`;
+    // Calculate approximate ATM strike from current underlying price
+    // MCX Gold: round to nearest 100, Silver: nearest 1000, Crude: nearest 50, others: nearest 50
+    const underlyingPx = state.lastPrice;
+    let strikeStep = 50;
+    const symU = state.instrumentSymbol.toUpperCase();
+    if (symU.includes("GOLD")) strikeStep = 100;
+    else if (symU.includes("SILVER")) strikeStep = 1000;
+    else if (symU.includes("CRUDE") || symU.includes("OIL")) strikeStep = 50;
+    else if (symU.includes("NATGAS") || symU.includes("GAS")) strikeStep = 5;
+    else if (symU.includes("BANK")) strikeStep = 100;
+    else if (symU.includes("NIFTY") || symU.includes("FIN")) strikeStep = 50;
+    const atmStrike = underlyingPx > 0 ? Math.round(underlyingPx / strikeStep) * strikeStep : 0;
+    const strikeTag = atmStrike > 0 ? ` ${atmStrike}` : " ATM";
+    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrike || "ATM"}`;
+    tradeLabel = `${state.instrumentLabel}${strikeTag} ${ceOrPe} (paper)`;
     optionPremiumForSizing = mockPremium;
     state.optionPremiumPrice = mockPremium;
   }
