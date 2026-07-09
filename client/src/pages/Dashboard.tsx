@@ -1426,11 +1426,25 @@ export default function Dashboard() {
                       <span>₹{(bot.lastPrice ?? 0).toFixed(2)}</span>
                       <span>{bot.tradesCount ?? 0} trades</span>
                     </div>
-                    <div className={`text-base font-bold ${
-                      pnlPositive ? "text-emerald-400" : pnlNegative ? "text-red-400" : "text-white/40"
-                    }`}>
-                      {(bot.dailyPnl ?? 0) >= 0 ? "+" : ""}₹{(bot.dailyPnl ?? 0).toFixed(0)}
-                      <span className="text-xs font-normal text-white/30 ml-1">today</span>
+                    <div className="flex items-center justify-between">
+                      <div className={`text-base font-bold ${
+                        pnlPositive ? "text-emerald-400" : pnlNegative ? "text-red-400" : "text-white/40"
+                      }`}>
+                        {(bot.dailyPnl ?? 0) >= 0 ? "+" : ""}₹{(bot.dailyPnl ?? 0).toFixed(0)}
+                        <span className="text-xs font-normal text-white/30 ml-1">today</span>
+                      </div>
+                      {(bot.dailyPnl ?? 0) !== 0 && (
+                        <button
+                          onClick={() => {
+                            if (!confirm(`Reset P&L counter for ${slotLabel} (${bot.instrumentLabel || "—"})? This recalculates from actual closed trades.`)) return;
+                            resetPnlMutation.mutate({ sessionToken });
+                          }}
+                          className="text-orange-400/60 hover:text-orange-400 transition-colors p-1 rounded hover:bg-orange-500/10"
+                          title="Fix P&L counter if it shows wrong value"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                     {bot.openTrade && (
                       <div className={`mt-2 text-xs px-2 py-1 rounded-lg ${

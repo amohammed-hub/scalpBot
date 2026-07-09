@@ -1035,18 +1035,34 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
-        const trades = await db.select().from(tradeLog).where(
-          and(
-            eq(tradeLog.sessionToken, input.sessionToken),
-            eq(tradeLog.status, "closed"),
-          )
-        );
-        const realPnl = trades.reduce((sum: number, t: TradeLog) => sum + (t.pnl ?? 0), 0);
-        const realCount = trades.length;
-        await db.update(botSessions)
-          .set({ dailyPnl: realPnl, tradesCount: realCount })
-          .where(eq(botSessions.sessionToken, input.sessionToken));
-        return { success: true, recalculatedPnl: realPnl, tradeCount: realCount };
+        // Reset all 3 slots: primary + slot1 + slot2
+        const allTokens = [
+          input.sessionToken,
+          `${input.sessionToken}-slot1`,
+          `${input.sessionToken}-slot2`,
+        ];
+        let totalPnl = 0;
+        let totalCount = 0;
+        for (const tok of allTokens) {
+          const trades = await db.select().from(tradeLog).where(
+            and(
+              eq(tradeLog.sessionToken, tok),
+              eq(tradeLog.status, "closed"),
+            )
+          );
+          const realPnl = trades.reduce((sum: number, t: TradeLog) => sum + (t.pnl ?? 0), 0);
+          const realCount = trades.length;
+          // Only update if the session row exists
+          const existing = await db.select({ id: botSessions.id }).from(botSessions).where(eq(botSessions.sessionToken, tok)).limit(1);
+          if (existing.length > 0) {
+            await db.update(botSessions)
+              .set({ dailyPnl: realPnl, tradesCount: realCount })
+              .where(eq(botSessions.sessionToken, tok));
+          }
+          totalPnl += realPnl;
+          totalCount += realCount;
+        }
+        return { success: true, recalculatedPnl: totalPnl, tradeCount: totalCount };
       }),
     exportData: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
