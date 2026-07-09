@@ -16,6 +16,7 @@
  */
 
 import axios from "axios";
+import { emitActivity } from "./activityLog";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface Candle {
@@ -1342,6 +1343,7 @@ async function tick(
     state.openTrade = null;
     await onTradeClose(trade.dbId, effectivePrice, pnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${pnl.toFixed(0)}`);
+    emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(0)}`, { price: effectivePrice, pnl });
     return;
   }
 
@@ -1462,6 +1464,7 @@ async function tick(
       state.openTrade = null;
       await onTradeClose(trade.dbId, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
       console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
+      emitActivity(state.sessionToken, "trade_close", `${exitReason} ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)} | Day: ₹${state.dailyPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
       // Telegram exit alert
       const exitEmoji = totalPnl >= 0 ? "✅" : "❌";
       const pnlSign = totalPnl >= 0 ? "+" : "";
@@ -1538,6 +1541,10 @@ async function tick(
   }
 
   state.lastSignal = signal;
+  // Emit tick signal to activity log
+  if (signal.direction !== "HOLD") {
+    emitActivity(state.sessionToken, "signal", `${signal.direction} signal @ ₹${signal.entryPrice.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf | ${signal.layer} | ${signal.reason}`, { price: signal.entryPrice, confidence: signal.confidence });
+  }
   if (signal.direction === "HOLD" || signal.confidence < state.minConfidence / 100) return;
 
   // ── Options mode: resolve ATM option token based on signal direction ──────────────────────
@@ -1687,6 +1694,7 @@ async function tick(
   state.tradesCount += 1;
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${signal.entryPrice.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
+  emitActivity(state.sessionToken, "trade_open", `${tradeType} ${signal.direction} ${state.instrumentLabel} @ ₹${signal.entryPrice.toFixed(2)} | SL: ₹${signal.slPrice.toFixed(2)} | Target: ₹${signal.targetPrice.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf`, { price: signal.entryPrice, confidence: signal.confidence });
 
   // Telegram: send trade alert
   const dirEmoji = signal.direction === "BUY" ? "🟢" : "🔴";
@@ -1746,13 +1754,21 @@ export function startBot(
   const intervalMs = Math.max(15, config.scanIntervalSec) * 1000;
   const handle = setInterval(() => tick(state, onTradeOpen, onTradeClose, onTick), intervalMs);
   state.intervalHandle = handle;
-  bots.set(config.sessionToken, state);
+    bots.set(config.sessionToken, state);
+  emitActivity(config.sessionToken, "bot_start", `Bot started — ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s`);
   tick(state, onTradeOpen, onTradeClose, onTick);
 }
-
 export function stopBot(sessionToken: string) {
   const state = bots.get(sessionToken);
   if (state?.intervalHandle) { clearInterval(state.intervalHandle); state.intervalHandle = null; state.status = "stopped"; }
+  emitActivity(sessionToken, "bot_stop", `Bot stopped | Day P&L: ₹${state?.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state?.tradesCount ?? 0}`);
+  if (state) {
+    const pnlSign = (state.dailyPnl ?? 0) >= 0 ? "+" : "";
+    sendTelegramAlert(state,
+      `⏹ <b>BOT STOPPED</b> — ${state.instrumentLabel}\n` +
+      `Mode: ${state.mode} | Day P&L: ${pnlSign}₹${(state.dailyPnl ?? 0).toFixed(0)} | Trades: ${state.tradesCount ?? 0}`
+    );
+  }
 }
 
 export function getBotState(sessionToken: string): BotState | undefined {

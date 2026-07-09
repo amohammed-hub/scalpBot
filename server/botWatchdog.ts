@@ -15,6 +15,7 @@ import { botSessions } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { getBotState } from "./botEngine";
 import { restartSingleSession } from "./botRestart";
+import { emitActivity } from "./activityLog";
 
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -57,11 +58,28 @@ export async function runWatchdogCycle(): Promise<{ checked: number; restarted: 
     if (!inMemory) {
       // Bot is marked running in DB but not in memory — restart it
       console.warn(`[BotWatchdog] Session ${session.sessionToken.slice(0, 8)} marked running but not in memory — triggering restart`);
+      emitActivity(session.sessionToken, "bot_crash", `⚠ Bot dropped from memory — watchdog restarting ${session.instrumentLabel ?? session.instrumentToken}`);
+      // Send Telegram crash alert
+      try {
+        if (session.telegramEnabled && session.telegramBotToken && session.telegramChatId) {
+          await fetch(`https://api.telegram.org/bot${session.telegramBotToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: session.telegramChatId,
+              text: `⚠️ <b>BOT CRASH DETECTED</b> — ${session.instrumentLabel ?? session.instrumentToken}\nWatchdog restarting automatically...`,
+              parse_mode: "HTML",
+            }),
+          });
+        }
+      } catch { /* silent */ }
       try {
         await restartSingleSession(session);
         restarted++;
+        emitActivity(session.sessionToken, "bot_start", `✅ Watchdog restarted bot — ${session.instrumentLabel ?? session.instrumentToken}`);
       } catch (err) {
         console.error(`[BotWatchdog] Failed to restart session ${session.sessionToken.slice(0, 8)}:`, err);
+        emitActivity(session.sessionToken, "error", `Watchdog restart failed: ${(err as Error).message}`);
         errors++;
       }
     }

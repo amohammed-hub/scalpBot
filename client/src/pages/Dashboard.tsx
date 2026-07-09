@@ -319,6 +319,30 @@ export default function Dashboard() {
     onError: (e) => toast.error(`Reset failed: ${e.message}`),
   });
 
+  // ── Activity log ─────────────────────────────────────────────────────────────
+  const [activityAfterId, setActivityAfterId] = useState(0);
+  type ActivityEvent = { id: number; ts: number; type: string; slot: number; message: string; price?: number; pnl?: number; confidence?: number };
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
+  const activityScrollRef = useRef<HTMLDivElement>(null);
+  const { data: newActivityEvents } = trpc.activity.log.useQuery(
+    { sessionToken, limit: 50, afterId: activityAfterId },
+    { refetchInterval: 2000, enabled: !!sessionToken }
+  );
+  useEffect(() => {
+    if (!newActivityEvents || newActivityEvents.length === 0) return;
+    setActivityEvents(prev => {
+      const combined = [...prev, ...newActivityEvents];
+      return combined.slice(-200);
+    });
+    const lastId = newActivityEvents[newActivityEvents.length - 1]?.id;
+    if (lastId) setActivityAfterId(lastId);
+    setTimeout(() => {
+      if (activityScrollRef.current) {
+        activityScrollRef.current.scrollTop = activityScrollRef.current.scrollHeight;
+      }
+    }, 50);
+  }, [newActivityEvents]);
+
   // ── Derived state ─────────────────────────────────────────────────────────────
   const isRunning = botStatus?.status === "running";
   const currentPrice = liveData?.price ?? botStatus?.lastPrice ?? 0;
@@ -1755,6 +1779,59 @@ export default function Dashboard() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* Bot Activity Log */}
+        <div className="mt-6 rounded-xl border border-white/10 bg-[oklch(0.14_0.02_240)] overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-emerald-400" />
+              <span className="font-semibold text-white text-sm">Bot Activity Log</span>
+              <span className="text-white/30 text-xs">(last 200 events — live)</span>
+            </div>
+            <button
+              onClick={() => { setActivityEvents([]); setActivityAfterId(0); }}
+              className="text-white/30 hover:text-white/60 text-xs transition-colors"
+            >Clear</button>
+          </div>
+          <div
+            ref={activityScrollRef}
+            className="h-64 overflow-y-auto p-3 font-mono text-xs space-y-0.5"
+          >
+            {activityEvents.length === 0 ? (
+              <div className="text-white/20 text-center py-8">No activity yet — start the bot to see live events here.</div>
+            ) : (
+              activityEvents.map((ev) => {
+                const time = new Date(ev.ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                const slotTag = ev.slot === 0 ? "" : ev.slot === 1 ? " [S1]" : " [S2]";
+                const color =
+                  ev.type === "trade_open" ? "text-emerald-400" :
+                  ev.type === "trade_close" ? (ev.pnl != null && ev.pnl >= 0 ? "text-emerald-300" : "text-red-400") :
+                  ev.type === "signal" ? "text-cyan-400" :
+                  ev.type === "bot_start" ? "text-blue-400" :
+                  ev.type === "bot_stop" ? "text-orange-400" :
+                  ev.type === "bot_crash" ? "text-red-500" :
+                  ev.type === "partial_book" ? "text-yellow-400" :
+                  ev.type === "error" ? "text-red-400" :
+                  "text-white/50";
+                const icon =
+                  ev.type === "trade_open" ? "▶" :
+                  ev.type === "trade_close" ? "■" :
+                  ev.type === "signal" ? "◆" :
+                  ev.type === "bot_start" ? "▷" :
+                  ev.type === "bot_stop" ? "□" :
+                  ev.type === "partial_book" ? "◐" :
+                  ev.type === "error" ? "⚠" : "•";
+                return (
+                  <div key={ev.id} className={`flex gap-2 ${color}`}>
+                    <span className="text-white/20 shrink-0">{time}{slotTag}</span>
+                    <span className="shrink-0">{icon}</span>
+                    <span className="break-all">{ev.message}</span>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </main>

@@ -1853,7 +1853,20 @@ export const appRouter = router({
           .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
         return { success: true, alreadyDisabled: false };
       }),
+    }),
+
+  // ── Activity Log ─────────────────────────────────────────────────────────────
+  activity: router({
+    log: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        limit: z.number().min(1).max(200).default(50),
+        afterId: z.number().default(0),
+      }))
+      .query(async ({ input }) => {
+        const { getActivity } = await import("./activityLog");
+        return getActivity(input.sessionToken, input.limit, input.afterId);
+      }),
   }),
 });
-
 export type AppRouter = typeof appRouter;
