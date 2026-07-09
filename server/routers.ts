@@ -1855,6 +1855,71 @@ export const appRouter = router({
       }),
     }),
 
+  // ── End-of-Day Summary Cron ─────────────────────────────────────────────────
+  eodSummary: router({
+    status: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return { enabled: false };
+        const rows = await db
+          .select({ eodSummaryCronTaskUid: botSessions.eodSummaryCronTaskUid })
+          .from(botSessions)
+          .where(eq(botSessions.sessionToken, input.sessionToken))
+          .limit(1);
+        return { enabled: !!(rows[0]?.eodSummaryCronTaskUid) };
+      }),
+    enable: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        manusSession: z.string().default(""),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const rows = await db
+          .select({ eodSummaryCronTaskUid: botSessions.eodSummaryCronTaskUid })
+          .from(botSessions)
+          .where(eq(botSessions.sessionToken, input.sessionToken))
+          .limit(1);
+        if (rows[0]?.eodSummaryCronTaskUid) return { success: true, alreadyEnabled: true };
+        const job = await createHeartbeatJob({
+          name: `eod-summary-${input.sessionToken.slice(0, 8)}`,
+          cron: "0 0 18 * * *",
+          path: "/api/scheduled/eod-summary",
+          payload: { sessionToken: input.sessionToken },
+          description: "Daily end-of-day P&L summary at 11:30 PM IST (MCX close)",
+        }, input.manusSession);
+        await db
+          .update(botSessions)
+          .set({ eodSummaryCronTaskUid: job.taskUid })
+          .where(eq(botSessions.sessionToken, input.sessionToken));
+        return { success: true, alreadyEnabled: false };
+      }),
+    disable: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        manusSession: z.string().default(""),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const rows = await db
+          .select({ eodSummaryCronTaskUid: botSessions.eodSummaryCronTaskUid })
+          .from(botSessions)
+          .where(eq(botSessions.sessionToken, input.sessionToken))
+          .limit(1);
+        const uid = rows[0]?.eodSummaryCronTaskUid;
+        if (!uid) return { success: true, alreadyDisabled: true };
+        await deleteHeartbeatJob(uid, input.manusSession);
+        await db
+          .update(botSessions)
+          .set({ eodSummaryCronTaskUid: null })
+          .where(eq(botSessions.sessionToken, input.sessionToken));
+        return { success: true, alreadyDisabled: false };
+      }),
+  }),
+
   // ── Activity Log ─────────────────────────────────────────────────────────────
   activity: router({
     log: publicProcedure

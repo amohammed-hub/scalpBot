@@ -1178,8 +1178,14 @@ export default function Dashboard() {
               <span>Qty: <span className="text-white">{activeTrade.quantity}</span></span>
               <span>Mode: <span className={activeTrade.mode === "paper" ? "text-amber-400" : "text-red-400"}>{activeTrade.mode}</span></span>
               {activeTrade.confidence && <span>Confidence: <span className="text-teal-400">{(activeTrade.confidence * 100).toFixed(0)}%</span></span>}
+              {(activeTrade as any).signalLayer && (
+                <span>Layer: <span className="text-purple-400">{(activeTrade as any).signalLayer}</span></span>
+              )}
               {activeTrade.slPrice && activeTrade.targetPrice && (
                 <span>R:R <span className="text-white">{(Math.abs(activeTrade.targetPrice - activeTrade.entryPrice) / Math.abs(activeTrade.slPrice - activeTrade.entryPrice)).toFixed(1)}:1</span></span>
+              )}
+              {(activeTrade as any).signalReason && (
+                <span className="text-white/30 italic text-xs truncate max-w-xs" title={(activeTrade as any).signalReason}>{(activeTrade as any).signalReason}</span>
               )}
             </div>
           </div>
@@ -1679,6 +1685,7 @@ export default function Dashboard() {
                   <th className="text-right py-2 pr-4">Entry</th>
                   <th className="text-right py-2 pr-4">Exit</th>
                   <th className="text-right py-2 pr-4">Qty</th>
+                  <th className="text-right py-2 pr-4">Lots</th>
                   <th className="text-right py-2 pr-4">P&L</th>
                   <th className="text-left py-2 pr-4">Status</th>
                   <th className="text-right py-2">Del</th>
@@ -1686,7 +1693,7 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {trades.length === 0 ? (
-                  <tr><td colSpan={10} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
+                  <tr><td colSpan={11} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
                 ) : (
                   trades.slice(0, 30).map((t: typeof trades[0]) => {
                     // Compute live P&L for open trades
@@ -1747,6 +1754,14 @@ export default function Dashboard() {
                         <td className="py-2.5 pr-4 text-right font-mono text-white/80">₹{t.entryPrice.toFixed(2)}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-white/60">{t.exitPrice ? `₹${t.exitPrice.toFixed(2)}` : "—"}</td>
                         <td className="py-2.5 pr-4 text-right text-white/60">{t.quantity}</td>
+                        <td className="py-2.5 pr-4 text-right text-white/40 text-xs">
+                          {(() => {
+                            const instr = INSTRUMENTS.find(i => i.symbol === t.symbol || (t.symbolLabel ?? '').includes(i.label.split(' →')[0]));
+                            const ls = instr?.lotSize ?? 1;
+                            const lots = ls > 1 ? Math.round(t.quantity / ls) : null;
+                            return lots !== null ? `${lots}L` : '—';
+                          })()}
+                        </td>
                         <td className={`py-2.5 pr-4 text-right font-mono font-semibold ${(livePnl ?? 0) > 0 ? "text-emerald-400" : (livePnl ?? 0) < 0 ? "text-red-400" : "text-white/40"}`}>
                           {livePnl !== undefined && livePnl !== null
                             ? `${livePnl > 0 ? "+" : ""}₹${livePnl.toFixed(0)}${t.status === "open" ? " ●" : ""}`

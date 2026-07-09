@@ -80,6 +80,8 @@ export interface OpenTrade {
   // Options mode: when true, exit price must be fetched from option chain, not underlying price
   isIndexOptions?: boolean;
   optionMockKey?: string; // e.g. "BNF_CE" or "BNF_PE" for paper mode premium lookup
+  signalReason?: string; // full signal reason string
+  signalLayer?: string; // extracted layer name e.g. "Breakout", "MCXEvening"
 }
 
 export interface BotState {
@@ -1702,6 +1704,7 @@ async function tick(
     partial1RPrice, partial2RPrice, partialBooked: 0, bookedQty: 0, bookedPnl: 0,
     isHeroZero: signal.isHeroZero, heroZeroPremiumEntry: signal.isHeroZero ? signal.entryPrice : undefined,
     isIndexOptions: isOptionsMode, optionMockKey,
+    signalReason: signalLabel, signalLayer: signal.layer,
   };
 
   state.tradesCount += 1;

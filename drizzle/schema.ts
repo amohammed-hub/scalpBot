@@ -81,6 +81,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   isIndexOptions: boolean("isIndexOptions").default(false),
   underlyingToken: varchar("underlyingToken", { length: 128 }),
   optionType: varchar("optionType", { length: 8 }),
+  // End-of-day summary cron task UID (set when EOD summary is enabled)
+  eodSummaryCronTaskUid: varchar("eodSummaryCronTaskUid", { length: 128 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

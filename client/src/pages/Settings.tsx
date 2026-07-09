@@ -4,7 +4,7 @@ import {
   Settings as SettingsIcon, Zap, Activity, Calculator, Key,
   ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle,
   AlertTriangle, ChevronDown, ChevronUp, MousePointer,
-  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame
+  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2
 } from "lucide-react";
 import { MCX_INSTRUMENTS, getMCXByCategory } from "@shared/mcxInstruments";
 import { useState, useEffect } from "react";
@@ -183,6 +183,69 @@ function RestoreSessionInput() {
       >
         Restore
       </button>
+    </div>
+  );
+}
+
+function EodSummarySection({ sessionToken }: { sessionToken: string }) {
+  const { data: status, refetch } = trpc.eodSummary.status.useQuery({ sessionToken });
+  const enableMutation = trpc.eodSummary.enable.useMutation({
+    onSuccess: () => { refetch(); toast.success("EOD summary enabled! You'll get a daily P&L summary at 11:30 PM IST."); },
+    onError: (e) => toast.error(e.message),
+  });
+  const disableMutation = trpc.eodSummary.disable.useMutation({
+    onSuccess: () => { refetch(); toast.success("EOD summary disabled."); },
+    onError: (e) => toast.error(e.message),
+  });
+  const isEnabled = status?.enabled ?? false;
+  const isPending = enableMutation.isPending || disableMutation.isPending;
+  return (
+    <div className="mt-6 bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+      <div className="p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BarChart2 className="w-4 h-4 text-purple-400" />
+            <span className="font-semibold text-white text-sm">Daily P&amp;L Summary (11:30 PM IST)</span>
+            {isEnabled
+              ? <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">Active</span>
+              : <span className="text-xs text-white/30 bg-white/5 px-2 py-0.5 rounded-full">Disabled</span>
+            }
+          </div>
+          <button
+            onClick={() => isEnabled
+              ? disableMutation.mutate({ sessionToken })
+              : enableMutation.mutate({ sessionToken })
+            }
+            disabled={isPending}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              isEnabled ? 'bg-purple-500' : 'bg-white/20'
+            } ${isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              isEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`} />
+          </button>
+        </div>
+        <p className="mt-2 text-white/50 text-xs leading-relaxed">
+          When enabled, a daily cron fires at <strong className="text-white/70">11:30 PM IST</strong> (MCX market close) and sends a Telegram summary of the day — total trades, wins, losses, and net P&amp;L across all 3 bot slots.
+        </p>
+        {isEnabled && (
+          <div className="mt-3 flex items-start gap-2 bg-purple-500/10 border border-purple-500/20 rounded-xl p-3">
+            <CheckCircle className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+            <p className="text-purple-300/80 text-xs">
+              Summary active. Make sure Telegram Alerts are configured below so you receive the nightly report.
+            </p>
+          </div>
+        )}
+        {!isEnabled && (
+          <div className="mt-3 flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-amber-300/70 text-xs">
+              Enable this after publishing the site. The cron requires a live URL to call back.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1048,6 +1111,9 @@ export default function Settings() {
 
         {/* ── Auto Token Refresh ─────────────────────────────────────── */}
         <AutoRefreshSection sessionToken={sessionToken} />
+
+        {/* ── EOD Daily Summary ─────────────────────────────────────── */}
+        <EodSummarySection sessionToken={sessionToken} />
 
         {/* ── Cross-Device Session Sharing ──────────────────────────────── */}
         <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl p-5">

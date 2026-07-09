@@ -10,8 +10,8 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { sdk } from "./sdk";
 import { getDb } from "../db";
-import { upstoxCredentials } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { upstoxCredentials, botSessions, tradeLog } from "../../drizzle/schema";
+import { eq, and, gte, inArray } from "drizzle-orm";
 import { restartRunningBots } from "../botRestart";
 import { startBotWatchdog } from "../botWatchdog";
 
@@ -242,6 +242,74 @@ async function startServer() {
         context: { url: req.url, taskUid: req.headers['x-task-uid'] },
         timestamp: new Date().toISOString(),
       });
+    }
+  });
+
+  // ── Scheduled: End-of-Day Summary (11:30 PM IST = 18:00 UTC) ────────────────
+  // Sends a daily P&L summary via Telegram for all sessions that have Telegram configured.
+  app.post('/api/scheduled/eod-summary', async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req as any);
+      if (!user.isCron || !user.taskUid) {
+        res.status(403).json({ error: 'cron-only endpoint' });
+        return;
+      }
+      const db = await getDb();
+      if (!db) { res.json({ ok: true, skipped: 'no-db' }); return; }
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      // Find all sessions with Telegram enabled
+      const activeSessions = await db
+        .select()
+        .from(botSessions)
+        .where(eq(botSessions.telegramEnabled, 1 as any))
+        .limit(50);
+      let summariesSent = 0;
+      for (const session of activeSessions) {
+        if (!session.telegramBotToken || !session.telegramChatId) continue;
+        const token = session.sessionToken;
+        const slotTokens = [token, `${token}-slot1`, `${token}-slot2`];
+        const trades = await db
+          .select()
+          .from(tradeLog)
+          .where(and(
+            inArray(tradeLog.sessionToken, slotTokens),
+            eq(tradeLog.status, 'closed'),
+            gte(tradeLog.enteredAt, todayStart),
+          ));
+        if (trades.length === 0) continue;
+        type TradeRow = typeof trades[number];
+        const totalPnl = trades.reduce((s: number, t: TradeRow) => s + (t.pnl ?? 0), 0);
+        const wins = trades.filter((t: TradeRow) => (t.pnl ?? 0) > 0).length;
+        const losses = trades.filter((t: TradeRow) => (t.pnl ?? 0) <= 0).length;
+        const winRate = Math.round(wins / trades.length * 100);
+        const pnlSign = totalPnl >= 0 ? '+' : '';
+        const dateStr = todayStart.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        const bestPnl = Math.max(...trades.map((t: TradeRow) => t.pnl ?? 0));
+        const worstPnl = Math.min(...trades.map((t: TradeRow) => t.pnl ?? 0));
+        const pnlEmoji = totalPnl >= 0 ? '\uD83D\uDFE2' : '\uD83D\uDD34';
+        const message = [
+          `${pnlEmoji} <b>End-of-Day Summary \u2014 ${dateStr}</b>`,
+          ``,
+          `\uD83D\uDCB0 Net P&L: <b>${pnlSign}\u20B9${totalPnl.toFixed(0)}</b>`,
+          `\uD83D\uDCCA Trades: ${trades.length} | Wins: ${wins} | Losses: ${losses} | Win Rate: ${winRate}%`,
+          `\uD83C\uDFC6 Best: +\u20B9${bestPnl.toFixed(0)} | \uD83D\uDCC9 Worst: \u20B9${worstPnl.toFixed(0)}`,
+          ``,
+          `\uD83E\uDD16 ScalpBot MCX closed \u2014 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`,
+        ].join('\n');
+        try {
+          await fetch(`https://api.telegram.org/bot${session.telegramBotToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: session.telegramChatId, text: message, parse_mode: 'HTML' }),
+            signal: AbortSignal.timeout(10000),
+          });
+          summariesSent++;
+        } catch { /* non-critical */ }
+      }
+      res.json({ ok: true, summariesSent });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
