@@ -1354,7 +1354,7 @@ async function tick(
   const istMin2 = ((now2.getUTCHours() * 60 + now2.getUTCMinutes()) + 330) % (24 * 60);
   const isMCX = state.instrumentToken.startsWith("MCX");
   const squareOffMin = isMCX ? 23 * 60 + 25 : 15 * 60 + 25;
-  const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 20;
+  const stopScanMin  = isMCX ? 23 * 60 + 25 : 15 * 60 + 20; // MCX: 5-min pre-close buffer (same as squareOff); NSE: 10-min buffer
 
   // NSE Power Hour: 3:00–3:20 PM IST
   const powerHourStart = 15 * 60;

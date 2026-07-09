@@ -747,14 +747,19 @@ export default function Dashboard() {
           const inMCX = istMin >= 540 && istMin <= 1410;
           const inSession = isMCX ? inMCX : inNSE;
           const squareOffMin = isMCX ? (23 * 60 + 25) : (15 * 60 + 25);
-          const stopScanMin  = isMCX ? (23 * 60 + 20) : (15 * 60 + 20);
+          const stopScanMin  = isMCX ? (23 * 60 + 25) : (15 * 60 + 20); // MCX: 5-min buffer (same as squareOff); NSE: 10-min buffer
           const nearClose = istMin >= stopScanMin && istMin < squareOffMin;
           return (
             <>
               {!inSession && (
                 <div className="mb-4 flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white/40 text-sm">
                   <span className="w-2 h-2 rounded-full bg-white/20 inline-block" />
-                  <span>Market is <strong>closed</strong> — bot will not generate signals until market opens</span>
+                  <span>
+                    {isMCX
+                      ? <><strong>MCX market is closed</strong> — trading hours: 9:00 AM–11:30 PM IST (Mon–Fri). Bot will not generate signals outside market hours.</>  
+                      : <><strong>NSE market is closed</strong> — trading hours: 9:15 AM–3:30 PM IST (Mon–Fri). Bot will not generate signals outside market hours.</>
+                    }
+                  </span>
                 </div>
               )}
               {nearClose && activeTrade && (
