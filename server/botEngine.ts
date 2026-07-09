@@ -884,9 +884,12 @@ export function generateMCXEveningSignal(
   const pricePos = dayRange > 0 ? (price - dayLow) / dayRange : 0.5;
 
   // Volume: US open surge (last 30 candles vs day avg)
+  // MCX futures return real volume, but in paper mode (mock candles) volume may be 0.
+  // When all volume is 0 (paper mode / thin market), bypass the volSurge check by treating it as 1.2.
   const avgDayVol = candles1m.reduce((a, c) => a + c.volume, 0) / candles1m.length;
   const last30Vol = candles1m.slice(-30).reduce((a, c) => a + c.volume, 0) / 30;
-  const volSurge  = avgDayVol > 0 ? last30Vol / avgDayVol : 1;
+  const allVolumeZero = avgDayVol === 0 && last30Vol === 0;
+  const volSurge  = allVolumeZero ? 1.2 : (avgDayVol > 0 ? last30Vol / avgDayVol : 1);
 
   // 5m MACD for medium-term momentum
   const closes5m = candles5m.map(c => c.close);
@@ -1543,7 +1546,20 @@ async function tick(
       const remainPnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
       const totalPnl  = remainPnl + trade.bookedPnl;
       if (trade.mode === "live" && state.accessToken) {
-        await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
+        const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
+        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, trade.quantity);
+        if (!exitOrderId) {
+          // Retry once after 2 seconds — network blip or brief Upstox outage
+          await new Promise(r => setTimeout(r, 2000));
+          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, trade.quantity);
+        }
+        if (!exitOrderId) {
+          // Both attempts failed — keep trade open, alert user to close manually
+          state.lastError = `EXIT ORDER FAILED — close ${trade.symbolLabel} manually on Upstox`;
+          emitActivity(state.sessionToken, "error", `⚠ EXIT ORDER FAILED (${exitReason}) — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
+          sendTelegramAlert(state, `🚨 <b>EXIT ORDER FAILED</b> — ${exitReason}\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not place exit order after 2 attempts.\n⚠ CLOSE MANUALLY ON UPSTOX NOW.`);
+          return; // do NOT close in DB — trade remains open until manual intervention
+        }
       }
       // Track SL hit for re-entry (only on full SL, not BE)
       if (exitReason === "Stop Loss" && trade.partialBooked === 0) {
@@ -1762,7 +1778,15 @@ async function tick(
     // Futures/equity: use signal direction directly
     const orderDirection = isOptionsMode ? "BUY" : signal.direction;
     const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity);
-    orderId = oid ?? undefined;
+    if (!oid) {
+      // CRITICAL: if the order was rejected by Upstox, do NOT record a phantom trade.
+      // Log the failure and skip this tick entirely.
+      state.lastError = `Order rejected by Upstox — ${tradeInstrumentToken} ${orderDirection} ${quantity} qty`;
+      emitActivity(state.sessionToken, "error", `⚠ Live order REJECTED — ${tradeLabel} ${orderDirection} ${quantity} qty. Check Upstox logs.`);
+      console.error(`[BotEngine] ${state.sessionToken} — Live order rejected, trade NOT recorded.`);
+      return;
+    }
+    orderId = oid;
   }
 
   const signalLabel = signal.isPowerHour
@@ -1825,8 +1849,13 @@ async function tick(
 
   state.tradesCount += 1;
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
-  console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${signal.entryPrice.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
-  emitActivity(state.sessionToken, "trade_open", `${tradeType} ${signal.direction} ${state.instrumentLabel} @ ₹${signal.entryPrice.toFixed(2)} | SL: ₹${signal.slPrice.toFixed(2)} | Target: ₹${signal.targetPrice.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf`, { price: signal.entryPrice, confidence: signal.confidence });
+  // For options mode: show option premium prices in activity log (not underlying index price)
+  const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
+  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.5 : signal.slPrice;
+  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + state.targetMultiplier * 0.5) : signal.targetPrice;
+  const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
+  console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
+  emitActivity(state.sessionToken, "trade_open", `${tradeType} ${signal.direction} ${displayLabel} @ ₹${displayEntry.toFixed(2)} | SL: ₹${displaySl.toFixed(2)} | Target: ₹${displayTarget.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf`, { price: displayEntry, confidence: signal.confidence });
 
   // Telegram: send trade alert
   const dirEmoji = signal.direction === "BUY" ? "🟢" : "🔴";

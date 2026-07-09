@@ -383,3 +383,30 @@
 
 ## Fix: Candle Pre-warm on Bot Start (Jul 9)
 - [x] botEngine.ts: on startBot, fetch last 60 historical 1m candles from Upstox (live mode) or generate synthetic history (paper mode) so signals fire immediately without 20-min warmup
+
+## Full Audit Fixes (Jul 9)
+
+### CRITICAL — Live mode records trade even when order placement fails
+- [ ] botEngine.ts: if placeUpstoxOrder returns null in live mode, abort the trade (do NOT call onTradeOpen) and emit error to activity log
+
+### CRITICAL — Silver Mini lot size is wrong (5000 grams = 5 kg, not 5000 kg)
+- [ ] mcxInstruments.ts: Silver Mini lotSize is 5000 (grams). The P&L formula uses (exitPrice - entryPrice) * quantity. Silver price is per kg (~₹90,000/kg), so 1 lot = 5 kg. The correct lotSize for quantity sizing should be 5 (lots), not 5000 (grams). Fix: use lotSize=5 for Silver Mini and Silver, and document that the P&L multiplier is price-per-kg × kg.
+- [ ] botEngine.ts: add a per-instrument P&L multiplier (tickValue / tickSize) so P&L is computed correctly for MCX instruments where price is per unit but lot is in different units
+
+### IMPORTANT — Signal engine MCX Evening requires 30 candles minimum but pre-warm only gives 60 1m candles
+- [ ] botEngine.ts: MCX Evening signal requires candles5m.length >= 6. The pre-warm build5mFromMock() from 60 1m candles gives 12 5m candles — this is sufficient. Confirmed OK.
+
+### IMPORTANT — MCX Evening window ends at 9:30 PM but bot started at 9:33 PM
+- [ ] botEngine.ts: MCX Evening window is 7:30–9:30 PM IST (istMin 1170–1290). After 9:30 PM, falls back to generateSignal() which needs 20 candles. Pre-warm fix already addresses this.
+
+### IMPORTANT — Partial booking at 2R uses wrong P&L formula
+- [ ] botEngine.ts line 1507: partial 2R bookPnl uses (partial2RPrice - entryPrice) * bookQty but should use (partial2RPrice - partial1RPrice) * bookQty since the first 50% was already booked at 1R. The remaining quantity's cost basis is still entryPrice, so formula is actually correct. Confirmed OK after re-read.
+
+### IMPORTANT — Live order failure at exit (SL/Target) does not retry
+- [x] botEngine.ts: if placeUpstoxOrder fails at SL/Target exit in live mode, the trade is still closed in DB and memory. Fixed: added 1 retry with 2s delay; if both fail, keeps trade open in DB and sends Telegram alert to close manually.
+
+### MINOR — MCX Evening volSurge check uses avgDayVol but MCX instruments return 0 volume from Upstox
+- [x] botEngine.ts: MCX futures DO return volume (unlike NSE indices). But if volume is 0 (holiday/thin market), volSurge = 1 which fails the >= 1.15 check. Fixed: allVolumeZero bypass added — treats volSurge as 1.2 when all volume is 0.
+
+### MINOR — Signal reason shown in activity log uses underlying price but trade entry uses option premium
+- [x] botEngine.ts line 1829: emitActivity shows signal.entryPrice (underlying) but trade was entered at optionPremiumForSizing. Fixed: activity log now shows option premium prices for options mode trades.
