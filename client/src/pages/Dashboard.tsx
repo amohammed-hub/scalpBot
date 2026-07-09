@@ -1768,7 +1768,7 @@ export default function Dashboard() {
               <button
                 onClick={() => {
                   if (trades.length === 0) { toast.info("No trades to export."); return; }
-                  const headers = ["Entry Date", "Exit Date", "Symbol", "Direction", "Mode", "Entry Price", "Exit Price", "Quantity", "P&L (INR)", "Status", "Exit Reason"];
+                  const headers = ["Entry Date", "Exit Date", "Symbol", "Direction", "Mode", "Entry Price", "SL Price", "Target Price", "Exit Price", "Quantity", "P&L (INR)", "P&L %", "Status", "Exit Reason"];
                   const rows = trades.map((t: typeof trades[0]) => [
                     t.enteredAt ? new Date(t.enteredAt).toLocaleString("en-IN") : "",
                     t.exitedAt ? new Date(t.exitedAt).toLocaleString("en-IN") : "",
@@ -1776,9 +1776,12 @@ export default function Dashboard() {
                     t.direction,
                     t.mode,
                     t.entryPrice.toFixed(2),
+                    (t as any).slPrice ? (t as any).slPrice.toFixed(2) : "",
+                    (t as any).targetPrice ? (t as any).targetPrice.toFixed(2) : "",
                     t.exitPrice ? t.exitPrice.toFixed(2) : "",
                     t.quantity,
                     t.pnl !== null && t.pnl !== undefined ? t.pnl.toFixed(2) : "",
+                    (t as any).pnlPct !== null && (t as any).pnlPct !== undefined ? (t as any).pnlPct.toFixed(2) : "",
                     t.status,
                     t.exitReason ?? "",
                   ]);
@@ -1827,6 +1830,8 @@ export default function Dashboard() {
                   <th className="text-left py-2 pr-4">Entry Time</th>
                   <th className="text-left py-2 pr-4">Exit Time</th>
                   <th className="text-right py-2 pr-4">Entry</th>
+                  <th className="text-right py-2 pr-4">SL</th>
+                  <th className="text-right py-2 pr-4">Target</th>
                   <th className="text-right py-2 pr-4">Exit</th>
                   <th className="text-right py-2 pr-4">Qty</th>
                   <th className="text-right py-2 pr-4">Lots</th>
@@ -1837,7 +1842,7 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {trades.length === 0 ? (
-                  <tr><td colSpan={11} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
+                      <tr><td colSpan={13} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
                 ) : (
                   trades.slice(0, 30).map((t: typeof trades[0]) => {
                     // Compute live P&L for open trades
@@ -1904,6 +1909,8 @@ export default function Dashboard() {
                           {t.exitedAt ? new Date(t.exitedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"}
                         </td>
                         <td className="py-2.5 pr-4 text-right font-mono text-white/80">₹{t.entryPrice.toFixed(2)}</td>
+                        <td className="py-2.5 pr-4 text-right font-mono text-red-400/70">{(t as any).slPrice ? `₹${(t as any).slPrice.toFixed(2)}` : "—"}</td>
+                        <td className="py-2.5 pr-4 text-right font-mono text-emerald-400/70">{(t as any).targetPrice ? `₹${(t as any).targetPrice.toFixed(2)}` : "—"}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-white/60">{t.exitPrice ? `₹${t.exitPrice.toFixed(2)}` : "—"}</td>
                         <td className="py-2.5 pr-4 text-right text-white/60">{t.quantity}</td>
                         <td className="py-2.5 pr-4 text-right text-white/40 text-xs">

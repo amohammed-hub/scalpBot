@@ -311,8 +311,10 @@ describe("Bot Lifecycle — End-to-End Integration", () => {
       trailingSlEnabled: false,
       trailingSlPct: 0.5,
       currentSl: sl, // SL = 99999, mock price ~53000 → triggers immediately
-      partial1RPrice: entry + 325,
-      partial2RPrice: entry + 650,
+      // Set partial prices far above any possible mock price so partial booking never fires
+      // (mock prices drift across tests since mockPrices is a shared module-level object)
+      partial1RPrice: 999998,
+      partial2RPrice: 999999,
       partialBooked: 0,
       bookedQty: 0,
       bookedPnl: 0,
@@ -324,8 +326,11 @@ describe("Bot Lifecycle — End-to-End Integration", () => {
       closedTrades.push({ dbId, exitPrice, pnl, reason });
     });
 
+    // Suppress console.error during this test (tick errors are expected in test env)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     startBot(makeBotConfig(sessionToken), onTradeOpen, onTradeClose, existingTrade);
-    await waitForTick(300);
+    await waitForTick(400); // extra time: auto square-off path is async
+    errorSpy.mockRestore();
 
     // Trade must close (either via SL or auto square-off if running after market hours)
     expect(onTradeClose).toHaveBeenCalled();

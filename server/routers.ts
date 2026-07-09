@@ -222,18 +222,23 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
+        // Load access token for BOTH paper and live modes.
+        // Paper mode uses it for real market data (candles, quotes) but skips actual order placement.
+        // This ensures paper trades reflect real prices — not fake mock values.
         let accessToken: string | null = null;
+        const creds = await db
+          .select()
+          .from(upstoxCredentials)
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .limit(1);
+        if (creds.length > 0 && creds[0].accessToken) {
+          accessToken = creds[0].accessToken;
+        }
+
         if (input.mode === "live") {
-          const creds = await db
-            .select()
-            .from(upstoxCredentials)
-            .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
-            .limit(1);
-          if (creds.length === 0 || !creds[0].accessToken) {
+          if (!accessToken) {
             throw new Error("No Upstox access token. Connect your account first.");
           }
-          accessToken = creds[0].accessToken;
-
           // Paper-trade safety gate: require at least 3 closed paper trades before going live
           const paperTradeRows = await db
             .select({ count: count() })
@@ -582,9 +587,9 @@ export const appRouter = router({
           .update(botSessions)
           .set({ status: "running", stoppedAt: null, lastError: null })
           .where(eq(botSessions.sessionToken, input.sessionToken));
-        // Fetch access token if live mode
+        // Fetch access token for BOTH paper and live modes (paper uses it for real market data)
         let accessToken: string | null = null;
-        if (row.mode === "live") {
+        {
           const creds = await db
             .select()
             .from(upstoxCredentials)
@@ -592,6 +597,9 @@ export const appRouter = router({
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken) {
             accessToken = creds[0].accessToken;
+          }
+          if (row.mode === "live" && !accessToken) {
+            throw new Error("No Upstox access token. Connect your account first.");
           }
         }
         // Restore today's trade count and P&L
@@ -1436,17 +1444,20 @@ export const appRouter = router({
         if (duplicate) {
           throw new Error(`Instrument already running in ${duplicate.botSlot === 0 ? 'Primary' : `Slot ${duplicate.botSlot}`}. Stop that bot first before starting the same instrument in another slot.`);
         }
+        // Load access token for BOTH paper and live modes (paper uses it for real market data)
         let accessToken: string | null = null;
-        if (input.mode === "live") {
+        {
           const creds = await db
             .select()
             .from(upstoxCredentials)
             .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
             .limit(1);
-          if (creds.length === 0 || !creds[0].accessToken) {
+          if (creds.length > 0 && creds[0].accessToken) {
+            accessToken = creds[0].accessToken;
+          }
+          if (input.mode === "live" && !accessToken) {
             throw new Error("No Upstox access token. Connect your account first.");
           }
-          accessToken = creds[0].accessToken;
         }
 
         // Restore today's P&L from closed trades (same logic as primary bot.start)
