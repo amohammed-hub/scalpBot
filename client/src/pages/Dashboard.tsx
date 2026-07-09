@@ -306,6 +306,8 @@ export default function Dashboard() {
   const isMCXEveningMode = liveData?.isMCXEveningMode ?? false;
   const heroZeroMode = liveData?.heroZeroMode ?? false;
   const reEntryCandles = liveData?.reEntryCandles ?? 0;
+  const optionPremiumPrice = liveData?.optionPremiumPrice ?? null;
+  const isIndexOptions = liveData?.isIndexOptions ?? false;
   const lastTickAt = liveData?.lastTickAt ?? 0;
 
   // Staleness: track how many seconds since last tick
@@ -435,11 +437,15 @@ export default function Dashboard() {
   } : openTrade ? { ...openTrade, upstoxOrderId: openTrade.upstoxOrderId ?? null } : null;
 
   // Only calculate unrealized P&L when we have a real live price (not 0, not same as entry)
-  const unrealizedPnl = activeTrade && currentPrice > 0
-    ? activeTrade.direction === "BUY"
-      ? (currentPrice - activeTrade.entryPrice) * activeTrade.quantity
-      : (activeTrade.entryPrice - currentPrice) * activeTrade.quantity
-    : null;
+  // For options mode, use option premium price for unrealized P&L; otherwise use underlying price
+  const effectiveLivePrice = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
+    ? optionPremiumPrice
+    : currentPrice;
+  const unrealizedPnl = activeTrade && effectiveLivePrice > 0
+      ? activeTrade.direction === "BUY"
+        ? (effectiveLivePrice - activeTrade.entryPrice) * activeTrade.quantity
+        : (activeTrade.entryPrice - effectiveLivePrice) * activeTrade.quantity
+      : null;
 
   // ── Stats ─────────────────────────────────────────────────────────────────────
   const todayTradesCount = todayStats?.todayTrades ?? 0;
@@ -1520,9 +1526,10 @@ export default function Dashboard() {
               <button
                 onClick={() => {
                   if (trades.length === 0) { toast.info("No trades to export."); return; }
-                  const headers = ["Date", "Symbol", "Direction", "Mode", "Entry Price", "Exit Price", "Quantity", "P&L (INR)", "Status", "Exit Reason"];
+                  const headers = ["Entry Date", "Exit Date", "Symbol", "Direction", "Mode", "Entry Price", "Exit Price", "Quantity", "P&L (INR)", "Status", "Exit Reason"];
                   const rows = trades.map((t: typeof trades[0]) => [
-                    new Date(t.enteredAt).toLocaleString("en-IN"),
+                    t.enteredAt ? new Date(t.enteredAt).toLocaleString("en-IN") : "",
+                    t.exitedAt ? new Date(t.exitedAt).toLocaleString("en-IN") : "",
                     t.symbolLabel ?? t.symbol,
                     t.direction,
                     t.mode,
@@ -1564,6 +1571,8 @@ export default function Dashboard() {
                   <th className="text-left py-2 pr-4">Symbol</th>
                   <th className="text-left py-2 pr-4">Direction</th>
                   <th className="text-left py-2 pr-4">Mode</th>
+                  <th className="text-left py-2 pr-4">Entry Time</th>
+                  <th className="text-left py-2 pr-4">Exit Time</th>
                   <th className="text-right py-2 pr-4">Entry</th>
                   <th className="text-right py-2 pr-4">Exit</th>
                   <th className="text-right py-2 pr-4">Qty</th>
@@ -1573,14 +1582,18 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {trades.length === 0 ? (
-                  <tr><td colSpan={8} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
+                  <tr><td colSpan={10} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
                 ) : (
                   trades.slice(0, 30).map((t: typeof trades[0]) => {
                     // Compute live P&L for open trades
-                    const livePnl = t.status === "open" && currentPrice > 0
+                    // In options mode use option premium price; otherwise use underlying price
+                    const liveEffectivePrice = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
+                      ? optionPremiumPrice
+                      : currentPrice;
+                    const livePnl = t.status === "open" && liveEffectivePrice > 0
                       ? t.direction === "BUY"
-                        ? (currentPrice - t.entryPrice) * t.quantity
-                        : (t.entryPrice - currentPrice) * t.quantity
+                        ? (liveEffectivePrice - t.entryPrice) * t.quantity
+                        : (t.entryPrice - liveEffectivePrice) * t.quantity
                       : t.pnl;
                     return (
                       <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
@@ -1620,6 +1633,12 @@ export default function Dashboard() {
                         </td>
                         <td className="py-2.5 pr-4">
                           <span className={`text-xs px-2 py-0.5 rounded-full ${t.mode === "paper" ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{t.mode}</span>
+                        </td>
+                        <td className="py-2.5 pr-4 text-xs text-white/50 whitespace-nowrap">
+                          {t.enteredAt ? new Date(t.enteredAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"}
+                        </td>
+                        <td className="py-2.5 pr-4 text-xs text-white/50 whitespace-nowrap">
+                          {t.exitedAt ? new Date(t.exitedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"}
                         </td>
                         <td className="py-2.5 pr-4 text-right font-mono text-white/80">₹{t.entryPrice.toFixed(2)}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-white/60">{t.exitPrice ? `₹${t.exitPrice.toFixed(2)}` : "—"}</td>

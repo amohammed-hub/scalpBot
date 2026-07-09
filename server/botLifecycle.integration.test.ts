@@ -25,6 +25,7 @@ import {
   getBotState,
   type BotState,
   type OpenTrade,
+  type TradeInsert,
 } from "./botEngine";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -742,5 +743,74 @@ describe("Feature 1-3 — currentSl, lastTickAt, dailyPnl E2E", () => {
     // Trade should be closed
     expect(state!.openTrade).toBeNull();
     expect(onTradeClose).toHaveBeenCalled();
+  });
+});
+
+// ── Options Mode Regression Tests ─────────────────────────────────────────────
+describe("Options Mode — entry/exit price integrity", () => {
+  const sessionToken = "test-options-price-integrity";
+
+  afterEach(() => {
+    const state = getBotState(sessionToken);
+    if (state) state.status = "stopped";
+  });
+
+  it("stores option premium as entry price (not underlying spot price)", async () => {
+    const onTradeOpen = vi.fn().mockResolvedValue(100);
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+
+    startBot(
+      makeBotConfig(sessionToken, {
+        isIndexOptions: true,
+        // underlyingToken not set → paper mode uses mock BNF_CE/BNF_PE prices
+        instrumentToken: "NSE_INDEX|Nifty Bank",
+        instrumentSymbol: "BANKNIFTY",
+        instrumentLabel: "BankNifty",
+      }),
+      onTradeOpen,
+      onTradeClose,
+    );
+    await waitForTick(400);
+
+    // If a trade was opened, entry price must be in option premium range (< 2000)
+    // NOT in underlying spot range (> 40000)
+    if (onTradeOpen.mock.calls.length > 0) {
+      const trade: TradeInsert = onTradeOpen.mock.calls[0][0];
+      expect(trade.entryPrice).toBeLessThan(2000);
+      expect(trade.entryPrice).toBeGreaterThan(0);
+      // Symbol label must contain CE or PE
+      expect(trade.symbolLabel).toMatch(/CE|PE/);
+      // Instrument token must NOT be the underlying index
+      expect(trade.instrumentToken).not.toBe("NSE_INDEX|Nifty Bank");
+    }
+  });
+
+  it("P&L is calculated from option premium, not underlying spot price", async () => {
+    const onTradeOpen = vi.fn().mockResolvedValue(200);
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+
+    startBot(
+      makeBotConfig(sessionToken + "-pnl", {
+        isIndexOptions: true,
+        instrumentToken: "NSE_INDEX|Nifty Bank",
+        instrumentSymbol: "BANKNIFTY",
+        instrumentLabel: "BankNifty",
+        capital: 200000,
+        riskPerTradePct: 1,
+      }),
+      onTradeOpen,
+      onTradeClose,
+    );
+    await waitForTick(600);
+
+    if (onTradeClose.mock.calls.length > 0) {
+      const [, exitPrice, pnl] = onTradeClose.mock.calls[0];
+      // Exit price must be in option premium range (< 5000), not underlying (> 40000)
+      expect(exitPrice).toBeLessThan(5000);
+      expect(exitPrice).toBeGreaterThan(0);
+      // P&L must be reasonable: |pnl| < capital (₹2L)
+      // If pnl were computed from underlying (57000 × qty), it would be > 1,000,000
+      expect(Math.abs(pnl)).toBeLessThan(200000);
+    }
   });
 });

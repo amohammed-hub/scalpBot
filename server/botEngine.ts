@@ -76,6 +76,9 @@ export interface OpenTrade {
   bookedPnl: number;        // P&L from closed portion
   isHeroZero?: boolean;
   heroZeroPremiumEntry?: number; // premium paid for OTM option
+  // Options mode: when true, exit price must be fetched from option chain, not underlying price
+  isIndexOptions?: boolean;
+  optionMockKey?: string; // e.g. "BNF_CE" or "BNF_PE" for paper mode premium lookup
 }
 
 export interface BotState {
@@ -1298,6 +1301,28 @@ async function tick(
   }
   state.isMCXEveningMode = inMCXEvening;
 
+  // ── Resolve effective price for open trade monitoring ───────────────────────
+  // For options mode: use current option premium (not underlying spot price) for P&L.
+  // For regular mode: use underlying/futures price as before.
+  let effectivePrice = price; // default: underlying price
+  if (state.openTrade?.isIndexOptions) {
+    if (state.accessToken && state.openTrade.instrumentToken) {
+      // Live mode: fetch current option premium from Upstox
+      const optQuote = await fetchFullQuote(state.openTrade.instrumentToken, state.accessToken);
+      if (optQuote && optQuote.ltp > 0) {
+        effectivePrice = optQuote.ltp;
+        state.optionPremiumPrice = optQuote.ltp; // update for Dashboard display
+      }
+    } else if (state.openTrade.optionMockKey) {
+      // Paper mode: use mock option premium (which drifts with buildMockCandle)
+      const mockPrem = mockPrices[state.openTrade.optionMockKey];
+      if (mockPrem && mockPrem > 0) {
+        effectivePrice = mockPrem;
+        state.optionPremiumPrice = mockPrem;
+      }
+    }
+  }
+
   // Auto square-off at market close
   if (istMin2 >= squareOffMin && state.openTrade) {
     const trade = state.openTrade;
@@ -1305,10 +1330,10 @@ async function tick(
       const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
       if (!sqOffId) { state.lastError = `Auto square-off rejected — close ${trade.symbolLabel} manually`; return; }
     }
-    const pnl = trade.direction === "BUY" ? (price - trade.entryPrice) * trade.quantity : (trade.entryPrice - price) * trade.quantity;
+    const pnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
     state.dailyPnl += pnl;
     state.openTrade = null;
-    await onTradeClose(trade.dbId, price, pnl, "Market Close — Auto Square-Off");
+    await onTradeClose(trade.dbId, effectivePrice, pnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${pnl.toFixed(0)}`);
     return;
   }
@@ -1327,16 +1352,16 @@ async function tick(
       const heroTarget = trade.heroZeroPremiumEntry * 5;
       const heroCut    = trade.heroZeroPremiumEntry * 0.5;
       let heroExit: string | null = null;
-      if (price >= heroTarget) heroExit = "Hero Zero — 5× Target Hit";
-      else if (price <= heroCut) heroExit = "Hero Zero — 50% Cut";
+      if (effectivePrice >= heroTarget) heroExit = "Hero Zero — 5× Target Hit";
+      else if (effectivePrice <= heroCut) heroExit = "Hero Zero — 50% Cut";
       if (heroExit) {
-        const pnl = (price - trade.entryPrice) * trade.quantity;
+        const pnl = (effectivePrice - trade.entryPrice) * trade.quantity;
         if (trade.mode === "live" && state.accessToken) {
           await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", trade.quantity);
         }
         state.dailyPnl += pnl + trade.bookedPnl;
         state.openTrade = null;
-        await onTradeClose(trade.dbId, price, pnl + trade.bookedPnl, heroExit);
+        await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
         console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
       }
       return;
@@ -1349,7 +1374,7 @@ async function tick(
       const partial1Valid = trade.partial1RPrice > 0 &&
         (trade.direction === "BUY" ? trade.partial1RPrice > trade.entryPrice : trade.partial1RPrice < trade.entryPrice);
       const hit1R = partial1Valid &&
-        (trade.direction === "BUY" ? price >= trade.partial1RPrice : price <= trade.partial1RPrice);
+        (trade.direction === "BUY" ? effectivePrice >= trade.partial1RPrice : effectivePrice <= trade.partial1RPrice);
       if (hit1R) {
         // Book 50% of position at 1R
         const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
@@ -1375,7 +1400,7 @@ async function tick(
         );
       }
     } else if (trade.partialBooked === 1) {
-      const hit2R = trade.direction === "BUY" ? price >= trade.partial2RPrice : price <= trade.partial2RPrice;
+      const hit2R = trade.direction === "BUY" ? effectivePrice >= trade.partial2RPrice : effectivePrice <= trade.partial2RPrice;
       if (hit2R) {
         // Book another 25% (half of remaining) at 2R
         const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
@@ -1405,17 +1430,17 @@ async function tick(
     // ── Trailing SL ──────────────────────────────────────────────────────────
     if (trade.trailingSlEnabled) {
       const trailDist = trade.entryPrice * (trade.trailingSlPct / 100);
-      if (trade.direction === "BUY") { const newSl = price - trailDist; if (newSl > trade.currentSl) trade.currentSl = newSl; }
-      else { const newSl = price + trailDist; if (newSl < trade.currentSl) trade.currentSl = newSl; }
+      if (trade.direction === "BUY") { const newSl = effectivePrice - trailDist; if (newSl > trade.currentSl) trade.currentSl = newSl; }
+      else { const newSl = effectivePrice + trailDist; if (newSl < trade.currentSl) trade.currentSl = newSl; }
     }
 
     // ── Full exit: SL or Target ───────────────────────────────────────────────
     let exitReason: string | null = null;
-    if (trade.direction === "BUY") { if (price <= trade.currentSl) exitReason = "Stop Loss"; else if (price >= trade.targetPrice) exitReason = "Target Hit"; }
-    else { if (price >= trade.currentSl) exitReason = "Stop Loss"; else if (price <= trade.targetPrice) exitReason = "Target Hit"; }
+    if (trade.direction === "BUY") { if (effectivePrice <= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice >= trade.targetPrice) exitReason = "Target Hit"; }
+    else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
 
     if (exitReason) {
-      const remainPnl = trade.direction === "BUY" ? (price - trade.entryPrice) * trade.quantity : (trade.entryPrice - price) * trade.quantity;
+      const remainPnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
       const totalPnl  = remainPnl + trade.bookedPnl;
       if (trade.mode === "live" && state.accessToken) {
         await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
@@ -1428,14 +1453,14 @@ async function tick(
       }
       state.dailyPnl += remainPnl;
       state.openTrade = null;
-      await onTradeClose(trade.dbId, price, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
+      await onTradeClose(trade.dbId, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
       console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
       // Telegram exit alert
       const exitEmoji = totalPnl >= 0 ? "✅" : "❌";
       const pnlSign = totalPnl >= 0 ? "+" : "";
       sendTelegramAlert(state,
         `${exitEmoji} <b>TRADE CLOSED — ${exitReason.toUpperCase()}</b>\n` +
-        `📊 <b>${state.instrumentLabel}</b> | Exit: ₹${price.toFixed(2)}\n` +
+        `📊 <b>${state.instrumentLabel}</b> | Exit: ₹${effectivePrice.toFixed(2)}\n` +
         `💰 Total P&L: ${pnlSign}₹${totalPnl.toFixed(0)}` +
         (trade.bookedPnl > 0 ? ` (locked: ₹${trade.bookedPnl.toFixed(0)})` : "") +
         `\n📈 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Trades: ${state.tradesCount}`,
@@ -1612,6 +1637,13 @@ async function tick(
     partial1RPrice, partial2RPrice,
   });
 
+  // Determine mock key for paper-mode option premium lookup at exit time
+  const optionMockKey = isOptionsMode
+    ? (signal.direction === "BUY" ?
+        (state.instrumentSymbol.includes("BANK") ? "BNF_CE" : "NIFTY_CE") :
+        (state.instrumentSymbol.includes("BANK") ? "BNF_PE" : "NIFTY_PE"))
+    : undefined;
+
   state.openTrade = {
     dbId, symbol: tradeSymbol, symbolLabel: tradeLabel,
     instrumentToken: tradeInstrumentToken, direction: signal.direction, mode: state.mode,
@@ -1621,6 +1653,7 @@ async function tick(
     trailingSlPct: state.trailingSlPct, currentSl: tradeSl, isReEntry,
     partial1RPrice, partial2RPrice, partialBooked: 0, bookedQty: 0, bookedPnl: 0,
     isHeroZero: signal.isHeroZero, heroZeroPremiumEntry: signal.isHeroZero ? signal.entryPrice : undefined,
+    isIndexOptions: isOptionsMode, optionMockKey,
   };
 
   state.tradesCount += 1;
@@ -1650,7 +1683,7 @@ async function tick(
   }
 }
 
-type TradeInsert = {
+export type TradeInsert = {
   symbol: string; symbolLabel: string; instrumentToken: string;
   direction: "BUY" | "SELL"; mode: "paper" | "live";
   entryPrice: number; quantity: number; slPrice: number; targetPrice: number;

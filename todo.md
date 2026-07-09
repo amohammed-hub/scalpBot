@@ -327,3 +327,14 @@
 - [x] Dashboard.tsx: redesign instrument selector — "Index Options" group: user picks BankNifty/Nifty, bot auto-resolves ATM strike at runtime
 - [x] botRestart.ts: restore underlyingToken + tradeToken from DB on restart
 - [x] Tests: verify option quantity uses premium price, CE selected for BUY, PE for SELL
+
+## Trade Log Data Integrity Fix — Jul 9 2026
+
+- [x] botEngine: store option premium price (not underlying spot) as tradeEntryPrice in DB
+- [x] botEngine: fix P&L calculation — must use option premium entry/exit prices consistently
+- [x] botEngine: fix symbol label — show option name (e.g. "BankNifty ATM CE") not "Bank Nifty (Spot)"
+- [x] botEngine: fix exit price recording — must store option premium at exit, not underlying price
+- [x] Trade Log UI: add enteredAt (entry date/time) column
+- [x] Trade Log UI: add exitedAt (exit date/time) column
+- [x] Trade Log UI: show option symbol name correctly in Symbol column
+- [x] Add vitest test: options mode entry price = option premium, not underlying price

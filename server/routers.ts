@@ -617,6 +617,9 @@ export const appRouter = router({
           isMCXEveningMode: state.isMCXEveningMode,
           heroZeroMode: state.heroZeroMode,
           reEntryCandles: state.reEntryCandles,
+          // Options mode: current option premium price (for live P&L display on Dashboard)
+          optionPremiumPrice: state.optionPremiumPrice ?? null,
+          isIndexOptions: state.isIndexOptions ?? false,
         };
       }),
 
