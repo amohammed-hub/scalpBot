@@ -1779,10 +1779,18 @@ export default function Dashboard() {
                 ) : (
                   trades.slice(0, 30).map((t: typeof trades[0]) => {
                     // Compute live P&L for open trades
-                    // In options mode use option premium price; otherwise use underlying price
-                    const liveEffectivePrice = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
+                    // For slot 1/2 trades, use that slot's lastPrice from allBots instead of primary currentPrice
+                    const tradeSlot = (t as any).botSlot ?? 0;
+                    const slotBot = tradeSlot > 0
+                      ? (allBots ?? []).find(b => b.slot === tradeSlot)
+                      : null;
+                    const slotLastPrice = slotBot?.lastPrice ?? 0;
+                    // For primary slot: use currentPrice (live data); for other slots: use allBots lastPrice
+                    const slotEffectivePrice = tradeSlot === 0 ? currentPrice : slotLastPrice;
+                    // In options mode use option premium price (only available for primary slot currently)
+                    const liveEffectivePrice = tradeSlot === 0 && isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
                       ? optionPremiumPrice
-                      : currentPrice;
+                      : slotEffectivePrice;
                     const livePnl = t.status === "open" && liveEffectivePrice > 0
                       ? t.direction === "BUY"
                         ? (liveEffectivePrice - t.entryPrice) * t.quantity

@@ -372,3 +372,7 @@
 - [x] Dashboard.tsx: show HealthDot next to primary bot status badge in the Bot Control Panel
 - [x] Dashboard.tsx: show HealthDot next to each slot's status badge in the Parallel Bots panel
 - [x] Dashboard.tsx: add tooltip on hover showing last scan time (e.g. "Last scan: 45s ago")
+
+## Critical Fixes (Jul 9 — Deploy Error + Trade Log P&L)
+- [x] Fix Railway DB: eodSummaryCronTaskUid column missing — run ALTER TABLE via webdev_execute_sql
+- [x] Fix Trade Log: open trades show blank P&L and Exit columns — compute live unrealised P&L from correct slot's lastPrice
