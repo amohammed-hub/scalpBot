@@ -338,3 +338,13 @@
 - [x] Trade Log UI: add exitedAt (exit date/time) column
 - [x] Trade Log UI: show option symbol name correctly in Symbol column
 - [x] Add vitest test: options mode entry price = option premium, not underlying price
+
+## Three-Point Fix — Jul 09 2026
+
+- [x] Clear old bad paper trades (entry_price > 10000 AND mode = paper) from DB
+- [x] Open Trade card: show resolved option name (e.g. BankNifty 57000 CE) and option premium price
+- [x] Open Trade card: show underlying price feed separately from option premium
+- [x] MCX: add MCX index options instruments (Gold, Silver, Crude Oil options)
+- [x] MCX: apply same isIndexOptions flow — read MCX futures for signals, trade MCX options CE/PE
+- [x] MCX: fix quantity sizing to use MCX option premium price (not futures price)
+- [x] MCX: add mock premium keys for paper mode (MCX_GOLD_CE, MCX_CRUDE_CE, etc.)

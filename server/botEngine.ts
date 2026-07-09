@@ -1080,6 +1080,13 @@ const mockPrices: Record<string, number> = {
   NIFTY_FUT: 24820, BNF_FUT: 53250,
   MCX_GOLD: 117700, MCX_SILVER: 98500, MCX_CRUDEOIL: 6650, MCX_NATGAS: 310,
   MCX_COPPER: 850, MCX_ZINC: 275, MCX_ALUMINIUM: 235, MCX_LEAD: 190, MCX_NICKEL: 1580,
+  // MCX option premiums (paper-mode mock prices)
+  MCX_GOLD_CE: 320, MCX_GOLD_PE: 280,
+  MCX_SILVER_CE: 1800, MCX_SILVER_PE: 1500,
+  MCX_CRUDE_CE: 85, MCX_CRUDE_PE: 70,
+  MCX_NATGAS_CE: 8, MCX_NATGAS_PE: 6,
+  MCX_COPPER_CE: 12, MCX_COPPER_PE: 10,
+  MCX_ZINC_CE: 4, MCX_ZINC_PE: 3,
   INFY: 1780, TCS: 3920, HDFC: 1740, ITC: 465, SBIN: 820, TATAMOTORS: 960, TATASTEEL: 165,
   SENSEX: 81500,
 };
@@ -1565,7 +1572,19 @@ async function tick(
     const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
       : state.optionType === "PE" ? "PE"
       : signal.direction === "BUY" ? "CE" : "PE";
-    const mockPremium = ceOrPe === "CE" ? (mockPrices["BNF_CE"] ?? 250) : (mockPrices["BNF_PE"] ?? 200);
+    // Determine the correct mock key based on underlying symbol
+    const sym = state.instrumentSymbol.toUpperCase();
+    let mockKey: string;
+    if (sym.includes("GOLD"))       mockKey = ceOrPe === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+    else if (sym.includes("SILVER")) mockKey = ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+    else if (sym.includes("CRUDE") || sym.includes("OIL")) mockKey = ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+    else if (sym.includes("NATGAS") || sym.includes("GAS")) mockKey = ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+    else if (sym.includes("COPPER")) mockKey = ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+    else if (sym.includes("ZINC"))   mockKey = ceOrPe === "CE" ? "MCX_ZINC_CE"   : "MCX_ZINC_PE";
+    else if (sym.includes("BANK"))   mockKey = ceOrPe === "CE" ? "BNF_CE"        : "BNF_PE";
+    else if (sym.includes("FIN") || sym.includes("FINNIFTY")) mockKey = ceOrPe === "CE" ? "NIFTY_CE" : "NIFTY_PE";
+    else                             mockKey = ceOrPe === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+    const mockPremium = mockPrices[mockKey] ?? (ceOrPe === "CE" ? 150 : 120);
     tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_ATM`;
     tradeLabel = `${state.instrumentLabel} ATM ${ceOrPe} (paper)`;
     optionPremiumForSizing = mockPremium;
@@ -1638,11 +1657,20 @@ async function tick(
   });
 
   // Determine mock key for paper-mode option premium lookup at exit time
-  const optionMockKey = isOptionsMode
-    ? (signal.direction === "BUY" ?
-        (state.instrumentSymbol.includes("BANK") ? "BNF_CE" : "NIFTY_CE") :
-        (state.instrumentSymbol.includes("BANK") ? "BNF_PE" : "NIFTY_PE"))
-    : undefined;
+  // Must match the same logic used at entry time above
+  let optionMockKey: string | undefined;
+  if (isOptionsMode) {
+    const sym2 = state.instrumentSymbol.toUpperCase();
+    const ceOrPe2: "CE" | "PE" = signal.direction === "BUY" ? "CE" : "PE";
+    if (sym2.includes("GOLD"))       optionMockKey = ceOrPe2 === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+    else if (sym2.includes("SILVER")) optionMockKey = ceOrPe2 === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+    else if (sym2.includes("CRUDE") || sym2.includes("OIL")) optionMockKey = ceOrPe2 === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+    else if (sym2.includes("NATGAS") || sym2.includes("GAS")) optionMockKey = ceOrPe2 === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+    else if (sym2.includes("COPPER")) optionMockKey = ceOrPe2 === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+    else if (sym2.includes("ZINC"))   optionMockKey = ceOrPe2 === "CE" ? "MCX_ZINC_CE"   : "MCX_ZINC_PE";
+    else if (sym2.includes("BANK"))   optionMockKey = ceOrPe2 === "CE" ? "BNF_CE"        : "BNF_PE";
+    else                              optionMockKey = ceOrPe2 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+  }
 
   state.openTrade = {
     dbId, symbol: tradeSymbol, symbolLabel: tradeLabel,

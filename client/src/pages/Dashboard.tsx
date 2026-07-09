@@ -57,9 +57,16 @@ const INSTRUMENTS = [
   // ── Index Options — Auto-ATM (RECOMMENDED for Nifty/BankNifty) ─────────────────────────────────
   // Bot reads the index for trend signals, then auto-resolves ATM CE (BUY) or PE (SELL) at trade time.
   // Quantity is sized using the option premium price, NOT the underlying index price.
+  // NSE Index Options (Auto-ATM)
   { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ATM Options (Auto)",  segment: "Index Options (Auto-ATM)", lotSize: 15, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
   { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options (Auto)",   segment: "Index Options (Auto-ATM)", lotSize: 25, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
   { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options (Auto)",   segment: "Index Options (Auto-ATM)", lotSize: 40, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
+  // MCX Commodity Options (Auto-ATM) — reads MCX futures price for signals, trades ATM CE/PE
+  { token: "MCX_FO|GOLDM",    symbol: "MCX_GOLD",   label: "Gold → ATM Options (Auto)",       segment: "MCX Options (Auto-ATM)", lotSize: 1,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|GOLDM" },
+  { token: "MCX_FO|SILVERM",  symbol: "MCX_SILVER", label: "Silver → ATM Options (Auto)",     segment: "MCX Options (Auto-ATM)", lotSize: 1,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|SILVERM" },
+  { token: "MCX_FO|CRUDEOIL", symbol: "MCX_CRUDE",  label: "Crude Oil → ATM Options (Auto)",  segment: "MCX Options (Auto-ATM)", lotSize: 100, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|CRUDEOIL" },
+  { token: "MCX_FO|NATURALGAS", symbol: "MCX_NATGAS", label: "Natural Gas → ATM Options (Auto)", segment: "MCX Options (Auto-ATM)", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|NATURALGAS" },
+  { token: "MCX_FO|COPPER",   symbol: "MCX_COPPER", label: "Copper → ATM Options (Auto)",     segment: "MCX Options (Auto-ATM)", lotSize: 1000, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|COPPER" },
   // ── NSE F&O Futures — TRADEABLE ──────────────────────────────────────────────
   { token: "NFO_FUT|BANKNIFTY30JUL2026FUT", symbol: "BNF_FUT",   label: "BankNifty Jul 2026 Futures", segment: "NSE F&O Futures", lotSize: 15, spotOnly: false },
   { token: "NFO_FUT|NIFTY30JUL2026FUT",     symbol: "NIFTY_FUT", label: "Nifty Jul 2026 Futures",     segment: "NSE F&O Futures", lotSize: 25, spotOnly: false },
@@ -926,13 +933,30 @@ export default function Dashboard() {
               </div>
             )}
             <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full animate-pulse ${activeTrade.direction === "BUY" ? "bg-emerald-400" : "bg-red-400"}`} />
-                <span className="font-semibold text-white">Open Trade</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${activeTrade.direction === "BUY" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
-                  {activeTrade.direction}
-                </span>
-                <span className="text-xs text-white/40">{activeTrade.symbolLabel ?? ('symbol' in activeTrade ? activeTrade.symbol : null) ?? config.instrumentLabel}</span>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full animate-pulse ${activeTrade.direction === "BUY" ? "bg-emerald-400" : "bg-red-400"}`} />
+                  <span className="font-semibold text-white">Open Trade</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${activeTrade.direction === "BUY" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+                    {activeTrade.direction}
+                  </span>
+                </div>
+                {/* Option name — shown prominently when in options mode */}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-teal-300">
+                    {activeTrade.symbolLabel ?? ('symbol' in activeTrade ? activeTrade.symbol : null) ?? config.instrumentLabel}
+                  </span>
+                  {isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0 && (
+                    <span className="text-xs bg-teal-500/15 text-teal-400 border border-teal-500/30 px-2 py-0.5 rounded-full">
+                      Premium ₹{optionPremiumPrice.toFixed(1)}
+                    </span>
+                  )}
+                  {isIndexOptions && currentPrice > 0 && (
+                    <span className="text-xs text-white/30">
+                      Underlying ₹{currentPrice.toFixed(2)}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 {unrealizedPnl !== null && (
@@ -968,19 +992,31 @@ export default function Dashboard() {
 
             {/* Price levels */}
             <div className="grid grid-cols-4 gap-3 mb-4">
-              {[
-                { label: "Entry", value: activeTrade.entryPrice, color: "text-white" },
-                { label: "Current", value: currentPrice > 0 ? currentPrice : null, color: currentPrice > activeTrade.entryPrice ? "text-emerald-400" : currentPrice > 0 && currentPrice < activeTrade.entryPrice ? "text-red-400" : "text-white/40" },
-                { label: "Stop Loss", value: activeTrade.slPrice, color: "text-red-400" },
-                { label: "Target", value: activeTrade.targetPrice, color: "text-emerald-400" },
-              ].map(item => (
-                <div key={item.label} className="bg-white/5 rounded-xl p-3 text-center">
-                  <div className="text-xs text-white/40 mb-1">{item.label}</div>
-                  <div className={`font-mono font-bold text-sm ${item.color}`}>
-                    {item.value ? `₹${item.value.toFixed(2)}` : "—"}
+              {(() => {
+                // In options mode: Entry/Current/SL/Target are all in option premium space
+                // currentPrice is the underlying — use optionPremiumPrice for the Current cell
+                const displayCurrent = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
+                  ? optionPremiumPrice
+                  : (currentPrice > 0 ? currentPrice : null);
+                const currentLabel = isIndexOptions ? "Premium Now" : "Current";
+                const currentColor = displayCurrent && displayCurrent > activeTrade.entryPrice
+                  ? "text-emerald-400"
+                  : displayCurrent && displayCurrent < activeTrade.entryPrice
+                  ? "text-red-400" : "text-white/40";
+                return [
+                  { label: "Entry", value: activeTrade.entryPrice, color: "text-white" },
+                  { label: currentLabel, value: displayCurrent, color: currentColor },
+                  { label: "Stop Loss", value: activeTrade.slPrice, color: "text-red-400" },
+                  { label: "Target", value: activeTrade.targetPrice, color: "text-emerald-400" },
+                ].map(item => (
+                  <div key={item.label} className="bg-white/5 rounded-xl p-3 text-center">
+                    <div className="text-xs text-white/40 mb-1">{item.label}</div>
+                    <div className={`font-mono font-bold text-sm ${item.color}`}>
+                      {item.value ? `₹${item.value.toFixed(2)}` : "—"}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ));
+              })()}
             </div>
 
             {/* Progress bar — SL on left, Entry in middle, Target on right */}
