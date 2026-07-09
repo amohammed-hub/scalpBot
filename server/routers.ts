@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "./db";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog } from "../drizzle/schema";
 import { eq, desc, and, gte, count } from "drizzle-orm";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, placeUpstoxOrder, generateSignal, type Candle } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, type Candle } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
 
@@ -210,6 +210,7 @@ export const appRouter = router({
         telegramChatId: z.string().optional(),
         telegramEnabled: z.boolean().default(false),
         botSlot: z.number().default(0),
+        lotSize: z.number().default(1),
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -326,6 +327,7 @@ export const appRouter = router({
               startedAt: new Date(),
               stoppedAt: null,
               lastError: null,
+              lotSize: input.lotSize,
             })
             .where(eq(botSessions.sessionToken, input.sessionToken));
         } else {
@@ -349,6 +351,7 @@ export const appRouter = router({
             tradesCount: 0,
             dailyPnl: 0,
             startedAt: new Date(),
+            lotSize: input.lotSize,
           });
           sessionId = Number((result as unknown as { insertId: number }).insertId);
         }
@@ -469,6 +472,7 @@ export const appRouter = router({
             telegramChatId: input.telegramChatId ?? null,
             telegramEnabled: input.telegramEnabled,
             botSlot: input.botSlot,
+            lotSize: input.lotSize,
           },
           onTradeOpen,
           onTradeClose,
@@ -1129,11 +1133,20 @@ export const appRouter = router({
         telegramBotToken: z.string().optional(),
         telegramChatId: z.string().optional(),
         telegramEnabled: z.boolean().default(false),
+        lotSize: z.number().default(1),
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
         const slotToken = `${input.sessionToken}-slot${input.slot}`;
+
+        // SAFETY: Reject if any running slot (including primary) is already trading the same instrument.
+        // This prevents two bots from opening trades on the same instrument simultaneously.
+        const runningBots = getAllRunningBotsForSession(input.sessionToken);
+        const duplicate = runningBots.find(b => b.instrumentToken === input.instrumentToken);
+        if (duplicate) {
+          throw new Error(`Instrument already running in ${duplicate.botSlot === 0 ? 'Primary' : `Slot ${duplicate.botSlot}`}. Stop that bot first before starting the same instrument in another slot.`);
+        }
         let accessToken: string | null = null;
         if (input.mode === "live") {
           const creds = await db
@@ -1216,6 +1229,7 @@ export const appRouter = router({
           telegramBotToken: input.telegramBotToken ?? null,
           telegramChatId: input.telegramChatId ?? null,
           telegramEnabled: input.telegramEnabled, botSlot: input.slot,
+          lotSize: input.lotSize ?? 1,
         }, onTradeOpen, onTradeClose, undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;

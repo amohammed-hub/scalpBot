@@ -211,6 +211,7 @@ export async function restartRunningBots(): Promise<void> {
           telegramChatId: session.telegramChatId ?? null,
           telegramEnabled: session.telegramEnabled ?? false,
           botSlot: session.botSlot ?? 0,
+          lotSize: session.lotSize ?? 1,
         },
         onTradeOpen,
         onTradeClose,

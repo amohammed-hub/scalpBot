@@ -303,3 +303,10 @@
 - [ ] server/botWatchdog.ts: runs every 60s, checks all running bot sessions in DB, restarts any that are marked running but have no in-memory state (missed by botRestart)
 - [ ] server/_core/index.ts: start watchdog after server starts
 - [ ] E2E test: watchdog detects missing in-memory state and triggers restart
+
+## Critical Bug Fixes — Jul 9 (Quantity / Duplicate Trade / Instrument)
+- [ ] botEngine.ts: fix quantity calculation to use lot size for futures (BankNifty lot=15, Nifty lot=25, etc.) — never trade fractional lots
+- [ ] botEngine.ts: hard block new signal if openTrade already exists in state — prevent duplicate open trades
+- [ ] instrument selector: replace BankNifty Spot / Nifty Spot with their futures contracts (BANKNIFTY Jul Fut, NIFTY Jul Fut) — spot index is not directly tradeable
+- [ ] instrument definitions: add lotSize field to all instruments so quantity calculator uses it
+- [ ] integration tests: verify lot-size rounding, duplicate trade prevention, and futures instrument tokens

@@ -49,44 +49,46 @@ interface BotConfig {
 interface PricePoint { time: string; price: number; }
 
 // ── Instruments ───────────────────────────────────────────────────────────────
+// lotSize: minimum tradeable quantity per lot. Quantity is always rounded to nearest lot.
+// spotOnly: true means the index cannot be directly traded — shown for reference/signal only.
 const INSTRUMENTS = [
-  // NSE Indices (spot)
-  { token: "NSE_INDEX|Nifty 50",           symbol: "NIFTY",         label: "Nifty 50 (Spot)",              segment: "NSE Index" },
-  { token: "NSE_INDEX|Nifty Bank",         symbol: "BANKNIFTY",     label: "Bank Nifty (Spot)",            segment: "NSE Index" },
-  { token: "NSE_INDEX|Nifty Fin Service",  symbol: "FINNIFTY",      label: "Fin Nifty (Spot)",             segment: "NSE Index" },
-  { token: "NSE_INDEX|MIDCPNIFTY",         symbol: "MIDCPNIFTY",    label: "Midcap Nifty (Spot)",          segment: "NSE Index" },
+  // NSE F&O Futures — TRADEABLE (listed first as recommended defaults)
+  { token: "NFO_FUT|BANKNIFTY30JUL2026FUT",    symbol: "BNF_FUT",     label: "BankNifty Jul 2026 Futures",  segment: "NSE F&O Futures", lotSize: 15,  spotOnly: false },
+  { token: "NFO_FUT|NIFTY30JUL2026FUT",        symbol: "NIFTY_FUT",   label: "Nifty Jul 2026 Futures",      segment: "NSE F&O Futures", lotSize: 25,  spotOnly: false },
   // NSE F&O Options
-  { token: "NFO_OPT|NIFTY10JUL202624800CE",  symbol: "NIFTY_CE",      label: "Nifty 24800 CE (10 Jul)",  segment: "NSE F&O Options" },
-  { token: "NFO_OPT|NIFTY10JUL202624800PE",  symbol: "NIFTY_PE",      label: "Nifty 24800 PE (10 Jul)",  segment: "NSE F&O Options" },
-  { token: "NFO_OPT|NIFTY10JUL202625000CE",  symbol: "NIFTY_25000CE", label: "Nifty 25000 CE (10 Jul)",  segment: "NSE F&O Options" },
-  { token: "NFO_OPT|NIFTY10JUL202625000PE",  symbol: "NIFTY_25000PE", label: "Nifty 25000 PE (10 Jul)",  segment: "NSE F&O Options" },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653000CE", symbol: "BNF_CE",     label: "BankNifty 53000 CE (9 Jul)",  segment: "NSE F&O Options" },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653000PE", symbol: "BNF_PE",     label: "BankNifty 53000 PE (9 Jul)",  segment: "NSE F&O Options" },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653500CE", symbol: "BNF_53500CE", label: "BankNifty 53500 CE (9 Jul)", segment: "NSE F&O Options" },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653500PE", symbol: "BNF_53500PE", label: "BankNifty 53500 PE (9 Jul)", segment: "NSE F&O Options" },
-  // NSE F&O Futures
-  { token: "NFO_FUT|NIFTY30JUL2026FUT",        symbol: "NIFTY_FUT",   label: "Nifty Jul 2026 Futures",      segment: "NSE F&O Futures" },
-  { token: "NFO_FUT|BANKNIFTY30JUL2026FUT",    symbol: "BNF_FUT",     label: "BankNifty Jul 2026 Futures",  segment: "NSE F&O Futures" },
+  { token: "NFO_OPT|NIFTY10JUL202624800CE",  symbol: "NIFTY_CE",      label: "Nifty 24800 CE (10 Jul)",  segment: "NSE F&O Options", lotSize: 25,  spotOnly: false },
+  { token: "NFO_OPT|NIFTY10JUL202624800PE",  symbol: "NIFTY_PE",      label: "Nifty 24800 PE (10 Jul)",  segment: "NSE F&O Options", lotSize: 25,  spotOnly: false },
+  { token: "NFO_OPT|NIFTY10JUL202625000CE",  symbol: "NIFTY_25000CE", label: "Nifty 25000 CE (10 Jul)",  segment: "NSE F&O Options", lotSize: 25,  spotOnly: false },
+  { token: "NFO_OPT|NIFTY10JUL202625000PE",  symbol: "NIFTY_25000PE", label: "Nifty 25000 PE (10 Jul)",  segment: "NSE F&O Options", lotSize: 25,  spotOnly: false },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653000CE", symbol: "BNF_CE",     label: "BankNifty 53000 CE (9 Jul)",  segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653000PE", symbol: "BNF_PE",     label: "BankNifty 53000 PE (9 Jul)",  segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653500CE", symbol: "BNF_53500CE", label: "BankNifty 53500 CE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
+  { token: "NFO_OPT|BANKNIFTY09JUL202653500PE", symbol: "BNF_53500PE", label: "BankNifty 53500 PE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
   // MCX Commodities
-  { token: "MCX_FO|552720", symbol: "MCX_GOLD",     label: "Gold (GOLDGUINEA FUT 31 Jul)",    segment: "MCX Commodities" },
-  { token: "MCX_FO|574822", symbol: "MCX_SILVER",   label: "Silver (SILVER100 FUT 31 Jul)",   segment: "MCX Commodities" },
-  { token: "MCX_FO|520703", symbol: "MCX_CRUDE",    label: "Crude Oil (CRUDEOILM FUT 20 Jul)",segment: "MCX Commodities" },
-  { token: "MCX_FO|538686", symbol: "MCX_NATGAS",   label: "Natural Gas Mini (28 Jul)",        segment: "MCX Commodities" },
-  { token: "MCX_FO|562048", symbol: "MCX_COPPER",   label: "Copper (FUT 31 Jul)",              segment: "MCX Commodities" },
-  { token: "MCX_FO|562054", symbol: "MCX_ZINC",     label: "Zinc Mini (FUT 31 Jul)",           segment: "MCX Commodities" },
-  { token: "MCX_FO|562047", symbol: "MCX_ALUM",     label: "Aluminium (FUT 31 Jul)",           segment: "MCX Commodities" },
-  { token: "MCX_FO|562050", symbol: "MCX_LEAD",     label: "Lead Mini (FUT 31 Jul)",           segment: "MCX Commodities" },
-  { token: "MCX_FO|562051", symbol: "MCX_NICKEL",   label: "Nickel (FUT 15 Jul)",              segment: "MCX Commodities" },
+  { token: "MCX_FO|552720", symbol: "MCX_GOLD",     label: "Gold (GOLDGUINEA FUT 31 Jul)",    segment: "MCX Commodities", lotSize: 10,    spotOnly: false },
+  { token: "MCX_FO|574822", symbol: "MCX_SILVER",   label: "Silver (SILVER100 FUT 31 Jul)",   segment: "MCX Commodities", lotSize: 100,   spotOnly: false },
+  { token: "MCX_FO|520703", symbol: "MCX_CRUDE",    label: "Crude Oil (CRUDEOILM FUT 20 Jul)",segment: "MCX Commodities", lotSize: 100,   spotOnly: false },
+  { token: "MCX_FO|538686", symbol: "MCX_NATGAS",   label: "Natural Gas Mini (28 Jul)",        segment: "MCX Commodities", lotSize: 1250,  spotOnly: false },
+  { token: "MCX_FO|562048", symbol: "MCX_COPPER",   label: "Copper (FUT 31 Jul)",              segment: "MCX Commodities", lotSize: 1000,  spotOnly: false },
+  { token: "MCX_FO|562054", symbol: "MCX_ZINC",     label: "Zinc Mini (FUT 31 Jul)",           segment: "MCX Commodities", lotSize: 1000,  spotOnly: false },
+  { token: "MCX_FO|562047", symbol: "MCX_ALUM",     label: "Aluminium (FUT 31 Jul)",           segment: "MCX Commodities", lotSize: 5000,  spotOnly: false },
+  { token: "MCX_FO|562050", symbol: "MCX_LEAD",     label: "Lead Mini (FUT 31 Jul)",           segment: "MCX Commodities", lotSize: 1000,  spotOnly: false },
+  { token: "MCX_FO|562051", symbol: "MCX_NICKEL",   label: "Nickel (FUT 15 Jul)",              segment: "MCX Commodities", lotSize: 100,   spotOnly: false },
   // NSE Equity
-  { token: "NSE_EQ|INE009A01021", symbol: "RELIANCE",  label: "Reliance Industries", segment: "NSE Equity" },
-  { token: "NSE_EQ|INE467B01029", symbol: "TCS",        label: "TCS",                segment: "NSE Equity" },
-  { token: "NSE_EQ|INE009B01011", symbol: "INFY",       label: "Infosys",            segment: "NSE Equity" },
-  { token: "NSE_EQ|INE040A01034", symbol: "HDFC",       label: "HDFC Bank",          segment: "NSE Equity" },
-  { token: "NSE_EQ|INE030A01027", symbol: "ITC",        label: "ITC",                segment: "NSE Equity" },
-  { token: "NSE_EQ|INE585B01010", symbol: "SBIN",       label: "SBI",                segment: "NSE Equity" },
-  { token: "NSE_EQ|INE062A01020", symbol: "TATAMOTORS", label: "Tata Motors",        segment: "NSE Equity" },
+  { token: "NSE_EQ|INE009A01021", symbol: "RELIANCE",  label: "Reliance Industries", segment: "NSE Equity", lotSize: 1, spotOnly: false },
+  { token: "NSE_EQ|INE467B01029", symbol: "TCS",        label: "TCS",                segment: "NSE Equity", lotSize: 1, spotOnly: false },
+  { token: "NSE_EQ|INE009B01011", symbol: "INFY",       label: "Infosys",            segment: "NSE Equity", lotSize: 1, spotOnly: false },
+  { token: "NSE_EQ|INE040A01034", symbol: "HDFC",       label: "HDFC Bank",          segment: "NSE Equity", lotSize: 1, spotOnly: false },
+  { token: "NSE_EQ|INE030A01027", symbol: "ITC",        label: "ITC",                segment: "NSE Equity", lotSize: 1, spotOnly: false },
+  { token: "NSE_EQ|INE585B01010", symbol: "SBIN",       label: "SBI",                segment: "NSE Equity", lotSize: 1, spotOnly: false },
+  { token: "NSE_EQ|INE062A01020", symbol: "TATAMOTORS", label: "Tata Motors",        segment: "NSE Equity", lotSize: 1, spotOnly: false },
   // BSE
-  { token: "BSE_INDEX|SENSEX", symbol: "SENSEX", label: "Sensex", segment: "BSE Index" },
+  { token: "BSE_INDEX|SENSEX", symbol: "SENSEX", label: "Sensex", segment: "BSE Index", lotSize: 1, spotOnly: false },
+  // NSE Indices (spot) — NOT directly tradeable, shown for price reference only
+  { token: "NSE_INDEX|Nifty 50",           symbol: "NIFTY",         label: "Nifty 50 (Spot)",     segment: "NSE Index (Spot Only)", lotSize: 1, spotOnly: true },
+  { token: "NSE_INDEX|Nifty Bank",         symbol: "BANKNIFTY",     label: "Bank Nifty (Spot)",   segment: "NSE Index (Spot Only)", lotSize: 1, spotOnly: true },
+  { token: "NSE_INDEX|Nifty Fin Service",  symbol: "FINNIFTY",      label: "Fin Nifty (Spot)",    segment: "NSE Index (Spot Only)", lotSize: 1, spotOnly: true },
+  { token: "NSE_INDEX|MIDCPNIFTY",         symbol: "MIDCPNIFTY",    label: "Midcap Nifty (Spot)", segment: "NSE Index (Spot Only)", lotSize: 1, spotOnly: true },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -369,6 +371,8 @@ export default function Dashboard() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleStart = () => {
+    const selectedInstr = INSTRUMENTS.find(i => i.token === config.instrumentToken);
+    const lotSize = selectedInstr?.lotSize ?? 1;
     startMutation.mutate({
       sessionToken,
       instrumentToken: config.instrumentToken,
@@ -385,6 +389,7 @@ export default function Dashboard() {
       trailingSlPct: config.trailingSlPct,
       minConfidence: config.minConfidence,
       scanIntervalSec: config.scanIntervalSec,
+      lotSize,
     });
   };
 

@@ -75,6 +75,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   lastTickAt: bigint("lastTickAt", { mode: "number" }).default(0),
   // Multi-bot slot (0 = primary, 1 = secondary, 2 = tertiary)
   botSlot: int("botSlot").default(0),
+  // Lot size for quantity rounding (1 for equity, 15 for BankNifty futures, etc.)
+  lotSize: int("lotSize").default(1),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

@@ -124,6 +124,8 @@ export interface BotState {
   telegramEnabled: boolean;
   // Multi-bot slot
   botSlot: number;
+  // Lot size for quantity rounding (1 for equity, 15 for BankNifty futures, etc.)
+  lotSize: number;
   // Track which alert types have already been sent this session (avoid spam)
   alertsSent: Set<string>;
 }
@@ -1436,10 +1438,13 @@ async function tick(
   state.lastSignal = signal;
   if (signal.direction === "HOLD" || signal.confidence < state.minConfidence / 100) return;
 
-  // Position sizing
+  // Position sizing — quantity must be a multiple of lotSize
   const riskAmount = (state.capital * state.riskPerTradePct) / 100;
   const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
-  const quantity = slDistance > 0 ? Math.max(1, Math.floor(riskAmount / slDistance)) : 1;
+  const lotSize = state.lotSize ?? 1;
+  const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
+  // Round DOWN to nearest lot (never exceed risk budget)
+  const quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
 
   let orderId: string | undefined;
   if (state.mode === "live" && state.accessToken) {
@@ -1565,4 +1570,15 @@ export function getBotStateByPrefix(sessionToken: string): BotState | undefined 
     if (key.startsWith(sessionToken) && state.status === 'running') return state;
   }
   return undefined;
+}
+
+/** Return all currently running bot states for a given base sessionToken (all slots) */
+export function getAllRunningBotsForSession(sessionToken: string): BotState[] {
+  const results: BotState[] = [];
+  for (const [key, state] of Array.from(bots.entries())) {
+    if ((key === sessionToken || key.startsWith(sessionToken + '-slot')) && state.status === 'running') {
+      results.push(state);
+    }
+  }
+  return results;
 }

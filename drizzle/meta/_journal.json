@@ -57,6 +57,13 @@
       "when": 1783545524177,
       "tag": "0007_secret_whirlwind",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1783576123785,
+      "tag": "0008_many_synch",
+      "breakpoints": true
     }
   ]
 }
