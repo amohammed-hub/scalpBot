@@ -163,11 +163,13 @@ function HealthDot({
   lastTickAt,
   scanIntervalSec,
   lastError,
+  onRestart,
 }: {
   status: string;
   lastTickAt: number;
   scanIntervalSec: number;
   lastError: string | null;
+  onRestart?: () => void;
 }) {
   const health = getBotHealth(status, lastTickAt, scanIntervalSec, lastError);
   const elapsedSec = lastTickAt > 0 ? Math.round((Date.now() - lastTickAt) / 1000) : null;
@@ -185,6 +187,19 @@ function HealthDot({
     red:   lastError ? `Error: ${lastError}` : `Stalled — last scan ${elapsedSec !== null ? `${elapsedSec}s ago` : "unknown"}`,
     idle:  "Bot is stopped",
   }[health];
+
+  if (health === "red" && onRestart) {
+    return (
+      <button
+        onClick={onRestart}
+        title={`${label} — Click to restart`}
+        className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 px-1.5 py-0.5 rounded-md transition-colors active:scale-95"
+      >
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${colorClass}`} />
+        Restart
+      </button>
+    );
+  }
 
   return (
     <span
@@ -349,6 +364,15 @@ export default function Dashboard() {
       utils.bot.status.invalidate();
     },
     onError: (e) => toast.error(`Failed to stop bot: ${e.message}`),
+  });
+
+  const restartMutation = trpc.bot.restart.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Bot restarted — ${data.instrumentLabel ?? "Bot"}`);
+      utils.bot.status.invalidate();
+      utils.multiBots.allStatus.invalidate();
+    },
+    onError: (e) => toast.error(`Restart failed: ${e.message}`),
   });
 
   const manualExitMutation = trpc.bot.manualExit.useMutation({
@@ -638,6 +662,7 @@ export default function Dashboard() {
               lastTickAt={(botStatus as any)?.lastTickAt ?? 0}
               scanIntervalSec={(botStatus as any)?.scanIntervalSec ?? 60}
               lastError={(botStatus as any)?.lastError ?? null}
+              onRestart={() => restartMutation.mutate({ sessionToken })}
             />
             {isRunning ? "Bot Running" : "Bot Stopped"}
           </div>
@@ -1516,6 +1541,7 @@ export default function Dashboard() {
                             lastTickAt={(bot as any).lastTickAt ?? 0}
                             scanIntervalSec={(bot as any).scanIntervalSec ?? 60}
                             lastError={(bot as any).lastError ?? null}
+                            onRestart={() => restartMutation.mutate({ sessionToken: bot.sessionToken })}
                           />
                         )}
                       </div>
@@ -1538,6 +1564,23 @@ export default function Dashboard() {
                       <span>₹{(bot.lastPrice ?? 0).toFixed(2)}</span>
                       <span>{bot.tradesCount ?? 0} trades</span>
                     </div>
+                    {/* Unrealised P&L for open trade */}
+                    {(() => {
+                      const openTrade = (bot as any).openTrade;
+                      if (!openTrade || !isActive) return null;
+                      const livePrice = bot.lastPrice ?? 0;
+                      if (livePrice === 0) return null;
+                      const dir = openTrade.direction === "BUY" ? 1 : -1;
+                      const unrealised = (livePrice - openTrade.entryPrice) * dir * (openTrade.quantity - (openTrade.bookedQty ?? 0));
+                      const isPos = unrealised >= 0;
+                      return (
+                        <div className={`flex items-center gap-1 text-xs mb-2 ${isPos ? "text-emerald-400" : "text-red-400"}`}>
+                          <span className="text-white/30">Unrealised:</span>
+                          <span className="font-semibold">{isPos ? "+" : ""}₹{unrealised.toFixed(0)}</span>
+                          <span className="text-white/20">({openTrade.direction} @ ₹{openTrade.entryPrice.toFixed(2)})</span>
+                        </div>
+                      );
+                    })()}
                     <div className="flex items-center justify-between">
                       <div className={`text-base font-bold ${
                         pnlPositive ? "text-emerald-400" : pnlNegative ? "text-red-400" : "text-white/40"

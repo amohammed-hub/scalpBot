@@ -376,3 +376,7 @@
 ## Critical Fixes (Jul 9 — Deploy Error + Trade Log P&L)
 - [x] Fix Railway DB: eodSummaryCronTaskUid column missing — run ALTER TABLE via webdev_execute_sql
 - [x] Fix Trade Log: open trades show blank P&L and Exit columns — compute live unrealised P&L from correct slot's lastPrice
+
+## Features: Restart Button + Unrealised P&L (Jul 9)
+- [x] Dashboard.tsx: HealthDot shows a "Restart" button when health is red — calls bot.stop then bot.start with same config
+- [x] Dashboard.tsx: Parallel Bots slot cards show live unrealised P&L of open trade next to entry price

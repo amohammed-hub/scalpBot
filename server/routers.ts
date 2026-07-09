@@ -559,6 +559,149 @@ export const appRouter = router({
         return { success: true };
       }),
 
+    restart: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input }) => {
+        // Stop the bot first
+        stopBot(input.sessionToken);
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        // Read last config from DB
+        const rows = await db
+          .select()
+          .from(botSessions)
+          .where(eq(botSessions.sessionToken, input.sessionToken))
+          .orderBy(desc(botSessions.updatedAt))
+          .limit(1);
+        if (rows.length === 0) throw new Error("No previous bot config found");
+        const row = rows[0];
+        const sessionId = row.id;
+        // Clear lastError and mark running
+        await db
+          .update(botSessions)
+          .set({ status: "running", stoppedAt: null, lastError: null })
+          .where(eq(botSessions.sessionToken, input.sessionToken));
+        // Fetch access token if live mode
+        let accessToken: string | null = null;
+        if (row.mode === "live") {
+          const creds = await db
+            .select()
+            .from(upstoxCredentials)
+            .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+            .limit(1);
+          if (creds.length > 0 && creds[0].accessToken) {
+            accessToken = creds[0].accessToken;
+          }
+        }
+        // Restore today's trade count and P&L
+        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        const todayTrades = await db
+          .select({ pnl: tradeLog.pnl })
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            eq(tradeLog.status, "closed"),
+            gte(tradeLog.enteredAt, todayStart),
+          ));
+        const todayCount = todayTrades.length;
+        const restoredPnl = todayTrades.reduce((s: number, t: { pnl: number | null }) => s + (t.pnl ?? 0), 0);
+        // Restore open trade if any
+        const openTradeRows = await db
+          .select()
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            eq(tradeLog.status, "open"),
+          ))
+          .orderBy(desc(tradeLog.enteredAt))
+          .limit(1);
+        const existingOpenTrade = openTradeRows.length > 0 ? {
+          dbId: openTradeRows[0].id,
+          symbol: openTradeRows[0].symbol,
+          symbolLabel: openTradeRows[0].symbolLabel ?? openTradeRows[0].symbol,
+          instrumentToken: openTradeRows[0].instrumentToken ?? row.instrumentToken ?? "",
+          direction: openTradeRows[0].direction as "BUY" | "SELL",
+          mode: openTradeRows[0].mode as "paper" | "live",
+          entryPrice: openTradeRows[0].entryPrice,
+          quantity: openTradeRows[0].quantity,
+          slPrice: openTradeRows[0].slPrice,
+          targetPrice: openTradeRows[0].targetPrice,
+          atr: openTradeRows[0].atr ?? 0,
+          confidence: openTradeRows[0].confidence ?? 0,
+          currentSl: openTradeRows[0].slPrice,
+          partial1RPrice: openTradeRows[0].partial1RPrice ?? 0,
+          partial2RPrice: openTradeRows[0].partial2RPrice ?? 0,
+          partialBooked: 0 as 0 | 1 | 2,
+          bookedQty: 0,
+          bookedPnl: 0,
+          trailingSlEnabled: row.trailingSlEnabled ?? false,
+          trailingSlPct: row.trailingSlPct ?? 0.5,
+          signalReason: openTradeRows[0].signalReason ?? "",
+          enteredAt: openTradeRows[0].enteredAt ?? new Date(),
+        } : null;
+        // Reuse same onTradeOpen / onTradeClose callbacks as bot.start
+        const onTradeOpen = async (trade: Parameters<typeof startBot>[1] extends (t: infer T) => unknown ? T : never): Promise<number> => {
+          const dbInner = await getDb();
+          if (!dbInner) return 0;
+          const result = await dbInner.insert(tradeLog).values({ sessionToken: input.sessionToken, sessionId, ...trade });
+          return Number((result as unknown as { insertId: number }).insertId);
+        };
+        const onTradeClose = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
+          const dbInner = await getDb();
+          if (!dbInner) return;
+          const capital = row.capital ?? 100000;
+          await dbInner.update(tradeLog).set({ status: "closed", exitPrice, pnl, pnlPct: (pnl / capital) * 100, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
+          const state = getBotState(input.sessionToken);
+          if (state) await dbInner.update(botSessions).set({ tradesCount: state.tradesCount, dailyPnl: state.dailyPnl, status: state.status, lastError: state.lastError }).where(eq(botSessions.sessionToken, input.sessionToken));
+        };
+        startBot(
+          {
+            sessionToken: input.sessionToken,
+            sessionId,
+            status: "running",
+            mode: row.mode ?? "paper",
+            instrumentToken: row.instrumentToken ?? "NSE_EQ|INE009A01021",
+            instrumentSymbol: row.instrumentSymbol ?? "RELIANCE",
+            instrumentLabel: row.instrumentLabel ?? "Reliance Industries",
+            capital: row.capital ?? 100000,
+            riskPerTradePct: row.riskPerTradePct ?? 1.0,
+            maxTradesPerDay: row.maxTradesPerDay ?? 5,
+            dailyLossLimitPct: row.dailyLossLimitPct ?? 3.0,
+            stopLossMultiplier: row.stopLossMultiplier ?? 1.5,
+            targetMultiplier: row.targetMultiplier ?? 3.0,
+            trailingSlEnabled: row.trailingSlEnabled ?? false,
+            trailingSlPct: row.trailingSlPct ?? 0.5,
+            minConfidence: row.minConfidence ?? 60,
+            scanIntervalSec: row.scanIntervalSec ?? 60,
+            tradesCount: todayCount,
+            dailyPnl: restoredPnl,
+            accessToken,
+            telegramBotToken: row.telegramBotToken ?? null,
+            telegramChatId: row.telegramChatId ?? null,
+            telegramEnabled: row.telegramEnabled ?? false,
+            botSlot: row.botSlot ?? 0,
+            lotSize: row.lotSize ?? 1,
+            isIndexOptions: row.isIndexOptions ?? false,
+            underlyingToken: row.underlyingToken ?? undefined,
+            optionType: (row.optionType as "CE" | "PE" | "auto" | undefined) ?? undefined,
+          },
+          onTradeOpen,
+          onTradeClose,
+          existingOpenTrade,
+          async (tickState) => {
+            const dbInner = await getDb();
+            if (!dbInner) return;
+            await dbInner.update(botSessions).set({
+              lastPrice: tickState.lastPrice, bidPrice: tickState.bidPrice, askPrice: tickState.askPrice,
+              nextScanAt: tickState.nextScanAt, lastSignal: tickState.lastSignal?.direction ?? null,
+              lastSignalAt: tickState.lastSignal ? new Date() : undefined,
+              currentSl: tickState.openTrade?.currentSl ?? null, lastTickAt: Date.now(),
+            }).where(eq(botSessions.sessionToken, tickState.sessionToken));
+          },
+        );
+        return { success: true, instrumentLabel: row.instrumentLabel };
+      }),
+
     liveData: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
