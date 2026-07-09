@@ -300,6 +300,24 @@ export default function Dashboard() {
     },
     onError: (e) => toast.error(`Exit failed: ${e.message}`),
   });
+  const deleteTradeByIdMutation = trpc.trades.deleteById.useMutation({
+    onSuccess: () => {
+      toast.success("Trade deleted.");
+      utils.trades.list.invalidate();
+      utils.trades.todayStats.invalidate();
+      utils.trades.stats.invalidate();
+    },
+    onError: (e) => toast.error(`Delete failed: ${e.message}`),
+  });
+  const resetPnlMutation = trpc.trades.resetPnlCounter.useMutation({
+    onSuccess: (data) => {
+      toast.success(`P&L counter reset. Recalculated: ₹${(data.recalculatedPnl ?? 0).toFixed(0)} from ${data.tradeCount} trades.`);
+      utils.bot.status.invalidate();
+      utils.trades.todayStats.invalidate();
+      utils.trades.stats.invalidate();
+    },
+    onError: (e) => toast.error(`Reset failed: ${e.message}`),
+  });
 
   // ── Derived state ─────────────────────────────────────────────────────────────
   const isRunning = botStatus?.status === "running";
@@ -1598,6 +1616,17 @@ export default function Dashboard() {
                 <span className="text-xs">📊</span>
                 Full Analytics
               </button>
+              <button
+                onClick={() => {
+                  if (!confirm("Recalculate and fix the P&L counter from actual closed trades? This does NOT delete any trades.")) return;
+                  resetPnlMutation.mutate({ sessionToken });
+                }}
+                className="flex items-center gap-1.5 text-xs text-orange-400 hover:text-orange-300 bg-orange-500/10 hover:bg-orange-500/20 px-2.5 py-1.5 rounded-lg transition-colors"
+                title="Fix P&L counter if it shows wrong total"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Fix P&L
+              </button>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -1613,7 +1642,8 @@ export default function Dashboard() {
                   <th className="text-right py-2 pr-4">Exit</th>
                   <th className="text-right py-2 pr-4">Qty</th>
                   <th className="text-right py-2 pr-4">P&L</th>
-                  <th className="text-left py-2">Status</th>
+                  <th className="text-left py-2 pr-4">Status</th>
+                  <th className="text-right py-2">Del</th>
                 </tr>
               </thead>
               <tbody>
@@ -1684,7 +1714,7 @@ export default function Dashboard() {
                             ? `${livePnl > 0 ? "+" : ""}₹${livePnl.toFixed(0)}${t.status === "open" ? " ●" : ""}`
                             : "—"}
                         </td>
-                        <td className="py-2.5">
+                        <td className="py-2.5 pr-4">
                           <span className={`text-xs px-2 py-0.5 rounded-full ${
                             t.status === "open" ? "bg-blue-500/20 text-blue-400"
                             : (t.pnl ?? 0) > 0 ? "bg-emerald-500/20 text-emerald-400"
@@ -1692,6 +1722,18 @@ export default function Dashboard() {
                           }`}>
                             {t.status === "open" ? "Open" : t.exitReason ?? "Closed"}
                           </span>
+                        </td>
+                        <td className="py-2.5 text-right">
+                          <button
+                            onClick={() => {
+                              if (!confirm(`Delete trade #${t.id} (${t.symbolLabel ?? t.symbol})? This cannot be undone.`)) return;
+                              deleteTradeByIdMutation.mutate({ sessionToken, tradeId: t.id });
+                            }}
+                            className="text-red-400/60 hover:text-red-400 transition-colors p-1 rounded hover:bg-red-500/10"
+                            title="Delete this trade record"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
                         </td>
                       </tr>
                     );

@@ -1001,6 +1001,53 @@ export const appRouter = router({
         }).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
       }),
 
+    // ── Admin / Cleanup ────────────────────────────────────────────────────────
+    // Delete a single trade by ID (for removing corrupted records)
+    deleteById: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        tradeId: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        await db.delete(tradeLog).where(
+          and(
+            eq(tradeLog.id, input.tradeId),
+            eq(tradeLog.sessionToken, input.sessionToken),
+          )
+        );
+        return { success: true };
+      }),
+    // Delete all trades for a session and reset dailyPnl + tradesCount
+    clearAll: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        await db.delete(tradeLog).where(eq(tradeLog.sessionToken, input.sessionToken));
+        await db.update(botSessions).set({ dailyPnl: 0, tradesCount: 0 }).where(eq(botSessions.sessionToken, input.sessionToken));
+        return { success: true };
+      }),
+    // Recalculate and reset dailyPnl/tradesCount from actual closed trades (keeps history)
+    resetPnlCounter: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const trades = await db.select().from(tradeLog).where(
+          and(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            eq(tradeLog.status, "closed"),
+          )
+        );
+        const realPnl = trades.reduce((sum: number, t: TradeLog) => sum + (t.pnl ?? 0), 0);
+        const realCount = trades.length;
+        await db.update(botSessions)
+          .set({ dailyPnl: realPnl, tradesCount: realCount })
+          .where(eq(botSessions.sessionToken, input.sessionToken));
+        return { success: true, recalculatedPnl: realPnl, tradeCount: realCount };
+      }),
     exportData: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
