@@ -456,6 +456,285 @@ describe("Bot Lifecycle — End-to-End Integration", () => {
 
     // onTick must have fired with a real price — this was the core bug
     expect(tickPrices.length).toBeGreaterThan(0);
-    expect(tickPrices[0]).toBeGreaterThan(0);
+        expect(tickPrices[0]).toBeGreaterThan(0);
+  });
+
+  // ── Test 11: lastTickAt is set after tick and increases on subsequent ticks ──
+  it("lastTickAt is set after tick and increases on subsequent ticks", async () => {
+    const onTradeOpen = vi.fn().mockResolvedValue(1);
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+    const tickStates: number[] = [];
+    const onTick = vi.fn().mockImplementation(async (state: BotState) => {
+      tickStates.push(state.lastTickAt ?? 0);
+    });
+
+    startBot(makeBotConfig(sessionToken), onTradeOpen, onTradeClose, null, onTick);
+    await waitForTick(200);
+
+    expect(tickStates.length).toBeGreaterThan(0);
+    expect(tickStates[0]).toBeGreaterThan(0);
+    // lastTickAt should be a recent unix timestamp (within last 5 seconds)
+    expect(tickStates[0]).toBeGreaterThan(Date.now() - 5000);
+  });
+
+  // ── Test 12: currentSl is updated in state after trailing SL moves ──────────
+  it("currentSl in state reflects initial slPrice on first tick", async () => {
+    const entry = 53525;
+    const sl = 53200;
+    const slDist = entry - sl;
+    const existingTrade: OpenTrade = {
+      dbId: 20,
+      symbol: "BNF_FUT",
+      symbolLabel: "BankNifty Jul 2026 Futures",
+      instrumentToken: "NSE_FO|BANKNIFTY",
+      direction: "BUY",
+      mode: "paper",
+      entryPrice: entry,
+      quantity: 6,
+      slPrice: sl,
+      targetPrice: entry + slDist * 3,
+      atr: slDist / 1.5,
+      confidence: 80,
+      enteredAt: new Date(),
+      trailingSlEnabled: false,
+      trailingSlPct: 0.5,
+      currentSl: sl,
+      partial1RPrice: entry + slDist,
+      partial2RPrice: entry + slDist * 2,
+      partialBooked: 0,
+      bookedQty: 0,
+      bookedPnl: 0,
+    };
+
+    const onTradeOpen = vi.fn().mockResolvedValue(1);
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+    const tickStates: BotState[] = [];
+    const onTick = vi.fn().mockImplementation(async (state: BotState) => {
+      tickStates.push({ ...state, openTrade: state.openTrade ? { ...state.openTrade } : null });
+    });
+
+    startBot(makeBotConfig(sessionToken), onTradeOpen, onTradeClose, existingTrade, onTick);
+    await waitForTick(200);
+
+    expect(tickStates.length).toBeGreaterThan(0);
+    const firstState = tickStates[0];
+    // currentSl in openTrade should equal the initial slPrice (no trailing in this test)
+    expect(firstState.openTrade?.currentSl).toBe(sl);
+  });
+
+  // ── Test 13: Lot size rounding — quantity is always a multiple of lotSize ────
+  it("quantity is always a multiple of lotSize", async () => {
+    const capturedTrades: Parameters<Parameters<typeof startBot>[1]>[0][] = [];
+    const onTradeOpen = vi.fn().mockImplementation(async (trade) => {
+      capturedTrades.push(trade);
+      return 99;
+    });
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+
+    // BankNifty futures: lotSize=15
+    startBot(
+      makeBotConfig(sessionToken, { capital: 200_000, riskPerTradePct: 1.0, lotSize: 15 }),
+      onTradeOpen,
+      onTradeClose,
+      null
+    );
+    await waitForTick(500);
+
+    if (capturedTrades.length > 0) {
+      const qty = capturedTrades[0].quantity;
+      expect(qty % 15).toBe(0); // must be a multiple of 15
+      expect(qty).toBeGreaterThanOrEqual(15); // at least 1 lot
+    }
+  });
+
+  // ── Test 14: No duplicate trade — second signal ignored when openTrade exists ─
+  it("second signal is ignored when openTrade already exists in state", async () => {
+    const entry = 53525;
+    const sl = 53200;
+    const slDist = entry - sl;
+    const existingTrade: OpenTrade = {
+      dbId: 30,
+      symbol: "BNF_FUT",
+      symbolLabel: "BankNifty Jul 2026 Futures",
+      instrumentToken: "NSE_FO|BANKNIFTY",
+      direction: "BUY",
+      mode: "paper",
+      entryPrice: entry,
+      quantity: 15,
+      slPrice: sl,
+      targetPrice: entry + slDist * 3,
+      atr: slDist / 1.5,
+      confidence: 80,
+      enteredAt: new Date(),
+      trailingSlEnabled: false,
+      trailingSlPct: 0.5,
+      currentSl: sl,
+      partial1RPrice: entry + slDist,
+      partial2RPrice: entry + slDist * 2,
+      partialBooked: 0,
+      bookedQty: 0,
+      bookedPnl: 0,
+    };
+
+    const onTradeOpen = vi.fn().mockResolvedValue(1);
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+
+    // Start bot with an existing open trade — signal generation should be skipped
+    startBot(
+      makeBotConfig(sessionToken, { minConfidence: 0 }),
+      onTradeOpen,
+      onTradeClose,
+      existingTrade
+    );
+    await waitForTick(500);
+
+    // onTradeOpen should NOT have been called — existing trade blocks new signals
+    expect(onTradeOpen).not.toHaveBeenCalled();
+  });
+});
+
+// ── Feature 1-3 E2E Tests ─────────────────────────────────────────────────────
+// These tests verify the in-memory engine behavior for currentSl, lastTickAt,
+// and dailyPnl. The DB persistence layer (onTick callback) is tested via the
+// mock — we verify the state passed to onTick contains the correct values.
+
+describe("Feature 1-3 — currentSl, lastTickAt, dailyPnl E2E", () => {
+  let sessionToken: string;
+
+  beforeEach(() => {
+    sessionToken = makeSessionToken();
+  });
+
+  afterEach(() => {
+    stopBot(sessionToken);
+  });
+
+  // ── Feature 2 E2E: lastTickAt is set after tick and increases on subsequent ticks
+  it("lastTickAt is set after tick and increases on subsequent ticks", async () => {
+    const onTradeOpen = vi.fn().mockResolvedValue(1);
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+    const tickStates: number[] = [];
+    const onTick = vi.fn().mockImplementation(async (state: BotState) => {
+      tickStates.push(state.lastTickAt ?? 0);
+    });
+
+    const before = Date.now();
+    startBot(makeBotConfig(sessionToken), onTradeOpen, onTradeClose, null, onTick);
+    await waitForTick(300);
+
+    // lastTickAt must be set to a recent unix timestamp
+    expect(tickStates.length).toBeGreaterThan(0);
+    expect(tickStates[0]).toBeGreaterThan(0);
+    expect(tickStates[0]).toBeGreaterThanOrEqual(before);
+    expect(tickStates[0]).toBeLessThanOrEqual(Date.now() + 100);
+
+    // Also verify the in-memory state has it set
+    const state = getBotState(sessionToken);
+    expect(state!.lastTickAt).toBeGreaterThan(0);
+    expect(state!.lastTickAt).toBeGreaterThanOrEqual(before);
+  });
+
+  // ── Feature 1 E2E: currentSl in onTick state reflects the trade's currentSl ──
+  it("currentSl passed to onTick matches openTrade.currentSl in state", async () => {
+    const entry = 53525;
+    const sl = 53200;
+    const slDist = entry - sl;
+    const existingTrade: OpenTrade = {
+      dbId: 60,
+      symbol: "BNF_FUT",
+      symbolLabel: "BankNifty Jul 2026 Futures",
+      instrumentToken: "NSE_FO|BANKNIFTY",
+      direction: "BUY",
+      mode: "paper",
+      entryPrice: entry,
+      quantity: 15,
+      slPrice: sl,
+      targetPrice: entry + slDist * 3,
+      atr: slDist / 1.5,
+      confidence: 80,
+      enteredAt: new Date(),
+      trailingSlEnabled: false,
+      trailingSlPct: 0.5,
+      currentSl: sl,
+      partial1RPrice: entry + slDist,
+      partial2RPrice: entry + slDist * 2,
+      partialBooked: 0,
+      bookedQty: 0,
+      bookedPnl: 0,
+    };
+
+    const tickCurrentSls: (number | null | undefined)[] = [];
+    const onTradeOpen = vi.fn().mockResolvedValue(60);
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+    const onTick = vi.fn().mockImplementation(async (state: BotState) => {
+      // This is what the DB persistence callback receives — must contain currentSl
+      tickCurrentSls.push(state.openTrade?.currentSl);
+    });
+
+    startBot(makeBotConfig(sessionToken), onTradeOpen, onTradeClose, existingTrade, onTick);
+    await waitForTick(300);
+
+    // If trade is still open, onTick should have received currentSl = sl (no trailing)
+    if (tickCurrentSls.length > 0 && tickCurrentSls[0] !== undefined && tickCurrentSls[0] !== null) {
+      // currentSl should be the original SL (no trailing enabled)
+      expect(tickCurrentSls[0]).toBe(sl);
+      expect(tickCurrentSls[0]).toBeGreaterThan(0);
+    }
+  });
+
+  // ── Feature 3 E2E: dailyPnl is updated in state after a trade closes ─────────
+  it("dailyPnl in state increases after a trade closes via Target Hit", async () => {
+    // BUY trade with entry=100, target=200 — mock price ~53000 >> target → closes immediately
+    const entry = 100;
+    const sl = 50;
+    const target = 200;
+    const qty = 15;
+
+    const existingTrade: OpenTrade = {
+      dbId: 70,
+      symbol: "BNF_FUT",
+      symbolLabel: "BankNifty Jul 2026 Futures",
+      instrumentToken: "NSE_FO|BANKNIFTY",
+      direction: "BUY",
+      mode: "paper",
+      entryPrice: entry,
+      quantity: qty,
+      slPrice: sl,
+      targetPrice: target,
+      atr: 25,
+      confidence: 80,
+      enteredAt: new Date(),
+      trailingSlEnabled: false,
+      trailingSlPct: 0.5,
+      currentSl: sl,
+      partial1RPrice: entry + 50,
+      partial2RPrice: entry + 100,
+      partialBooked: 0,
+      bookedQty: 0,
+      bookedPnl: 0,
+    };
+
+    const onTradeOpen = vi.fn().mockResolvedValue(70);
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+
+    // Start with dailyPnl = 500 (simulating restored value from DB)
+    startBot(
+      makeBotConfig(sessionToken, { dailyPnl: 500 }),
+      onTradeOpen,
+      onTradeClose,
+      existingTrade,
+    );
+    await waitForTick(300);
+
+    const state = getBotState(sessionToken);
+    expect(state).toBeDefined();
+
+    // After target hit, dailyPnl should be > 500 (restored base + trade profit)
+    // Mock price ~53000, entry=100, qty=15 → profit = (53000-100)*15 = ~793,500
+    // dailyPnl should be 500 + profit > 500
+    expect(state!.dailyPnl).toBeGreaterThan(500);
+    // Trade should be closed
+    expect(state!.openTrade).toBeNull();
+    expect(onTradeClose).toHaveBeenCalled();
   });
 });

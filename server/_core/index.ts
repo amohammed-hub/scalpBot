@@ -13,6 +13,7 @@ import { getDb } from "../db";
 import { upstoxCredentials } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { restartRunningBots } from "../botRestart";
+import { startBotWatchdog } from "../botWatchdog";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -266,6 +267,8 @@ async function startServer() {
     // Auto-restart any bots that were running before the server went down.
     // This ensures live price feed and SL/Target monitoring resume after deploys.
     restartRunningBots().catch(err => console.error('[BotRestart] Startup error:', err));
+    // Start the health watchdog — checks every 60s for sessions that fell out of memory
+    startBotWatchdog();
   });
 }
 

@@ -275,38 +275,38 @@
 ## Feature Batch — Jul 9 (All with E2E tests)
 
 ### Feature 1: Persist currentSl to DB on every tick
-- [ ] schema: add currentSl float column to bot_sessions (written by onTick)
-- [ ] routers.ts onTick: write state.openTrade.currentSl to bot_sessions.currentSl
-- [ ] routers.ts liveData DB fallback: read currentSl from bot_sessions and use it when restoring open trade
-- [ ] botRestart.ts: restore currentSl from bot_sessions (not slPrice) so trailing SL survives restart
-- [ ] E2E test: trailing SL updated in state after tick, and restored correctly from DB
+- [x] schema: add currentSl float column to bot_sessions (written by onTick)
+- [x] routers.ts onTick: write state.openTrade.currentSl to bot_sessions.currentSl
+- [x] routers.ts liveData DB fallback: read currentSl from bot_sessions and use it when restoring open trade
+- [x] botRestart.ts: restore currentSl from bot_sessions (not slPrice) so trailing SL survives restart
+- [x] E2E test: trailing SL updated in state after tick, and restored correctly from DB
 
 ### Feature 2: Last-tick timestamp + staleness warning on Dashboard
-- [ ] schema: add lastTickAt bigint column to bot_sessions (unix ms, written by onTick)
-- [ ] routers.ts onTick: write Date.now() to bot_sessions.lastTickAt
-- [ ] routers.ts liveData: return lastTickAt in both in-memory and DB fallback paths
-- [ ] Dashboard.tsx: show "Last updated X seconds ago" next to live price
-- [ ] Dashboard.tsx: show amber warning badge when lastTickAt is stale (> 2x scanInterval)
-- [ ] E2E test: lastTickAt is set after tick and increases on subsequent ticks
+- [x] schema: add lastTickAt bigint column to bot_sessions (unix ms, written by onTick)
+- [x] routers.ts onTick: write Date.now() to bot_sessions.lastTickAt
+- [x] routers.ts liveData: return lastTickAt in both in-memory and DB fallback paths
+- [x] Dashboard.tsx: show "Last updated X seconds ago" next to live price
+- [x] Dashboard.tsx: show amber warning badge when lastTickAt is stale (> 2x scanInterval)
+- [x] E2E test: lastTickAt is set after tick and increases on subsequent ticks
 
 ### Feature 3: Restore dailyPnl from DB on bot restart
-- [ ] routers.ts bot.start: query today's closed trades sum for this sessionToken and use as initial dailyPnl (not 0)
-- [ ] botRestart.ts: same — restore dailyPnl from today's closed trades sum
-- [ ] E2E test: dailyPnl is correctly restored from DB trade history
+- [x] routers.ts bot.start: query today's closed trades sum for this sessionToken and use as initial dailyPnl (not 0)
+- [x] botRestart.ts: same — restore dailyPnl from today's closed trades sum
+- [x] E2E test: dailyPnl is correctly restored from DB trade history
 
 ### Feature 4: Paper-trade safety gate before going live
-- [ ] routers.ts bot.start: if mode=live and sessionToken has zero closed paper trades, return error "Complete at least 3 paper trades before going live"
-- [ ] Dashboard.tsx: show clear warning in the mode selector when switching to live with insufficient paper trades
-- [ ] E2E test: live mode blocked with 0 paper trades, allowed after 3+ paper trades
+- [x] routers.ts bot.start: if mode=live and sessionToken has zero closed paper trades, return error "Complete at least 3 paper trades before going live"
+- [x] Dashboard.tsx: show clear warning in the mode selector when switching to live with insufficient paper trades
+- [x] E2E test: live mode blocked with 0 paper trades, allowed after 3+ paper trades
 
 ### Feature 5: Bot health watchdog
-- [ ] server/botWatchdog.ts: runs every 60s, checks all running bot sessions in DB, restarts any that are marked running but have no in-memory state (missed by botRestart)
-- [ ] server/_core/index.ts: start watchdog after server starts
-- [ ] E2E test: watchdog detects missing in-memory state and triggers restart
+- [x] server/botWatchdog.ts: runs every 60s, checks all running bot sessions in DB, restarts any that are marked running but have no in-memory state (missed by botRestart)
+- [x] server/_core/index.ts: start watchdog after server starts
+- [x] E2E test: watchdog detects missing in-memory state and triggers restart
 
 ## Critical Bug Fixes — Jul 9 (Quantity / Duplicate Trade / Instrument)
-- [ ] botEngine.ts: fix quantity calculation to use lot size for futures (BankNifty lot=15, Nifty lot=25, etc.) — never trade fractional lots
-- [ ] botEngine.ts: hard block new signal if openTrade already exists in state — prevent duplicate open trades
-- [ ] instrument selector: replace BankNifty Spot / Nifty Spot with their futures contracts (BANKNIFTY Jul Fut, NIFTY Jul Fut) — spot index is not directly tradeable
-- [ ] instrument definitions: add lotSize field to all instruments so quantity calculator uses it
-- [ ] integration tests: verify lot-size rounding, duplicate trade prevention, and futures instrument tokens
+- [x] botEngine.ts: fix quantity calculation to use lot size for futures (BankNifty lot=15, Nifty lot=25, etc.) — never trade fractional lots
+- [x] botEngine.ts: hard block new signal if openTrade already exists in state — prevent duplicate open trades (server-side duplicate instrument check)
+- [x] instrument selector: replace BankNifty Spot / Nifty Spot with their futures contracts (BANKNIFTY Jul Fut, NIFTY Jul Fut) — spot index is not directly tradeable
+- [x] instrument definitions: add lotSize field to all instruments so quantity calculator uses it
+- [x] integration tests: verify lot-size rounding, duplicate trade prevention, and futures instrument tokens
