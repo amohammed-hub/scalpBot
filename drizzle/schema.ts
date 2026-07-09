@@ -77,6 +77,10 @@ export const botSessions = mysqlTable("bot_sessions", {
   botSlot: int("botSlot").default(0),
   // Lot size for quantity rounding (1 for equity, 15 for BankNifty futures, etc.)
   lotSize: int("lotSize").default(1),
+  // Options mode: when true, bot reads underlying for signals and trades ATM CE/PE
+  isIndexOptions: boolean("isIndexOptions").default(false),
+  underlyingToken: varchar("underlyingToken", { length: 128 }),
+  optionType: varchar("optionType", { length: 8 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

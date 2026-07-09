@@ -289,6 +289,19 @@ export const appRouter = router({
           const slDist0 = Math.abs((t.entryPrice ?? 0) - (t.slPrice ?? 0));
           const p1 = t.partial1RPrice ?? (t.direction === "BUY" ? t.entryPrice + slDist0 : t.entryPrice - slDist0);
           const p2 = t.partial2RPrice ?? (t.direction === "BUY" ? t.entryPrice + slDist0 * 2 : t.entryPrice - slDist0 * 2);
+          // Derive optionMockKey from symbol so paper-mode exit price uses option premium, not spot
+          let restoredOptionMockKey: string | undefined;
+          if (input.isIndexOptions) {
+            const sym0 = (t.symbol ?? "").toUpperCase();
+            const ceOrPe0: "CE" | "PE" = t.direction === "BUY" ? "CE" : "PE";
+            if (sym0.includes("GOLD"))       restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+            else if (sym0.includes("SILVER")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+            else if (sym0.includes("CRUDE") || sym0.includes("OIL")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+            else if (sym0.includes("NATGAS") || sym0.includes("GAS")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+            else if (sym0.includes("COPPER")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+            else if (sym0.includes("BANK"))   restoredOptionMockKey = ceOrPe0 === "CE" ? "BNF_CE"        : "BNF_PE";
+            else                              restoredOptionMockKey = ceOrPe0 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+          }
           existingOpenTrade = {
             dbId: t.id,
             symbol: t.symbol,
@@ -312,6 +325,8 @@ export const appRouter = router({
             partialBooked: 0 as 0 | 1 | 2,
             bookedQty: 0,
             bookedPnl: 0,
+            isIndexOptions: input.isIndexOptions,
+            optionMockKey: restoredOptionMockKey,
           };
         }
 
@@ -342,12 +357,15 @@ export const appRouter = router({
               trailingSlPct: input.trailingSlPct,
               minConfidence: input.minConfidence,
               scanIntervalSec: input.scanIntervalSec,
-              tradesCount: 0,
-              dailyPnl: 0,
+              tradesCount: todayTradesCount,
+              dailyPnl: restoredDailyPnl,
               startedAt: new Date(),
               stoppedAt: null,
               lastError: null,
               lotSize: input.lotSize,
+              isIndexOptions: input.isIndexOptions,
+              underlyingToken: input.underlyingToken ?? null,
+              optionType: input.optionType ?? null,
             })
             .where(eq(botSessions.sessionToken, input.sessionToken));
         } else {
@@ -368,10 +386,13 @@ export const appRouter = router({
             trailingSlPct: input.trailingSlPct,
             minConfidence: input.minConfidence,
             scanIntervalSec: input.scanIntervalSec,
-            tradesCount: 0,
-            dailyPnl: 0,
+            tradesCount: todayTradesCount,
+            dailyPnl: restoredDailyPnl,
             startedAt: new Date(),
             lotSize: input.lotSize,
+            isIndexOptions: input.isIndexOptions,
+            underlyingToken: input.underlyingToken ?? null,
+            optionType: input.optionType ?? null,
           });
           sessionId = Number((result as unknown as { insertId: number }).insertId);
         }

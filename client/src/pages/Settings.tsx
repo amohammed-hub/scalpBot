@@ -156,6 +156,37 @@ function TokenStep({
 }
 
 // ── Auto Refresh Section ──────────────────────────────────────────────────────
+function RestoreSessionInput() {
+  const [value, setValue] = useState("");
+  const handleRestore = () => {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length < 20) {
+      toast.error("Invalid Session ID — paste the full ID from your other device");
+      return;
+    }
+    localStorage.setItem(LS_SESSION, trimmed);
+    toast.success("Session restored — reloading...");
+    setTimeout(() => window.location.reload(), 800);
+  };
+  return (
+    <div className="flex gap-2">
+      <input
+        type="text"
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        placeholder="Paste Session ID here"
+        className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white/80 placeholder-white/20 outline-none focus:border-teal-500/50"
+      />
+      <button
+        onClick={handleRestore}
+        className="shrink-0 bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/30 text-teal-300 text-xs px-3 py-1.5 rounded-lg transition-colors"
+      >
+        Restore
+      </button>
+    </div>
+  );
+}
+
 function AutoRefreshSection({ sessionToken }: { sessionToken: string }) {
   const { data: status, refetch } = trpc.autoRefresh.status.useQuery({ sessionToken });
   const enableMutation = trpc.autoRefresh.enable.useMutation({
@@ -1017,6 +1048,31 @@ export default function Settings() {
 
         {/* ── Auto Token Refresh ─────────────────────────────────────── */}
         <AutoRefreshSection sessionToken={sessionToken} />
+
+        {/* ── Cross-Device Session Sharing ──────────────────────────────── */}
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-base">📱</span>
+            <h2 className="text-white font-semibold text-sm">Access on Other Devices</h2>
+          </div>
+          <p className="text-white/50 text-xs mb-3 leading-relaxed">
+            Your session is tied to this browser. To view the same bot status, trade log, and P&amp;L on your phone or another computer, copy the Session ID below and paste it on the other device via Settings → Restore Session.
+          </p>
+          <div className="flex items-center gap-2 bg-black/30 border border-white/10 rounded-xl px-3 py-2">
+            <span className="flex-1 text-teal-300 text-xs font-mono truncate">{sessionToken}</span>
+            <button
+              onClick={() => { navigator.clipboard.writeText(sessionToken); toast.success("Session ID copied — paste it on your other device"); }}
+              className="shrink-0 text-white/40 hover:text-teal-400 transition-colors"
+              title="Copy Session ID"
+            >
+              <Copy className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="mt-3 border-t border-white/10 pt-3">
+            <p className="text-white/40 text-xs mb-2">Restore session on another device:</p>
+            <RestoreSessionInput />
+          </div>
+        </div>
 
         <div className="mt-6 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
           <div className="flex items-start gap-2">
