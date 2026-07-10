@@ -2323,29 +2323,23 @@ export default function Dashboard() {
                       <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                         <td className="py-2.5 pr-4 font-medium text-white text-xs">
                           {/* Symbol — clickable link to Upstox order if live, or portfolio if paper */}
-                          <a
-                            href={(() => {
-                              // Build Upstox chart URL from instrumentToken
-                              // Format: NSE_EQ|INE009A01021 → https://upstox.com/stocks/NSE/INE009A01021
-                              // MCX_FO|... → https://upstox.com/chart/MCX/...
+                         <a
+                           href={(() => {
                               const token = t.instrumentToken ?? "";
                               if (t.mode === "live" && t.upstoxOrderId) {
                                 return `https://upstox.com/orders/${t.upstoxOrderId}`;
                               }
-                              // Parse instrument token to build chart URL
-                              const [exchange, isin] = token.split("|");
-                              if (exchange && isin) {
-                                const exch = exchange.replace("_EQ", "").replace("_FO", "").replace("_INDEX", "");
-                                return `https://upstox.com/chart/${exch}/${isin}`;
+                              // Direct link to Upstox Pro chart for this exact instrument
+                              if (token) {
+                                return `https://pro.upstox.com/chart?sid=${encodeURIComponent(token)}`;
                               }
-                              // Fallback: search on Upstox
-                              const sym = (t.symbolLabel ?? t.symbol ?? "").replace(/[→\s]+/g, " ").trim();
-                              return `https://www.upstox.com/stocks/${encodeURIComponent(sym)}`;
+                              // Fallback: open Upstox trade book
+                              return `https://pro.upstox.com/visitor/trade-book`;
                             })()}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 hover:text-emerald-400 transition-colors group cursor-pointer"
-                            title={`Open ${t.symbolLabel ?? t.symbol} on Upstox`}
+                            title={`Open chart for ${t.symbolLabel ?? t.symbol} on Upstox Pro`}
                           >
                             {t.symbolLabel ?? t.symbol}
                             <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
