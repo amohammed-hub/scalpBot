@@ -1587,7 +1587,11 @@ export default function Dashboard() {
                       <div className={`mt-2 text-xs px-2 py-1 rounded-lg ${
                         bot.openTrade.direction === "BUY" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"
                       }`}>
-                        {bot.openTrade.direction} @ ₹{bot.openTrade.entryPrice?.toFixed(2)} · SL ₹{(bot.openTrade as any).sl?.toFixed(2) ?? (bot.openTrade as any).stopLoss?.toFixed(2) ?? "—"}
+                        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                          <span>{bot.openTrade.direction} @ ₹{bot.openTrade.entryPrice?.toFixed(2)}</span>
+                          {bot.openTrade.slPrice ? <span className="text-red-400">SL ₹{bot.openTrade.slPrice.toFixed(2)}</span> : null}
+                          {bot.openTrade.targetPrice ? <span className="text-emerald-400">Tgt ₹{bot.openTrade.targetPrice.toFixed(2)}</span> : null}
+                        </div>
                       </div>
                     )}
                     {bot.lastSignal && !bot.openTrade && (
