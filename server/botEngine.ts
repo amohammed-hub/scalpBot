@@ -17,6 +17,10 @@
 
 import axios from "axios";
 import { emitActivity } from "./activityLog";
+import {
+  getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
+  recordTradeClose, isCooldownActive, applyPaperCosts, getPaperCostConfig,
+} from "./riskManager";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface Candle {
@@ -1697,9 +1701,15 @@ async function tick(
       const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
       if (!sqOffId) { state.lastError = `Auto square-off rejected — close ${trade.symbolLabel} manually`; return; }
     }
-    const pnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
+    let pnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
+    // v3: paper-mode brokerage + slippage simulation
+    if (trade.mode === "paper") {
+      const pc = getPaperCostConfig();
+      pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
+    }
     state.dailyPnl += pnl;
     state.openTrade = null;
+    recordTradeClose(state.sessionToken, state.scanIntervalSec);
     await onTradeClose(trade.dbId, effectivePrice, pnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${pnl.toFixed(0)}`);
     emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(0)}`, { price: effectivePrice, pnl });
@@ -1723,12 +1733,18 @@ async function tick(
       if (effectivePrice >= heroTarget) heroExit = "Hero Zero — 5× Target Hit";
       else if (effectivePrice <= heroCut) heroExit = "Hero Zero — 50% Cut";
       if (heroExit) {
-        const pnl = (effectivePrice - trade.entryPrice) * trade.quantity;
+        let pnl = (effectivePrice - trade.entryPrice) * trade.quantity;
         if (trade.mode === "live" && state.accessToken) {
           await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", trade.quantity);
         }
+        // v3: paper-mode brokerage + slippage simulation
+        if (trade.mode === "paper") {
+          const pc = getPaperCostConfig();
+          pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
+        }
         state.dailyPnl += pnl + trade.bookedPnl;
         state.openTrade = null;
+        recordTradeClose(state.sessionToken, state.scanIntervalSec);
         await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
         console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
       }
@@ -1808,7 +1824,12 @@ async function tick(
     else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
 
     if (exitReason) {
-      const remainPnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
+      let remainPnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
+      // v3: paper-mode brokerage + slippage simulation
+      if (trade.mode === "paper") {
+        const pc = getPaperCostConfig();
+        remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
+      }
       const totalPnl  = remainPnl + trade.bookedPnl;
       if (trade.mode === "live" && state.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
@@ -1834,6 +1855,7 @@ async function tick(
       }
       state.dailyPnl += remainPnl;
       state.openTrade = null;
+      recordTradeClose(state.sessionToken, state.scanIntervalSec);
       await onTradeClose(trade.dbId, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
       console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
       emitActivity(state.sessionToken, "trade_close", `${exitReason} ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)} | Day: ₹${state.dailyPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
@@ -1857,6 +1879,30 @@ async function tick(
   if (state.tradesCount >= state.maxTradesPerDay) {
     state.status = "paused";
     state.lastError = `Max trades per day reached (${state.maxTradesPerDay})`;
+    return;
+  }
+
+  // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
+  // 1. StoplossGuard: pause after 3 consecutive SLs in last 20 trades (checked globally)
+  const slGuard = getStoplossGuardState();
+  if (slGuard.isPaused) {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: slGuard.reason ?? "StoplossGuard active", layer: "None" };
+    return;
+  }
+  // 2. Portfolio MaxDrawdown Halt: unified daily loss limit across all slots
+  const baseToken = state.sessionToken.replace(/-slot\d+$/, "");
+  const portfolioBots = getAllRunningBotsForSession(baseToken);
+  const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct);
+  if (ddCheck.halted) {
+    state.status = "paused";
+    state.lastError = ddCheck.reason ?? "Portfolio daily drawdown limit hit";
+    emitActivity(state.sessionToken, "error", `🛑 ${ddCheck.reason}`);
+    return;
+  }
+  // 3. CooldownPeriod: mandatory 2-candle wait after any trade close
+  const cooldown = isCooldownActive(state.sessionToken);
+  if (cooldown.active) {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Cooldown after last trade (${Math.ceil(cooldown.remainingMs / 1000)}s remaining)`, layer: "None" };
     return;
   }
 
@@ -2107,6 +2153,16 @@ async function tick(
     const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
     const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
     quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
+  }
+
+  // ── v3 Risk Gate: Portfolio exposure cap (80% of combined capital) ──────────
+  const entryPriceForExposure = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
+  const newTradeExposure = entryPriceForExposure * quantity;
+  const exposureCheck = canOpenNewTrade(getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, "")), newTradeExposure);
+  if (!exposureCheck.allowed) {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: exposureCheck.reason ?? "Portfolio exposure cap reached", layer: "None" };
+    emitActivity(state.sessionToken, "signal", `⛔ Entry blocked — ${exposureCheck.reason}`);
+    return;
   }
 
   // ── Place order ─────────────────────────────────────────────────────────────────────────────

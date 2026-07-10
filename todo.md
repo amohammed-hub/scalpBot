@@ -424,3 +424,18 @@
 - [x] When Smart Scanner is selected, show ranked scan results with instrument, direction, confidence %, premium estimate, ATR, signal layer
 - [x] Auto-start bot on highest confidence instrument after scan (click any green row)
 - [x] Add "Re-scan" button to re-run scanner without restarting bot
+
+## v3 World-Class Upgrade (Jul 2026)
+- [x] Market Regime Risk Gate: global "safe to trade?" check (India VIX + regime classifier + consecutive SL count) blocking entries when unsafe; live Market Risk Score on dashboard
+- [x] Options Analytics Engine: PCR, Max Pain, OI walls (S/R), Greeks (delta/theta/IV) from /v2/option/chain; delta 0.4-0.6 strike selection; PoP per trade on dashboard
+- [x] StoplossGuard protection: pause all bots after 3 consecutive SLs within last 20 trades
+- [x] Strict MaxDrawdown halt: portfolio-wide daily loss limit across all parallel bots, immediate halt when breached
+- [x] CooldownPeriod: mandatory 2-candle wait after any trade close before next entry
+- [x] Portfolio Risk Manager: combined exposure across 5 slots, reject entries above 80% margin usage; aggregate daily P&L + exposure % on dashboard
+- [x] Emergency Kill Switch: one-click close all positions + halt all bots, visible on main dashboard
+- [x] Strategy Layer Scorecard: per-layer win rate over last 20 trades, auto-disable layers below 30% win rate, scorecard visible on dashboard
+- [x] Strategy Presets: Conservative/Balanced/Aggressive presets applied atomically to all active slots
+- [x] Slippage & Brokerage Simulation: paper mode deducts configurable brokerage (default Rs.20/trade) and slippage (default 0.05%)
+- [x] Paper-to-Live Readiness: checklist + readiness score (win rate >= 50%, profit factor >= 1.5, max drawdown < 10%) with "Ready to Go Live" indicator
+- [x] Vitest coverage for all new modules
+- [x] Push to GitHub for Railway deployment

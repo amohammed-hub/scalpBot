@@ -7,6 +7,7 @@ import {
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
   Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink
 } from "lucide-react";
+import { Shield, Skull, Layers, Target, Gauge, Power, Award } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
@@ -333,6 +334,41 @@ export default function Dashboard() {
     { refetchInterval: 30000, staleTime: 15000, retry: false }
   );
 
+  // ── Risk Manager Queries ────────────────────────────────────────────────────
+  const { data: riskScore } = trpc.riskManager.score.useQuery(
+    { sessionToken },
+    { refetchInterval: 5000, staleTime: 2000 }
+  );
+  const { data: portfolioStatus } = trpc.riskManager.portfolio.useQuery(
+    { sessionToken },
+    { refetchInterval: 5000, staleTime: 2000 }
+  );
+  const { data: cooldownInfo } = trpc.riskManager.cooldown.useQuery(
+    { sessionToken },
+    { refetchInterval: 3000, staleTime: 1000 }
+  );
+
+  // ── Layer Tracker ────────────────────────────────────────────────────────────
+  const { data: layerStats = [] } = trpc.layerTracker.stats.useQuery(
+    { sessionToken },
+    { refetchInterval: 10000, staleTime: 5000 }
+  );
+
+  // ── Presets ──────────────────────────────────────────────────────────────────
+  const { data: presetsList = [] } = trpc.presets.list.useQuery(undefined, { staleTime: 60000 });
+
+  // ── Readiness ────────────────────────────────────────────────────────────────
+  const { data: readinessData } = trpc.readiness.check.useQuery(
+    { sessionToken },
+    { refetchInterval: 15000, staleTime: 10000 }
+  );
+
+  // ── Paper Costs ──────────────────────────────────────────────────────────────
+  const { data: paperCosts } = trpc.paperCosts.get.useQuery(undefined, { staleTime: 30000 });
+  const [localBrokerage, setLocalBrokerage] = useState(20);
+  const [localSlippage, setLocalSlippage] = useState(0.05);
+  useEffect(() => { if (paperCosts) { setLocalBrokerage(paperCosts.brokerage); setLocalSlippage(paperCosts.slippagePct); } }, [paperCosts]);
+
   // ── Mutations ────────────────────────────────────────────────────────────────
   const startMutation = trpc.bot.start.useMutation({
     onSuccess: () => {
@@ -388,6 +424,34 @@ export default function Dashboard() {
       utils.trades.stats.invalidate();
     },
     onError: (e) => toast.error(`Reset failed: ${e.message}`),
+  });
+
+  // Kill Switch
+  const killSwitchMutation = trpc.riskManager.killSwitch.useMutation({
+    onSuccess: (data) => {
+      toast.error(`🚨 KILL SWITCH ACTIVATED — ${data.closedTrades} trades closed, ${data.stoppedBots} bots stopped.`);
+      utils.bot.status.invalidate();
+      utils.multiBots.allStatus.invalidate();
+      utils.trades.list.invalidate();
+      utils.trades.todayStats.invalidate();
+    },
+    onError: (e) => toast.error(`Kill switch failed: ${e.message}`),
+  });
+
+  // Preset Apply
+  const applyPresetMutation = trpc.presets.applyPreset.useMutation({
+    onSuccess: (data: { applied: string; botsUpdated: number }) => {
+      toast.success(`✅ Preset "${data.applied}" applied to ${data.botsUpdated} bot(s).`);
+      utils.bot.status.invalidate();
+      utils.multiBots.allStatus.invalidate();
+    },
+    onError: (e: { message: string }) => toast.error(`Preset failed: ${e.message}`),
+  });
+
+  // Paper Costs Update
+  const updatePaperCostsMutation = trpc.paperCosts.update.useMutation({
+    onSuccess: () => toast.success("Paper costs updated."),
+    onError: (e) => toast.error(`Update failed: ${e.message}`),
   });
 
   // ── Activity log ─────────────────────────────────────────────────────────────
@@ -802,6 +866,90 @@ export default function Dashboard() {
               {s.sub && <div className="text-xs text-white/30 mt-0.5">{s.sub}</div>}
             </div>
           ))}
+        </div>
+
+        {/* ── Risk & Portfolio Command Center ─────────────────────────────────── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {/* Market Risk Score */}
+          <div className={`rounded-2xl p-4 border ${
+            riskScore?.safe ? "bg-emerald-500/5 border-emerald-500/20" : "bg-red-500/5 border-red-500/20"
+          }`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-white/50 text-xs">Market Risk Score</span>
+              <Gauge className={`w-4 h-4 ${riskScore?.safe ? "text-emerald-400" : "text-red-400"}`} />
+            </div>
+            <div className={`text-2xl font-bold ${riskScore?.safe ? "text-emerald-400" : "text-red-400"}`}>
+              {riskScore?.score ?? "—"}<span className="text-sm text-white/30">/100</span>
+            </div>
+            <div className="text-xs text-white/40 mt-1">
+              {riskScore?.regime ?? "—"} · VIX: {riskScore?.vixLevel?.toFixed(1) ?? "—"}
+            </div>
+            {riskScore && !riskScore.safe && (
+              <div className="text-xs text-red-400 mt-1 font-medium">{riskScore.reasons?.[0] ?? "Unsafe"}</div>
+            )}
+            {cooldownInfo?.active && (
+              <div className="text-xs text-amber-400 mt-1">Cooldown: {Math.ceil((cooldownInfo.remainingMs ?? 0) / 1000)}s</div>
+            )}
+          </div>
+
+          {/* Portfolio Exposure */}
+          <div className={`rounded-2xl p-4 border ${
+            (portfolioStatus?.exposurePct ?? 0) > 80 ? "bg-red-500/5 border-red-500/20" : "bg-white/5 border-white/10"
+          }`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-white/50 text-xs">Portfolio Exposure</span>
+              <Shield className={`w-4 h-4 ${(portfolioStatus?.exposurePct ?? 0) > 80 ? "text-red-400" : "text-teal-400"}`} />
+            </div>
+            <div className="text-2xl font-bold text-white">
+              {(portfolioStatus?.exposurePct ?? 0).toFixed(0)}%
+            </div>
+            <div className="text-xs text-white/40 mt-1">
+              {portfolioStatus?.runningBots ?? 0} bots · ₹{((portfolioStatus?.totalExposure ?? 0) / 1000).toFixed(1)}K used
+            </div>
+            {portfolioStatus?.isHalted && (
+              <div className="text-xs text-red-400 mt-1 font-medium">DRAWDOWN HALT</div>
+            )}
+          </div>
+
+          {/* Aggregate Daily P&L */}
+          <div className="rounded-2xl p-4 border bg-white/5 border-white/10">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-white/50 text-xs">Aggregate Daily P&L</span>
+              <DollarSign className={`w-4 h-4 ${(portfolioStatus?.aggregateDailyPnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`} />
+            </div>
+            <div className={`text-2xl font-bold ${(portfolioStatus?.aggregateDailyPnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {(portfolioStatus?.aggregateDailyPnl ?? 0) >= 0 ? "+" : ""}₹{(portfolioStatus?.aggregateDailyPnl ?? 0).toFixed(0)}
+            </div>
+            <div className="text-xs text-white/40 mt-1">
+              Across all {portfolioStatus?.runningBots ?? 0} active slot(s)
+            </div>
+          </div>
+
+          {/* Kill Switch + Readiness */}
+          <div className="rounded-2xl p-4 border bg-white/5 border-white/10 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-white/50 text-xs">Emergency Controls</span>
+                <Power className="w-4 h-4 text-red-400" />
+              </div>
+              <button
+                onClick={() => { if (confirm("⚠️ This will CLOSE ALL open trades and STOP ALL bots. Continue?")) killSwitchMutation.mutate({ sessionToken }); }}
+                disabled={killSwitchMutation.isPending}
+                className="w-full py-2 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/30 text-sm font-bold transition-colors disabled:opacity-50 mb-2"
+              >
+                {killSwitchMutation.isPending ? "⏳ Killing..." : "🚨 KILL SWITCH"}
+              </button>
+            </div>
+            {/* Readiness badge */}
+            <div className={`flex items-center gap-2 px-2 py-1.5 rounded-lg ${
+              readinessData?.ready ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-amber-500/10 border border-amber-500/20"
+            }`}>
+              <Award className={`w-4 h-4 ${readinessData?.ready ? "text-emerald-400" : "text-amber-400"}`} />
+              <span className={`text-xs font-medium ${readinessData?.ready ? "text-emerald-400" : "text-amber-400"}`}>
+                {readinessData?.ready ? "Ready to Go Live!" : `Readiness: ${readinessData?.score ?? 0}%`}
+              </span>
+            </div>
+          </div>
         </div>
 
         {/* Account Balance & Profile Widget */}
@@ -1498,6 +1646,159 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+
+        {/* ── Strategy Presets ──────────────────────────────────────────────────── */}
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Target className="w-5 h-5 text-amber-400" />
+            <span className="font-semibold text-white">Strategy Presets</span>
+            <span className="text-xs text-white/40">Apply atomically to all active bot slots</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {presetsList.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => { if (confirm(`Apply "${p.name}" preset to ALL active bots?`)) applyPresetMutation.mutate({ sessionToken, presetId: p.id }); }}
+                disabled={applyPresetMutation.isPending}
+                className={`text-left p-4 rounded-xl border transition-colors hover:bg-white/5 ${
+                  p.id === "conservative" ? "border-blue-500/30 hover:border-blue-500/50" :
+                  p.id === "balanced" ? "border-teal-500/30 hover:border-teal-500/50" :
+                  "border-orange-500/30 hover:border-orange-500/50"
+                }`}
+              >
+                <div className={`text-sm font-bold mb-1 ${
+                  p.id === "conservative" ? "text-blue-400" :
+                  p.id === "balanced" ? "text-teal-400" : "text-orange-400"
+                }`}>{p.name}</div>
+                <div className="text-xs text-white/40 mb-2">{p.description}</div>
+                <div className="text-[10px] text-white/30 space-y-0.5">
+                  <div>Confidence: {p.minConfidence}% · SL: {p.stopLossMultiplier}× · TP: {p.targetMultiplier}×</div>
+                  <div>Risk: {p.riskPerTradePct}% · Max Trades: {p.maxTradesPerDay} · Daily Limit: {p.dailyLossLimitPct}%</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Paper Costs & Readiness ──────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          {/* Paper Costs Config */}
+          {config.mode === "paper" && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Calculator className="w-5 h-5 text-purple-400" />
+                <span className="font-semibold text-white">Paper Mode Costs</span>
+                <span className="text-xs text-white/40">Simulates real trading costs</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-white/50 mb-1 block">Brokerage (₹/trade)</label>
+                  <input type="number" value={localBrokerage} min={0} max={200} step={5}
+                    onChange={(e) => setLocalBrokerage(Number(e.target.value))}
+                    className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500" />
+                </div>
+                <div>
+                  <label className="text-xs text-white/50 mb-1 block">Slippage (%)</label>
+                  <input type="number" value={localSlippage} min={0} max={1} step={0.01}
+                    onChange={(e) => setLocalSlippage(Number(e.target.value))}
+                    className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500" />
+                </div>
+              </div>
+              <button
+                onClick={() => updatePaperCostsMutation.mutate({ brokerage: localBrokerage, slippagePct: localSlippage })}
+                disabled={updatePaperCostsMutation.isPending}
+                className="mt-3 w-full py-2 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-xs font-medium transition-colors disabled:opacity-50"
+              >
+                {updatePaperCostsMutation.isPending ? "Saving..." : "Save Paper Costs"}
+              </button>
+            </div>
+          )}
+
+          {/* Paper-to-Live Readiness */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Award className={`w-5 h-5 ${readinessData?.ready ? "text-emerald-400" : "text-amber-400"}`} />
+              <span className="font-semibold text-white">Paper-to-Live Readiness</span>
+              {readinessData?.ready && <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold">READY</span>}
+            </div>
+            {readinessData?.checks ? (
+              <div className="space-y-2">
+                {readinessData.checks.map((c) => (
+                  <div key={c.name} className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {c.passed ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-amber-400" />}
+                      <span className="text-xs text-white/60">{c.name}</span>
+                    </div>
+                    <span className={`text-xs font-bold ${c.passed ? "text-emerald-400" : "text-amber-400"}`}>
+                      {typeof c.value === "number" ? c.value.toFixed(1) : c.value}
+                    </span>
+                  </div>
+                ))}
+                <div className="mt-3 pt-3 border-t border-white/10">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-white/50">Overall Score</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-24 h-2 rounded-full bg-white/10 overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${readinessData.ready ? "bg-emerald-400" : "bg-amber-400"}`}
+                          style={{ width: `${readinessData.score}%` }} />
+                      </div>
+                      <span className="text-xs font-bold text-white">{readinessData.score}%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-white/30">Complete at least 20 paper trades to see readiness evaluation.</div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Layer Scorecard ──────────────────────────────────────────────────── */}
+        {layerStats.length > 0 && (
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Layers className="w-5 h-5 text-cyan-400" />
+              <span className="font-semibold text-white">Strategy Layer Scorecard</span>
+              <span className="text-xs text-white/40">Auto-disables layers below 30% win rate (last 20 trades)</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-white/40 border-b border-white/10">
+                    <th className="text-left py-2 px-2">Layer</th>
+                    <th className="text-center py-2 px-2">Trades</th>
+                    <th className="text-center py-2 px-2">W/L</th>
+                    <th className="text-center py-2 px-2">Win Rate</th>
+                    <th className="text-right py-2 px-2">P&L</th>
+                    <th className="text-center py-2 px-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {layerStats.map((l) => (
+                    <tr key={l.layer} className={`border-b border-white/5 ${l.disabled ? "opacity-50" : ""}`}>
+                      <td className="py-2 px-2 text-white font-medium">{l.layer}</td>
+                      <td className="py-2 px-2 text-center text-white/60">{l.totalTrades}</td>
+                      <td className="py-2 px-2 text-center text-white/60">{l.wins}/{l.losses}</td>
+                      <td className={`py-2 px-2 text-center font-bold ${l.winRate >= 50 ? "text-emerald-400" : l.winRate >= 30 ? "text-amber-400" : "text-red-400"}`}>
+                        {l.winRate.toFixed(0)}%
+                      </td>
+                      <td className={`py-2 px-2 text-right font-bold ${l.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {l.totalPnl >= 0 ? "+" : ""}₹{l.totalPnl.toFixed(0)}
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        {l.disabled ? (
+                          <span className="text-red-400 bg-red-500/10 px-2 py-0.5 rounded-full text-[10px] font-bold">DISABLED</span>
+                        ) : (
+                          <span className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full text-[10px] font-bold">ACTIVE</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Parallel Bots Panel — always visible since allStatus always returns all 3 slots */}
         {(
