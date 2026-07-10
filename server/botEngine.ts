@@ -1742,6 +1742,9 @@ async function tick(
     const strikeTag = atmStrike > 0 ? ` ${atmStrike}` : " ATM";
     tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrike || "ATM"}`;
     tradeLabel = `${state.instrumentLabel}${strikeTag} ${ceOrPe} (paper)`;
+    // Set a synthetic option instrument token so the stored trade does NOT use the underlying index token.
+    // Format: PAPER_OPT|<underlying>_<strike>_<ceOrPe> — clearly identifies this as a paper option.
+    tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike || "ATM"}_${ceOrPe}`;
     optionPremiumForSizing = mockPremium;
     state.optionPremiumPrice = mockPremium;
   }
