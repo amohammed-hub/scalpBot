@@ -1686,9 +1686,47 @@ async function tick(
         state.underlyingToken = realToken;
         emitActivity(state.sessionToken, "signal", `✅ MCX futures resolved: ${symbol} → ${realToken}`);
       } else {
-        console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping trade.`);
-        emitActivity(state.sessionToken, "error", `⚠ MCX token resolve failed for ${symbol} — check access token or market hours`);
-        return;
+        // MCX futures token resolve failed (API unavailable or market closed).
+        // In paper mode: fall through to mock premium path instead of skipping.
+        // In live mode: skip trade (can't place real order without real token).
+        if (state.mode === "live") {
+          console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping live trade.`);
+          emitActivity(state.sessionToken, "error", `⚠ MCX token resolve failed for ${symbol} — check access token or market hours`);
+          return;
+        }
+        // Paper mode: use mock premiums so the trade still fires for testing
+        emitActivity(state.sessionToken, "signal", `⚠ MCX token resolve failed — using mock premium for paper trade`);
+        // Fall through to the mock premium block below by clearing accessToken temporarily
+        const savedToken = state.accessToken;
+        state.accessToken = null;
+        // Re-enter mock premium path inline
+        const ceOrPeFallback: "CE" | "PE" = state.optionType === "CE" ? "CE"
+          : state.optionType === "PE" ? "PE"
+          : signal.direction === "BUY" ? "CE" : "PE";
+        const symFb = state.instrumentSymbol.toUpperCase();
+        let mockKeyFb: string;
+        if (symFb.includes("GOLD"))       mockKeyFb = ceOrPeFallback === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+        else if (symFb.includes("SILVER")) mockKeyFb = ceOrPeFallback === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+        else if (symFb.includes("CRUDE") || symFb.includes("OIL")) mockKeyFb = ceOrPeFallback === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+        else if (symFb.includes("NATGAS") || symFb.includes("GAS")) mockKeyFb = ceOrPeFallback === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+        else if (symFb.includes("COPPER")) mockKeyFb = ceOrPeFallback === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+        else                              mockKeyFb = ceOrPeFallback === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+        const mockPremiumFb = mockPrices[mockKeyFb] ?? (ceOrPeFallback === "CE" ? 150 : 120);
+        const underlyingPxFb = state.lastPrice;
+        let strikeStepFb = 50;
+        if (symFb.includes("GOLD")) strikeStepFb = 100;
+        else if (symFb.includes("SILVER")) strikeStepFb = 1000;
+        else if (symFb.includes("CRUDE") || symFb.includes("OIL")) strikeStepFb = 50;
+        else if (symFb.includes("NATGAS") || symFb.includes("GAS")) strikeStepFb = 5;
+        const atmStrikeFb = underlyingPxFb > 0 ? Math.round(underlyingPxFb / strikeStepFb) * strikeStepFb : 0;
+        tradeSymbol = `${state.instrumentSymbol}_${ceOrPeFallback}_${atmStrikeFb || "ATM"}`;
+        tradeLabel = `${state.instrumentLabel}${atmStrikeFb > 0 ? ` ${atmStrikeFb}` : " ATM"} ${ceOrPeFallback} (paper)`;
+        tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrikeFb || "ATM"}_${ceOrPeFallback}`;
+        optionPremiumForSizing = mockPremiumFb;
+        state.optionPremiumPrice = mockPremiumFb;
+        state.accessToken = savedToken;
+        // Skip the live resolver block below
+        // (jump to position sizing by ensuring resolved path is not entered)
       }
     }
 
@@ -1699,16 +1737,46 @@ async function tick(
       : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken);
 
     if (!resolved) {
-      console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option. Skipping trade.`);
-      return;
+      // Option resolve failed. In paper mode fall back to mock premium; in live mode skip.
+      if (state.mode === "live") {
+        console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option. Skipping live trade.`);
+        return;
+      }
+      // Paper mode fallback: use mock premium
+      emitActivity(state.sessionToken, "signal", `⚠ ATM option resolve failed — using mock premium for paper trade`);
+      const symFb2 = state.instrumentSymbol.toUpperCase();
+      let mockKeyFb2: string;
+      if (symFb2.includes("GOLD"))       mockKeyFb2 = ceOrPe === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+      else if (symFb2.includes("SILVER")) mockKeyFb2 = ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+      else if (symFb2.includes("CRUDE") || symFb2.includes("OIL")) mockKeyFb2 = ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+      else if (symFb2.includes("NATGAS") || symFb2.includes("GAS")) mockKeyFb2 = ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+      else if (symFb2.includes("COPPER")) mockKeyFb2 = ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+      else if (symFb2.includes("BANK"))   mockKeyFb2 = ceOrPe === "CE" ? "BNF_CE"        : "BNF_PE";
+      else                               mockKeyFb2 = ceOrPe === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+      const mockPremiumFb2 = mockPrices[mockKeyFb2] ?? (ceOrPe === "CE" ? 150 : 120);
+      const underlyingPxFb2 = state.lastPrice;
+      let strikeStepFb2 = 50;
+      if (symFb2.includes("GOLD")) strikeStepFb2 = 100;
+      else if (symFb2.includes("SILVER")) strikeStepFb2 = 1000;
+      else if (symFb2.includes("CRUDE") || symFb2.includes("OIL")) strikeStepFb2 = 50;
+      else if (symFb2.includes("NATGAS") || symFb2.includes("GAS")) strikeStepFb2 = 5;
+      else if (symFb2.includes("BANK")) strikeStepFb2 = 100;
+      else if (symFb2.includes("NIFTY") || symFb2.includes("FIN")) strikeStepFb2 = 50;
+      const atmStrikeFb2 = underlyingPxFb2 > 0 ? Math.round(underlyingPxFb2 / strikeStepFb2) * strikeStepFb2 : 0;
+      tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrikeFb2 || "ATM"}_${ceOrPe}`;
+      tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrikeFb2 || "ATM"}`;
+      tradeLabel = `${state.instrumentLabel}${atmStrikeFb2 > 0 ? ` ${atmStrikeFb2}` : " ATM"} ${ceOrPe} (paper)`;
+      optionPremiumForSizing = mockPremiumFb2;
+      state.optionPremiumPrice = mockPremiumFb2;
+    } else {
+      tradeInstrumentToken = resolved.token;
+      tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${resolved.strike}`;
+      tradeLabel = `${state.instrumentLabel} ${resolved.strike} ${ceOrPe}`;
+      optionPremiumForSizing = resolved.premium;
+      state.optionTradeToken = resolved.token;
+      state.optionPremiumPrice = resolved.premium;
+      console.log(`[BotEngine] ${state.sessionToken} — Options mode: ${ceOrPe} @ strike ${resolved.strike}, premium ₹${resolved.premium.toFixed(2)}, token: ${resolved.token}`);
     }
-    tradeInstrumentToken = resolved.token;
-    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${resolved.strike}`;
-    tradeLabel = `${state.instrumentLabel} ${resolved.strike} ${ceOrPe}`;
-    optionPremiumForSizing = resolved.premium;
-    state.optionTradeToken = resolved.token;
-    state.optionPremiumPrice = resolved.premium;
-    console.log(`[BotEngine] ${state.sessionToken} — Options mode: ${ceOrPe} @ strike ${resolved.strike}, premium ₹${resolved.premium.toFixed(2)}, token: ${resolved.token}`);
   } else if (isOptionsMode && !state.accessToken) {
     // Paper mode with options: simulate option premium from mock prices
     const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
