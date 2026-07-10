@@ -230,10 +230,19 @@ export default function Dashboard() {
   const handleQuickStart = (slot: number) => {
     const qs = slotQS[slot];
     const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
-    // Resolve token: check MCX registry first, then fall back to NSE_FO
+    // Resolve token: NSE index instruments use NSE_INDEX| prefix (ATM options mode)
+    // MCX instruments use MCX_FO| prefix. Never use NSE_FO| for index instruments.
+    const NSE_INDEX_MAP: Record<string, { token: string; label: string; lotSize: number }> = {
+      NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → ATM Options (Auto)",   lotSize: 25 },
+      BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → ATM Options (Auto)",  lotSize: 15 },
+      FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → ATM Options (Auto)",   lotSize: 40 },
+    };
     const mcxInstr = MCX_INSTRUMENTS.find(i => i.symbol === qs.symbol);
-    const resolvedToken = mcxInstr ? mcxInstr.instrumentToken : `NSE_FO|${qs.symbol}`;
-    const resolvedLabel = mcxInstr ? mcxInstr.label : qs.symbol;
+    const nseInstr = NSE_INDEX_MAP[qs.symbol];
+    const resolvedToken = mcxInstr ? mcxInstr.instrumentToken : nseInstr ? nseInstr.token : `NSE_INDEX|Nifty 50`;
+    const resolvedLabel = mcxInstr ? mcxInstr.label : nseInstr ? nseInstr.label : qs.symbol;
+    const resolvedLotSize = mcxInstr ? (mcxInstr.lotSize ?? 1) : nseInstr ? nseInstr.lotSize : 25;
+    const isIdxOpt = !!(mcxInstr || nseInstr); // always true for all supported instruments
     startSecondaryMutation.mutate({
       sessionToken, slot: slot as 1 | 2,
       instrumentToken: resolvedToken,
@@ -241,6 +250,9 @@ export default function Dashboard() {
       mode: "paper", capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
       dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
       minConfidence: 60, scanIntervalSec: 30,
+      lotSize: resolvedLotSize,
+      isIndexOptions: isIdxOpt,
+      underlyingToken: resolvedToken,
       telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
     });
   };
