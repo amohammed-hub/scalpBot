@@ -349,21 +349,25 @@ export default function Settings() {
       return;
     }
     setAutoTokenLoading(true);
+    // ALWAYS use the current domain's callback URL — never use a stale localStorage value.
+    // This ensures the redirect_uri sent to Upstox and the one used in token exchange always match.
+    const currentCallbackUrl = getCallbackUrl();
     try {
       // Always save to DB before redirecting — this is required for the callback to work
       await saveCredsMutation.mutateAsync({
         sessionToken,
         apiKey: creds.apiKey,
         apiSecret: creds.apiSecret,
-        redirectUri: creds.redirectUri || getCallbackUrl(),
+        redirectUri: currentCallbackUrl,
       });
-      // Also save to localStorage
-      const toSave = { ...creds, redirectUri: creds.redirectUri || getCallbackUrl() };
+      // Also save to localStorage with fresh redirect URI
+      const toSave = { ...creds, redirectUri: currentCallbackUrl };
       localStorage.setItem(LS_CREDS, JSON.stringify(toSave));
+      setCreds(c => ({ ...c, redirectUri: currentCallbackUrl }));
       toast.success("Credentials saved — opening Upstox login…");
       // Small delay so toast is visible, then redirect
       setTimeout(() => {
-        const url = buildUpstoxAuthUrl(creds.apiKey, creds.redirectUri || getCallbackUrl(), sessionToken);
+        const url = buildUpstoxAuthUrl(creds.apiKey, currentCallbackUrl, sessionToken);
         window.location.href = url;
       }, 800);
     } catch (err) {

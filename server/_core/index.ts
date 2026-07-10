@@ -123,21 +123,25 @@ async function startServer() {
         return;
       }
 
-      const { apiKey, apiSecret } = rows[0];
-      // Always build the redirect_uri from the actual request headers.
-      // Behind a reverse proxy (Manus hosting), X-Forwarded-Proto gives us 'https'.
-      // This MUST match exactly what the user registered in their Upstox Developer App:
-      //   https://<domain>/api/upstox-callback
-      const proto = (req.headers['x-forwarded-proto'] as string || req.protocol).split(',')[0].trim();
-      const host = (req.headers['x-forwarded-host'] as string || req.get('host') || '');
-      const redirectUri = `${proto}://${host}/api/upstox-callback`;
+      const { apiKey, apiSecret, redirectUri: savedRedirectUri } = rows[0];
 
-      // Log for debugging — visible in server logs
-      console.log('[upstox-callback] token exchange redirect_uri:', redirectUri);
-      console.log('[upstox-callback] x-forwarded-proto:', req.headers['x-forwarded-proto']);
-      console.log('[upstox-callback] x-forwarded-host:', req.headers['x-forwarded-host']);
-      console.log('[upstox-callback] req.protocol:', req.protocol);
-      console.log('[upstox-callback] req.host:', req.get('host'));
+      // Use the redirectUri saved in DB — this is the exact URI the frontend sent to Upstox
+      // during the authorization request. It MUST match byte-for-byte for the token exchange.
+      // Fallback: build from request headers if DB value is missing or is the default placeholder.
+      let redirectUri: string;
+      const isPlaceholder = !savedRedirectUri ||
+        savedRedirectUri === 'http://localhost:8000/callback' ||
+        savedRedirectUri.startsWith('http://localhost');
+
+      if (!isPlaceholder) {
+        redirectUri = savedRedirectUri;
+      } else {
+        const proto = (req.headers['x-forwarded-proto'] as string || req.protocol).split(',')[0].trim();
+        const host = (req.headers['x-forwarded-host'] as string || req.get('host') || '');
+        redirectUri = `${proto}://${host}/api/upstox-callback`;
+      }
+
+      console.log('[upstox-callback] using redirect_uri:', redirectUri, '| from DB:', !isPlaceholder);
 
       const params = new URLSearchParams({
         code,
