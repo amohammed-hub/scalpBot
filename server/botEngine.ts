@@ -1911,49 +1911,14 @@ async function tick(
         state.underlyingToken = realToken;
         emitActivity(state.sessionToken, "signal", `✅ MCX futures resolved: ${symbol} → ${realToken}`);
       } else {
-        // MCX futures token resolve failed (API unavailable or market closed).
-        // In paper mode: fall through to mock premium path instead of skipping.
-        // In live mode: skip trade (can't place real order without real token).
-        if (state.mode === "live") {
-          console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping live trade.`);
-          emitActivity(state.sessionToken, "error", `⚠ MCX token resolve failed for ${symbol} — check access token or market hours`);
-          return;
-        }
-        // Paper mode: use mock premiums so the trade still fires for testing
-        emitActivity(state.sessionToken, "signal", `⚠ MCX token resolve failed — using mock premium for paper trade`);
-        // Fall through to the mock premium block below by clearing accessToken temporarily
-        const savedToken = state.accessToken;
-        state.accessToken = null;
-        // Re-enter mock premium path inline
-        const ceOrPeFallback: "CE" | "PE" = state.optionType === "CE" ? "CE"
-          : state.optionType === "PE" ? "PE"
-          : signal.direction === "BUY" ? "CE" : "PE";
-        const symFb = state.instrumentSymbol.toUpperCase();
-        let mockKeyFb: string;
-        if (symFb.includes("GOLD"))       mockKeyFb = ceOrPeFallback === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
-        else if (symFb.includes("SILVER")) mockKeyFb = ceOrPeFallback === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
-        else if (symFb.includes("CRUDE") || symFb.includes("OIL")) mockKeyFb = ceOrPeFallback === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
-        else if (symFb.includes("NATGAS") || symFb.includes("GAS")) mockKeyFb = ceOrPeFallback === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
-        else if (symFb.includes("COPPER")) mockKeyFb = ceOrPeFallback === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
-        else                              mockKeyFb = ceOrPeFallback === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
-        const mockPremiumFb = mockPrices[mockKeyFb] ?? (ceOrPeFallback === "CE" ? 150 : 120);
-        const underlyingPxFb = state.lastPrice;
-        let strikeStepFb = 50;
-        if (symFb.includes("GOLD")) strikeStepFb = 100;
-        else if (symFb.includes("SILVER")) strikeStepFb = 1000;
-        else if (symFb.includes("CRUDE") || symFb.includes("OIL")) strikeStepFb = 50;
-        else if (symFb.includes("NATGAS") || symFb.includes("GAS")) strikeStepFb = 5;
-        const atmStrikeFb = underlyingPxFb > 0 ? Math.round(underlyingPxFb / strikeStepFb) * strikeStepFb : 0;
-        tradeSymbol = `${state.instrumentSymbol}_${ceOrPeFallback}_${atmStrikeFb || "ATM"}`;
-        tradeLabel = `${state.instrumentLabel}${atmStrikeFb > 0 ? ` ${atmStrikeFb}` : " ATM"} ${ceOrPeFallback} (paper)`;
-        tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrikeFb || "ATM"}_${ceOrPeFallback}`;
-        optionPremiumForSizing = mockPremiumFb;
-        state.optionPremiumPrice = mockPremiumFb;
-        state.accessToken = savedToken;
-        // Skip the live resolver block below
-        // (jump to position sizing by ensuring resolved path is not entered)
+        // MCX futures token resolve failed.
+        // Skip the trade in ALL cases when a token is present — the token is likely expired.
+        // Only use mock premiums when there is NO token at all (no-token paper mode).
+        console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping trade.`);
+        emitActivity(state.sessionToken, "error", `⚠ MCX futures token resolve failed for ${symbol} — skipping trade. Your Upstox token may be expired. Refresh it in Settings.`);
+        return;
       }
-    }
+    } // end isMcxPlaceholder
 
     // Use MCX-specific resolver for MCX tokens, NSE chain resolver for everything else.
     // Skip if optionPremiumForSizing was already set by the MCX placeholder fallback above.
@@ -1964,13 +1929,18 @@ async function tick(
       : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken);
 
     if (!resolved) {
-      // Option resolve failed. In paper mode fall back to mock premium; in live mode skip.
-      if (state.mode === "live") {
-        console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option. Skipping live trade.`);
+      // Option resolve failed.
+      // In paper mode WITH a token: the token is likely expired — skip the trade, do NOT use fake mock premiums.
+      // In paper mode WITHOUT a token: fall back to mock premium (handled by the else-if block below).
+      // In live mode: always skip.
+      if (state.mode === "live" || state.accessToken) {
+        const reason = state.mode === "live" ? "live mode" : "access token present but API call failed (token may be expired)";
+        console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option (${reason}). Skipping trade.`);
+        emitActivity(state.sessionToken, "error", `⚠ ATM option resolve failed — skipping trade. Check your Upstox token (may be expired). Refresh it in Settings.`);
         return;
       }
-      // Paper mode fallback: use mock premium
-      emitActivity(state.sessionToken, "signal", `⚠ ATM option resolve failed — using mock premium for paper trade`);
+      // Paper mode with no token: use mock premium (clearly labelled)
+      emitActivity(state.sessionToken, "signal", `⚠ No Upstox token — using mock premium for paper trade (connect token in Settings for real prices)`);
       const symFb2 = state.instrumentSymbol.toUpperCase();
       let mockKeyFb2: string;
       if (symFb2.includes("GOLD"))       mockKeyFb2 = ceOrPe === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
