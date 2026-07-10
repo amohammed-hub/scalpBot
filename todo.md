@@ -446,3 +446,7 @@
 - [x] Show skipped-trade details (what it WOULD have bought) even when resolve fails
 - [x] Add token health check indicator on dashboard (token valid/expired/missing)
 - [x] Improve error messages with actionable guidance
+## UI Enhancement: Show Capital Deployed per Trade (Jul 10, 2026)
+- [x] Add "Capital Used" (premium × qty) to Trade Log table
+- [x] Show capital deployed in activity log trade_open line
+- [x] Show capital deployed in the open trade card on dashboard

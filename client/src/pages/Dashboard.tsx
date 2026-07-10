@@ -2218,7 +2218,7 @@ export default function Dashboard() {
               <button
                 onClick={() => {
                   if (trades.length === 0) { toast.info("No trades to export."); return; }
-                  const headers = ["Entry Date", "Exit Date", "Symbol", "Direction", "Mode", "Entry Price", "SL Price", "Target Price", "Exit Price", "Quantity", "P&L (INR)", "P&L %", "Status", "Exit Reason"];
+                  const headers = ["Entry Date", "Exit Date", "Symbol", "Direction", "Mode", "Entry Price", "SL Price", "Target Price", "Exit Price", "Quantity", "Capital Used", "P&L (INR)", "P&L %", "Status", "Exit Reason"];
                   const rows = trades.map((t: typeof trades[0]) => [
                     t.enteredAt ? new Date(t.enteredAt).toLocaleString("en-IN") : "",
                     t.exitedAt ? new Date(t.exitedAt).toLocaleString("en-IN") : "",
@@ -2230,6 +2230,7 @@ export default function Dashboard() {
                     (t as any).targetPrice ? (t as any).targetPrice.toFixed(2) : "",
                     t.exitPrice ? t.exitPrice.toFixed(2) : "",
                     t.quantity,
+                    (t.entryPrice * t.quantity).toFixed(2),
                     t.pnl !== null && t.pnl !== undefined ? t.pnl.toFixed(2) : "",
                     (t as any).pnlPct !== null && (t as any).pnlPct !== undefined ? (t as any).pnlPct.toFixed(2) : "",
                     t.status,
@@ -2285,6 +2286,7 @@ export default function Dashboard() {
                   <th className="text-right py-2 pr-4">Exit</th>
                   <th className="text-right py-2 pr-4">Qty</th>
                   <th className="text-right py-2 pr-4">Lots</th>
+                  <th className="text-right py-2 pr-4">Capital</th>
                   <th className="text-right py-2 pr-4">P&L</th>
                   <th className="text-left py-2 pr-4">Status</th>
                   <th className="text-right py-2">Del</th>
@@ -2292,7 +2294,7 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {trades.length === 0 ? (
-                      <tr><td colSpan={13} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
+                      <tr><td colSpan={14} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
                 ) : (
                   trades.slice(0, 30).map((t: typeof trades[0]) => {
                     // Compute live P&L for open trades
@@ -2370,6 +2372,9 @@ export default function Dashboard() {
                             const lots = ls > 1 ? Math.round(t.quantity / ls) : null;
                             return lots !== null ? `${lots}L` : '—';
                           })()}
+                        </td>
+                        <td className="py-2.5 pr-4 text-right font-mono text-cyan-400/80 text-xs">
+                          ₹{(t.entryPrice * t.quantity).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                         </td>
                         <td className={`py-2.5 pr-4 text-right font-mono font-semibold ${(livePnl ?? 0) > 0 ? "text-emerald-400" : (livePnl ?? 0) < 0 ? "text-red-400" : "text-white/40"}`}>
                           {livePnl !== undefined && livePnl !== null
