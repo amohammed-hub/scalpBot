@@ -145,6 +145,7 @@ export interface BotState {
   optionType?: "CE" | "PE" | "auto";
   optionTradeToken?: string; // resolved at runtime from option chain
   optionPremiumPrice?: number; // last fetched option premium (for quantity sizing)
+  isOpeningTrade?: boolean; // mutex: prevents duplicate trade opens from concurrent ticks
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -1620,6 +1621,8 @@ async function tick(
   }
 
   if (nearClose) return;
+  // Mutex guard: prevent duplicate trade opens from concurrent ticks
+  if (state.isOpeningTrade) return;
   if (state.tradesCount >= state.maxTradesPerDay) {
     state.status = "paused";
     state.lastError = `Max trades per day reached (${state.maxTradesPerDay})`;
@@ -1947,6 +1950,8 @@ async function tick(
     ? optionPremiumForSizing * (1 + (state.targetMultiplier * 0.5)) // target = premium * (1 + 0.5*targetMult)
     : signal.targetPrice;
 
+  // Set mutex before async DB write to prevent concurrent duplicate opens
+  state.isOpeningTrade = true;
   const dbId = await onTradeOpen({
     symbol: tradeSymbol, symbolLabel: tradeLabel,
     instrumentToken: tradeInstrumentToken, direction: signal.direction, mode: state.mode,
@@ -1986,6 +1991,7 @@ async function tick(
     signalReason: signalLabel, signalLayer: signal.layer,
   };
 
+  state.isOpeningTrade = false; // Release mutex after openTrade is set
   state.tradesCount += 1;
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
