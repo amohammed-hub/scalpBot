@@ -2323,31 +2323,33 @@ export default function Dashboard() {
                       <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                         <td className="py-2.5 pr-4 font-medium text-white text-xs">
                           {/* Symbol — clickable link to Upstox order if live, or portfolio if paper */}
-                          {t.mode === "live" && t.upstoxOrderId ? (
-                            <a
-                              href={`https://upstox.com/orders/${t.upstoxOrderId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1 hover:text-emerald-400 transition-colors group"
-                              title={`View order ${t.upstoxOrderId} on Upstox`}
-                            >
-                              {t.symbolLabel ?? t.symbol}
-                              <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
-                            </a>
-                          ) : t.mode === "live" ? (
-                            <a
-                              href="https://upstox.com/orders"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1 hover:text-emerald-400 transition-colors group"
-                              title="View orders on Upstox"
-                            >
-                              {t.symbolLabel ?? t.symbol}
-                              <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
-                            </a>
-                          ) : (
-                            t.symbolLabel ?? t.symbol
-                          )}
+                          <a
+                            href={(() => {
+                              // Build Upstox chart URL from instrumentToken
+                              // Format: NSE_EQ|INE009A01021 → https://upstox.com/stocks/NSE/INE009A01021
+                              // MCX_FO|... → https://upstox.com/chart/MCX/...
+                              const token = t.instrumentToken ?? "";
+                              if (t.mode === "live" && t.upstoxOrderId) {
+                                return `https://upstox.com/orders/${t.upstoxOrderId}`;
+                              }
+                              // Parse instrument token to build chart URL
+                              const [exchange, isin] = token.split("|");
+                              if (exchange && isin) {
+                                const exch = exchange.replace("_EQ", "").replace("_FO", "").replace("_INDEX", "");
+                                return `https://upstox.com/chart/${exch}/${isin}`;
+                              }
+                              // Fallback: search on Upstox
+                              const sym = (t.symbolLabel ?? t.symbol ?? "").replace(/[→\s]+/g, " ").trim();
+                              return `https://www.upstox.com/stocks/${encodeURIComponent(sym)}`;
+                            })()}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 hover:text-emerald-400 transition-colors group cursor-pointer"
+                            title={`Open ${t.symbolLabel ?? t.symbol} on Upstox`}
+                          >
+                            {t.symbolLabel ?? t.symbol}
+                            <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
+                          </a>
                         </td>
                         <td className="py-2.5 pr-4">
                           <span className={`flex items-center gap-1 ${t.direction === "BUY" ? "text-emerald-400" : "text-red-400"}`}>
