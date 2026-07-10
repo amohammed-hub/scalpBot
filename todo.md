@@ -417,3 +417,10 @@
 - [x] Fix root cause of tick crash after trade entry — DB columns already present; tick error handler already in place
 - [x] Add auto-restart: if tick crashes 3 times in a row, auto-restart the bot with same config — DONE
 - [x] Upgrade "Bot not running" banner to show a one-click Restart button — DONE
+
+## Smart Scanner Mode (Slot 1 & 2)
+- [x] Add `bot.smartScan` tRPC procedure — fetches candles for all instruments in parallel, runs generateSignal on each, returns ranked list by confidence score
+- [x] Add "Smart Scanner (Auto-Pick Best)" option to secondary slot Quick Start dropdown
+- [x] When Smart Scanner is selected, show ranked scan results with instrument, direction, confidence %, premium estimate, ATR, signal layer
+- [x] Auto-start bot on highest confidence instrument after scan (click any green row)
+- [x] Add "Re-scan" button to re-run scanner without restarting bot

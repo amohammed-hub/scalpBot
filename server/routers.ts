@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "./db";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog } from "../drizzle/schema";
 import { eq, desc, and, gte, count } from "drizzle-orm";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, type Candle } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, type Candle } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
 
@@ -2178,6 +2178,74 @@ export const appRouter = router({
           .set({ eodSummaryCronTaskUid: null })
           .where(eq(botSessions.sessionToken, input.sessionToken));
         return { success: true, alreadyDisabled: false };
+      }),
+  }),
+
+  // ── Smart Scanner ─────────────────────────────────────────────────────────────
+  // Scans all instruments simultaneously, runs generateSignal on each, returns ranked list by confidence.
+  // Used by Slot 1 and Slot 2 Quick Start to auto-pick the best opportunity.
+  scanner: router({
+    smartScan: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const SCAN_INSTRUMENTS = [
+          { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ATM Options",   lotSize: 15 },
+          { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options",    lotSize: 25 },
+          { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options",    lotSize: 40 },
+          { token: "MCX_FO|520702",               symbol: "MCX_CRUDE", label: "Crude Oil → ATM Options",   lotSize: 100 },
+          { token: "MCX_FO|552720",               symbol: "MCX_GOLD",  label: "Gold → ATM Options",        lotSize: 100 },
+          { token: "MCX_FO|574822",               symbol: "MCX_SILVER",label: "Silver → ATM Options",      lotSize: 30 },
+          { token: "MCX_FO|538685",               symbol: "MCX_NATGAS",label: "Natural Gas → ATM Options", lotSize: 1250 },
+        ];
+
+        const db = await getDb();
+        let accessToken: string | null = null;
+        if (db) {
+          const rows = await db.select().from(upstoxCredentials)
+            .where(eq(upstoxCredentials.sessionToken, input.sessionToken)).limit(1);
+          accessToken = rows[0]?.accessToken ?? null;
+        }
+
+        // Fetch candles for all instruments in parallel
+        const rawResults = await Promise.allSettled(
+          SCAN_INSTRUMENTS.map(async (instr) => {
+            const [candles1m, candles5m] = await Promise.all([
+              fetchUpstoxCandles(instr.token, accessToken ?? undefined),
+              fetchUpstox5mCandles(instr.token, accessToken ?? undefined),
+            ]);
+            if (candles1m.length < 20) {
+              return { token: instr.token, symbol: instr.symbol, label: instr.label, lotSize: instr.lotSize,
+                hasData: false, confidence: 0, direction: "HOLD" as const, reason: "Insufficient data",
+                layer: "None", atr: 0, currentPrice: 0, estimatedPremium: 0, isActionable: false };
+            }
+            const currentPrice = candles1m[candles1m.length - 1].close;
+            const signal = generateSignal(candles1m, 1.5, 3.0, 0.65, candles5m.length > 0 ? candles5m : []);
+            const estimatedPremium = Math.round(currentPrice * 0.01);
+            return {
+              token: instr.token, symbol: instr.symbol, label: instr.label, lotSize: instr.lotSize,
+              hasData: true,
+              confidence: Math.round(signal.confidence * 100),
+              direction: signal.direction,
+              reason: signal.reason,
+              layer: signal.layer ?? "None",
+              atr: Math.round(signal.atr * 100) / 100,
+              currentPrice: Math.round(currentPrice * 100) / 100,
+              estimatedPremium,
+              isActionable: signal.direction !== "HOLD" && signal.confidence >= 0.65,
+            };
+          })
+        );
+
+        const results = rawResults
+          .filter((r) => r.status === "fulfilled")
+          .map((r) => (r as PromiseFulfilledResult<typeof rawResults[number] extends PromiseSettledResult<infer T> ? T : never>).value)
+          .sort((a, b) => {
+            if (a.isActionable && !b.isActionable) return -1;
+            if (!a.isActionable && b.isActionable) return 1;
+            return b.confidence - a.confidence;
+          });
+
+        return { results, scanTime: Date.now(), accessTokenPresent: !!accessToken };
       }),
   }),
 

@@ -1194,7 +1194,7 @@ export function generateHeroZeroSignal(
 }
 
 // ── Fetch 1-min candles from Upstox ───────────────────────────────────────────
-async function fetchUpstoxCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
+export async function fetchUpstoxCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/1minute`;
@@ -1222,7 +1222,7 @@ async function fetchUpstoxDayCandles(instrumentToken: string, accessToken?: stri
 }
 
 // ── Fetch 5-min candles from Upstox ──────────────────────────────────────────
-async function fetchUpstox5mCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
+export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/5minute`;

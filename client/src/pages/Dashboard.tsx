@@ -259,6 +259,14 @@ export default function Dashboard() {
     });
   };
 
+  // Smart Scanner state
+  const [showScanner, setShowScanner] = useState<number | null>(null);
+  const [scanEnabled, setScanEnabled] = useState(false);
+  const { data: scanData, isLoading: scanLoading, refetch: refetchScan } = trpc.scanner.smartScan.useQuery(
+    { sessionToken },
+    { enabled: scanEnabled, staleTime: 30000, refetchOnWindowFocus: false }
+  );
+
   // Bot status — poll every 3s when running
   const { data: botStatus } = trpc.bot.status.useQuery(
     { sessionToken },
@@ -1656,35 +1664,146 @@ export default function Dashboard() {
                     {bot.slot > 0 && !isActive && (
                       <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
                         <div className="text-xs text-white/40 font-medium">Quick Start</div>
-                        <div className="flex gap-2">
-                          <select
-                            value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
-                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
-                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none"
+
+                        {/* Mode toggle: Manual pick vs Smart Scanner */}
+                        <div className="flex gap-1 mb-2">
+                          <button
+                            onClick={() => setShowScanner(null)}
+                            className={`flex-1 text-xs py-1 rounded-l-lg border transition-colors ${
+                              showScanner !== bot.slot
+                                ? "bg-purple-500/30 text-purple-200 border-purple-500/50"
+                                : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"
+                            }`}
                           >
-                            <option value="NIFTY">NIFTY</option>
-                            <option value="BANKNIFTY">BANKNIFTY</option>
-                            <option value="FINNIFTY">FINNIFTY</option>
-                            <option value="CRUDEOIL">Crude Oil (MCX)</option>
-                            <option value="GOLDM">Gold Mini (MCX)</option>
-                            <option value="SILVERM">Silver Mini (MCX)</option>
-                          </select>
-                          <input
-                            type="number"
-                            value={slotQS[bot.slot]?.capital ?? 50000}
-                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
-                            min={10000} step={10000}
-                            className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none"
-                            placeholder="Capital"
-                          />
+                            Pick Instrument
+                          </button>
+                          <button
+                            onClick={() => { setShowScanner(bot.slot); setScanEnabled(true); refetchScan(); }}
+                            className={`flex-1 text-xs py-1 rounded-r-lg border transition-colors ${
+                              showScanner === bot.slot
+                                ? "bg-cyan-500/30 text-cyan-200 border-cyan-500/50"
+                                : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"
+                            }`}
+                          >
+                            ⚡ Smart Scanner
+                          </button>
                         </div>
-                        <button
-                          onClick={() => handleQuickStart(bot.slot)}
-                          disabled={startSecondaryMutation.isPending}
-                          className="w-full text-xs py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50"
-                        >
-                          {startSecondaryMutation.isPending ? "⏳ Starting…" : `▶ Start Slot ${bot.slot} (Paper)`}
-                        </button>
+
+                        {showScanner !== bot.slot ? (
+                          /* Manual pick mode */
+                          <>
+                            <div className="flex gap-2">
+                              <select
+                                value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
+                                onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
+                                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none"
+                              >
+                                <option value="NIFTY">NIFTY</option>
+                                <option value="BANKNIFTY">BANKNIFTY</option>
+                                <option value="FINNIFTY">FINNIFTY</option>
+                                <option value="MCX_CRUDE">Crude Oil (MCX)</option>
+                                <option value="MCX_GOLD">Gold (MCX)</option>
+                                <option value="MCX_SILVER">Silver (MCX)</option>
+                                <option value="MCX_NATGAS">Natural Gas (MCX)</option>
+                              </select>
+                              <input
+                                type="number"
+                                value={slotQS[bot.slot]?.capital ?? 50000}
+                                onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
+                                min={10000} step={10000}
+                                className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none"
+                                placeholder="Capital"
+                              />
+                            </div>
+                            <button
+                              onClick={() => handleQuickStart(bot.slot)}
+                              disabled={startSecondaryMutation.isPending}
+                              className="w-full text-xs py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50"
+                            >
+                              {startSecondaryMutation.isPending ? "⏳ Starting…" : `▶ Start Slot ${bot.slot} (Paper)`}
+                            </button>
+                          </>
+                        ) : (
+                          /* Smart Scanner mode */
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-white/40">
+                                {scanLoading ? "⏳ Scanning all instruments…" : scanData ? `Scanned ${scanData.results.length} instruments` : "Tap Scan to find best opportunity"}
+                              </span>
+                              <button
+                                onClick={() => { setScanEnabled(true); refetchScan(); }}
+                                disabled={scanLoading}
+                                className="text-xs px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/30 disabled:opacity-50 transition-colors"
+                              >
+                                {scanLoading ? "⏳" : "↺ Scan"}
+                              </button>
+                            </div>
+
+                            {/* Ranked results */}
+                            {scanData && scanData.results.length > 0 && (
+                              <div className="space-y-1 max-h-48 overflow-y-auto">
+                                {scanData.results.map((r, idx) => (
+                                  <div
+                                    key={r.token}
+                                    className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-colors ${
+                                      r.isActionable
+                                        ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20"
+                                        : "bg-white/3 border-white/10 hover:bg-white/8 opacity-60"
+                                    }`}
+                                    onClick={() => {
+                                      if (!r.isActionable) return;
+                                      const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
+                                      startSecondaryMutation.mutate({
+                                        sessionToken, slot: bot.slot as 1 | 2,
+                                        instrumentToken: r.token,
+                                        instrumentSymbol: r.symbol,
+                                        instrumentLabel: r.label,
+                                        mode: "paper",
+                                        capital: slotQS[bot.slot]?.capital ?? 50000,
+                                        riskPerTradePct: 1.5, maxTradesPerDay: 5,
+                                        dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
+                                        minConfidence: 60, scanIntervalSec: 30,
+                                        lotSize: r.lotSize,
+                                        isIndexOptions: true,
+                                        underlyingToken: r.token,
+                                        telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+                                      });
+                                    }}
+                                  >
+                                    <span className="text-xs font-bold text-white/60 w-4">{idx + 1}</span>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-xs font-medium text-white truncate">{r.label.replace(" → ATM Options", "")}</div>
+                                      <div className="text-[10px] text-white/40">{r.reason}</div>
+                                    </div>
+                                    <div className="flex flex-col items-end gap-0.5">
+                                      <span className={`text-xs font-bold ${
+                                        r.direction === "BUY" ? "text-green-400" : r.direction === "SELL" ? "text-red-400" : "text-white/40"
+                                      }`}>{r.direction}</span>
+                                      <span className="text-[10px] text-cyan-400">{r.confidence}%</span>
+                                    </div>
+                                    {r.isActionable && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 border border-green-500/30 whitespace-nowrap">
+                                        ▶ Start
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Capital input for scanner mode */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-white/40">Capital (₹)</span>
+                              <input
+                                type="number"
+                                value={slotQS[bot.slot]?.capital ?? 50000}
+                                onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
+                                min={10000} step={10000}
+                                className="w-24 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-xs focus:outline-none"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
