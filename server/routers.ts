@@ -222,6 +222,13 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
+
+        // SAFETY: Reject if primary bot is already running in memory (prevents double-start from rapid clicks)
+        const existingPrimaryBot = getBotState(input.sessionToken);
+        if (existingPrimaryBot?.status === 'running') {
+          throw new Error('Primary bot is already running. Stop it first before restarting.');
+        }
+
         // Load access token for BOTH paper and live modes.
         // Paper mode uses it for real market data (candles, quotes) but skips actual order placement.
         // This ensures paper trades reflect real prices — not fake mock values.
@@ -642,20 +649,35 @@ export const appRouter = router({
           mode: openTradeRows[0].mode as "paper" | "live",
           entryPrice: openTradeRows[0].entryPrice,
           quantity: openTradeRows[0].quantity,
-          slPrice: openTradeRows[0].slPrice,
-          targetPrice: openTradeRows[0].targetPrice,
+          slPrice: openTradeRows[0].slPrice ?? 0,
+          targetPrice: openTradeRows[0].targetPrice ?? 0,
           atr: openTradeRows[0].atr ?? 0,
           confidence: openTradeRows[0].confidence ?? 0,
-          currentSl: openTradeRows[0].slPrice,
+          currentSl: row.currentSl ?? openTradeRows[0].slPrice ?? 0,
           partial1RPrice: openTradeRows[0].partial1RPrice ?? 0,
           partial2RPrice: openTradeRows[0].partial2RPrice ?? 0,
           partialBooked: 0 as 0 | 1 | 2,
           bookedQty: 0,
           bookedPnl: 0,
+          isReEntry: false,
           trailingSlEnabled: row.trailingSlEnabled ?? false,
           trailingSlPct: row.trailingSlPct ?? 0.5,
           signalReason: openTradeRows[0].signalReason ?? "",
           enteredAt: openTradeRows[0].enteredAt ?? new Date(),
+          // Options mode fields — MUST be restored so P&L uses option premium not spot price
+          isIndexOptions: !!(row.isIndexOptions),
+          optionMockKey: (() => {
+            if (!row.isIndexOptions) return undefined;
+            const sym0 = (openTradeRows[0].symbol ?? "").toUpperCase();
+            const ceOrPe0: "CE" | "PE" = openTradeRows[0].direction === "BUY" ? "CE" : "PE";
+            if (sym0.includes("GOLD"))       return ceOrPe0 === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+            if (sym0.includes("SILVER"))     return ceOrPe0 === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+            if (sym0.includes("CRUDE") || sym0.includes("OIL")) return ceOrPe0 === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+            if (sym0.includes("NATGAS") || sym0.includes("GAS")) return ceOrPe0 === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+            if (sym0.includes("COPPER"))     return ceOrPe0 === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+            if (sym0.includes("BANK"))       return ceOrPe0 === "CE" ? "BNF_CE"        : "BNF_PE";
+            return ceOrPe0 === "CE" ? "NIFTY_CE" : "NIFTY_PE";
+          })(),
         } : null;
         // Reuse same onTradeOpen / onTradeClose callbacks as bot.start
         const onTradeOpen = async (trade: Parameters<typeof startBot>[1] extends (t: infer T) => unknown ? T : never): Promise<number> => {
@@ -1453,6 +1475,12 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
         const slotToken = `${input.sessionToken}-slot${input.slot}`;
+
+        // SAFETY: Reject if this slot is already running in memory (prevents double-start from rapid clicks)
+        const existingSlotBot = getBotState(slotToken);
+        if (existingSlotBot?.status === 'running') {
+          throw new Error(`Slot ${input.slot} bot is already running. Stop it first before restarting.`);
+        }
 
         // SAFETY: Reject if any running slot (including primary) is already trading the same instrument.
         // This prevents two bots from opening trades on the same instrument simultaneously.

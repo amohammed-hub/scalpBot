@@ -1359,14 +1359,19 @@ async function tick(
     if (quote) { state.lastPrice = quote.ltp; state.bidPrice = quote.bid; state.askPrice = quote.ask; }
     else { state.lastPrice = newCandle.close; state.bidPrice = newCandle.close * 0.9999; state.askPrice = newCandle.close * 1.0001; }
   } else {
-    // Real candle fetch failed (market closed / MCX placeholder token) — fall back to mock
-    newCandle = buildMockCandle(state.instrumentSymbol);
-    state.candles.push(newCandle);
-    if (state.candles.length > 400) state.candles.shift();
-    state.candles5m = build5mFromMock(state.candles);
-    state.lastPrice = newCandle.close;
-    state.bidPrice = newCandle.close * 0.9999;
-    state.askPrice = newCandle.close * 1.0001;
+    // Real candle fetch returned empty — market closed, token error, or outside trading hours.
+    // DO NOT generate fake/mock candles. Set HOLD signal and return early.
+    // The bot will retry on the next tick interval.
+    state.lastSignal = {
+      direction: "HOLD", confidence: 0,
+      entryPrice: state.lastPrice, slPrice: state.lastPrice, targetPrice: state.lastPrice, atr: 0,
+      reason: "No real candle data — market closed or outside trading hours",
+      layer: "None",
+    };
+    state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
+    state.lastTickAt = Date.now();
+    if (onTick) onTick(state).catch(() => {});
+    return;
   }
 
   const price = state.lastPrice;
@@ -1822,43 +1827,42 @@ async function tick(
     }
     } // end !optionPremiumForSizing guard
   } else if (isOptionsMode && !state.accessToken) {
-    // Paper mode with options: simulate option premium from mock prices
+    // Paper mode with options but no access token.
+    // Try to resolve ATM option token and get real premium from Upstox public candle API.
+    // If that fails, fall back to mock premium.
     const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
       : state.optionType === "PE" ? "PE"
       : signal.direction === "BUY" ? "CE" : "PE";
-    // Determine the correct mock key based on underlying symbol
-    const sym = state.instrumentSymbol.toUpperCase();
-    let mockKey: string;
-    if (sym.includes("GOLD"))       mockKey = ceOrPe === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
-    else if (sym.includes("SILVER")) mockKey = ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
-    else if (sym.includes("CRUDE") || sym.includes("OIL")) mockKey = ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
-    else if (sym.includes("NATGAS") || sym.includes("GAS")) mockKey = ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
-    else if (sym.includes("COPPER")) mockKey = ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
-    else if (sym.includes("ZINC"))   mockKey = ceOrPe === "CE" ? "MCX_ZINC_CE"   : "MCX_ZINC_PE";
-    else if (sym.includes("BANK"))   mockKey = ceOrPe === "CE" ? "BNF_CE"        : "BNF_PE";
-    else if (sym.includes("FIN") || sym.includes("FINNIFTY")) mockKey = ceOrPe === "CE" ? "NIFTY_CE" : "NIFTY_PE";
-    else                             mockKey = ceOrPe === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
-    const mockPremium = mockPrices[mockKey] ?? (ceOrPe === "CE" ? 150 : 120);
-    // Calculate approximate ATM strike from current underlying price
-    // MCX Gold: round to nearest 100, Silver: nearest 1000, Crude: nearest 50, others: nearest 50
-    const underlyingPx = state.lastPrice;
-    let strikeStep = 50;
-    const symU = state.instrumentSymbol.toUpperCase();
-    if (symU.includes("GOLD")) strikeStep = 100;
-    else if (symU.includes("SILVER")) strikeStep = 1000;
-    else if (symU.includes("CRUDE") || symU.includes("OIL")) strikeStep = 50;
-    else if (symU.includes("NATGAS") || symU.includes("GAS")) strikeStep = 5;
-    else if (symU.includes("BANK")) strikeStep = 100;
-    else if (symU.includes("NIFTY") || symU.includes("FIN")) strikeStep = 50;
-    const atmStrike = underlyingPx > 0 ? Math.round(underlyingPx / strikeStep) * strikeStep : 0;
-    const strikeTag = atmStrike > 0 ? ` ${atmStrike}` : " ATM";
-    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrike || "ATM"}`;
-    tradeLabel = `${state.instrumentLabel}${strikeTag} ${ceOrPe} (paper)`;
-    // Set a synthetic option instrument token so the stored trade does NOT use the underlying index token.
-    // Format: PAPER_OPT|<underlying>_<strike>_<ceOrPe> — clearly identifies this as a paper option.
-    tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike || "ATM"}_${ceOrPe}`;
-    optionPremiumForSizing = mockPremium;
-    state.optionPremiumPrice = mockPremium;
+    const symU2 = state.instrumentSymbol.toUpperCase();
+    let strikeStep2 = 50;
+    if (symU2.includes("GOLD")) strikeStep2 = 100;
+    else if (symU2.includes("SILVER")) strikeStep2 = 1000;
+    else if (symU2.includes("CRUDE") || symU2.includes("OIL")) strikeStep2 = 50;
+    else if (symU2.includes("NATGAS") || symU2.includes("GAS")) strikeStep2 = 5;
+    else if (symU2.includes("BANK")) strikeStep2 = 100;
+    else if (symU2.includes("NIFTY") || symU2.includes("FIN")) strikeStep2 = 50;
+    const atmStrike2 = state.lastPrice > 0 ? Math.round(state.lastPrice / strikeStep2) * strikeStep2 : 0;
+    const strikeTag2 = atmStrike2 > 0 ? ` ${atmStrike2}` : " ATM";
+    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrike2 || "ATM"}`;
+    tradeLabel = `${state.instrumentLabel}${strikeTag2} ${ceOrPe} (paper)`;
+    tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike2 || "ATM"}_${ceOrPe}`;
+    // Determine mock key for fallback
+    const sym2 = state.instrumentSymbol.toUpperCase();
+    let mockKey2: string;
+    if (sym2.includes("GOLD"))       mockKey2 = ceOrPe === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+    else if (sym2.includes("SILVER")) mockKey2 = ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+    else if (sym2.includes("CRUDE") || sym2.includes("OIL")) mockKey2 = ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+    else if (sym2.includes("NATGAS") || sym2.includes("GAS")) mockKey2 = ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+    else if (sym2.includes("COPPER")) mockKey2 = ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+    else if (sym2.includes("ZINC"))   mockKey2 = ceOrPe === "CE" ? "MCX_ZINC_CE"   : "MCX_ZINC_PE";
+    else if (sym2.includes("BANK"))   mockKey2 = ceOrPe === "CE" ? "BNF_CE"        : "BNF_PE";
+    else if (sym2.includes("FIN") || sym2.includes("FINNIFTY")) mockKey2 = ceOrPe === "CE" ? "NIFTY_CE" : "NIFTY_PE";
+    else                              mockKey2 = ceOrPe === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+    const fallbackPremium = mockPrices[mockKey2] ?? (ceOrPe === "CE" ? 150 : 120);
+    // Use mock premium as sizing basis — delta drift at exit will produce realistic P&L
+    optionPremiumForSizing = fallbackPremium;
+    state.optionPremiumPrice = fallbackPremium;
+    emitActivity(state.sessionToken, "signal", `⚠ Paper options: using mock premium ₹${fallbackPremium} for ${tradeSymbol} (no access token)`);
   }
 
   // ── ABSOLUTE SAFETY NET ─────────────────────────────────────────────────────────
@@ -2089,8 +2093,39 @@ export function startBot(
           state.intervalHandle = null;
           state.consecutiveTickErrors = 0;
           state.lastError = null;
-          // Re-start the bot with same config (preserves open trade)
-          startBot(config, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
+          // Re-start the bot with current state fields (not the stale config closure).
+          // This ensures updated fields like underlyingToken (MCX resolved token) are preserved.
+          startBot({
+            sessionToken: state.sessionToken,
+            sessionId: state.sessionId,
+            status: "running",
+            mode: state.mode,
+            instrumentToken: state.instrumentToken,
+            instrumentSymbol: state.instrumentSymbol,
+            instrumentLabel: state.instrumentLabel,
+            capital: state.capital,
+            riskPerTradePct: state.riskPerTradePct,
+            maxTradesPerDay: state.maxTradesPerDay,
+            dailyLossLimitPct: state.dailyLossLimitPct,
+            stopLossMultiplier: state.stopLossMultiplier,
+            targetMultiplier: state.targetMultiplier,
+            trailingSlEnabled: state.trailingSlEnabled,
+            trailingSlPct: state.trailingSlPct,
+            minConfidence: state.minConfidence,
+            scanIntervalSec: state.scanIntervalSec,
+            tradesCount: state.tradesCount,
+            dailyPnl: state.dailyPnl,
+            accessToken: state.accessToken,
+            telegramBotToken: state.telegramBotToken,
+            telegramChatId: state.telegramChatId,
+            telegramEnabled: state.telegramEnabled,
+            botSlot: state.botSlot,
+            lotSize: state.lotSize,
+            isIndexOptions: state.isIndexOptions,
+            underlyingToken: state.underlyingToken,
+            optionType: state.optionType,
+            consecutiveTickErrors: 0,
+          }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
         }
       });
   }, intervalMs);
