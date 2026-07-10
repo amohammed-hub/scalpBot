@@ -95,6 +95,27 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     partialBooked: 0,
     bookedQty: 0,
     bookedPnl: 0,
+    // CRITICAL: preserve options mode state so effectivePrice uses premium, not underlying
+    isIndexOptions: !!(session.isIndexOptions),
+    // Use the entry price of the underlying at trade open time for delta drift calculation.
+    // Since we don't store entryUnderlyingPrice in DB, use lastPrice from bot_sessions as a reasonable
+    // approximation (it's the most recent underlying price before restart). This is imperfect but
+    // far better than using the current tick price (which would make underlyingMove=0 on first tick).
+    entryUnderlyingPrice: session.isIndexOptions ? (session.lastPrice ?? undefined) : undefined,
+    // Reconstruct optionMockKey for paper-mode premium drift
+    optionMockKey: (() => {
+      if (!session.isIndexOptions) return undefined;
+      const sym = (session.instrumentSymbol ?? "").toUpperCase();
+      const ceOrPe = t.direction === "BUY" ? "CE" : "PE";
+      if (sym.includes("GOLD")) return ceOrPe === "CE" ? "MCX_GOLD_CE" : "MCX_GOLD_PE";
+      if (sym.includes("SILVER")) return ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+      if (sym.includes("CRUDE") || sym.includes("OIL")) return ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+      if (sym.includes("NATGAS") || sym.includes("GAS")) return ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+      if (sym.includes("COPPER")) return ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+      if (sym.includes("ZINC")) return ceOrPe === "CE" ? "MCX_ZINC_CE" : "MCX_ZINC_PE";
+      if (sym.includes("BANK")) return ceOrPe === "CE" ? "BNF_CE" : "BNF_PE";
+      return ceOrPe === "CE" ? "NIFTY_CE" : "NIFTY_PE";
+    })(),
   };
 
   console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — restoring open trade #${t.id} ${t.direction} ${t.symbol} @ ₹${t.entryPrice} | SL: ₹${t.slPrice} | 1R: ₹${partial1RPrice.toFixed(2)}`);

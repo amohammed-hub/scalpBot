@@ -450,3 +450,7 @@
 - [x] Add "Capital Used" (premium × qty) to Trade Log table
 - [x] Show capital deployed in activity log trade_open line
 - [x] Show capital deployed in the open trade card on dashboard
+## CRITICAL BUG: Options Exit Price Using Spot Instead of Premium (Jul 10, 2026)
+- [ ] Fix exit price for options trades — must use option premium at exit, NOT underlying spot price
+- [ ] Fix P&L calculation for options: (exit_premium - entry_premium) × qty
+- [ ] Verify Target Hit exit uses option premium price correctly

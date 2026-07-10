@@ -612,8 +612,12 @@ export default function Dashboard() {
   const handleManualExit = () => {
     const trade = openTrade ?? (inMemOpenTrade ? { id: inMemOpenTrade.dbId, entryPrice: inMemOpenTrade.entryPrice, direction: inMemOpenTrade.direction, quantity: inMemOpenTrade.quantity } : null);
     if (!trade || !trade.id) { toast.error("No open trade to exit."); return; }
-    if (!currentPrice) { toast.error("No current price available."); return; }
-    manualExitMutation.mutate({ sessionToken, tradeId: trade.id, exitPrice: currentPrice });
+    // For options mode: use option premium price (not underlying spot) as exit price
+    const exitPriceToUse = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
+      ? optionPremiumPrice
+      : currentPrice;
+    if (!exitPriceToUse) { toast.error("No current price available."); return; }
+    manualExitMutation.mutate({ sessionToken, tradeId: trade.id, exitPrice: exitPriceToUse });
   };
 
   // ── Open trade panel helpers ──────────────────────────────────────────────────

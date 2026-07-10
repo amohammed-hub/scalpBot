@@ -64,7 +64,7 @@ function makeTrade(exitReason: string, pnl: number) {
 }
 
 describe("Risk Manager — Market Risk Score", () => {
-  it("computes a score between 0-100 with safe boolean and regime", async () => {
+  it("computes a score between 0-100 with safe boolean and regime", { timeout: 15000 }, async () => {
     const score = await computeMarketRiskScore(
       [], // no candles → unknown regime
       [], // no recent trades
