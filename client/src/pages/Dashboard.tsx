@@ -1611,6 +1611,40 @@ export default function Dashboard() {
                         Last: {bot.lastSignal.direction} · {bot.lastSignal.confidence}%
                       </div>
                     )}
+                    {/* Candle readiness + data source indicator */}
+                    {isActive && (() => {
+                      const count = (bot as any).candlesCount ?? 0;
+                      const hasReal = (bot as any).hasRealData ?? false;
+                      const ready = count >= 20;
+                      return (
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          {/* Candle readiness bar */}
+                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                            <div className="flex-1 bg-white/10 rounded-full h-1.5 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                  ready ? "bg-emerald-400" : "bg-amber-400"
+                                }`}
+                                style={{ width: `${Math.min(100, (count / 20) * 100)}%` }}
+                              />
+                            </div>
+                            <span className={`text-xs whitespace-nowrap ${
+                              ready ? "text-emerald-400" : "text-amber-400"
+                            }`}>
+                              {ready ? "✓ Ready" : `${count}/20`}
+                            </span>
+                          </div>
+                          {/* Real vs Mock data badge */}
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                            hasReal
+                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                              : "bg-orange-500/20 text-orange-300 border border-orange-500/30"
+                          }`}>
+                            {hasReal ? "🟢 Live Data" : "🟡 Mock Data"}
+                          </span>
+                        </div>
+                      );
+                    })()}
                     {/* Quick Start form for inactive secondary slots */}
                     {bot.slot > 0 && !isActive && (
                       <div className="mt-3 pt-3 border-t border-white/10 space-y-2">

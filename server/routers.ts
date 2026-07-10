@@ -1410,6 +1410,10 @@ export const appRouter = router({
             lastTickAt: inMem?.lastTickAt ?? (dbRow?.lastTickAt ? Number(dbRow.lastTickAt) : 0),
             scanIntervalSec: inMem?.scanIntervalSec ?? dbRow?.scanIntervalSec ?? 60,
             lastError: inMem?.lastError ?? dbRow?.lastError ?? null,
+            // Candle readiness: how many 1m candles collected vs 20 needed to trade
+            candlesCount: inMem?.candles?.length ?? 0,
+            // Whether bot has a real Upstox access token (real-time data vs mock)
+            hasRealData: !!(inMem?.accessToken),
           };
         });
       }),
