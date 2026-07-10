@@ -1433,17 +1433,64 @@ async function resolveAtmMcxOptionToken(
     const underlyingPrice: number = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
     if (!underlyingPrice) return null;
 
-    // Step 2: fetch option contracts for this futures instrument
-    const contractResp = await axios.get(
-      `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(futuresToken)}&expiry_date=`,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
-    );
-    const contracts: Array<{
+    // Step 2: calculate nearest MCX expiry dates to try
+    // MCX options expire on the 3rd Tuesday of each month (or last Tuesday before expiry)
+    // Try current month, next month, and also the next few Tuesdays as weekly candidates
+    const getNearestMcxExpiries = (): string[] => {
+      const dates: string[] = [];
+      const now = new Date();
+      // Generate next 8 Tuesdays (covers weekly and monthly expiries)
+      for (let week = 0; week < 8; week++) {
+        const d = new Date(now);
+        const dayOfWeek = d.getDay(); // 0=Sun, 2=Tue
+        const daysUntilTuesday = (2 - dayOfWeek + 7) % 7 || 7;
+        d.setDate(d.getDate() + daysUntilTuesday + week * 7);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        dates.push(`${yyyy}-${mm}-${dd}`);
+      }
+      return Array.from(new Set(dates));
+    };
+    const expiryDatesToTry = getNearestMcxExpiries();
+
+    // Step 3: try each expiry date until we get contracts
+    let contracts: Array<{
       instrument_key?: string;
       strike_price?: number;
       instrument_type?: string;
       market_data?: { ltp?: number };
-    }> = contractResp.data?.data ?? [];
+    }> = [];
+
+    for (const expiryDate of expiryDatesToTry) {
+      try {
+        const contractResp = await axios.get(
+          `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(futuresToken)}&expiry_date=${expiryDate}`,
+          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+        );
+        const data = contractResp.data?.data ?? [];
+        if (Array.isArray(data) && data.length > 0) {
+          contracts = data;
+          console.log(`[BotEngine] MCX option contracts found for expiry ${expiryDate}: ${data.length} contracts`);
+          break;
+        }
+      } catch {
+        // try next expiry
+      }
+    }
+
+    // If no expiry worked, try without expiry_date as last resort
+    if (contracts.length === 0) {
+      try {
+        const fallbackResp = await axios.get(
+          `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(futuresToken)}`,
+          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+        );
+        contracts = fallbackResp.data?.data ?? [];
+      } catch {
+        // ignore
+      }
+    }
 
     // Filter by option type (CE or PE) and find ATM strike
     const filtered = contracts.filter(c =>
