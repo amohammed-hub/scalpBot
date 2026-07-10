@@ -53,57 +53,20 @@ interface PricePoint { time: string; price: number; }
 // spotOnly: true means the index cannot be directly traded — shown for reference/signal only.
 // isIndexOptions: when true, bot reads underlying (underlyingToken) for signals and auto-resolves ATM CE/PE at runtime.
 // underlyingToken: the index token used to fetch candles and generate signals (only for isIndexOptions instruments).
+// ONLY ATM Options (Auto) instruments are available.
+// The bot reads the underlying index/futures for signals and auto-resolves the ATM CE/PE option at trade time.
+// Quantity is sized using the option PREMIUM price (~₹100–500), NOT the underlying futures price.
 const INSTRUMENTS = [
-  // ── Index Options — Auto-ATM (RECOMMENDED for Nifty/BankNifty) ─────────────────────────────────
-  // Bot reads the index for trend signals, then auto-resolves ATM CE (BUY) or PE (SELL) at trade time.
-  // Quantity is sized using the option premium price, NOT the underlying index price.
-  // NSE Index Options (Auto-ATM)
-  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ATM Options (Auto)",  segment: "Index Options (Auto-ATM)", lotSize: 15, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
-  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options (Auto)",   segment: "Index Options (Auto-ATM)", lotSize: 25, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
-  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options (Auto)",   segment: "Index Options (Auto-ATM)", lotSize: 40, spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
-  // MCX Commodity Options (Auto-ATM) — reads MCX futures price for signals, trades ATM CE/PE
-  { token: "MCX_FO|GOLDM",    symbol: "MCX_GOLD",   label: "Gold → ATM Options (Auto)",       segment: "MCX Options (Auto-ATM)", lotSize: 1,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|GOLDM" },
-  { token: "MCX_FO|SILVERM",  symbol: "MCX_SILVER", label: "Silver → ATM Options (Auto)",     segment: "MCX Options (Auto-ATM)", lotSize: 1,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|SILVERM" },
-  { token: "MCX_FO|CRUDEOIL", symbol: "MCX_CRUDE",  label: "Crude Oil → ATM Options (Auto)",  segment: "MCX Options (Auto-ATM)", lotSize: 100, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|CRUDEOIL" },
-  { token: "MCX_FO|NATURALGAS", symbol: "MCX_NATGAS", label: "Natural Gas → ATM Options (Auto)", segment: "MCX Options (Auto-ATM)", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|NATURALGAS" },
-  { token: "MCX_FO|COPPER",   symbol: "MCX_COPPER", label: "Copper → ATM Options (Auto)",     segment: "MCX Options (Auto-ATM)", lotSize: 1000, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|COPPER" },
-  // ── NSE F&O Futures — TRADEABLE ──────────────────────────────────────────────
-  { token: "NFO_FUT|BANKNIFTY30JUL2026FUT", symbol: "BNF_FUT",   label: "BankNifty Jul 2026 Futures", segment: "NSE F&O Futures", lotSize: 15, spotOnly: false },
-  { token: "NFO_FUT|NIFTY30JUL2026FUT",     symbol: "NIFTY_FUT", label: "Nifty Jul 2026 Futures",     segment: "NSE F&O Futures", lotSize: 25, spotOnly: false },
-  // ── NSE F&O Options — Fixed Strike (manual selection) ────────────────────────
-  { token: "NFO_OPT|NIFTY10JUL202624800CE",    symbol: "NIFTY_CE",      label: "Nifty 24800 CE (10 Jul)",    segment: "NSE F&O Options", lotSize: 25, spotOnly: false },
-  { token: "NFO_OPT|NIFTY10JUL202624800PE",    symbol: "NIFTY_PE",      label: "Nifty 24800 PE (10 Jul)",    segment: "NSE F&O Options", lotSize: 25, spotOnly: false },
-  { token: "NFO_OPT|NIFTY10JUL202625000CE",    symbol: "NIFTY_25000CE", label: "Nifty 25000 CE (10 Jul)",    segment: "NSE F&O Options", lotSize: 25, spotOnly: false },
-  { token: "NFO_OPT|NIFTY10JUL202625000PE",    symbol: "NIFTY_25000PE", label: "Nifty 25000 PE (10 Jul)",    segment: "NSE F&O Options", lotSize: 25, spotOnly: false },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653000CE", symbol: "BNF_CE",       label: "BankNifty 53000 CE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653000PE", symbol: "BNF_PE",       label: "BankNifty 53000 PE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653500CE", symbol: "BNF_53500CE",  label: "BankNifty 53500 CE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
-  { token: "NFO_OPT|BANKNIFTY09JUL202653500PE", symbol: "BNF_53500PE",  label: "BankNifty 53500 PE (9 Jul)", segment: "NSE F&O Options", lotSize: 15, spotOnly: false },
-  // MCX Commodities
-  { token: "MCX_FO|552720", symbol: "MCX_GOLD",     label: "Gold (GOLDGUINEA FUT 31 Jul)",    segment: "MCX Commodities", lotSize: 10,    spotOnly: false },
-  { token: "MCX_FO|574822", symbol: "MCX_SILVER",   label: "Silver (SILVER100 FUT 31 Jul)",   segment: "MCX Commodities", lotSize: 100,   spotOnly: false },
-  { token: "MCX_FO|520703", symbol: "MCX_CRUDE",    label: "Crude Oil (CRUDEOILM FUT 20 Jul)",segment: "MCX Commodities", lotSize: 100,   spotOnly: false },
-  { token: "MCX_FO|538686", symbol: "MCX_NATGAS",   label: "Natural Gas Mini (28 Jul)",        segment: "MCX Commodities", lotSize: 1250,  spotOnly: false },
-  { token: "MCX_FO|562048", symbol: "MCX_COPPER",   label: "Copper (FUT 31 Jul)",              segment: "MCX Commodities", lotSize: 1000,  spotOnly: false },
-  { token: "MCX_FO|562054", symbol: "MCX_ZINC",     label: "Zinc Mini (FUT 31 Jul)",           segment: "MCX Commodities", lotSize: 1000,  spotOnly: false },
-  { token: "MCX_FO|562047", symbol: "MCX_ALUM",     label: "Aluminium (FUT 31 Jul)",           segment: "MCX Commodities", lotSize: 5000,  spotOnly: false },
-  { token: "MCX_FO|562050", symbol: "MCX_LEAD",     label: "Lead Mini (FUT 31 Jul)",           segment: "MCX Commodities", lotSize: 1000,  spotOnly: false },
-  { token: "MCX_FO|562051", symbol: "MCX_NICKEL",   label: "Nickel (FUT 15 Jul)",              segment: "MCX Commodities", lotSize: 100,   spotOnly: false },
-  // NSE Equity
-  { token: "NSE_EQ|INE009A01021", symbol: "RELIANCE",  label: "Reliance Industries", segment: "NSE Equity", lotSize: 1, spotOnly: false },
-  { token: "NSE_EQ|INE467B01029", symbol: "TCS",        label: "TCS",                segment: "NSE Equity", lotSize: 1, spotOnly: false },
-  { token: "NSE_EQ|INE009B01011", symbol: "INFY",       label: "Infosys",            segment: "NSE Equity", lotSize: 1, spotOnly: false },
-  { token: "NSE_EQ|INE040A01034", symbol: "HDFC",       label: "HDFC Bank",          segment: "NSE Equity", lotSize: 1, spotOnly: false },
-  { token: "NSE_EQ|INE030A01027", symbol: "ITC",        label: "ITC",                segment: "NSE Equity", lotSize: 1, spotOnly: false },
-  { token: "NSE_EQ|INE585B01010", symbol: "SBIN",       label: "SBI",                segment: "NSE Equity", lotSize: 1, spotOnly: false },
-  { token: "NSE_EQ|INE062A01020", symbol: "TATAMOTORS", label: "Tata Motors",        segment: "NSE Equity", lotSize: 1, spotOnly: false },
-  // BSE
-  { token: "BSE_INDEX|SENSEX", symbol: "SENSEX", label: "Sensex", segment: "BSE Index", lotSize: 1, spotOnly: false },
-  // NSE Indices (spot) — NOT directly tradeable, shown for price reference only
-  { token: "NSE_INDEX|Nifty 50",           symbol: "NIFTY",         label: "Nifty 50 (Spot)",     segment: "NSE Index (Spot Only)", lotSize: 1, spotOnly: true },
-  { token: "NSE_INDEX|Nifty Bank",         symbol: "BANKNIFTY",     label: "Bank Nifty (Spot)",   segment: "NSE Index (Spot Only)", lotSize: 1, spotOnly: true },
-  { token: "NSE_INDEX|Nifty Fin Service",  symbol: "FINNIFTY",      label: "Fin Nifty (Spot)",    segment: "NSE Index (Spot Only)", lotSize: 1, spotOnly: true },
-  { token: "NSE_INDEX|MIDCPNIFTY",         symbol: "MIDCPNIFTY",    label: "Midcap Nifty (Spot)", segment: "NSE Index (Spot Only)", lotSize: 1, spotOnly: true },
+  // ── NSE Index Options — Auto-ATM ─────────────────────────────────────────────
+  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ATM Options (Auto)",  segment: "NSE Index Options", lotSize: 15,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
+  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options (Auto)",   segment: "NSE Index Options", lotSize: 25,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
+  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options (Auto)",   segment: "NSE Index Options", lotSize: 40,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
+  // ── MCX Commodity Options — Auto-ATM ─────────────────────────────────────────
+  { token: "MCX_FO|CRUDEOIL",   symbol: "MCX_CRUDE",  label: "Crude Oil → ATM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|CRUDEOIL" },
+  { token: "MCX_FO|GOLDM",      symbol: "MCX_GOLD",   label: "Gold → ATM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 1,    spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|GOLDM" },
+  { token: "MCX_FO|SILVERM",    symbol: "MCX_SILVER", label: "Silver → ATM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 1,    spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|SILVERM" },
+  { token: "MCX_FO|NATURALGAS", symbol: "MCX_NATGAS", label: "Natural Gas → ATM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|NATURALGAS" },
+  { token: "MCX_FO|COPPER",     symbol: "MCX_COPPER", label: "Copper → ATM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 1000, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|COPPER" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

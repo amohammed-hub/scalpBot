@@ -450,12 +450,17 @@ export default function Settings() {
     if (!instr) return;
     const tg = JSON.parse(localStorage.getItem("scalpbot_telegram") ?? "{}");
     setMcxLaunching(symbol);
+    // Always use ATM Options mode for MCX instruments:
+    // isIndexOptions=true means the bot reads futures price for signals but trades ATM CE/PE options.
+    const atmLabel = `${instr.label} → ATM Options (Auto)`;
     startSecondaryMutation.mutate({
       sessionToken,
       slot: mcxSlot,
       instrumentToken: instr.instrumentToken,
       instrumentSymbol: instr.symbol,
-      instrumentLabel: instr.label,
+      instrumentLabel: atmLabel,
+      isIndexOptions: true,
+      underlyingToken: instr.instrumentToken,
       mode: "paper",
       capital: mcxCapital,
       riskPerTradePct: 1.5,

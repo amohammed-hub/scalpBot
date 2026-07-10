@@ -235,6 +235,15 @@ export const appRouter = router({
           accessToken = creds[0].accessToken;
         }
 
+        // Server-side safety guard: NSE_INDEX and MCX_FO tokens are ALWAYS options mode.
+        // This prevents accidental direct futures/spot trading regardless of what the frontend sends.
+        const isIndexToken = input.instrumentToken.startsWith("NSE_INDEX|") || input.instrumentToken.startsWith("MCX_FO|");
+        if (isIndexToken && !input.isIndexOptions) {
+          // Force ATM options mode — underlying token is the same as instrument token for these
+          (input as any).isIndexOptions = true;
+          if (!input.underlyingToken) (input as any).underlyingToken = input.instrumentToken;
+        }
+
         if (input.mode === "live") {
           if (!accessToken) {
             throw new Error("No Upstox access token. Connect your account first.");
