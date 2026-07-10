@@ -80,6 +80,7 @@ export interface OpenTrade {
   // Options mode: when true, exit price must be fetched from option chain, not underlying price
   isIndexOptions?: boolean;
   optionMockKey?: string; // e.g. "BNF_CE" or "BNF_PE" for paper mode premium lookup
+  entryUnderlyingPrice?: number; // underlying index price at trade entry (for paper mode delta P&L drift)
   signalReason?: string; // full signal reason string
   signalLayer?: string; // extracted layer name e.g. "Breakout", "MCXEvening"
 }
@@ -1380,8 +1381,8 @@ async function tick(
   const now2 = new Date();
   const istMin2 = ((now2.getUTCHours() * 60 + now2.getUTCMinutes()) + 330) % (24 * 60);
   const isMCX = state.instrumentToken.startsWith("MCX");
-  const squareOffMin = isMCX ? 23 * 60 + 25 : 15 * 60 + 25;
-  const stopScanMin  = isMCX ? 23 * 60 + 25 : 15 * 60 + 20; // MCX: 5-min pre-close buffer (same as squareOff); NSE: 10-min buffer
+  const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
+  const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 20; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:20, square-off at 15:25
 
   // NSE Power Hour: 3:00–3:20 PM IST
   const powerHourStart = 15 * 60;
@@ -1443,13 +1444,17 @@ async function tick(
         effectivePrice = optQuote.ltp;
         state.optionPremiumPrice = optQuote.ltp; // update for Dashboard display
       }
-    } else if (state.openTrade.optionMockKey) {
-      // Paper mode: use mock option premium (which drifts with buildMockCandle)
-      const mockPrem = mockPrices[state.openTrade.optionMockKey];
-      if (mockPrem && mockPrem > 0) {
-        effectivePrice = mockPrem;
-        state.optionPremiumPrice = mockPrem;
-      }
+    } else {
+      // Paper mode (no access token): derive drifting option premium from real underlying price.
+      // Use delta approximation: ATM option moves ~0.5x the underlying for every 1 point move.
+      // Base premium is the entry price of the open trade (already a real option premium).
+      const entryPremium = state.openTrade.entryPrice;
+      const entryUnderlying = state.openTrade.entryUnderlyingPrice ?? price; // stored at trade open
+      const underlyingMove = price - entryUnderlying;
+      const delta = 0.5; // ATM delta approximation
+      const driftedPremium = Math.max(0.05, entryPremium + (state.openTrade.direction === "BUY" ? underlyingMove * delta : -underlyingMove * delta));
+      effectivePrice = driftedPremium;
+      state.optionPremiumPrice = driftedPremium;
     }
   }
 
@@ -1763,7 +1768,9 @@ async function tick(
       }
     }
 
-    // Use MCX-specific resolver for MCX tokens, NSE chain resolver for everything else
+    // Use MCX-specific resolver for MCX tokens, NSE chain resolver for everything else.
+    // Skip if optionPremiumForSizing was already set by the MCX placeholder fallback above.
+    if (!optionPremiumForSizing) {
     const isMcxToken = resolvedUnderlying.startsWith("MCX_FO|");
     const resolved = isMcxToken
       ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken)
@@ -1810,6 +1817,7 @@ async function tick(
       state.optionPremiumPrice = resolved.premium;
       console.log(`[BotEngine] ${state.sessionToken} — Options mode: ${ceOrPe} @ strike ${resolved.strike}, premium ₹${resolved.premium.toFixed(2)}, token: ${resolved.token}`);
     }
+    } // end !optionPremiumForSizing guard
   } else if (isOptionsMode && !state.accessToken) {
     // Paper mode with options: simulate option premium from mock prices
     const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
@@ -1974,6 +1982,7 @@ async function tick(
     partial1RPrice, partial2RPrice, partialBooked: 0, bookedQty: 0, bookedPnl: 0,
     isHeroZero: signal.isHeroZero, heroZeroPremiumEntry: signal.isHeroZero ? signal.entryPrice : undefined,
     isIndexOptions: isOptionsMode, optionMockKey,
+    entryUnderlyingPrice: isOptionsMode ? price : undefined, // underlying price at entry for paper mode delta drift
     signalReason: signalLabel, signalLayer: signal.layer,
   };
 
@@ -2032,25 +2041,13 @@ export function startBot(
   const existing = bots.get(config.sessionToken);
   if (existing?.intervalHandle) clearInterval(existing.intervalHandle);
 
-  // ── Pre-warm candle buffer (paper mode only) ──────────────────────────────
-  // In live mode, fetchUpstoxCandles returns the full day's history on the first tick.
-  // In paper mode there is no API call, so we seed 60 synthetic candles so the signal
-  // engine has enough data to fire immediately without a 20-minute warmup.
-  const prewarmCandles: Candle[] = [];
-  if (!config.accessToken) {
-    const PREWARM = 60;
-    const now0 = Date.now();
-    for (let i = PREWARM; i >= 1; i--) {
-      const c = buildMockCandle(config.instrumentSymbol);
-      c.timestamp = now0 - i * 60_000; // back-date each candle 1 min apart
-      prewarmCandles.push(c);
-    }
-  }
-
+  // No pre-warm: the Upstox intraday candle API works without auth and returns the
+  // full day's history on the first tick. Using mock candles would pollute the signal
+  // engine with fake prices. The bot will collect real candles from the first tick.
   const state: BotState = {
     ...config,
-    candles: prewarmCandles,
-    candles5m: prewarmCandles.length > 0 ? build5mFromMock(prewarmCandles) : [],
+    candles: [],
+    candles5m: [],
     candlesDay: [],
     lastSignal: null, lastPrice: 0, bidPrice: 0, askPrice: 0,
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,

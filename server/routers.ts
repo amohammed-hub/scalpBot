@@ -1412,8 +1412,12 @@ export const appRouter = router({
             lastError: inMem?.lastError ?? dbRow?.lastError ?? null,
             // Candle readiness: how many 1m candles collected vs 20 needed to trade
             candlesCount: inMem?.candles?.length ?? 0,
-            // Whether bot has a real Upstox access token (real-time data vs mock)
-            hasRealData: !!(inMem?.accessToken),
+            // hasRealData: true when bot has loaded real candles from Upstox API.
+            // The Upstox intraday candle API works without auth, so paper mode also gets real data.
+            // We consider data "real" when candles have been loaded (count > 0) OR access token is present.
+            hasRealData: !!(inMem?.accessToken) || (inMem?.candles?.length ?? 0) > 0,
+            // Current option premium price (for unrealised P&L calculation in slot cards)
+            optionPremiumPrice: inMem?.optionPremiumPrice ?? null,
           };
         });
       }),
@@ -1478,6 +1482,47 @@ export const appRouter = router({
           if (input.mode === "live" && !accessToken) {
             throw new Error("No Upstox access token. Connect your account first.");
           }
+        }
+
+        // Check for existing open trade to restore (same as primary bot.start)
+        const slotExistingOpenTrades = await db
+          .select()
+          .from(tradeLog)
+          .where(and(
+            eq(tradeLog.sessionToken, slotToken),
+            eq(tradeLog.status, "open"),
+          ))
+          .orderBy(desc(tradeLog.enteredAt))
+          .limit(1);
+        let slotExistingOpenTrade = null;
+        if (slotExistingOpenTrades.length > 0) {
+          const t = slotExistingOpenTrades[0];
+          const slDist0 = Math.abs((t.entryPrice ?? 0) - (t.slPrice ?? 0));
+          const p1 = t.partial1RPrice ?? (t.direction === "BUY" ? t.entryPrice + slDist0 : t.entryPrice - slDist0);
+          const p2 = t.partial2RPrice ?? (t.direction === "BUY" ? t.entryPrice + slDist0 * 2 : t.entryPrice - slDist0 * 2);
+          let restoredOptionMockKey: string | undefined;
+          if (input.isIndexOptions) {
+            const sym0 = (t.symbol ?? "").toUpperCase();
+            const ceOrPe0: "CE" | "PE" = t.direction === "BUY" ? "CE" : "PE";
+            if (sym0.includes("GOLD"))       restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+            else if (sym0.includes("SILVER")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+            else if (sym0.includes("CRUDE") || sym0.includes("OIL")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+            else if (sym0.includes("NATGAS") || sym0.includes("GAS")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+            else if (sym0.includes("BANK"))   restoredOptionMockKey = ceOrPe0 === "CE" ? "BNF_CE"        : "BNF_PE";
+            else                              restoredOptionMockKey = ceOrPe0 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+          }
+          slotExistingOpenTrade = {
+            dbId: t.id, symbol: t.symbol, symbolLabel: t.symbolLabel ?? t.symbol,
+            instrumentToken: t.instrumentToken ?? input.instrumentToken,
+            direction: t.direction, mode: t.mode, entryPrice: t.entryPrice, quantity: t.quantity,
+            slPrice: t.slPrice ?? 0, targetPrice: t.targetPrice ?? 0, atr: t.atr ?? 0,
+            confidence: t.confidence ?? 0, upstoxOrderId: t.upstoxOrderId ?? undefined,
+            enteredAt: t.enteredAt, trailingSlEnabled: input.trailingSlEnabled,
+            trailingSlPct: input.trailingSlPct, currentSl: t.slPrice ?? 0,
+            partial1RPrice: p1, partial2RPrice: p2, partialBooked: 0 as 0 | 1 | 2,
+            bookedQty: 0, bookedPnl: 0, isIndexOptions: input.isIndexOptions,
+            optionMockKey: restoredOptionMockKey,
+          };
         }
 
         // Restore today's P&L from closed trades (same logic as primary bot.start)
@@ -1590,7 +1635,7 @@ export const appRouter = router({
           underlyingToken: input.underlyingToken,
           optionType: input.optionType,
           consecutiveTickErrors: 0,
-        }, onTradeOpen, onTradeClose, undefined, async (tickState) => {
+        }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;
           await db.update(botSessions).set({

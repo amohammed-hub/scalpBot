@@ -1562,7 +1562,12 @@ export default function Dashboard() {
                     {(() => {
                       const openTrade = (bot as any).openTrade;
                       if (!openTrade || !isActive) return null;
-                      const livePrice = bot.lastPrice ?? 0;
+                      // For options mode: use optionPremiumPrice (drifts with real underlying)
+                      // For futures/spot mode: use lastPrice (underlying)
+                      const isOpts = openTrade.isIndexOptions;
+                      const livePrice = isOpts
+                        ? ((bot as any).optionPremiumPrice ?? 0)
+                        : (bot.lastPrice ?? 0);
                       if (livePrice === 0) return null;
                       const dir = openTrade.direction === "BUY" ? 1 : -1;
                       const unrealised = (livePrice - openTrade.entryPrice) * dir * (openTrade.quantity - (openTrade.bookedQty ?? 0));
@@ -1571,7 +1576,7 @@ export default function Dashboard() {
                         <div className={`flex items-center gap-1 text-xs mb-2 ${isPos ? "text-emerald-400" : "text-red-400"}`}>
                           <span className="text-white/30">Unrealised:</span>
                           <span className="font-semibold">{isPos ? "+" : ""}₹{unrealised.toFixed(0)}</span>
-                          <span className="text-white/20">({openTrade.direction} @ ₹{openTrade.entryPrice.toFixed(2)})</span>
+                          <span className="text-white/20">({openTrade.direction} @ ₹{openTrade.entryPrice.toFixed(2)}{isOpts ? " premium" : ""})</span>
                         </div>
                       );
                     })()}
