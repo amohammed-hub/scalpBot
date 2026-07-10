@@ -62,11 +62,13 @@ const INSTRUMENTS = [
   { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options (Auto)",   segment: "NSE Index Options", lotSize: 25,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
   { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options (Auto)",   segment: "NSE Index Options", lotSize: 40,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
   // ── MCX Commodity Options — Auto-ATM ─────────────────────────────────────────
-  { token: "MCX_FO|CRUDEOIL",   symbol: "MCX_CRUDE",  label: "Crude Oil → ATM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|CRUDEOIL" },
-  { token: "MCX_FO|GOLDM",      symbol: "MCX_GOLD",   label: "Gold → ATM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 1,    spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|GOLDM" },
-  { token: "MCX_FO|SILVERM",    symbol: "MCX_SILVER", label: "Silver → ATM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 1,    spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|SILVERM" },
-  { token: "MCX_FO|NATURALGAS", symbol: "MCX_NATGAS", label: "Natural Gas → ATM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|NATURALGAS" },
-  { token: "MCX_FO|COPPER",     symbol: "MCX_COPPER", label: "Copper → ATM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 1000, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|COPPER" },
+  // Tokens are numeric front-month IDs verified from Upstox instrument master (Jul 2026).
+  // These auto-resolve to the correct front-month contract via resolveMcxFuturesToken() at runtime.
+  { token: "MCX_FO|520702",  symbol: "MCX_CRUDE",  label: "Crude Oil → ATM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|520702" },
+  { token: "MCX_FO|552720",  symbol: "MCX_GOLD",   label: "Gold → ATM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|552720" },
+  { token: "MCX_FO|574822",  symbol: "MCX_SILVER", label: "Silver → ATM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|574822" },
+  { token: "MCX_FO|538685",  symbol: "MCX_NATGAS", label: "Natural Gas → ATM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|538685" },
+  { token: "MCX_FO|562048",  symbol: "MCX_COPPER", label: "Copper → ATM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 2500, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|562048" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

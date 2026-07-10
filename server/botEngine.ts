@@ -1372,6 +1372,8 @@ async function resolveMcxFuturesToken(
     }
   }
   // Method 2: Download public Upstox instruments JSON (no auth needed)
+  // NOTE: MCX instruments JSON has empty trading_symbol but populated 'name' field.
+  // Match by name (e.g. symbol="CRUDEOIL" matches name="CRUDE OIL", symbol="GOLD" matches name="GOLD").
   try {
     const resp = await axios.get("https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz", {
       responseType: "arraybuffer",
@@ -1379,17 +1381,33 @@ async function resolveMcxFuturesToken(
     });
     const { gunzipSync } = await import("zlib");
     const json = gunzipSync(Buffer.from(resp.data));
-    const instruments: Array<{ instrument_key: string; trading_symbol: string; instrument_type: string; expiry: number }> = JSON.parse(json.toString());
+    const instruments: Array<{ instrument_key: string; name: string; trading_symbol: string; instrument_type: string; expiry: number }> = JSON.parse(json.toString());
     const now = Date.now();
+    // Build a normalized name from symbol for matching:
+    // CRUDEOIL → CRUDE OIL, NATURALGAS → NATURALGAS, GOLD → GOLD, SILVER → SILVER
+    const normalizedSymbol = symbol.toUpperCase()
+      .replace('CRUDEOIL', 'CRUDE OIL')
+      .replace('CRUDEOILM', 'CRUDE OIL MINI');
     const futures = instruments.filter(x =>
       x.instrument_type === "FUT" &&
       x.expiry > now &&
-      (x.trading_symbol ?? "").toUpperCase().includes(symbol.toUpperCase())
+      (x.name ?? "").toUpperCase() === normalizedSymbol
     );
     futures.sort((a, b) => a.expiry - b.expiry);
     if (futures.length > 0) {
-      console.log(`[BotEngine] Resolved MCX futures token (instruments JSON): ${symbol} → ${futures[0].instrument_key} (${futures[0].trading_symbol})`);
+      console.log(`[BotEngine] Resolved MCX futures token (instruments JSON): ${symbol} → ${futures[0].instrument_key} (name=${futures[0].name})`);
       return futures[0].instrument_key;
+    }
+    // Fallback: partial name match
+    const partialFutures = instruments.filter(x =>
+      x.instrument_type === "FUT" &&
+      x.expiry > now &&
+      (x.name ?? "").toUpperCase().includes(symbol.replace('CRUDEOIL','CRUDE').toUpperCase())
+    );
+    partialFutures.sort((a, b) => a.expiry - b.expiry);
+    if (partialFutures.length > 0) {
+      console.log(`[BotEngine] Resolved MCX futures token (partial match): ${symbol} → ${partialFutures[0].instrument_key} (name=${partialFutures[0].name})`);
+      return partialFutures[0].instrument_key;
     }
   } catch (err) {
     console.error(`[BotEngine] resolveMcxFuturesToken instruments JSON failed for ${symbol}:`, err instanceof Error ? err.message : String(err));
@@ -1528,6 +1546,9 @@ async function tick(
     };
     state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
     state.lastTickAt = Date.now();
+    // Log to activity so the user can see the bot is alive and waiting for market data
+    emitActivity(state.sessionToken, "signal",
+      `⏳ Waiting for market data — token: ${signalToken} | Next scan in ${state.scanIntervalSec}s`);
     if (onTick) onTick(state).catch(() => {});
     return;
   }

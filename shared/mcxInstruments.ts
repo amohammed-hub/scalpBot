@@ -1,42 +1,31 @@
-// MCX Instrument Registry — pre-filled Upstox instrument tokens, lot sizes, tick values
-// Used in Settings MCX quick-launch and Hero Zero scanner
+// MCX Instrument Registry — verified Upstox instrument tokens (numeric IDs, July 2026 front-month)
+// Tokens verified against https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz
+// on 2026-07-10. These are NUMERIC instrument keys (e.g. MCX_FO|520702) — NOT text-based symbols.
 //
-// IMPORTANT: MCX futures are monthly contracts. The instrument token format is MCX_FO|<SYMBOL><EXPIRY>
-// e.g., MCX_FO|GOLDM24AUGFUT for Gold Mini August 2024 expiry.
-// The tokens below use the generic MCX_FO|SYMBOL format as a base — you MUST verify the
-// active near-month contract from the Upstox instrument master CSV (downloadable from
-// https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz for NSE and
-// https://assets.upstox.com/market-quote/instruments/exchange/MCX.csv.gz for MCX).
-// Replace instrumentToken with the exact key for the current front-month contract.
+// ⚠️  MCX futures are monthly contracts. Tokens change every month when contracts roll over.
+// The resolveMcxFrontMonthToken() function in botEngine.ts auto-resolves the current front-month
+// token at runtime using the Upstox instrument master, so the bot always uses the correct contract.
+// The tokens below are used as fallbacks when the API is unavailable.
 
 export interface MCXInstrument {
   label: string;
-  symbol: string;
-  instrumentToken: string; // Upstox instrument key format: MCX_FO|<symbol>
-  lotSize: number;         // Number of units per lot
-  tickSize: number;        // Minimum price movement (₹)
-  tickValue: number;       // ₹ value per tick per lot
-  margin: number;          // Approximate margin per lot (₹)
-  bestTimes: string;       // Best trading windows (IST)
+  symbol: string;           // Internal symbol used for matching (e.g. "CRUDEOIL")
+  instrumentToken: string;  // Current front-month Upstox instrument key (numeric ID)
+  upstoxName: string;       // Exact name in Upstox instrument master for auto-resolution
+  lotSize: number;          // Number of units per lot
+  tickSize: number;         // Minimum price movement (₹)
+  tickValue: number;        // ₹ value per tick per lot
+  margin: number;           // Approximate margin per lot (₹)
+  bestTimes: string;        // Best trading windows (IST)
   category: "metal" | "energy" | "agri";
 }
 
 export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
-    label: "Gold Mini",
-    symbol: "GOLDM",
-    instrumentToken: "MCX_FO|GOLDM",
-    lotSize: 10,       // 10 grams
-    tickSize: 1,       // ₹1 per gram
-    tickValue: 10,     // ₹10 per tick
-    margin: 15000,     // ~₹15,000 per lot
-    bestTimes: "9:00–11:30 AM, 7:30–9:30 PM",
-    category: "metal",
-  },
-  {
     label: "Gold",
     symbol: "GOLD",
-    instrumentToken: "MCX_FO|GOLD",
+    instrumentToken: "MCX_FO|552720",   // GOLD front-month Jul 2026
+    upstoxName: "GOLD",
     lotSize: 100,      // 100 grams
     tickSize: 1,
     tickValue: 100,    // ₹100 per tick
@@ -45,21 +34,11 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
     category: "metal",
   },
   {
-    label: "Silver Mini",
-    symbol: "SILVERM",
-    instrumentToken: "MCX_FO|SILVERM",
-    lotSize: 5000,     // 5 kg (5000 grams)
-    tickSize: 1,
-    tickValue: 5000,   // ₹5,000 per ₹1 move
-    margin: 20000,
-    bestTimes: "9:00–11:30 AM, 7:30–9:30 PM",
-    category: "metal",
-  },
-  {
     label: "Silver",
     symbol: "SILVER",
-    instrumentToken: "MCX_FO|SILVER",
-    lotSize: 30000,    // 30 kg
+    instrumentToken: "MCX_FO|574822",   // SILVER front-month Jul 2026
+    upstoxName: "SILVER",
+    lotSize: 30000,    // 30 kg (30,000 grams)
     tickSize: 1,
     tickValue: 30000,
     margin: 120000,
@@ -69,7 +48,8 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Crude Oil",
     symbol: "CRUDEOIL",
-    instrumentToken: "MCX_FO|CRUDEOIL",
+    instrumentToken: "MCX_FO|520702",   // CRUDE OIL front-month Jul 2026
+    upstoxName: "CRUDE OIL",
     lotSize: 100,      // 100 barrels
     tickSize: 1,       // ₹1 per barrel
     tickValue: 100,    // ₹100 per tick
@@ -78,20 +58,10 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
     category: "energy",
   },
   {
-    label: "Crude Oil Mini",
-    symbol: "CRUDEOILM",
-    instrumentToken: "MCX_FO|CRUDEOILM",
-    lotSize: 10,       // 10 barrels
-    tickSize: 1,
-    tickValue: 10,
-    margin: 5000,
-    bestTimes: "7:30–9:30 PM (US Open), Wed 8:00 PM (EIA)",
-    category: "energy",
-  },
-  {
     label: "Natural Gas",
     symbol: "NATURALGAS",
-    instrumentToken: "MCX_FO|NATURALGAS",
+    instrumentToken: "MCX_FO|538685",   // NATURALGAS front-month Jul 2026
+    upstoxName: "NATURALGAS",
     lotSize: 1250,     // 1250 mmBtu
     tickSize: 0.10,
     tickValue: 125,    // ₹125 per tick
@@ -100,24 +70,38 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
     category: "energy",
   },
   {
-    label: "Copper Mini",
-    symbol: "COPPERM",
-    instrumentToken: "MCX_FO|COPPERM",
-    lotSize: 1000,     // 1000 kg
+    label: "Copper",
+    symbol: "COPPER",
+    instrumentToken: "MCX_FO|562048",   // COPPER front-month Jul 2026
+    upstoxName: "COPPER",
+    lotSize: 2500,     // 2500 kg
     tickSize: 0.05,
-    tickValue: 50,
-    margin: 18000,
+    tickValue: 125,
+    margin: 50000,
     bestTimes: "9:00–11:30 AM, 7:30–9:30 PM",
     category: "metal",
   },
   {
-    label: "Aluminium Mini",
-    symbol: "ALUMINIUMM",
-    instrumentToken: "MCX_FO|ALUMINIUMM",
-    lotSize: 1000,
+    label: "Zinc",
+    symbol: "ZINC",
+    instrumentToken: "MCX_FO|562053",   // ZINC front-month Jul 2026
+    upstoxName: "ZINC",
+    lotSize: 5000,     // 5000 kg
     tickSize: 0.05,
-    tickValue: 50,
-    margin: 8000,
+    tickValue: 250,
+    margin: 30000,
+    bestTimes: "9:00–11:30 AM, 7:30–9:30 PM",
+    category: "metal",
+  },
+  {
+    label: "Aluminium",
+    symbol: "ALUMINIUM",
+    instrumentToken: "MCX_FO|562046",   // ALUMINIUM front-month Jul 2026
+    upstoxName: "ALUMINIUM",
+    lotSize: 5000,     // 5000 kg
+    tickSize: 0.05,
+    tickValue: 250,
+    margin: 20000,
     bestTimes: "9:00–11:30 AM",
     category: "metal",
   },
