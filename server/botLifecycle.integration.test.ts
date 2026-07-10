@@ -28,6 +28,34 @@ import {
   type TradeInsert,
 } from "./botEngine";
 
+// Mock axios so tests don't make real HTTP calls and always get mock candle data
+vi.mock("axios", () => {
+  const mockCandles = Array.from({ length: 30 }, (_, i) => ({
+    timestamp: Date.now() - (30 - i) * 60000,
+    open: 53200 + i * 10,
+    high: 53250 + i * 10,
+    low: 53150 + i * 10,
+    close: 53220 + i * 10,
+    volume: 1000,
+  }));
+  const mockAxios = {
+    get: vi.fn().mockResolvedValue({
+      data: {
+        status: "success",
+        data: {
+          candles: mockCandles.map(c => [
+            new Date(c.timestamp).toISOString(),
+            c.open, c.high, c.low, c.close, c.volume, 0,
+          ]),
+        },
+      },
+    }),
+    create: vi.fn().mockReturnThis(),
+    defaults: { headers: {} },
+  };
+  return { default: mockAxios, ...mockAxios };
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeSessionToken() {

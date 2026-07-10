@@ -1034,35 +1034,41 @@ export function generateHeroZeroSignal(
 }
 
 // ── Fetch 1-min candles from Upstox ───────────────────────────────────────────
-async function fetchUpstoxCandles(instrumentToken: string, accessToken: string): Promise<Candle[]> {
+async function fetchUpstoxCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/1minute`;
-    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 });
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    const resp = await axios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
   } catch { return []; }
 }
 
 // ── Fetch daily candles from Upstox (last 7 days) ───────────────────────────
-async function fetchUpstoxDayCandles(instrumentToken: string, accessToken: string): Promise<Candle[]> {
+async function fetchUpstoxDayCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
     const toDate = new Date().toISOString().split("T")[0];
     const fromDate = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split("T")[0];
     const url = `https://api.upstox.com/v2/historical-candle/${encoded}/day/${toDate}/${fromDate}`;
-    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 });
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    const resp = await axios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
   } catch { return []; }
 }
 
 // ── Fetch 5-min candles from Upstox ──────────────────────────────────────────
-async function fetchUpstox5mCandles(instrumentToken: string, accessToken: string): Promise<Candle[]> {
+async function fetchUpstox5mCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/5minute`;
-    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 });
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    const resp = await axios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
   } catch { return []; }
@@ -1176,34 +1182,59 @@ async function resolveAtmOptionToken(
 // ── MCX: Resolve front-month futures instrument_key ─────────────────────────
 // MCX futures tokens are numeric IDs that change every month (e.g. MCX_FO|226593).
 // Placeholder tokens like MCX_FO|GOLDM (no numeric ID) must be resolved before use.
+// This function works WITHOUT an access token by downloading the public Upstox instruments JSON.
 async function resolveMcxFuturesToken(
   symbol: string,
-  accessToken: string,
+  accessToken?: string | null,
 ): Promise<string | null> {
-  try {
-    const url = `https://api.upstox.com/v2/instruments/search` +
-      `?query=${encodeURIComponent(symbol)}` +
-      `&exchanges=MCX&segments=COMM&instrument_types=FUTCOM` +
-      `&expiry=current_month&records=10`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
-      timeout: 8000,
-    });
-    const items: Array<{ instrument_key: string; trading_symbol: string }> =
-      resp.data?.data ?? [];
-    // Find the entry whose trading_symbol starts with the symbol (e.g. "GOLDM")
-    const match = items.find(i =>
-      i.trading_symbol.toUpperCase().startsWith(symbol.toUpperCase())
-    );
-    if (match) {
-      console.log(`[BotEngine] Resolved MCX futures token: ${symbol} → ${match.instrument_key} (${match.trading_symbol})`);
-      return match.instrument_key;
+  // Method 1: Try Upstox instruments search API (requires auth)
+  if (accessToken) {
+    try {
+      const url = `https://api.upstox.com/v2/instruments/search` +
+        `?query=${encodeURIComponent(symbol)}` +
+        `&exchanges=MCX&segments=COMM&instrument_types=FUTCOM` +
+        `&expiry=current_month&records=10`;
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        timeout: 8000,
+      });
+      const items: Array<{ instrument_key: string; trading_symbol: string }> =
+        resp.data?.data ?? [];
+      const match = items.find(i =>
+        i.trading_symbol.toUpperCase().startsWith(symbol.toUpperCase())
+      );
+      if (match) {
+        console.log(`[BotEngine] Resolved MCX futures token (API): ${symbol} → ${match.instrument_key} (${match.trading_symbol})`);
+        return match.instrument_key;
+      }
+    } catch (err) {
+      console.warn(`[BotEngine] resolveMcxFuturesToken API failed for ${symbol}:`, err instanceof Error ? err.message : String(err));
     }
-    return null;
-  } catch (err) {
-    console.error(`[BotEngine] resolveMcxFuturesToken(${symbol}) failed:`, err instanceof Error ? err.message : String(err));
-    return null;
   }
+  // Method 2: Download public Upstox instruments JSON (no auth needed)
+  try {
+    const resp = await axios.get("https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz", {
+      responseType: "arraybuffer",
+      timeout: 15000,
+    });
+    const { gunzipSync } = await import("zlib");
+    const json = gunzipSync(Buffer.from(resp.data));
+    const instruments: Array<{ instrument_key: string; trading_symbol: string; instrument_type: string; expiry: number }> = JSON.parse(json.toString());
+    const now = Date.now();
+    const futures = instruments.filter(x =>
+      x.instrument_type === "FUT" &&
+      x.expiry > now &&
+      (x.trading_symbol ?? "").toUpperCase().includes(symbol.toUpperCase())
+    );
+    futures.sort((a, b) => a.expiry - b.expiry);
+    if (futures.length > 0) {
+      console.log(`[BotEngine] Resolved MCX futures token (instruments JSON): ${symbol} → ${futures[0].instrument_key} (${futures[0].trading_symbol})`);
+      return futures[0].instrument_key;
+    }
+  } catch (err) {
+    console.error(`[BotEngine] resolveMcxFuturesToken instruments JSON failed for ${symbol}:`, err instanceof Error ? err.message : String(err));
+  }
+  return null;
 }
 
 // ── MCX: Resolve ATM option using /v2/option/contract (MCX-specific path) ────
@@ -1309,28 +1340,24 @@ async function tick(
   const signalToken = isOptionsMode && state.underlyingToken ? state.underlyingToken : state.instrumentToken;
 
   // Fetch candles + quote
+  // The Upstox intraday candle API works WITHOUT authentication for NSE_INDEX and MCX_FO tokens.
+  // Paper mode uses real candle data from Upstox — no access token needed.
   let newCandle: Candle;
-  if (state.accessToken) {
-    const [candles1m, candles5m, dayCandles, quote] = await Promise.all([
-      fetchUpstoxCandles(signalToken, state.accessToken),
-      fetchUpstox5mCandles(signalToken, state.accessToken),
-      // Only re-fetch daily candles once per session (they don't change intraday)
-      state.candlesDay.length < 2 ? fetchUpstoxDayCandles(signalToken, state.accessToken) : Promise.resolve(state.candlesDay),
-      fetchFullQuote(signalToken, state.accessToken),
-    ]);
-    if (candles1m.length > 0) {
-      state.candles = candles1m.slice(-400); // full day
-      newCandle = candles1m[candles1m.length - 1];
-    } else {
-      newCandle = buildMockCandle(state.instrumentSymbol);
-      state.candles.push(newCandle);
-      if (state.candles.length > 400) state.candles.shift();
-    }
+  const [candles1m, candles5m, dayCandles, quote] = await Promise.all([
+    fetchUpstoxCandles(signalToken, state.accessToken ?? undefined),
+    fetchUpstox5mCandles(signalToken, state.accessToken ?? undefined),
+    state.candlesDay.length < 2 ? fetchUpstoxDayCandles(signalToken, state.accessToken ?? undefined) : Promise.resolve(state.candlesDay),
+    state.accessToken ? fetchFullQuote(signalToken, state.accessToken) : Promise.resolve(null),
+  ]);
+  if (candles1m.length > 0) {
+    state.candles = candles1m.slice(-400); // full day
+    newCandle = candles1m[candles1m.length - 1];
     state.candles5m = candles5m.length > 0 ? candles5m.slice(-80) : build5mFromMock(state.candles);
     if (dayCandles.length > 0) state.candlesDay = dayCandles.slice(-10);
     if (quote) { state.lastPrice = quote.ltp; state.bidPrice = quote.bid; state.askPrice = quote.ask; }
-    else { state.lastPrice = newCandle.close; }
+    else { state.lastPrice = newCandle.close; state.bidPrice = newCandle.close * 0.9999; state.askPrice = newCandle.close * 1.0001; }
   } else {
+    // Real candle fetch failed (market closed / MCX placeholder token) — fall back to mock
     newCandle = buildMockCandle(state.instrumentSymbol);
     state.candles.push(newCandle);
     if (state.candles.length > 400) state.candles.shift();
