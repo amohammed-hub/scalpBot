@@ -1300,7 +1300,7 @@ async function resolveAtmOptionToken(
   underlyingToken: string,
   optionType: "CE" | "PE",
   accessToken: string,
-): Promise<{ token: string; premium: number; strike: number } | null> {
+): Promise<ResolvedOption | null> {
   try {
     // Step 1: get current underlying price
     const quoteResp = await axios.get(
@@ -1319,13 +1319,14 @@ async function resolveAtmOptionToken(
     );
     const chain = chainResp.data?.data?.[0];
     if (!chain) return null;
+    const chainExpiry: string | undefined = chain.expiry ?? undefined;
 
     const options = optionType === "CE"
       ? (chain.call_options ?? []) as Array<{ instrument_key?: string; strike_price?: number; market_data?: { ltp?: number } }>
       : (chain.put_options ?? []) as Array<{ instrument_key?: string; strike_price?: number; market_data?: { ltp?: number } }>;
 
     // Find ATM: option whose strike is closest to underlying price
-    let best: { token: string; premium: number; strike: number } | null = null;
+    let best: ResolvedOption | null = null;
     let bestDist = Infinity;
     for (const opt of options) {
       const strike = opt.strike_price ?? 0;
@@ -1333,7 +1334,7 @@ async function resolveAtmOptionToken(
       const premium = opt.market_data?.ltp ?? 0;
       if (dist < bestDist && premium > 0.5 && opt.instrument_key) {
         bestDist = dist;
-        best = { token: opt.instrument_key, premium, strike };
+        best = { token: opt.instrument_key, premium, strike, expiry: chainExpiry };
       }
     }
     return best;
@@ -1379,13 +1380,7 @@ async function resolveMcxFuturesToken(
   // NOTE: MCX instruments JSON has empty trading_symbol but populated 'name' field.
   // Match by name (e.g. symbol="CRUDEOIL" matches name="CRUDE OIL", symbol="GOLD" matches name="GOLD").
   try {
-    const resp = await axios.get("https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz", {
-      responseType: "arraybuffer",
-      timeout: 15000,
-    });
-    const { gunzipSync } = await import("zlib");
-    const json = gunzipSync(Buffer.from(resp.data));
-    const instruments: Array<{ instrument_key: string; name: string; trading_symbol: string; instrument_type: string; expiry: number }> = JSON.parse(json.toString());
+    const instruments = await getMcxInstruments();
     const now = Date.now();
     // Build a normalized name from symbol for matching:
     // CRUDEOIL → CRUDE OIL, NATURALGAS → NATURALGAS, GOLD → GOLD, SILVER → SILVER
@@ -1394,10 +1389,10 @@ async function resolveMcxFuturesToken(
       .replace('CRUDEOILM', 'CRUDE OIL MINI');
     const futures = instruments.filter(x =>
       x.instrument_type === "FUT" &&
-      x.expiry > now &&
+      (x.expiry ?? 0) > now &&
       (x.name ?? "").toUpperCase() === normalizedSymbol
     );
-    futures.sort((a, b) => a.expiry - b.expiry);
+    futures.sort((a, b) => (a.expiry ?? 0) - (b.expiry ?? 0));
     if (futures.length > 0) {
       console.log(`[BotEngine] Resolved MCX futures token (instruments JSON): ${symbol} → ${futures[0].instrument_key} (name=${futures[0].name})`);
       return futures[0].instrument_key;
@@ -1405,10 +1400,10 @@ async function resolveMcxFuturesToken(
     // Fallback: partial name match
     const partialFutures = instruments.filter(x =>
       x.instrument_type === "FUT" &&
-      x.expiry > now &&
+      (x.expiry ?? 0) > now &&
       (x.name ?? "").toUpperCase().includes(symbol.replace('CRUDEOIL','CRUDE').toUpperCase())
     );
-    partialFutures.sort((a, b) => a.expiry - b.expiry);
+    partialFutures.sort((a, b) => (a.expiry ?? 0) - (b.expiry ?? 0));
     if (partialFutures.length > 0) {
       console.log(`[BotEngine] Resolved MCX futures token (partial match): ${symbol} → ${partialFutures[0].instrument_key} (name=${partialFutures[0].name})`);
       return partialFutures[0].instrument_key;
@@ -1421,11 +1416,51 @@ async function resolveMcxFuturesToken(
 
 // ── MCX: Resolve ATM option using /v2/option/contract (MCX-specific path) ────
 // Note: /v2/option/chain does NOT work for MCX. Use /v2/option/contract instead.
+// ── MCX instruments JSON cache (shared by futures + options resolvers) ───────
+interface McxInstrumentRow {
+  instrument_key: string;
+  trading_symbol?: string;
+  name?: string;
+  instrument_type?: string;
+  strike_price?: number;
+  expiry?: number;
+  lot_size?: number;
+  underlying_key?: string;
+}
+let mcxInstrumentsCache: McxInstrumentRow[] | null = null;
+let mcxInstrumentsCacheAt = 0;
+const MCX_INSTRUMENTS_CACHE_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function getMcxInstruments(): Promise<McxInstrumentRow[]> {
+  if (mcxInstrumentsCache && Date.now() - mcxInstrumentsCacheAt < MCX_INSTRUMENTS_CACHE_MS) {
+    return mcxInstrumentsCache;
+  }
+  const resp = await axios.get("https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz", {
+    responseType: "arraybuffer",
+    timeout: 20000,
+  });
+  const { gunzipSync } = await import("zlib");
+  const json = gunzipSync(Buffer.from(resp.data));
+  mcxInstrumentsCache = JSON.parse(json.toString()) as McxInstrumentRow[];
+  mcxInstrumentsCacheAt = Date.now();
+  console.log(`[BotEngine] MCX instruments JSON cached: ${mcxInstrumentsCache.length} rows`);
+  return mcxInstrumentsCache;
+}
+
+export interface ResolvedOption {
+  token: string;
+  premium: number;
+  strike: number;
+  expiry?: string;       // YYYY-MM-DD
+  lotSize?: number;
+  tradingSymbol?: string;
+}
+
 async function resolveAtmMcxOptionToken(
   futuresToken: string,
   optionType: "CE" | "PE",
   accessToken: string,
-): Promise<{ token: string; premium: number; strike: number } | null> {
+): Promise<ResolvedOption | null> {
   try {
     // Step 1: get current futures price
     const quoteResp = await axios.get(
@@ -1435,65 +1470,90 @@ async function resolveAtmMcxOptionToken(
     const qData = quoteResp.data?.data;
     const qKey = qData ? Object.keys(qData)[0] : null;
     const underlyingPrice: number = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
-    if (!underlyingPrice) return null;
+    if (!underlyingPrice) {
+      console.warn(`[BotEngine] resolveAtmMcxOptionToken: could not fetch futures LTP for ${futuresToken} (token may be expired)`);
+      return null;
+    }
 
-    // Step 2: calculate nearest MCX expiry dates to try
-    // MCX options expire on the 3rd Tuesday of each month (or last Tuesday before expiry)
-    // Try current month, next month, and also the next few Tuesdays as weekly candidates
-    const getNearestMcxExpiries = (): string[] => {
-      const dates: string[] = [];
-      const now = new Date();
-      // Generate next 8 Tuesdays (covers weekly and monthly expiries)
-      for (let week = 0; week < 8; week++) {
-        const d = new Date(now);
-        const dayOfWeek = d.getDay(); // 0=Sun, 2=Tue
-        const daysUntilTuesday = (2 - dayOfWeek + 7) % 7 || 7;
-        d.setDate(d.getDate() + daysUntilTuesday + week * 7);
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        dates.push(`${yyyy}-${mm}-${dd}`);
+    // Step 2 (PRIMARY): Use the public MCX instruments JSON — it lists every live
+    // option contract with its REAL expiry, strike, lot size, and underlying_key
+    // linking it directly to the futures contract. No expiry guessing needed.
+    // (Previous approach guessed Tuesdays — but e.g. Crude Oil options expire on
+    //  a Thursday, so every guess failed and trades were wrongly skipped.)
+    try {
+      const instruments = await getMcxInstruments();
+      const nowMs = Date.now();
+      const candidates = instruments.filter(x =>
+        x.underlying_key === futuresToken &&
+        (x.instrument_type ?? "").toUpperCase() === optionType &&
+        (x.expiry ?? 0) > nowMs,
+      );
+      if (candidates.length > 0) {
+        // Nearest expiry only
+        const nearestExpiry = Math.min(...candidates.map(c => c.expiry ?? Infinity));
+        const chain = candidates
+          .filter(c => c.expiry === nearestExpiry)
+          .sort((a, b) => Math.abs((a.strike_price ?? 0) - underlyingPrice) - Math.abs((b.strike_price ?? 0) - underlyingPrice));
+        // Take the 4 strikes closest to ATM and fetch their live premiums in one call
+        const near = chain.slice(0, 4).filter(c => c.instrument_key);
+        if (near.length > 0) {
+          const keys = near.map(c => c.instrument_key).join(",");
+          const optQuoteResp = await axios.get(
+            `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(keys)}`,
+            { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+          );
+          const oqData: Record<string, { last_price?: number; instrument_token?: string }> = optQuoteResp.data?.data ?? {};
+          // Map premiums back to candidates (response keys use trading-symbol format like "MCX_FO:CRUDEOIL 6900 CE 16 JUL 26")
+          const premiumByToken = new Map<string, number>();
+          for (const v of Object.values(oqData)) {
+            if (v?.instrument_token) premiumByToken.set(v.instrument_token, v.last_price ?? 0);
+          }
+          for (const c of near) {
+            const premium = premiumByToken.get(c.instrument_key) ?? 0;
+            if (premium > 0.5) {
+              const expDate = new Date(c.expiry!);
+              const expiryStr = `${expDate.getFullYear()}-${String(expDate.getMonth() + 1).padStart(2, "0")}-${String(expDate.getDate()).padStart(2, "0")}`;
+              console.log(`[BotEngine] MCX ATM ${optionType} resolved (instruments JSON): ${c.trading_symbol} | strike ${c.strike_price}, premium ₹${premium.toFixed(2)}, expiry ${expiryStr}, lot ${c.lot_size}`);
+              return {
+                token: c.instrument_key,
+                premium,
+                strike: c.strike_price ?? 0,
+                expiry: expiryStr,
+                lotSize: c.lot_size,
+                tradingSymbol: c.trading_symbol,
+              };
+            }
+          }
+          console.warn(`[BotEngine] MCX ${optionType}: found ${near.length} ATM contracts but no live premium > 0.5 (market may be closed)`);
+        }
+      } else {
+        console.warn(`[BotEngine] MCX instruments JSON: no live ${optionType} options with underlying_key=${futuresToken}`);
       }
-      return Array.from(new Set(dates));
-    };
-    const expiryDatesToTry = getNearestMcxExpiries();
+    } catch (jsonErr) {
+      console.warn(`[BotEngine] MCX instruments JSON path failed, falling back to contract API:`, jsonErr instanceof Error ? jsonErr.message : String(jsonErr));
+    }
 
-    // Step 3: try each expiry date until we get contracts
+    // Step 3 (FALLBACK): /v2/option/contract without expiry guessing
     let contracts: Array<{
       instrument_key?: string;
       strike_price?: number;
       instrument_type?: string;
+      expiry?: string;
+      lot_size?: number;
+      trading_symbol?: string;
       market_data?: { ltp?: number };
     }> = [];
-
-    for (const expiryDate of expiryDatesToTry) {
-      try {
-        const contractResp = await axios.get(
-          `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(futuresToken)}&expiry_date=${expiryDate}`,
-          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
-        );
-        const data = contractResp.data?.data ?? [];
-        if (Array.isArray(data) && data.length > 0) {
-          contracts = data;
-          console.log(`[BotEngine] MCX option contracts found for expiry ${expiryDate}: ${data.length} contracts`);
-          break;
-        }
-      } catch {
-        // try next expiry
+    try {
+      const fallbackResp = await axios.get(
+        `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(futuresToken)}`,
+        { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+      );
+      contracts = fallbackResp.data?.data ?? [];
+      if (contracts.length > 0) {
+        console.log(`[BotEngine] MCX option contracts found via contract API fallback: ${contracts.length}`);
       }
-    }
-
-    // If no expiry worked, try without expiry_date as last resort
-    if (contracts.length === 0) {
-      try {
-        const fallbackResp = await axios.get(
-          `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(futuresToken)}`,
-          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
-        );
-        contracts = fallbackResp.data?.data ?? [];
-      } catch {
-        // ignore
-      }
+    } catch (apiErr) {
+      console.warn(`[BotEngine] contract API fallback also failed:`, apiErr instanceof Error ? apiErr.message : String(apiErr));
     }
 
     // Filter by option type (CE or PE) and find ATM strike
@@ -1501,7 +1561,7 @@ async function resolveAtmMcxOptionToken(
       (c.instrument_type ?? "").toUpperCase() === optionType
     );
 
-    let best: { token: string; premium: number; strike: number } | null = null;
+    let best: ResolvedOption | null = null;
     let bestDist = Infinity;
     for (const opt of filtered) {
       const strike = opt.strike_price ?? 0;
@@ -1509,7 +1569,7 @@ async function resolveAtmMcxOptionToken(
       const premium = opt.market_data?.ltp ?? 0;
       if (dist < bestDist && premium > 0.5 && opt.instrument_key) {
         bestDist = dist;
-        best = { token: opt.instrument_key, premium, strike };
+        best = { token: opt.instrument_key, premium, strike, expiry: opt.expiry, lotSize: opt.lot_size, tradingSymbol: opt.trading_symbol };
       }
     }
     if (best) {
@@ -1963,7 +2023,8 @@ async function tick(
   state.lastSignal = signal;
   // Emit tick signal to activity log
   if (signal.direction !== "HOLD") {
-    emitActivity(state.sessionToken, "signal", `${signal.direction} signal @ ₹${signal.entryPrice.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf | ${signal.layer} | ${signal.reason}`, { price: signal.entryPrice, confidence: signal.confidence });
+    const slPct = signal.entryPrice > 0 ? (Math.abs(signal.entryPrice - signal.slPrice) / signal.entryPrice * 100).toFixed(1) : "?";
+    emitActivity(state.sessionToken, "signal", `◆ ${signal.direction} signal @ ₹${signal.entryPrice.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf | ${signal.layer} | SL ₹${signal.slPrice.toFixed(2)} (${slPct}%) | Target ₹${signal.targetPrice.toFixed(2)} | ATR ${signal.atr.toFixed(1)} | ${signal.reason}`, { price: signal.entryPrice, confidence: signal.confidence });
   }
   if (signal.direction === "HOLD" || signal.confidence < state.minConfidence / 100) return;
 
@@ -2008,7 +2069,7 @@ async function tick(
         // Skip the trade in ALL cases when a token is present — the token is likely expired.
         // Only use mock premiums when there is NO token at all (no-token paper mode).
         console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping trade.`);
-        emitActivity(state.sessionToken, "error", `⚠ MCX futures token resolve failed for ${symbol} — skipping trade. Your Upstox token may be expired. Refresh it in Settings.`);
+        emitActivity(state.sessionToken, "error", `⚠ MCX futures resolve failed for ${symbol} — cannot find active futures contract. Upstox instruments API may be down or token expired. Refresh token in Settings.`);
         return;
       }
     } // end isMcxPlaceholder
@@ -2027,9 +2088,19 @@ async function tick(
       // In paper mode WITHOUT a token: fall back to mock premium (handled by the else-if block below).
       // In live mode: always skip.
       if (state.mode === "live" || state.accessToken) {
-        const reason = state.mode === "live" ? "live mode" : "access token present but API call failed (token may be expired)";
+        // Compute what the bot WOULD have bought for the activity log
+        const symSkip = state.instrumentSymbol.toUpperCase();
+        let strikeStepSkip = 50;
+        if (symSkip.includes("GOLD")) strikeStepSkip = 100;
+        else if (symSkip.includes("SILVER")) strikeStepSkip = 1000;
+        else if (symSkip.includes("CRUDE") || symSkip.includes("OIL")) strikeStepSkip = 50;
+        else if (symSkip.includes("NATGAS") || symSkip.includes("GAS")) strikeStepSkip = 5;
+        else if (symSkip.includes("BANK")) strikeStepSkip = 100;
+        const estimatedStrike = state.lastPrice > 0 ? Math.round(state.lastPrice / strikeStepSkip) * strikeStepSkip : 0;
+        const wouldBuy = `${state.instrumentLabel} ${estimatedStrike} ${ceOrPe}`;
+        const reason = state.mode === "live" ? "live mode — cannot trade without confirmed contract" : "option contract lookup failed (price quote OK → token valid, but no matching option contracts found for this expiry)";
         console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option (${reason}). Skipping trade.`);
-        emitActivity(state.sessionToken, "error", `⚠ ATM option resolve failed — skipping trade. Check your Upstox token (may be expired). Refresh it in Settings.`);
+        emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Would buy ${wouldBuy} but option contract lookup failed. Underlying price ₹${state.lastPrice.toFixed(2)} fetched OK (token valid). Issue: no live option contracts matched for ${resolvedUnderlying}. Check: is this contract expired? Try refreshing token or restarting bot.`);
         return;
       }
       // Paper mode with no token: use mock premium (clearly labelled)
@@ -2065,6 +2136,16 @@ async function tick(
       optionPremiumForSizing = resolved.premium;
       state.optionTradeToken = resolved.token;
       state.optionPremiumPrice = resolved.premium;
+      // Use the contract's actual lot size when available (MCX lot sizes vary per commodity)
+      if (resolved.lotSize && resolved.lotSize > 0) {
+        state.lotSize = resolved.lotSize;
+      }
+      const contractName = resolved.tradingSymbol ?? `${state.instrumentSymbol} ${resolved.strike} ${ceOrPe}`;
+      emitActivity(
+        state.sessionToken,
+        "signal",
+        `📋 Contract: ${contractName} | Strike ${resolved.strike} | Premium ₹${resolved.premium.toFixed(2)}${resolved.expiry ? ` | Expiry ${resolved.expiry}` : ""}${resolved.lotSize ? ` | Lot ${resolved.lotSize}` : ""}`,
+      );
       console.log(`[BotEngine] ${state.sessionToken} — Options mode: ${ceOrPe} @ strike ${resolved.strike}, premium ₹${resolved.premium.toFixed(2)}, token: ${resolved.token}`);
     }
     } // end !optionPremiumForSizing guard
@@ -2256,7 +2337,7 @@ async function tick(
   const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + state.targetMultiplier * 0.5) : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
-  emitActivity(state.sessionToken, "trade_open", `${tradeType} ${signal.direction} ${displayLabel} @ ₹${displayEntry.toFixed(2)} | SL: ₹${displaySl.toFixed(2)} | Target: ₹${displayTarget.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf`, { price: displayEntry, confidence: signal.confidence });
+  emitActivity(state.sessionToken, "trade_open", `${tradeType} ${signal.direction} ${displayLabel} @ ₹${displayEntry.toFixed(2)} | SL: ₹${displaySl.toFixed(2)} | Target: ₹${displayTarget.toFixed(2)} | Qty: ${quantity} (${Math.floor(quantity / lotSize)} lot${Math.floor(quantity / lotSize) > 1 ? "s" : ""}) | Risk: ₹${riskAmount.toFixed(0)} | ${(signal.confidence * 100).toFixed(0)}% conf | ${signal.layer}`, { price: displayEntry, confidence: signal.confidence });
 
   // Telegram: send trade alert
   const dirEmoji = signal.direction === "BUY" ? "🟢" : "🔴";

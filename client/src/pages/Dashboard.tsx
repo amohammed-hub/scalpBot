@@ -543,6 +543,14 @@ export default function Dashboard() {
     { refetchInterval: 60000, staleTime: 30000 }
   );
   const [tokenStatus, setTokenStatus] = useState<"valid" | "missing" | "short">("missing");
+  // Real-time token health check via Upstox API
+  const tokenHealthQuery = trpc.credentials.tokenHealth.useQuery(
+    { sessionToken },
+    { enabled: !!sessionToken, refetchInterval: 60000, staleTime: 30000 }
+  );
+  const tokenHealthStatus = tokenHealthQuery.data?.status;
+  const tokenHealthMessage = tokenHealthQuery.data?.message;
+
   useEffect(() => {
     if (serverCreds !== undefined) {
       // Server DB is the source of truth — covers auto-fetched tokens
@@ -754,14 +762,16 @@ export default function Dashboard() {
             <p className="text-white/50 text-sm">Automated scalping — Candle breakout + EMA + VWAP + RSI</p>
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate("/settings")}
-              title={tokenStatus === "valid" ? "Access Token: OK" : tokenStatus === "missing" ? "No Access Token" : "Token looks incomplete"}
+          <button onClick={() => navigate("/settings")}
+              title={tokenHealthMessage ?? (tokenStatus === "valid" ? "Access Token: OK" : tokenStatus === "missing" ? "No Access Token" : "Token looks incomplete")}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                tokenStatus === "valid" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                (tokenStatus === "valid" && tokenHealthStatus !== "expired") ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
                 : tokenStatus === "missing" ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 animate-pulse"
                 : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
               }`}>
-              {tokenStatus === "valid" ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK</span></>
+              {(tokenStatus === "valid" && tokenHealthStatus === "valid") ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK ✓</span></>
+               : (tokenHealthStatus === "expired") ? <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token Expired!</span></>
+               : tokenStatus === "valid" ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK</span></>
                : tokenStatus === "missing" ? <><ShieldOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">No Token</span></>
                : <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token?</span></>}
             </button>

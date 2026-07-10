@@ -439,3 +439,10 @@
 - [x] Paper-to-Live Readiness: checklist + readiness score (win rate >= 50%, profit factor >= 1.5, max drawdown < 10%) with "Ready to Go Live" indicator
 - [x] Vitest coverage for all new modules
 - [x] Push to GitHub for Railway deployment
+
+## Bug Fix: MCX Option Resolve + Trade Details (Jul 10, 2026)
+- [x] Fix MCX ATM option resolve failure — diagnose why Crude Oil option contract lookup fails
+- [x] Add rich signal details to activity log: strike name, premium, expiry, lot size, quantity, SL, TP for every signal
+- [x] Show skipped-trade details (what it WOULD have bought) even when resolve fails
+- [x] Add token health check indicator on dashboard (token valid/expired/missing)
+- [x] Improve error messages with actionable guidance

@@ -171,6 +171,43 @@ export const appRouter = router({
 
         return { success: true };
       }),
+    // Token health check — tests the Upstox token by making a real API call
+    tokenHealth: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return { status: "no_db" as const, message: "Database unavailable" };
+        const rows = await db
+          .select()
+          .from(upstoxCredentials)
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .limit(1);
+        if (rows.length === 0 || !rows[0].apiKey) {
+          return { status: "not_configured" as const, message: "No API credentials saved. Go to Settings to add your Upstox API key." };
+        }
+        if (!rows[0].accessToken) {
+          return { status: "no_token" as const, message: "No access token. Generate one in Settings → Upstox Auth." };
+        }
+        const expiresAt = rows[0].tokenExpiresAt;
+        if (expiresAt && new Date(expiresAt) < new Date()) {
+          return { status: "expired" as const, message: `Token expired at ${new Date(expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}. Refresh it in Settings.` };
+        }
+        try {
+          const resp = await fetch("https://api.upstox.com/v2/user/get-funds-and-margin", {
+            headers: { Authorization: `Bearer ${rows[0].accessToken}`, Accept: "application/json" },
+            signal: AbortSignal.timeout(6000),
+          });
+          if (resp.ok) {
+            return { status: "valid" as const, message: "Token is active and working.", expiresAt: expiresAt?.toISOString() };
+          }
+          if (resp.status === 401) {
+            return { status: "expired" as const, message: "Token rejected by Upstox (401). Refresh in Settings." };
+          }
+          return { status: "error" as const, message: `Upstox returned ${resp.status}. Token may still work for market data.` };
+        } catch (err) {
+          return { status: "error" as const, message: `Could not reach Upstox API: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      }),
   }),
 
   // Bot
