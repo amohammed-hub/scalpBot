@@ -1664,6 +1664,12 @@ async function tick(
   let tradeLabel = state.instrumentLabel;
   let optionPremiumForSizing: number | null = null;
 
+  // Safety: ensure underlyingToken is always set when isIndexOptions=true
+  // If it was not saved to DB, derive it from instrumentToken
+  if (isOptionsMode && !state.underlyingToken) {
+    state.underlyingToken = state.instrumentToken;
+  }
+
   if (isOptionsMode && state.accessToken) {
     // Determine CE or PE based on signal direction (or explicit optionType override)
     const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
@@ -1815,6 +1821,31 @@ async function tick(
     tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike || "ATM"}_${ceOrPe}`;
     optionPremiumForSizing = mockPremium;
     state.optionPremiumPrice = mockPremium;
+  }
+
+  // ── ABSOLUTE SAFETY NET ─────────────────────────────────────────────────────────
+  // If isOptionsMode=true but optionPremiumForSizing is still null at this point,
+  // it means all option resolution paths were skipped (e.g. underlyingToken was null
+  // and accessToken path was skipped). Force-set from mockPrices to prevent spot price
+  // from leaking as entry price (which causes ₹24,000+ entries and absurd P&L).
+  if (isOptionsMode && !optionPremiumForSizing) {
+    const sym3 = state.instrumentSymbol.toUpperCase();
+    const ceOrPe3: "CE" | "PE" = signal.direction === "BUY" ? "CE" : "PE";
+    let mockKey3: string;
+    if (sym3.includes("BANK"))                                   mockKey3 = ceOrPe3 === "CE" ? "BNF_CE"        : "BNF_PE";
+    else if (sym3.includes("FIN") || sym3.includes("FINNIFTY")) mockKey3 = ceOrPe3 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+    else if (sym3.includes("GOLD"))                             mockKey3 = ceOrPe3 === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
+    else if (sym3.includes("SILVER"))                           mockKey3 = ceOrPe3 === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+    else if (sym3.includes("CRUDE") || sym3.includes("OIL"))   mockKey3 = ceOrPe3 === "CE" ? "MCX_CRUDE_CE"  : "MCX_CRUDE_PE";
+    else if (sym3.includes("NATGAS") || sym3.includes("GAS"))  mockKey3 = ceOrPe3 === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+    else                                                         mockKey3 = ceOrPe3 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+    optionPremiumForSizing = mockPrices[mockKey3] ?? (ceOrPe3 === "CE" ? 150 : 120);
+    const atmStrike3 = state.lastPrice > 0 ? Math.round(state.lastPrice / 50) * 50 : 0;
+    tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike3 || "ATM"}_${ceOrPe3}`;
+    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe3}_${atmStrike3 || "ATM"}`;
+    tradeLabel = `${state.instrumentLabel}${atmStrike3 > 0 ? ` ${atmStrike3}` : " ATM"} ${ceOrPe3} (paper)`;
+    state.optionPremiumPrice = optionPremiumForSizing;
+    emitActivity(state.sessionToken, "signal", `⚠ Safety net: using mock premium ₹${optionPremiumForSizing} for ${tradeSymbol}`);
   }
 
   // ── Position sizing ───────────────────────────────────────────────────────────────
