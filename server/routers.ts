@@ -1453,6 +1453,13 @@ export const appRouter = router({
         if (duplicate) {
           throw new Error(`Instrument already running in ${duplicate.botSlot === 0 ? 'Primary' : `Slot ${duplicate.botSlot}`}. Stop that bot first before starting the same instrument in another slot.`);
         }
+        // Server-side safety guard: NSE_INDEX and MCX_FO tokens are ALWAYS options mode.
+        // This prevents accidental direct futures/spot trading regardless of what the frontend sends.
+        const slotIsIndexToken = input.instrumentToken.startsWith("NSE_INDEX|") || input.instrumentToken.startsWith("MCX_FO|");
+        if (slotIsIndexToken && !input.isIndexOptions) {
+          (input as any).isIndexOptions = true;
+          if (!input.underlyingToken) (input as any).underlyingToken = input.instrumentToken;
+        }
         // Load access token for BOTH paper and live modes (paper uses it for real market data)
         let accessToken: string | null = null;
         {
@@ -1511,6 +1518,8 @@ export const appRouter = router({
             telegramBotToken: input.telegramBotToken, telegramChatId: input.telegramChatId,
             telegramEnabled: input.telegramEnabled, botSlot: input.slot,
             tradesCount: slotTodayCount, dailyPnl: slotRestoredDailyPnl,
+            isIndexOptions: input.isIndexOptions ?? false,
+            underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(), stoppedAt: null, lastError: null,
           }).where(eq(botSessions.sessionToken, slotToken));
         } else {
@@ -1525,6 +1534,8 @@ export const appRouter = router({
             scanIntervalSec: input.scanIntervalSec, telegramBotToken: input.telegramBotToken,
             telegramChatId: input.telegramChatId, telegramEnabled: input.telegramEnabled,
             botSlot: input.slot, tradesCount: slotTodayCount, dailyPnl: slotRestoredDailyPnl,
+            isIndexOptions: input.isIndexOptions ?? false,
+            underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(),
           });
           sessionId = Number((result as unknown as { insertId: number }).insertId);
