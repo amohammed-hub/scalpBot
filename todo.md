@@ -488,7 +488,6 @@
 - [x] All 119 tests passing, TypeScript 0 errors
 
 ## Precision Verification Framework (Jul 11, 2026)
-- [ ] Signal journal DB table — log every signal with layer, confidence, regime, VIX, outcome
 - [x] Signal journal DB table — log every signal with layer, confidence, regime, VIX, outcome
 - [x] Performance metrics engine — Sharpe ratio, expectancy, profit factor, max drawdown, streaks
 - [x] Per-layer accuracy breakdown — win rate, avg P&L, best/worst per strategy layer
