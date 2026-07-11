@@ -2329,43 +2329,36 @@ export default function Dashboard() {
                               if (t.mode === "live" && t.upstoxOrderId) {
                                 return `https://upstox.com/orders/${t.upstoxOrderId}`;
                               }
-                              // Build a TradingView chart link for the underlying instrument
-                              // Extract the symbol name from symbolLabel or symbol
                               const label = (t.symbolLabel ?? t.symbol ?? "").toUpperCase();
-                              // Determine exchange and symbol for TradingView
-                              let tvSymbol = "";
+                              // Link to Upstox option chain page for the underlying instrument
                               if (label.includes("CRUDE") || label.includes("OIL")) {
-                                tvSymbol = "MCX:CRUDEOIL1!";
+                                return "https://upstox.com/option-chain/crude-oil/";
                               } else if (label.includes("GOLD")) {
-                                tvSymbol = "MCX:GOLD1!";
+                                return "https://upstox.com/option-chain/gold/";
                               } else if (label.includes("SILVER")) {
-                                tvSymbol = "MCX:SILVER1!";
+                                return "https://upstox.com/option-chain/silver/";
                               } else if (label.includes("NATGAS") || label.includes("GAS")) {
-                                tvSymbol = "MCX:NATURALGAS1!";
+                                return "https://upstox.com/option-chain/natural-gas/";
                               } else if (label.includes("COPPER")) {
-                                tvSymbol = "MCX:COPPER1!";
+                                return "https://upstox.com/option-chain/copper/";
                               } else if (label.includes("ZINC")) {
-                                tvSymbol = "MCX:ZINC1!";
+                                return "https://upstox.com/option-chain/zinc/";
                               } else if (label.includes("ALUMINIUM")) {
-                                tvSymbol = "MCX:ALUMINIUM1!";
+                                return "https://upstox.com/option-chain/aluminium/";
                               } else if (label.includes("BANKNIFTY") || label.includes("BANK NIFTY")) {
-                                tvSymbol = "NSE:BANKNIFTY1!";
+                                return "https://upstox.com/option-chain/bank-nifty/";
                               } else if (label.includes("NIFTY")) {
-                                tvSymbol = "NSE:NIFTY1!";
+                                return "https://upstox.com/option-chain/nifty/";
                               } else if (label.includes("FINNIFTY")) {
-                                tvSymbol = "NSE:FINNIFTY1!";
+                                return "https://upstox.com/option-chain/finnifty/";
                               } else {
-                                // Fallback: try to extract symbol from token
-                                const parts = token.split("|");
-                                const exch = parts[0]?.includes("MCX") ? "MCX" : "NSE";
-                                tvSymbol = `${exch}:${(t.symbol ?? "NIFTY").replace(/[^A-Z0-9]/g, "")}`;
+                                return "https://upstox.com/option-chain/nifty/";
                               }
-                              return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}`;
                             })()}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 hover:text-emerald-400 transition-colors group cursor-pointer"
-                            title={`Open ${t.symbolLabel ?? t.symbol} chart on TradingView`}
+                            title={`View ${t.symbolLabel ?? t.symbol} option chain on Upstox`}
                           >
                             {t.symbolLabel ?? t.symbol}
                             <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
