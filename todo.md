@@ -498,4 +498,4 @@
 ## New Strategy Layers (Jul 11, 2026)
 - [x] 1-Hour Candle Close Strategy layer (HourlyClose) — wait for first hourly candle, enter on strong body
 - [x] Anish Singh Thakur / Booming Bulls layer (BoomingBulls) — ADX + Supertrend + Pivot breakout
-- [ ] Layer selection UI toggle in Dashboard — checkboxes to enable/disable each strategy layer
+- [x] Layer selection UI toggle in Dashboard — checkboxes to enable/disable each strategy layer
