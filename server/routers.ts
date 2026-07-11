@@ -524,7 +524,7 @@ export const appRouter = router({
           const dbInner = await getDb();
           if (!dbInner) return;
           const entryRow = await dbInner
-            .select({ entryPrice: tradeLog.entryPrice, quantity: tradeLog.quantity, capital: botSessions.capital })
+            .select({ entryPrice: tradeLog.entryPrice, quantity: tradeLog.quantity, capital: botSessions.capital, enteredAt: tradeLog.enteredAt })
             .from(tradeLog)
             .where(eq(tradeLog.id, dbId))
             .limit(1);
@@ -540,6 +540,10 @@ export const appRouter = router({
               exitedAt: new Date(),
             })
             .where(eq(tradeLog.id, dbId));
+
+          // Update signal journal with trade outcome
+          const holdDurationMs = entryRow[0]?.enteredAt ? Date.now() - entryRow[0].enteredAt.getTime() : 0;
+          updateJournalOnTradeClose(dbId, exitPrice, pnl, exitReason, holdDurationMs);
 
           const state = getBotState(input.sessionToken);
           if (state) {
@@ -2624,5 +2628,43 @@ export const appRouter = router({
       .input(z.object({ brokerage: z.number().min(0).max(200).default(20), slippagePct: z.number().min(0).max(1).default(0.05) }))
       .mutation(({ input }) => setPaperCostConfig(input.brokerage, input.slippagePct)),
   }),
+
+  // ── Precision Verification ──────────────────────────────────────────────────
+  precision: router({
+    /** Get comprehensive precision metrics */
+    metrics: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        fromDate: z.string().optional(),
+        toDate: z.string().optional(),
+        capital: z.number().optional(),
+      }))
+      .query(async ({ input }) => {
+        return computePrecisionMetrics(input.sessionToken, input.fromDate, input.toDate, input.capital);
+      }),
+
+    /** Get per-layer accuracy breakdown */
+    layerAccuracy: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        fromDate: z.string().optional(),
+        toDate: z.string().optional(),
+      }))
+      .query(async ({ input }) => {
+        return computeLayerAccuracy(input.sessionToken, input.fromDate, input.toDate);
+      }),
+
+    /** Get daily performance reports */
+    dailyReports: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        days: z.number().min(1).max(365).default(30),
+      }))
+      .query(async ({ input }) => {
+        return computeDailyReports(input.sessionToken, input.days);
+      }),
+  }),
 });
 export type AppRouter = typeof appRouter;
+import { computePrecisionMetrics, computeLayerAccuracy, computeDailyReports } from "./precisionMetrics";
+import { updateJournalOnTradeClose } from "./precisionMetrics";

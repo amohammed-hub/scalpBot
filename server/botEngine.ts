@@ -17,6 +17,7 @@
 
 import axios from "axios";
 import { emitActivity } from "./activityLog";
+import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
 import {
   getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
   recordTradeClose, isCooldownActive, applyPaperCosts, getPaperCostConfig,
@@ -2246,8 +2247,15 @@ async function tick(
   const newTradeExposure = entryPriceForExposure * quantity;
   const exposureCheck = canOpenNewTrade(getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, "")), newTradeExposure);
   if (!exposureCheck.allowed) {
-    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: exposureCheck.reason ?? "Portfolio exposure cap reached", layer: "None" };
+    const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: exposureCheck.reason ?? "Portfolio exposure cap reached", layer: "None" };
+    state.lastSignal = rejectSignal;
     emitActivity(state.sessionToken, "signal", `⛔ Entry blocked — ${exposureCheck.reason}`);
+    logSignalToJournal({
+      sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+      direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+      entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+      atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: exposureCheck.reason ?? "Exposure cap",
+    });
     return;
   }
 
@@ -2335,6 +2343,13 @@ async function tick(
 
   state.isOpeningTrade = false; // Release mutex after openTrade is set
   state.tradesCount += 1;
+  // Log signal as traded in journal
+  logSignalToJournal({
+    sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+    direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+    entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+    atr: signal.atr, regime: signal.marketRegime, outcome: "traded", tradeId: dbId,
+  });
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;

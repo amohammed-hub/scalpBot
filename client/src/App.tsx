@@ -24,6 +24,7 @@ function Router() {
       <Route path="/hero-zero" component={HeroZeroScanner} />
       <Route path="/pnl-analytics" component={PnLAnalytics} />
       <Route path="/backtest" component={Backtest} />
+      <Route path="/verification" component={Verification} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
@@ -44,3 +45,4 @@ function App() {
 }
 
 export default App;
+import Verification from "./pages/Verification";

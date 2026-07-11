@@ -121,3 +121,40 @@ export const tradeLog = mysqlTable("trade_log", {
 });
 export type TradeLog = typeof tradeLog.$inferSelect;
 export type InsertTradeLog = typeof tradeLog.$inferInsert;
+
+// ── Signal Journal ───────────────────────────────────────────────────────────
+// Logs EVERY signal generated (whether traded or rejected) for precision verification
+export const signalJournal = mysqlTable("signal_journal", {
+  id: int("id").autoincrement().primaryKey(),
+  sessionToken: varchar("sessionToken", { length: 128 }).notNull(),
+  symbol: varchar("symbol", { length: 32 }).notNull(),
+  instrumentToken: varchar("instrumentToken", { length: 128 }),
+  direction: mysqlEnum("direction", ["BUY", "SELL"]).notNull(),
+  layer: varchar("layer", { length: 64 }).notNull(), // signal layer (Supertrend, MACD/BB, etc.)
+  confidence: float("confidence").notNull(),
+  entryPrice: float("entryPrice").notNull(), // price at signal time
+  suggestedSl: float("suggestedSl"), // suggested SL at signal time
+  suggestedTarget: float("suggestedTarget"), // suggested target at signal time
+  atr: float("atr"), // ATR at signal time
+  // Market context at signal time
+  regime: varchar("regime", { length: 32 }), // trending/ranging/high_vol/low_vol
+  vixLevel: float("vixLevel"), // India VIX at signal time
+  oiBias: varchar("oiBias", { length: 16 }), // bullish/bearish/neutral from options flow
+  // Outcome tracking
+  outcome: mysqlEnum("outcome", ["traded", "rejected", "pending"]).default("pending").notNull(),
+  rejectReason: varchar("rejectReason", { length: 128 }), // why signal was rejected (risk gate, cooldown, etc.)
+  tradeId: int("tradeId"), // FK to trade_log.id if traded
+  // Post-trade outcome (filled after trade closes)
+  exitPrice: float("exitPrice"),
+  pnl: float("pnl"),
+  exitReason: varchar("exitReason", { length: 64 }),
+  holdDurationMs: bigint("holdDurationMs", { mode: "number" }), // how long the trade was held
+  maxFavorableExcursion: float("maxFavorableExcursion"), // max profit during trade (MFE)
+  maxAdverseExcursion: float("maxAdverseExcursion"), // max loss during trade (MAE)
+  // Timestamps
+  signalAt: timestamp("signalAt").defaultNow().notNull(),
+  outcomeAt: timestamp("outcomeAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type SignalJournal = typeof signalJournal.$inferSelect;
+export type InsertSignalJournal = typeof signalJournal.$inferInsert;

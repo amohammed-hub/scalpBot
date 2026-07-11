@@ -486,3 +486,12 @@
 - [x] Bug 5: heroZero.scanStrikes empty expiry_date= param — Upstox API may 400 on empty string. Removed param entirely (API returns nearest expiry by default).
 - [x] Bug 6: bot.stop didn't clear activity log — stale events from previous session persisted in memory. Now calls clearActivity on stop.
 - [x] All 119 tests passing, TypeScript 0 errors
+
+## Precision Verification Framework (Jul 11, 2026)
+- [ ] Signal journal DB table — log every signal with layer, confidence, regime, VIX, outcome
+- [x] Signal journal DB table — log every signal with layer, confidence, regime, VIX, outcome
+- [x] Performance metrics engine — Sharpe ratio, expectancy, profit factor, max drawdown, streaks
+- [x] Per-layer accuracy breakdown — win rate, avg P&L, best/worst per strategy layer
+- [x] Verification Dashboard page — equity curve, metrics cards, layer heatmap, daily stats
+- [x] Auto-logging wired into botEngine — every signal/trade journaled with full context
+- [x] Daily/weekly summary generation — automated performance reports

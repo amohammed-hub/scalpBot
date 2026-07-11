@@ -716,6 +716,11 @@ export default function Dashboard() {
           <span className="text-base">🔬</span>
           Backtester
         </button>
+        <button onClick={() => navigate("/verification")}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-amber-400 hover:bg-amber-500/10 border border-amber-500/20">
+          <span className="text-base">📊</span>
+          Precision Verify
+        </button>
         <div className="mt-auto px-2 pb-2 space-y-2">
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${isRunning ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-white/40"}`}>
             <HealthDot
