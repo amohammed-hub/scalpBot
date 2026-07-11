@@ -441,6 +441,12 @@ export const appRouter = router({
               optionType: input.optionType ?? null,
             })
             .where(eq(botSessions.sessionToken, input.sessionToken));
+          // Persist enabledLayers separately (text column, JSON-encoded)
+          if (input.enabledLayers) {
+            await db.update(botSessions).set({
+              enabledLayers: JSON.stringify(input.enabledLayers),
+            }).where(eq(botSessions.sessionToken, input.sessionToken));
+          }
         } else {
           const result = await db.insert(botSessions).values({
             sessionToken: input.sessionToken,
@@ -464,8 +470,9 @@ export const appRouter = router({
             startedAt: new Date(),
             lotSize: input.lotSize,
             isIndexOptions: input.isIndexOptions,
-            underlyingToken: input.underlyingToken ?? null,
-            optionType: input.optionType ?? null,
+              underlyingToken: input.underlyingToken ?? null,
+              optionType: input.optionType ?? null,
+              enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
           });
           sessionId = Number((result as unknown as { insertId: number }).insertId);
         }
@@ -1686,6 +1693,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions ?? false,
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(), stoppedAt: null, lastError: null,
+            enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
           }).where(eq(botSessions.sessionToken, slotToken));
         } else {
           const result = await db.insert(botSessions).values({
@@ -1702,6 +1710,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions ?? false,
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(),
+            enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
           });
           sessionId = Number((result as unknown as { insertId: number }).insertId);
         }

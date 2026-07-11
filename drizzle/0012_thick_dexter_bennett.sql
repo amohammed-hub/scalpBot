@@ -1,0 +1,1 @@
+ALTER TABLE `bot_sessions` ADD `enabledLayers` text;

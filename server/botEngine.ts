@@ -2133,6 +2133,12 @@ async function tick(
     }
   }
 
+  // ── HourlyClose one-shot guard: only fire once per day ─────────────────────
+  if (signal.layer === "HourlyClose" && state.hourlyCloseSignalFired) {
+    emitActivity(state.sessionToken, "signal", `⊘ HourlyClose signal skipped (already fired today)`);
+    return;
+  }
+
   // ── Options mode: resolve ATM option token based on signal direction ──────────────────────
   // When isOptionsMode=true, the bot reads the underlying (Nifty/BankNifty futures) for signals
   // but places the actual order on the ATM CE (for BUY) or ATM PE (for SELL).
@@ -2442,6 +2448,10 @@ async function tick(
 
   state.isOpeningTrade = false; // Release mutex after openTrade is set
   state.tradesCount += 1;
+  // Mark HourlyClose as fired for today (one-shot strategy)
+  if (signal.layer === "HourlyClose") {
+    state.hourlyCloseSignalFired = true;
+  }
   // Log signal as traded in journal
   logSignalToJournal({
     sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
@@ -2578,6 +2588,7 @@ export function startBot(
             underlyingToken: state.underlyingToken,
             optionType: state.optionType,
             consecutiveTickErrors: 0,
+            enabledLayers: state.enabledLayers,
           }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
         }
       });

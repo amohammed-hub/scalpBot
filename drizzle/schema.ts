@@ -83,6 +83,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   optionType: varchar("optionType", { length: 8 }),
   // End-of-day summary cron task UID (set when EOD summary is enabled)
   eodSummaryCronTaskUid: varchar("eodSummaryCronTaskUid", { length: 128 }),
+  // Strategy layer selection (JSON array of enabled layer names)
+  enabledLayers: text("enabledLayers"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

@@ -499,3 +499,9 @@
 - [x] 1-Hour Candle Close Strategy layer (HourlyClose) — wait for first hourly candle, enter on strong body
 - [x] Anish Singh Thakur / Booming Bulls layer (BoomingBulls) — ADX + Supertrend + Pivot breakout
 - [x] Layer selection UI toggle in Dashboard — checkboxes to enable/disable each strategy layer
+
+## Round 4 Audit — Strategy Layer Wiring (Jul 11)
+- [x] Fix: Auto-restart preserves enabledLayers (botEngine.ts)
+- [x] Fix: HourlyClose one-shot guard — only fires once per day (botEngine.ts)
+- [x] Fix: Secondary slot quick-start passes enabledLayers (Dashboard.tsx)
+- [x] Fix: enabledLayers persisted in bot_sessions DB column + restored on restart (schema + routers + botRestart)

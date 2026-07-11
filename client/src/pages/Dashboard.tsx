@@ -259,6 +259,7 @@ export default function Dashboard() {
       isIndexOptions: isIdxOpt,
       underlyingToken: resolvedToken,
       telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+      enabledLayers: config.enabledLayers,
     });
   };
 
