@@ -266,6 +266,7 @@ export const appRouter = router({
         isIndexOptions: z.boolean().default(false), // true = auto-resolve ATM CE/PE at trade time
         underlyingToken: z.string().optional(), // e.g. "NSE_INDEX|Nifty Bank"
         optionType: z.enum(["CE", "PE", "auto"]).optional(), // "auto" = CE for BUY, PE for SELL
+        enabledLayers: z.array(z.string()).optional(),
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -604,6 +605,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions,
             underlyingToken: input.underlyingToken,
             optionType: input.optionType,
+            enabledLayers: input.enabledLayers,
             consecutiveTickErrors: 0,
           },
           onTradeOpen,
@@ -1554,6 +1556,7 @@ export const appRouter = router({
         isIndexOptions: z.boolean().default(false),
         underlyingToken: z.string().optional(),
         optionType: z.enum(["CE", "PE", "auto"]).optional(),
+        enabledLayers: z.array(z.string()).optional(),
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -1757,6 +1760,7 @@ export const appRouter = router({
           isIndexOptions: input.isIndexOptions ?? false,
           underlyingToken: input.underlyingToken,
           optionType: input.optionType,
+          enabledLayers: input.enabledLayers,
           consecutiveTickErrors: 0,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();

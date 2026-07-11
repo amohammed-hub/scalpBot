@@ -45,6 +45,7 @@ interface BotConfig {
   trailingSlPct: number;
   minConfidence: number;
   scanIntervalSec: number;
+  enabledLayers: string[];
 }
 
 interface PricePoint { time: string; price: number; }
@@ -198,6 +199,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
+      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "InstFootprint", "HourlyClose", "BoomingBulls"],
     };
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(LS_CONFIG) ?? "null") }; }
     catch { return defaults; }
@@ -604,6 +606,7 @@ export default function Dashboard() {
       lotSize,
       isIndexOptions,
       underlyingToken,
+      enabledLayers: config.enabledLayers,
     });
   };
 
@@ -1664,6 +1667,51 @@ export default function Dashboard() {
               <span>Live mode requires your Upstox access token. Go to <button className="underline" onClick={() => navigate("/settings")}>Settings</button> to add it. Always test in Paper mode first.</span>
             </div>
           )}
+
+          {/* ── Strategy Layers Selection ───────────────────────────────────────── */}
+          <div className="mt-5 p-4 bg-white/5 rounded-xl border border-white/10">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-sm font-medium text-white">Strategy Layers</span>
+              <span className="text-[10px] text-white/40">(enable/disable which strategies the bot uses)</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {[
+                { id: "Breakout", label: "Breakout", on: "bg-yellow-500/20 border-yellow-500/40 text-yellow-400", dot: "bg-yellow-400" },
+                { id: "Pattern", label: "Pattern", on: "bg-blue-500/20 border-blue-500/40 text-blue-400", dot: "bg-blue-400" },
+                { id: "Trend", label: "Supertrend", on: "bg-teal-500/20 border-teal-500/40 text-teal-400", dot: "bg-teal-400" },
+                { id: "Momentum", label: "Momentum", on: "bg-pink-500/20 border-pink-500/40 text-pink-400", dot: "bg-pink-400" },
+                { id: "MACD_BB", label: "MACD/BB", on: "bg-violet-500/20 border-violet-500/40 text-violet-400", dot: "bg-violet-400" },
+                { id: "ORB", label: "ORB", on: "bg-lime-500/20 border-lime-500/40 text-lime-400", dot: "bg-lime-400" },
+                { id: "VWAPReversion", label: "VWAP Reversion", on: "bg-cyan-500/20 border-cyan-500/40 text-cyan-400", dot: "bg-cyan-400" },
+                { id: "VWAPPullback", label: "VWAP Pullback", on: "bg-sky-500/20 border-sky-500/40 text-sky-400", dot: "bg-sky-400" },
+                { id: "InstFootprint", label: "Institutional", on: "bg-rose-500/20 border-rose-500/40 text-rose-400", dot: "bg-rose-400" },
+                { id: "HourlyClose", label: "1H Candle Close", on: "bg-emerald-500/20 border-emerald-500/40 text-emerald-400", dot: "bg-emerald-400" },
+                { id: "BoomingBulls", label: "Booming Bulls", on: "bg-indigo-500/20 border-indigo-500/40 text-indigo-400", dot: "bg-indigo-400" },
+              ].map(layer => {
+                const isEnabled = config.enabledLayers.includes(layer.id);
+                return (
+                  <button
+                    key={layer.id}
+                    onClick={() => !isRunning && setConfig(c => ({
+                      ...c,
+                      enabledLayers: isEnabled
+                        ? c.enabledLayers.filter((l: string) => l !== layer.id)
+                        : [...c.enabledLayers, layer.id],
+                    }))}
+                    disabled={isRunning}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all border disabled:opacity-50 ${isEnabled ? layer.on : "bg-white/5 border-white/10 text-white/30"}`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${isEnabled ? layer.dot : "bg-white/20"}`} />
+                    {layer.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-2 text-[10px] text-white/30">
+              Tip: Disable underperforming layers based on your Verification Dashboard data.
+            </div>
+          </div>
+
         </div>
 
         {/* ── Strategy Presets ──────────────────────────────────────────────────── */}

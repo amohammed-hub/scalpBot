@@ -494,3 +494,8 @@
 - [x] Verification Dashboard page — equity curve, metrics cards, layer heatmap, daily stats
 - [x] Auto-logging wired into botEngine — every signal/trade journaled with full context
 - [x] Daily/weekly summary generation — automated performance reports
+
+## New Strategy Layers (Jul 11, 2026)
+- [x] 1-Hour Candle Close Strategy layer (HourlyClose) — wait for first hourly candle, enter on strong body
+- [x] Anish Singh Thakur / Booming Bulls layer (BoomingBulls) — ADX + Supertrend + Pivot breakout
+- [ ] Layer selection UI toggle in Dashboard — checkboxes to enable/disable each strategy layer

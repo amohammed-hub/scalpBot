@@ -41,7 +41,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -151,6 +151,10 @@ export interface BotState {
   optionTradeToken?: string; // resolved at runtime from option chain
   optionPremiumPrice?: number; // last fetched option premium (for quantity sizing)
   isOpeningTrade?: boolean; // mutex: prevents duplicate trade opens from concurrent ticks
+  // Layer selection: user can enable/disable specific strategy layers
+  enabledLayers?: string[];
+  // HourlyClose: track if first-hour signal already fired today
+  hourlyCloseSignalFired?: boolean;
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -865,6 +869,93 @@ export function generateSignal(
           confidence = Math.min(0.92, 0.72 + (stDir === "BUY" ? Math.max(0, rsi - 50) : Math.max(0, 50 - rsi)) * 0.003);
           reason = `[Supertrend] HA-Supertrend(10,3) flipped ${stDir} | band:${st.band.toFixed(1)} | RSI(${rsi.toFixed(0)}) | 5m:${trend5m}`;
           layer = "Trend";
+        }
+      }
+    }
+  }
+
+  // ── Layer 11: 1-Hour Candle Close Strategy (HourlyClose) ────────────────────
+  // Wait for the first 1-hour candle (9:15–10:15 AM IST) to close.
+  // If body > 60% of total range → strong directional signal.
+  // Fires ONCE per day. SL at opposite end of the hourly candle.
+  if (direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {
+    // Aggregate first ~60 one-minute candles to form the 1-hour candle (9:15–10:15)
+    const firstHourCandles = candles.slice(0, Math.min(60, candles.length));
+    const hourOpen = firstHourCandles[0].open;
+    const hourClose = firstHourCandles[firstHourCandles.length - 1].close;
+    const hourHigh = Math.max(...firstHourCandles.map(c => c.high));
+    const hourLow = Math.min(...firstHourCandles.map(c => c.low));
+    const hourRange = hourHigh - hourLow;
+    const hourBody = Math.abs(hourClose - hourOpen);
+    const bodyRatio = hourRange > 0 ? hourBody / hourRange : 0;
+
+    if (bodyRatio > 0.60 && hourRange > atr * 0.5) {
+      const isBullish = hourClose > hourOpen;
+      const hourDir: "BUY" | "SELL" = isBullish ? "BUY" : "SELL";
+      if ((hourDir === "BUY" && allow5mBuy) || (hourDir === "SELL" && allow5mSell)) {
+        direction = hourDir;
+        confidence = Math.min(0.93, 0.70 + bodyRatio * 0.2 + (adx > 25 ? 0.05 : 0));
+        reason = `[HourlyClose] 1H candle body ${(bodyRatio * 100).toFixed(0)}% of range | O:${hourOpen.toFixed(0)} C:${hourClose.toFixed(0)} H:${hourHigh.toFixed(0)} L:${hourLow.toFixed(0)} | ADX(${adx.toFixed(0)}) | 5m:${trend5m}`;
+        layer = "HourlyClose";
+      }
+    }
+  }
+
+  // ── Layer 12: Booming Bulls Strategy (ADX + Supertrend + Pivot Breakout) ────
+  // Source: Anish Singh Thakur / Booming Bulls
+  // Triple confirmation: ADX > 20 (trending) + Supertrend direction + Pivot level breakout
+  // This is the most popular retail intraday strategy in India.
+  if (direction === "HOLD" && candles.length >= 15 && srLevels.length > 0) {
+    const haCandles = toHeikenAshi(candles);
+    const st = calcSupertrend(haCandles, 10, 3.0);
+    const stDir = st.direction as "BUY" | "SELL";
+
+    // ADX must be above 20 (trending market)
+    if (adx > 20) {
+      // Check if price just broke through a pivot level in the Supertrend direction
+      const prevCandle = candles[candles.length - 2];
+      const currCandle = candles[candles.length - 1];
+
+      let pivotBroken = false;
+      let brokenLevel = 0;
+      let nextTarget = 0;
+
+      if (stDir === "BUY") {
+        // For BUY: price must cross ABOVE a resistance level (R1, R2, R3 or PP)
+        for (const level of srLevels) {
+          if (prevCandle.close <= level && currCandle.close > level && currCandle.close > level * 1.0001) {
+            pivotBroken = true;
+            brokenLevel = level;
+            // Target: next resistance level above
+            const higherLevels = srLevels.filter(l => l > level).sort((a, b) => a - b);
+            nextTarget = higherLevels.length > 0 ? higherLevels[0] : level + atr * 2;
+            break;
+          }
+        }
+      } else {
+        // For SELL: price must cross BELOW a support level (S1, S2, S3 or PP)
+        for (const level of srLevels) {
+          if (prevCandle.close >= level && currCandle.close < level && currCandle.close < level * 0.9999) {
+            pivotBroken = true;
+            brokenLevel = level;
+            // Target: next support level below
+            const lowerLevels = srLevels.filter(l => l < level).sort((a, b) => b - a);
+            nextTarget = lowerLevels.length > 0 ? lowerLevels[0] : level - atr * 2;
+            break;
+          }
+        }
+      }
+
+      if (pivotBroken) {
+        // Additional VWAP confirmation (enhanced version)
+        const vwapOk = stDir === "BUY" ? price > vwap : price < vwap;
+        if (vwapOk) {
+          if ((stDir === "BUY" && allow5mBuy) || (stDir === "SELL" && allow5mSell)) {
+            direction = stDir;
+            confidence = Math.min(0.94, 0.72 + (adx - 20) * 0.005 + (vwapOk ? 0.05 : 0));
+            reason = `[BoomingBulls] ADX(${adx.toFixed(0)}) + Supertrend(${stDir}) + Pivot break ₹${brokenLevel.toFixed(0)} | VWAP ₹${vwap.toFixed(0)} | Target ₹${nextTarget.toFixed(0)} | 5m:${trend5m}`;
+            layer = "BoomingBulls";
+          }
         }
       }
     }
@@ -2033,6 +2124,14 @@ async function tick(
     emitActivity(state.sessionToken, "signal", `◆ ${signal.direction} signal @ ₹${signal.entryPrice.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf | ${signal.layer} | SL ₹${signal.slPrice.toFixed(2)} (${slPct}%) | Target ₹${signal.targetPrice.toFixed(2)} | ATR ${signal.atr.toFixed(1)} | ${signal.reason}`, { price: signal.entryPrice, confidence: signal.confidence });
   }
   if (signal.direction === "HOLD" || signal.confidence < state.minConfidence / 100) return;
+
+  // ── Layer filter: skip signals from disabled layers ─────────────────────────
+  if (state.enabledLayers && state.enabledLayers.length > 0 && signal.layer !== "None") {
+    if (!state.enabledLayers.includes(signal.layer)) {
+      emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal from ${signal.layer} skipped (layer disabled)`);
+      return;
+    }
+  }
 
   // ── Options mode: resolve ATM option token based on signal direction ──────────────────────
   // When isOptionsMode=true, the bot reads the underlying (Nifty/BankNifty futures) for signals
