@@ -1839,20 +1839,25 @@ export default function Dashboard() {
               {(allBots ?? []).map((bot) => {
                 const isActive = bot.status === "running";
                 const slotLabel = bot.slot === 0 ? "Primary" : `Slot ${bot.slot}`;
-                const slotColor = bot.slot === 0 ? "teal" : bot.slot === 1 ? "purple" : "amber";
+                // Static class lookup — dynamic interpolation breaks Tailwind CSS purge in production
+                const slotClasses = bot.slot === 0
+                  ? { border: "border-teal-500/30", bg: "bg-teal-500/5", badge: "bg-teal-500/20", text: "text-teal-300" }
+                  : bot.slot === 1
+                    ? { border: "border-purple-500/30", bg: "bg-purple-500/5", badge: "bg-purple-500/20", text: "text-purple-300" }
+                    : { border: "border-amber-500/30", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300" };
                 const pnlPositive = (bot.dailyPnl ?? 0) > 0;
                 const pnlNegative = (bot.dailyPnl ?? 0) < 0;
                 const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
                 return (
                   <div key={bot.sessionToken} className={`rounded-xl border p-4 ${
                     isActive
-                      ? `border-${slotColor}-500/30 bg-${slotColor}-500/5`
+                      ? `${slotClasses.border} ${slotClasses.bg}`
                       : "border-white/10 bg-white/3"
                   }`}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                          isActive ? `bg-${slotColor}-500/20 text-${slotColor}-300` : "bg-white/10 text-white/40"
+                          isActive ? `${slotClasses.badge} ${slotClasses.text}` : "bg-white/10 text-white/40"
                         }`}>{slotLabel}</span>
                         {isActive && (
                           <HealthDot
@@ -2311,9 +2316,13 @@ export default function Dashboard() {
                     // For primary slot: use currentPrice (live data); for other slots: use allBots lastPrice
                     const slotEffectivePrice = tradeSlot === 0 ? currentPrice : slotLastPrice;
                     // In options mode use option premium price (only available for primary slot currently)
+                    // For secondary slots, use their optionPremiumPrice from allBots data
+                    const slotOptionPremium = slotBot?.optionPremiumPrice ?? 0;
                     const liveEffectivePrice = tradeSlot === 0 && isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
                       ? optionPremiumPrice
-                      : slotEffectivePrice;
+                      : (tradeSlot > 0 && slotOptionPremium > 0)
+                        ? slotOptionPremium
+                        : slotEffectivePrice;
                     const livePnl = t.status === "open" && liveEffectivePrice > 0
                       ? t.direction === "BUY"
                         ? (liveEffectivePrice - t.entryPrice) * t.quantity

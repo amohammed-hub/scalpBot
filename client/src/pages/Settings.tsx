@@ -566,14 +566,14 @@ export default function Settings() {
       <main className="flex-1 p-4 md:p-6 max-w-2xl overflow-y-auto">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-white mb-1">Settings</h1>
-          <p className="text-white/50 text-sm">Your credentials are stored only in your browser — never sent to any server.</p>
+          <p className="text-white/50 text-sm">Your credentials are stored securely on the server for bot operation.</p>
         </div>
 
         {/* Privacy Notice */}
         <div className="bg-teal-500/10 border border-teal-500/30 rounded-xl p-4 mb-6 flex items-start gap-3">
           <CheckCircle className="w-5 h-5 text-teal-400 shrink-0 mt-0.5" />
           <div className="text-sm text-teal-300">
-            <strong>100% Private & Independent:</strong> All credentials are saved in your browser's localStorage. They never leave your device and are not stored on any server. No login required.
+            <strong>Secure &amp; Independent:</strong> Your API credentials are stored securely on the server (encrypted at rest) to enable automated trading. No third-party login required — access via your unique session link.
           </div>
         </div>
 
@@ -615,7 +615,7 @@ export default function Settings() {
                 icon={ClipboardPaste}
                 title="Set the Redirect URL"
                 description="In the app creation form, find the Redirect URL field. Copy the Redirect URI shown in the credentials form below and paste it there."
-                note={`The Redirect URI is shown in the credentials form below — use the copy button next to it. It looks like: ${window.location.origin}/upstox-callback`}
+                note={`The Redirect URI is shown in the credentials form below — use the copy button next to it. It looks like: ${window.location.origin}/api/upstox-callback`}
               />
               <TokenStep
                 step={4}

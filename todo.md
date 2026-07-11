@@ -468,3 +468,12 @@
 - [x] Bug 9: Kill switch used raw lastPrice for options exit — now uses optionPremiumPrice for options trades
 - [x] Test whitelist updated: added VWAPPullback, MCXEvening, HeroZero, fixed InstFootprint (was InstitutionalFootprint)
 - [x] All 119 tests passing, TypeScript 0 errors
+
+## Full Deep Codebase Audit Round 2 — Bug Fixes (Jul 11, 2026)
+- [x] Bug A: Dynamic Tailwind classes in Parallel Bots panel — replaced interpolated `border-${color}` with static class lookup map (production CSS purge fix)
+- [x] Bug B: Trade Log live P&L for secondary slot options trades — now uses slotBot.optionPremiumPrice for slot 1/2 (was only using primary slot premium)
+- [x] Bug C: layerTracker.ts pattern matching — added Breakout, Supertrend, MACD/BB, VWAPPullback patterns; fixed newest-first ordering bug (slice(-20) was giving oldest trades)
+- [x] Bug D: Settings.tsx redirect URI guide text said `/upstox-callback` — fixed to `/api/upstox-callback` (actual server endpoint)
+- [x] Bug E: Supertrend `flipped` was ALWAYS false (prevDir === direction after loop) — fixed by tracking penultimate direction separately
+- [x] Settings.tsx privacy copy updated — removed misleading "never sent to server" claim, replaced with accurate "stored securely on server"
+- [x] All 119 tests passing, TypeScript 0 errors

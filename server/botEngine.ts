@@ -233,6 +233,7 @@ function calcSupertrend(
   let direction: "BUY" | "SELL" = "BUY";
   let prevDir: "BUY" | "SELL" = "BUY";
   let band = 0;
+  let penultimateDir: "BUY" | "SELL" = "BUY"; // direction at second-to-last iteration
   const startIdx = candles.length - smoothedAtrs.length;
   for (let i = 0; i < smoothedAtrs.length; i++) {
     const c = candles[startIdx + i];
@@ -252,11 +253,11 @@ function calcSupertrend(
     band = direction === "BUY" ? lowerBand : upperBand;
     prevUpperBand = upperBand;
     prevLowerBand = lowerBand;
+    penultimateDir = prevDir; // save BEFORE updating prevDir
     prevDir = direction;
   }
-  // Detect flip: compare last two directions
-  let prevDirection: "BUY" | "SELL" = prevDir;
-  const flipped = direction !== prevDirection;
+  // Detect flip: compare final direction vs the one before it
+  const flipped = direction !== penultimateDir;
   return { direction, band, flipped };
 }
 

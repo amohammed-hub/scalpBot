@@ -28,9 +28,19 @@ const autoDisabled = new Map<string, { at: number; reason: string }>();
 export function computeLayerStats(
   closedTrades: Array<{ signalReason: string | null; pnl: number | null; exitedAt: Date | null }>,
 ): LayerStats[] {
-  // Extract layer from signalReason — trades store the layer in signalReason.
-  // Known layers used by the engine:
+  // Reverse if newest-first (router passes desc order) — we need oldest-first for correct slice(-20)
+  const first = closedTrades[0]?.exitedAt;
+  const last = closedTrades[closedTrades.length - 1]?.exitedAt;
+  const sorted = closedTrades.length > 1 && first && last && first > last
+    ? [...closedTrades].reverse()
+    : closedTrades;
+
+  // Extract layer from signalReason — known layers used by the engine:
   const layerPatterns: Array<{ layer: string; test: (r: string) => boolean }> = [
+    { layer: "Breakout", test: r => r.includes("Breakout") || r.includes("breakout") },
+    { layer: "Supertrend", test: r => r.includes("Supertrend") },
+    { layer: "MACD/BB", test: r => r.includes("MACD") || r.includes("BB") || r.includes("Bollinger") },
+    { layer: "VWAPPullback", test: r => r.includes("VWAPPullback") },
     { layer: "ORB", test: r => r.includes("ORB") || r.includes("Opening Range") },
     { layer: "VWAP", test: r => r.includes("VWAP") },
     { layer: "EMA Cross", test: r => r.includes("EMA") },
@@ -44,7 +54,7 @@ export function computeLayerStats(
   ];
 
   const byLayer = new Map<string, Array<{ pnl: number }>>();
-  for (const t of closedTrades) {
+  for (const t of sorted) {
     if (t.pnl === null || t.pnl === undefined) continue;
     const reason = t.signalReason ?? "";
     let matched = "Other";
