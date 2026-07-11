@@ -40,7 +40,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "HeroZero" | "ORB" | "VWAPReversion" | "InstFootprint" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -214,7 +214,7 @@ function calcSupertrend(
   multiplier = 3.0,
 ): { direction: "BUY" | "SELL"; band: number; flipped: boolean } {
   if (candles.length < atrPeriod + 2) {
-    return { direction: "HOLD" as any, band: 0, flipped: false };
+    return { direction: "BUY", band: 0, flipped: false };
   }
   // Compute ATR for each candle
   const atrs: number[] = [];
@@ -841,7 +841,7 @@ export function generateSignal(
         direction = pullback.direction;
         confidence = Math.min(0.91, 0.68 + pullback.strength * 0.15);
         reason = `[VWAPPullback] Price returned to VWAP | ${pullback.direction} reversal candle | 5m:${trend5m}`;
-        layer = "VWAPReversion";
+        layer = "VWAPPullback";
       }
     }
   }
@@ -1314,7 +1314,7 @@ async function resolveAtmOptionToken(
 
     // Step 2: fetch option chain (nearest expiry)
     const chainResp = await axios.get(
-      `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=`,
+      `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
     );
     const chain = chainResp.data?.data?.[0];

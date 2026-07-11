@@ -12,7 +12,7 @@
  */
 import { getDb } from "./db";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { startBot, getBotState, type OpenTrade, type BotState } from "./botEngine";
 
 // Type alias for a row from botSessions (Drizzle infers this)
@@ -135,6 +135,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     entryPrice: number; quantity: number; slPrice: number; targetPrice: number;
     atr: number; confidence: number; status: "open" | "closed" | "cancelled";
     upstoxOrderId?: string; signalReason: string; enteredAt: Date;
+    partial1RPrice: number; partial2RPrice: number;
   }): Promise<number> => {
     const dbInner = await getDb();
     if (!dbInner) return 0;
@@ -156,6 +157,8 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       botSlot: session.botSlot ?? 0,
       status: "open",
       enteredAt: trade.enteredAt,
+      partial1RPrice: trade.partial1RPrice,
+      partial2RPrice: trade.partial2RPrice,
     });
     return (result as any).insertId ?? 0;
   };
@@ -173,10 +176,23 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       exitReason,
       exitedAt: new Date(),
     }).where(eq(tradeLog.id, dbId));
+    // Use live bot state for accurate counters (session snapshot is stale after restart)
+    const liveState = getBotState(session.sessionToken);
     await dbInner.update(botSessions).set({
-      tradesCount: (session.tradesCount ?? 0) + 1,
-      dailyPnl: (session.dailyPnl ?? 0) + pnl,
+      tradesCount: liveState?.tradesCount ?? ((session.tradesCount ?? 0) + 1),
+      dailyPnl: liveState?.dailyPnl ?? ((session.dailyPnl ?? 0) + pnl),
     }).where(eq(botSessions.sessionToken, session.sessionToken));
+    // Refresh StoplossGuard from recent trades (same as primary path)
+    try {
+      const { updateStoplossGuard } = await import("./riskManager");
+      const recentRows = await dbInner
+        .select({ exitReason: tradeLog.exitReason, pnl: tradeLog.pnl })
+        .from(tradeLog)
+        .where(and(eq(tradeLog.sessionToken, session.sessionToken), eq(tradeLog.status, "closed")))
+        .orderBy(desc(tradeLog.exitedAt))
+        .limit(20);
+      updateStoplossGuard(recentRows.reverse());
+    } catch { /* non-fatal */ }
   };
 
   // Build onTick callback — persist live price, trailing SL, and tick timestamp to DB on every scan

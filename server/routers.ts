@@ -911,9 +911,15 @@ export const appRouter = router({
         if (trades[0].status !== "open") throw new Error("Trade is already closed");
         const trade = trades[0];
 
-        const pnl = trade.direction === "BUY"
+        let pnl = trade.direction === "BUY"
           ? (input.exitPrice - trade.entryPrice) * trade.quantity
           : (trade.entryPrice - input.exitPrice) * trade.quantity;
+
+        // Apply paper-mode brokerage + slippage (consistent with auto-exit paths)
+        if (trade.mode === "paper") {
+          const pc = getPaperCostConfig();
+          pnl = applyPaperCosts(pnl, trade.entryPrice, input.exitPrice, trade.quantity, pc.brokerage, pc.slippagePct);
+        }
 
         // Place real exit order in live mode
         let orderId: string | null = null;
@@ -1609,6 +1615,7 @@ export const appRouter = router({
             partial1RPrice: p1, partial2RPrice: p2, partialBooked: 0 as 0 | 1 | 2,
             bookedQty: 0, bookedPnl: 0, isIndexOptions: input.isIndexOptions,
             optionMockKey: restoredOptionMockKey,
+            entryUnderlyingPrice: input.isIndexOptions ? t.entryPrice : undefined,
           };
         }
 
@@ -1634,7 +1641,7 @@ export const appRouter = router({
         const slotTodayCount = slotTodayCountRows[0]?.count ?? 0;
         // Insert or update a bot session for this slot
         const existing = await db
-          .select({ id: botSessions.id })
+          .select({ id: botSessions.id, lastPrice: botSessions.lastPrice })
           .from(botSessions)
           .where(eq(botSessions.sessionToken, slotToken))
           .limit(1);
@@ -1703,6 +1710,16 @@ export const appRouter = router({
               lastError: slotState.lastError,
             }).where(eq(botSessions.sessionToken, slotToken));
           }
+          // Refresh StoplossGuard from recent slot trades (parity with primary path)
+          try {
+            const recentRows = await dbInner
+              .select({ exitReason: tradeLog.exitReason, pnl: tradeLog.pnl })
+              .from(tradeLog)
+              .where(and(eq(tradeLog.sessionToken, slotToken), eq(tradeLog.status, "closed")))
+              .orderBy(desc(tradeLog.exitedAt))
+              .limit(20);
+            updateStoplossGuard(recentRows.reverse());
+          } catch { /* non-fatal */ }
         };
 
         startBot({

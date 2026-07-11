@@ -272,7 +272,10 @@ export async function executeKillSwitch(
     // Close open trade at market
     if (bot.openTrade) {
       const trade = bot.openTrade;
-      const exitPrice = bot.lastPrice || trade.entryPrice;
+      // For options trades, use the current option premium (not underlying spot) for exit P&L
+      const exitPrice = trade.isIndexOptions && bot.optionPremiumPrice
+        ? bot.optionPremiumPrice
+        : (bot.lastPrice || trade.entryPrice);
 
       if (trade.mode === "live" && bot.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";

@@ -455,3 +455,16 @@
 - [x] Fix P&L calculation for options: (exit_premium - entry_premium) × qty
 - [x] Verify Target Hit exit uses option premium price correctly
 - [x] Add hyperlink on symbol name in Trade Log to open Upstox chart for that instrument
+
+## Full Deep Codebase Audit — Bug Fixes (Jul 11, 2026)
+- [x] Bug 1: VWAPPullback layer was mislabeled as "VWAPReversion" — fixed to "VWAPPullback" with new union type
+- [x] Bug 2: Supertrend calcSupertrend returned "HOLD" as any for insufficient data — fixed to safe neutral default
+- [x] Bug 3: resolveAtmOptionToken had empty &expiry_date= param in URL — removed (Upstox defaults to nearest expiry)
+- [x] Bug 4: manualExit did NOT apply paper costs — added applyPaperCosts for paper mode consistency
+- [x] Bug 5: botRestart.ts onTradeOpen missing partial1RPrice/partial2RPrice in DB insert — added both fields
+- [x] Bug 6: botRestart.ts onTradeClose used stale session counters — now uses live getBotState values
+- [x] Bug 7: Secondary slot onTradeClose didn't refresh StoplossGuard — added updateStoplossGuard call
+- [x] Bug 8: Secondary slot open trade restore missing entryUnderlyingPrice — added for delta-drift calculation
+- [x] Bug 9: Kill switch used raw lastPrice for options exit — now uses optionPremiumPrice for options trades
+- [x] Test whitelist updated: added VWAPPullback, MCXEvening, HeroZero, fixed InstFootprint (was InstitutionalFootprint)
+- [x] All 119 tests passing, TypeScript 0 errors
