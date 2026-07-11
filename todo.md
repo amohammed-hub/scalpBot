@@ -477,3 +477,12 @@
 - [x] Bug E: Supertrend `flipped` was ALWAYS false (prevDir === direction after loop) — fixed by tracking penultimate direction separately
 - [x] Settings.tsx privacy copy updated — removed misleading "never sent to server" claim, replaced with accurate "stored securely on server"
 - [x] All 119 tests passing, TypeScript 0 errors
+
+## Full Deep Codebase Audit Round 3 — Bug Fixes (Jul 11, 2026)
+- [x] Bug 1: Watchdog false-success — restartSingleSession returns false when skipped, but restarted++ was unconditional. Now checks return value.
+- [x] Bug 2: Partial 2R booking guard missing — effectivePrice >= 0 always true for BUY if partial2RPrice is 0. Added same > 0 + direction validation as 1R.
+- [x] Bug 3: bot.restart onTradeClose missing StoplossGuard refresh — consecutive SL detection broken after restart. Added same refresh block as bot.start.
+- [x] Bug 4: getCachedAnalytics served arbitrarily stale data (no TTL check) — now returns null if older than 5 minutes.
+- [x] Bug 5: heroZero.scanStrikes empty expiry_date= param — Upstox API may 400 on empty string. Removed param entirely (API returns nearest expiry by default).
+- [x] Bug 6: bot.stop didn't clear activity log — stale events from previous session persisted in memory. Now calls clearActivity on stop.
+- [x] All 119 tests passing, TypeScript 0 errors

@@ -74,9 +74,11 @@ export async function runWatchdogCycle(): Promise<{ checked: number; restarted: 
         }
       } catch { /* silent */ }
       try {
-        await restartSingleSession(session);
-        restarted++;
-        emitActivity(session.sessionToken, "bot_start", `✅ Watchdog restarted bot — ${session.instrumentLabel ?? session.instrumentToken}`);
+        const didRestart = await restartSingleSession(session);
+        if (didRestart) {
+          restarted++;
+          emitActivity(session.sessionToken, "bot_start", `✅ Watchdog restarted bot — ${session.instrumentLabel ?? session.instrumentToken}`);
+        }
       } catch (err) {
         console.error(`[BotWatchdog] Failed to restart session ${session.sessionToken.slice(0, 8)}:`, err);
         emitActivity(session.sessionToken, "error", `Watchdog restart failed: ${(err as Error).message}`);

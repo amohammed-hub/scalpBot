@@ -225,5 +225,9 @@ export function checkOiConfluence(
 }
 
 export function getCachedAnalytics(underlyingToken: string): OptionsAnalytics | null {
-  return analyticsCache.get(underlyingToken) ?? null;
+  const cached = analyticsCache.get(underlyingToken);
+  if (!cached) return null;
+  // Return null if stale (> 5 minutes) — avoids serving hours-old data
+  if (Date.now() - cached.updatedAt > 300_000) return null;
+  return cached;
 }

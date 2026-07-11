@@ -1845,7 +1845,11 @@ async function tick(
         );
       }
     } else if (trade.partialBooked === 1) {
-      const hit2R = trade.direction === "BUY" ? effectivePrice >= trade.partial2RPrice : effectivePrice <= trade.partial2RPrice;
+      // Safety guard: partial2RPrice must be a valid non-zero price above/below entry (same as 1R guard)
+      const partial2Valid = trade.partial2RPrice > 0 &&
+        (trade.direction === "BUY" ? trade.partial2RPrice > trade.entryPrice : trade.partial2RPrice < trade.entryPrice);
+      const hit2R = partial2Valid &&
+        (trade.direction === "BUY" ? effectivePrice >= trade.partial2RPrice : effectivePrice <= trade.partial2RPrice);
       if (hit2R) {
         // Book another 25% (half of remaining) at 2R
         const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));

@@ -630,6 +630,11 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .mutation(async ({ input }) => {
         stopBot(input.sessionToken);
+        // Clear activity log for this session (stale events confuse UX on next start)
+        try {
+          const { clearActivity } = await import("./activityLog");
+          clearActivity(input.sessionToken);
+        } catch { /* non-fatal */ }
         const db = await getDb();
         if (db) {
           await db
@@ -752,6 +757,16 @@ export const appRouter = router({
           await dbInner.update(tradeLog).set({ status: "closed", exitPrice, pnl, pnlPct: (pnl / capital) * 100, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
           const state = getBotState(input.sessionToken);
           if (state) await dbInner.update(botSessions).set({ tradesCount: state.tradesCount, dailyPnl: state.dailyPnl, status: state.status, lastError: state.lastError }).where(eq(botSessions.sessionToken, input.sessionToken));
+          // Refresh StoplossGuard state from last 20 closed trades (same as bot.start path)
+          try {
+            const recentRows = await dbInner
+              .select({ exitReason: tradeLog.exitReason, pnl: tradeLog.pnl })
+              .from(tradeLog)
+              .where(and(eq(tradeLog.sessionToken, input.sessionToken), eq(tradeLog.status, "closed")))
+              .orderBy(desc(tradeLog.exitedAt))
+              .limit(20);
+            updateStoplossGuard(recentRows.reverse());
+          } catch { /* non-fatal */ }
         };
         startBot(
           {
@@ -1811,7 +1826,7 @@ export const appRouter = router({
 
         // Get weekly option chain
         try {
-          const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=`, {
+          const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}`, {
             headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
             signal: AbortSignal.timeout(10000),
           });
