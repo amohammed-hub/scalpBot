@@ -505,3 +505,15 @@
 - [x] Fix: HourlyClose one-shot guard — only fires once per day (botEngine.ts)
 - [x] Fix: Secondary slot quick-start passes enabledLayers (Dashboard.tsx)
 - [x] Fix: enabledLayers persisted in bot_sessions DB column + restored on restart (schema + routers + botRestart)
+
+## Round 5 Audit (Jul 11, 2025)
+- [x] Fix: Move precisionMetrics imports to top of routers.ts (was at bottom, worked via hoisting but bad practice)
+- [x] Fix: stopBot memory leak — bots Map never cleaned up stopped entries (unbounded growth over time)
+- [x] Fix: Updated test to match new stopBot behavior (Map entry deleted on stop)
+- [x] Verified: enabledLayers properly wired through all paths (start, restart, secondary slot, auto-restart)
+- [x] Verified: HourlyClose one-shot guard prevents duplicate signals
+- [x] Verified: BoomingBulls layer has proper ADX + Supertrend + Pivot triple confluence
+- [x] Verified: Kill switch accesses bot state before calling stopBot (safe with Map delete)
+- [x] Verified: All client trpc calls match router procedure names
+- [x] Verified: recharts dependency installed
+- [x] Verified: No division-by-zero in critical paths (BB, RSI, profit factor all guarded)

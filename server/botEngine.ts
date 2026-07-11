@@ -2614,6 +2614,8 @@ export function stopBot(sessionToken: string) {
       `Mode: ${state.mode} | Day P&L: ${pnlSign}₹${(state.dailyPnl ?? 0).toFixed(0)} | Trades: ${state.tradesCount ?? 0}`
     );
   }
+  // Clean up: remove from bots Map to prevent memory leak (unbounded growth)
+  bots.delete(sessionToken);
 }
 
 export function getBotState(sessionToken: string): BotState | undefined {

@@ -433,8 +433,8 @@ describe("Bot Lifecycle — End-to-End Integration", () => {
 
     stopBot(sessionToken);
     const state = getBotState(sessionToken);
-    expect(state!.status).toBe("stopped");
-    expect(state!.intervalHandle).toBeNull();
+    expect(state).toBeUndefined();
+    
   });
 
   // ── Test 9: onTick receives updated price state ───────────────────────────
