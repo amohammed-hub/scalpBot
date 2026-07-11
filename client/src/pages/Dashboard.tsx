@@ -2329,17 +2329,43 @@ export default function Dashboard() {
                               if (t.mode === "live" && t.upstoxOrderId) {
                                 return `https://upstox.com/orders/${t.upstoxOrderId}`;
                               }
-                              // Direct link to Upstox Pro chart for this exact instrument
-                              if (token) {
-                                return `https://pro.upstox.com/chart?sid=${encodeURIComponent(token)}`;
+                              // Build a TradingView chart link for the underlying instrument
+                              // Extract the symbol name from symbolLabel or symbol
+                              const label = (t.symbolLabel ?? t.symbol ?? "").toUpperCase();
+                              // Determine exchange and symbol for TradingView
+                              let tvSymbol = "";
+                              if (label.includes("CRUDE") || label.includes("OIL")) {
+                                tvSymbol = "MCX:CRUDEOIL1!";
+                              } else if (label.includes("GOLD")) {
+                                tvSymbol = "MCX:GOLD1!";
+                              } else if (label.includes("SILVER")) {
+                                tvSymbol = "MCX:SILVER1!";
+                              } else if (label.includes("NATGAS") || label.includes("GAS")) {
+                                tvSymbol = "MCX:NATURALGAS1!";
+                              } else if (label.includes("COPPER")) {
+                                tvSymbol = "MCX:COPPER1!";
+                              } else if (label.includes("ZINC")) {
+                                tvSymbol = "MCX:ZINC1!";
+                              } else if (label.includes("ALUMINIUM")) {
+                                tvSymbol = "MCX:ALUMINIUM1!";
+                              } else if (label.includes("BANKNIFTY") || label.includes("BANK NIFTY")) {
+                                tvSymbol = "NSE:BANKNIFTY1!";
+                              } else if (label.includes("NIFTY")) {
+                                tvSymbol = "NSE:NIFTY1!";
+                              } else if (label.includes("FINNIFTY")) {
+                                tvSymbol = "NSE:FINNIFTY1!";
+                              } else {
+                                // Fallback: try to extract symbol from token
+                                const parts = token.split("|");
+                                const exch = parts[0]?.includes("MCX") ? "MCX" : "NSE";
+                                tvSymbol = `${exch}:${(t.symbol ?? "NIFTY").replace(/[^A-Z0-9]/g, "")}`;
                               }
-                              // Fallback: open Upstox trade book
-                              return `https://pro.upstox.com/visitor/trade-book`;
+                              return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}`;
                             })()}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 hover:text-emerald-400 transition-colors group cursor-pointer"
-                            title={`Open chart for ${t.symbolLabel ?? t.symbol} on Upstox Pro`}
+                            title={`Open ${t.symbolLabel ?? t.symbol} chart on TradingView`}
                           >
                             {t.symbolLabel ?? t.symbol}
                             <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
