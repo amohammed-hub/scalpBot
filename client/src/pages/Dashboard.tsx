@@ -2329,36 +2329,12 @@ export default function Dashboard() {
                               if (t.mode === "live" && t.upstoxOrderId) {
                                 return `https://upstox.com/orders/${t.upstoxOrderId}`;
                               }
-                              const label = (t.symbolLabel ?? t.symbol ?? "").toUpperCase();
-                              // Link to Moneycontrol commodity page for MCX, NSE option chain for NSE
-                              if (label.includes("CRUDE") || label.includes("OIL")) {
-                                return "https://www.moneycontrol.com/commodity/crudeoil-price.html";
-                              } else if (label.includes("GOLD")) {
-                                return "https://www.moneycontrol.com/commodity/gold-price.html";
-                              } else if (label.includes("SILVER")) {
-                                return "https://www.moneycontrol.com/commodity/silver-price.html";
-                              } else if (label.includes("NATGAS") || label.includes("GAS")) {
-                                return "https://www.moneycontrol.com/commodity/naturalgas-price.html";
-                              } else if (label.includes("COPPER")) {
-                                return "https://www.moneycontrol.com/commodity/copper-price.html";
-                              } else if (label.includes("ZINC")) {
-                                return "https://www.moneycontrol.com/commodity/zinc-price.html";
-                              } else if (label.includes("ALUMINIUM")) {
-                                return "https://www.moneycontrol.com/commodity/aluminium-price.html";
-                              } else if (label.includes("BANKNIFTY") || label.includes("BANK NIFTY")) {
-                                return "https://www.nseindia.com/option-chain?symbol=BANKNIFTY";
-                              } else if (label.includes("NIFTY")) {
-                                return "https://www.nseindia.com/option-chain?symbol=NIFTY";
-                              } else if (label.includes("FINNIFTY")) {
-                                return "https://www.nseindia.com/option-chain?symbol=FINNIFTY";
-                              } else {
-                                return "https://www.nseindia.com/option-chain?symbol=NIFTY";
-                              }
+                              return "https://pro.upstox.com/trading-charts";
                             })()}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 hover:text-emerald-400 transition-colors group cursor-pointer"
-                            title={`View ${t.symbolLabel ?? t.symbol} live chart & data`}
+                            title={`Open chart — search for: ${t.symbolLabel ?? t.symbol}`}
                           >
                             {t.symbolLabel ?? t.symbol}
                             <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
