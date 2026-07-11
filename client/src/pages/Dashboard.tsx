@@ -2330,35 +2330,35 @@ export default function Dashboard() {
                                 return `https://upstox.com/orders/${t.upstoxOrderId}`;
                               }
                               const label = (t.symbolLabel ?? t.symbol ?? "").toUpperCase();
-                              // Link to Upstox option chain page for the underlying instrument
+                              // Link to Moneycontrol commodity page for MCX, NSE option chain for NSE
                               if (label.includes("CRUDE") || label.includes("OIL")) {
-                                return "https://upstox.com/option-chain/crude-oil/";
+                                return "https://www.moneycontrol.com/commodity/crudeoil-price.html";
                               } else if (label.includes("GOLD")) {
-                                return "https://upstox.com/option-chain/gold/";
+                                return "https://www.moneycontrol.com/commodity/gold-price.html";
                               } else if (label.includes("SILVER")) {
-                                return "https://upstox.com/option-chain/silver/";
+                                return "https://www.moneycontrol.com/commodity/silver-price.html";
                               } else if (label.includes("NATGAS") || label.includes("GAS")) {
-                                return "https://upstox.com/option-chain/natural-gas/";
+                                return "https://www.moneycontrol.com/commodity/naturalgas-price.html";
                               } else if (label.includes("COPPER")) {
-                                return "https://upstox.com/option-chain/copper/";
+                                return "https://www.moneycontrol.com/commodity/copper-price.html";
                               } else if (label.includes("ZINC")) {
-                                return "https://upstox.com/option-chain/zinc/";
+                                return "https://www.moneycontrol.com/commodity/zinc-price.html";
                               } else if (label.includes("ALUMINIUM")) {
-                                return "https://upstox.com/option-chain/aluminium/";
+                                return "https://www.moneycontrol.com/commodity/aluminium-price.html";
                               } else if (label.includes("BANKNIFTY") || label.includes("BANK NIFTY")) {
-                                return "https://upstox.com/option-chain/bank-nifty/";
+                                return "https://www.nseindia.com/option-chain?symbol=BANKNIFTY";
                               } else if (label.includes("NIFTY")) {
-                                return "https://upstox.com/option-chain/nifty/";
+                                return "https://www.nseindia.com/option-chain?symbol=NIFTY";
                               } else if (label.includes("FINNIFTY")) {
-                                return "https://upstox.com/option-chain/finnifty/";
+                                return "https://www.nseindia.com/option-chain?symbol=FINNIFTY";
                               } else {
-                                return "https://upstox.com/option-chain/nifty/";
+                                return "https://www.nseindia.com/option-chain?symbol=NIFTY";
                               }
                             })()}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 hover:text-emerald-400 transition-colors group cursor-pointer"
-                            title={`View ${t.symbolLabel ?? t.symbol} option chain on Upstox`}
+                            title={`View ${t.symbolLabel ?? t.symbol} live chart & data`}
                           >
                             {t.symbolLabel ?? t.symbol}
                             <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
