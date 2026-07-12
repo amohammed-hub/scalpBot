@@ -20,7 +20,7 @@ import { emitActivity } from "./activityLog";
 import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
 import {
   getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
-  recordTradeClose, isCooldownActive, applyPaperCosts, getPaperCostConfig,
+  recordTradeClose, isCooldownActive, applyPaperCosts, getPaperCostConfig, resetDailyState,
 } from "./riskManager";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -155,6 +155,8 @@ export interface BotState {
   enabledLayers?: string[];
   // HourlyClose: track if first-hour signal already fired today
   hourlyCloseSignalFired?: boolean;
+  // Daily reset: track last trading day (IST date string YYYY-MM-DD) to reset counters
+  lastTradingDay?: string;
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -1769,6 +1771,20 @@ async function tick(
   // Time calculations
   const now2 = new Date();
   const istMin2 = ((now2.getUTCHours() * 60 + now2.getUTCMinutes()) + 330) % (24 * 60);
+  // ── Daily reset: detect new trading day and reset daily counters ──────────
+  const istDate = new Date(now2.getTime() + 330 * 60000);
+  const todayStr = istDate.toISOString().slice(0, 10);
+  if (state.lastTradingDay && state.lastTradingDay !== todayStr) {
+    // New trading day detected — reset daily counters
+    state.dailyPnl = 0;
+    state.tradesCount = 0;
+    state.hourlyCloseSignalFired = false;
+    state.status = "running"; // un-pause if paused from previous day limits
+    state.lastError = null;
+    resetDailyState(); // Clear StoplossGuard, portfolio halt, cooldowns
+    emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
+  }
+  state.lastTradingDay = todayStr;
   const isMCX = state.instrumentToken.startsWith("MCX");
   const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
   const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 20; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:20, square-off at 15:25
@@ -1849,11 +1865,16 @@ async function tick(
 
   // Auto square-off at market close
   if (istMin2 >= squareOffMin && state.openTrade) {
-    const trade = state.openTrade;
-    if (trade.mode === "live" && state.accessToken) {
-      const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
-      if (!sqOffId) { state.lastError = `Auto square-off rejected — close ${trade.symbolLabel} manually`; return; }
-    }
+   const trade = state.openTrade;
+   if (trade.mode === "live" && state.accessToken) {
+     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
+      if (!sqOffId) {
+        state.lastError = `Auto square-off REJECTED — close ${trade.symbolLabel} manually on Upstox`;
+        emitActivity(state.sessionToken, "error", `⚠ AUTO SQUARE-OFF FAILED — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
+        sendTelegramAlert(state, `🚨 <b>AUTO SQUARE-OFF FAILED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Market close order rejected. CLOSE MANUALLY ON UPSTOX NOW.`);
+        return; // do NOT close trade in DB — position still open
+      }
+   }
     let pnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
     // v3: paper-mode brokerage + slippage simulation
     if (trade.mode === "paper") {
@@ -1885,12 +1906,18 @@ async function tick(
       let heroExit: string | null = null;
       if (effectivePrice >= heroTarget) heroExit = "Hero Zero — 5× Target Hit";
       else if (effectivePrice <= heroCut) heroExit = "Hero Zero — 50% Cut";
-      if (heroExit) {
-        let pnl = (effectivePrice - trade.entryPrice) * trade.quantity;
-        if (trade.mode === "live" && state.accessToken) {
-          await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", trade.quantity);
-        }
-        // v3: paper-mode brokerage + slippage simulation
+     if (heroExit) {
+       let pnl = (effectivePrice - trade.entryPrice) * trade.quantity;
+       if (trade.mode === "live" && state.accessToken) {
+          const heroOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", trade.quantity);
+          if (!heroOrderId) {
+            state.lastError = `Hero Zero exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
+            emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
+            sendTelegramAlert(state, `🚨 <b>HERO ZERO EXIT FAILED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Exit order rejected. CLOSE MANUALLY ON UPSTOX.`);
+            return; // do NOT close trade in DB — position still open
+          }
+       }
+       // v3: paper-mode brokerage + slippage simulation
         if (trade.mode === "paper") {
           const pc = getPaperCostConfig();
           pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
@@ -1912,16 +1939,22 @@ async function tick(
         (trade.direction === "BUY" ? trade.partial1RPrice > trade.entryPrice : trade.partial1RPrice < trade.entryPrice);
       const hit1R = partial1Valid &&
         (trade.direction === "BUY" ? effectivePrice >= trade.partial1RPrice : effectivePrice <= trade.partial1RPrice);
-      if (hit1R) {
-        // Book 50% of position at 1R
-        const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
-        const bookPnl = trade.direction === "BUY"
-          ? (trade.partial1RPrice - trade.entryPrice) * bookQty
-          : (trade.entryPrice - trade.partial1RPrice) * bookQty;
-        if (trade.mode === "live" && state.accessToken) {
-          await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
-        }
-        trade.bookedQty += bookQty;
+     if (hit1R) {
+       // Book 50% of position at 1R
+       const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
+       const bookPnl = trade.direction === "BUY"
+         ? (trade.partial1RPrice - trade.entryPrice) * bookQty
+         : (trade.entryPrice - trade.partial1RPrice) * bookQty;
+       if (trade.mode === "live" && state.accessToken) {
+          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
+          if (!partialOrderId) {
+            state.lastError = `Partial 1R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
+            emitActivity(state.sessionToken, "error", `⚠ PARTIAL 1R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
+            sendTelegramAlert(state, `🚨 <b>PARTIAL BOOKING FAILED (1R)</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not book 50% profit. Will retry.`);
+            return; // do NOT update bookedQty/bookedPnl — order didn't execute
+          }
+       }
+       trade.bookedQty += bookQty;
         trade.bookedPnl += bookPnl;
         trade.quantity   -= bookQty;
         trade.partialBooked = 1;
@@ -1942,16 +1975,22 @@ async function tick(
         (trade.direction === "BUY" ? trade.partial2RPrice > trade.entryPrice : trade.partial2RPrice < trade.entryPrice);
       const hit2R = partial2Valid &&
         (trade.direction === "BUY" ? effectivePrice >= trade.partial2RPrice : effectivePrice <= trade.partial2RPrice);
-      if (hit2R) {
-        // Book another 25% (half of remaining) at 2R
-        const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
-        const bookPnl = trade.direction === "BUY"
-          ? (trade.partial2RPrice - trade.entryPrice) * bookQty
-          : (trade.entryPrice - trade.partial2RPrice) * bookQty;
-        if (trade.mode === "live" && state.accessToken) {
-          await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
-        }
-        trade.bookedQty += bookQty;
+     if (hit2R) {
+       // Book another 25% (half of remaining) at 2R
+       const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
+       const bookPnl = trade.direction === "BUY"
+         ? (trade.partial2RPrice - trade.entryPrice) * bookQty
+         : (trade.entryPrice - trade.partial2RPrice) * bookQty;
+       if (trade.mode === "live" && state.accessToken) {
+          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
+          if (!partialOrderId) {
+            state.lastError = `Partial 2R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
+            emitActivity(state.sessionToken, "error", `⚠ PARTIAL 2R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
+            sendTelegramAlert(state, `🚨 <b>PARTIAL BOOKING FAILED (2R)</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not book 25% profit. Will retry.`);
+            return; // do NOT update bookedQty/bookedPnl — order didn't execute
+          }
+       }
+       trade.bookedQty += bookQty;
         trade.bookedPnl += bookPnl;
         trade.quantity   -= bookQty;
         trade.partialBooked = 2;

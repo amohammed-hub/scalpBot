@@ -2444,10 +2444,11 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const allBots = getAllRunningBotsForSession(input.sessionToken);
         const db = await getDb();
-        const onTradeCloseKill = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
-          if (!db) return;
-          await db.update(tradeLog).set({ status: "closed", exitPrice, pnl, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
-        };
+       const onTradeCloseKill = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
+         if (!db) return;
+         await db.update(tradeLog).set({ status: "closed", exitPrice, pnl, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
+          updateJournalOnTradeClose(dbId, exitPrice, pnl, exitReason, 0);
+       };
         const result = await executeKillSwitch(allBots, stopBot, onTradeCloseKill);
         // Mark all sessions stopped in DB
         if (db) {

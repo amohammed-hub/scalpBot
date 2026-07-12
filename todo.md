@@ -517,3 +517,20 @@
 - [x] Verified: All client trpc calls match router procedure names
 - [x] Verified: recharts dependency installed
 - [x] Verified: No division-by-zero in critical paths (BB, RSI, profit factor all guarded)
+
+## Round 6 Audit — Order Failure Safety + Daily Reset (Jul 12, 2025)
+- [x] CRITICAL FIX: Partial 1R profit booking — placeUpstoxOrder return value not checked. If order rejected, bot still updated bookedQty/bookedPnl/quantity as if sold. Now returns early with error + Telegram alert.
+- [x] CRITICAL FIX: Partial 2R profit booking — same issue. Now returns early with error + Telegram alert.
+- [x] CRITICAL FIX: Hero Zero exit — placeUpstoxOrder return value not checked. If order rejected, trade still closed in DB. Now returns early with error + Telegram alert.
+- [x] FIX: Auto square-off failure handling enhanced — was returning silently, now emits activity log error + Telegram alert for manual intervention.
+- [x] FIX: Daily reset mechanism added — bot now detects new trading day (IST date change) and resets dailyPnl, tradesCount, hourlyCloseSignalFired, StoplossGuard, cooldowns, and portfolio halt. Prevents stale state when bot runs overnight.
+- [x] FIX: Kill switch onTradeCloseKill now calls updateJournalOnTradeClose — signal journal is updated on emergency exits.
+- [x] FIX: Dashboard trade progress bar division-by-zero when SL equals Target (range || 1 guard).
+- [x] FIX: Dashboard margin usage bar division-by-zero when both margins are 0.
+- [x] Verified: All indicator functions (calcATR, calcRSI, calcADX, calcVWAP) have proper edge-case guards for empty/short candle arrays.
+- [x] Verified: Candle fetch returns early with HOLD signal when empty (no fake data generated).
+- [x] Verified: generateSignal only called after candles1m.length > 0 guard passes.
+- [x] Verified: Verification.tsx properly guards metrics with loading/null checks before rendering.
+- [x] Verified: precisionMetrics.ts has no division-by-zero (all divisions guarded with > 0 checks).
+- [x] Verified: enabledLayers preserved in auto-restart, secondary slot, crash recovery.
+- [x] All 119 tests passing, TypeScript 0 errors.

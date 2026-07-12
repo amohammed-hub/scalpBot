@@ -1071,7 +1071,7 @@ export default function Dashboard() {
                         <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-gradient-to-r from-emerald-500 to-amber-500 rounded-full transition-all"
-                            style={{ width: `${Math.min(100, ((accountBalance.equity.used_margin ?? 0) / ((accountBalance.equity.available_margin ?? 0) + (accountBalance.equity.used_margin ?? 0))) * 100)}%` }}
+                            style={{ width: `${Math.min(100, ((accountBalance.equity.used_margin ?? 0) / (((accountBalance.equity.available_margin ?? 0) + (accountBalance.equity.used_margin ?? 0)) || 1)) * 100)}%` }}
                           />
                         </div>
                       </div>
@@ -1343,7 +1343,7 @@ export default function Dashboard() {
                   const sl = activeTrade.slPrice!;
                   const tgt = activeTrade.targetPrice!;
                   const entry = activeTrade.entryPrice;
-                  const range = Math.abs(tgt - sl);
+                  const range = Math.abs(tgt - sl) || 1; // prevent division by zero
                   // Entry position as % of SL→Target range
                   const entryPct = Math.max(5, Math.min(95, (Math.abs(entry - sl) / range) * 100));
                   // Current price position (only show cursor when we have a real price)
