@@ -541,3 +541,11 @@
 - [x] Fix: Merged enabledLayers into main UPDATE query (was a separate UPDATE that could fail independently).
 - [x] Fix: Wrote correct SQL in migration file (drizzle/0012_thick_dexter_bennett.sql) for documentation.
 - [x] All 119 tests passing, TypeScript 0 errors.
+
+## Round 7 Final Deep Audit (Jul 13, 2026)
+- [x] Full server-side audit: db.ts, botEngine.ts, botRestart.ts, botWatchdog.ts, riskManager.ts, precisionMetrics.ts, layerTracker.ts, presets.ts, routers.ts, optionsAnalytics.ts, activityLog.ts, storage.ts, _core/index.ts
+- [x] Full client-side audit: Dashboard.tsx, Settings.tsx, App.tsx, UpstoxCallback.tsx, HeroZeroScanner.tsx, PnLAnalytics.tsx, Verification.tsx, Backtest.tsx
+- [x] Schema + deployment config audit: drizzle/schema.ts, .nixpacks.toml, package.json
+- [x] Fix: botRestart.ts — JSON.parse(enabledLayers) wrapped in try-catch to prevent crash on malformed data
+- [x] Fix: db.ts — Added self-healing migration for signal_journal table (auto-creates if missing on Railway)
+- [x] All 119 tests passing, TypeScript 0 errors.

@@ -30,9 +30,10 @@ async function initDb() {
     
     const db = drizzle(pool);
     console.log("[Database] Connected successfully");
-    // Self-healing migrations: ensure columns exist that may be missing on Railway
+   // Self-healing migrations: ensure columns exist that may be missing on Railway
     if (!_migrationRan) {
       _migrationRan = true;
+      // Check enabledLayers column
       try {
         await pool.execute("SELECT `enabledLayers` FROM `bot_sessions` LIMIT 1");
       } catch (e: any) {
@@ -40,6 +41,44 @@ async function initDb() {
           console.log("[Database] Auto-migrating: adding enabledLayers column to bot_sessions");
           await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `enabledLayers` text");
           console.log("[Database] Migration complete: enabledLayers column added");
+        }
+      }
+      // Check signal_journal table exists
+      try {
+        await pool.execute("SELECT 1 FROM `signal_journal` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating signal_journal table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS signal_journal (
+            id int AUTO_INCREMENT NOT NULL,
+            sessionToken varchar(128) NOT NULL,
+            symbol varchar(32) NOT NULL,
+            instrumentToken varchar(128),
+            direction enum('BUY','SELL') NOT NULL,
+            layer varchar(64) NOT NULL,
+            confidence float NOT NULL,
+            entryPrice float NOT NULL,
+            suggestedSl float,
+            suggestedTarget float,
+            atr float,
+            regime varchar(32),
+            vixLevel float,
+            oiBias varchar(16),
+            outcome enum('traded','rejected','pending') NOT NULL DEFAULT 'pending',
+            rejectReason varchar(128),
+            tradeId int,
+            exitPrice float,
+            pnl float,
+            exitReason varchar(64),
+            holdDurationMs bigint,
+            maxFavorableExcursion float,
+            maxAdverseExcursion float,
+            signalAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            outcomeAt timestamp NULL,
+            createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(id)
+          )`);
+          console.log("[Database] Migration complete: signal_journal table created");
         }
       }
     }
