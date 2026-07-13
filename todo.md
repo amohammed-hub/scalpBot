@@ -557,3 +557,10 @@
 - [x] Update Dashboard labels from "ATM Options" to "OTM Options" to reflect new strategy
 - [x] Update tooltip description to explain OTM selection logic
 - [x] All 119 tests passing, TypeScript 0 errors.
+
+## Round 9 — Duplicate Trade Prevention (Jul 13, 2026)
+- [x] Add tickInProgress lock to prevent overlapping ticks from running concurrently
+- [x] Add DB-level guard: check for existing open trade in DB before opening new one
+- [x] Add 2-minute cooldown between trade entries (lastTradeOpenedAt)
+- [x] Wrap entire tick body in try/finally to always release tickInProgress lock
+- [x] All 119 tests pass, TypeScript 0 errors, server running clean

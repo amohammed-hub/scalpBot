@@ -151,12 +151,15 @@ export interface BotState {
   optionTradeToken?: string; // resolved at runtime from option chain
   optionPremiumPrice?: number; // last fetched option premium (for quantity sizing)
   isOpeningTrade?: boolean; // mutex: prevents duplicate trade opens from concurrent ticks
+  tickInProgress?: boolean; // lock: prevents overlapping ticks from running concurrently
   // Layer selection: user can enable/disable specific strategy layers
   enabledLayers?: string[];
   // HourlyClose: track if first-hour signal already fired today
   hourlyCloseSignalFired?: boolean;
   // Daily reset: track last trading day (IST date string YYYY-MM-DD) to reset counters
   lastTradingDay?: string;
+  // Cooldown: prevent rapid-fire entries (minimum 2 minutes between trades)
+  lastTradeOpenedAt?: number; // Unix timestamp ms
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -1755,6 +1758,13 @@ async function tick(
   onTick?: (state: BotState) => Promise<void>,
 ) {
   if (state.status !== "running") return;
+  // Prevent overlapping ticks: if previous tick is still running (slow network, API timeout), skip
+  if (state.tickInProgress) {
+    console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — tick skipped (previous still running)`);
+    return;
+  }
+  state.tickInProgress = true;
+  try {
 
   const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100;
   if (state.dailyPnl <= maxDailyLoss) {
@@ -2125,6 +2135,10 @@ async function tick(
   if (nearClose) return;
   // Mutex guard: prevent duplicate trade opens from concurrent ticks
   if (state.isOpeningTrade) return;
+  // Cooldown guard: minimum 2 minutes between trade entries to prevent rapid-fire
+  if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < 120_000) {
+    return;
+  }
   if (state.tradesCount >= state.maxTradesPerDay) {
     state.status = "paused";
     state.lastError = `Max trades per day reached (${state.maxTradesPerDay})`;
@@ -2498,6 +2512,30 @@ async function tick(
     : signal.targetPrice;
 
   // Set mutex before async DB write to prevent concurrent duplicate opens
+  // DB-level guard: check if there's already an open trade for this session in the database.
+  // This catches edge cases where openTrade state was lost (server restart, crash) but DB still has an open trade.
+  try {
+    const { getDb } = await import("./db");
+    const dbCheck = await getDb();
+    if (dbCheck) {
+      const { tradeLog } = await import("../drizzle/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const existingOpen = await dbCheck
+        .select({ id: tradeLog.id })
+        .from(tradeLog)
+        .where(and(eq(tradeLog.sessionToken, state.sessionToken), eq(tradeLog.status, "open")))
+        .limit(1);
+      if (existingOpen.length > 0) {
+        console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — DB has open trade #${existingOpen[0].id}, skipping new entry`);
+        emitActivity(state.sessionToken, "signal", `⊘ Signal skipped — DB already has open trade #${existingOpen[0].id}`);
+        state.isOpeningTrade = false;
+        return;
+      }
+    }
+  } catch (dbErr) {
+    console.error(`[BotEngine] DB guard check failed:`, dbErr);
+    // Continue anyway — the in-memory guard is still active
+  }
   state.isOpeningTrade = true;
   const dbId = await onTradeOpen({
     symbol: tradeSymbol, symbolLabel: tradeLabel,
@@ -2540,6 +2578,7 @@ async function tick(
 
   state.isOpeningTrade = false; // Release mutex after openTrade is set
   state.tradesCount += 1;
+  state.lastTradeOpenedAt = Date.now(); // Set cooldown timestamp
   // Mark HourlyClose as fired for today (one-shot strategy)
   if (signal.layer === "HourlyClose") {
     state.hourlyCloseSignalFired = true;
@@ -2581,6 +2620,9 @@ async function tick(
       `💯 Confidence: ${(signal.confidence * 100).toFixed(0)}% | Qty: ${quantity}\n` +
       `📝 ${signal.reason}`,
     );
+  }
+  } finally {
+    state.tickInProgress = false;
   }
 }
 
