@@ -1323,6 +1323,28 @@ export const appRouter = router({
         await db.update(botSessions).set({ dailyPnl: 0, tradesCount: 0 }).where(eq(botSessions.sessionToken, input.sessionToken));
         return { success: true };
       }),
+    // Force-close all open trades at entry price (P&L = 0) — used for cleanup
+    closeAllOpen: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema.optional() }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const whereClause = input.sessionToken
+          ? and(eq(tradeLog.status, "open"), eq(tradeLog.sessionToken, input.sessionToken))
+          : eq(tradeLog.status, "open");
+        const openTrades = await db.select().from(tradeLog).where(whereClause);
+        const now = new Date();
+        for (const t of openTrades) {
+          await db.update(tradeLog).set({
+            status: "closed",
+            exitPrice: t.entryPrice,
+            pnl: 0,
+            exitReason: "Manual cleanup — force-closed",
+            exitedAt: now,
+          }).where(eq(tradeLog.id, t.id));
+        }
+        return { closed: openTrades.length };
+      }),
     // Recalculate and reset dailyPnl/tradesCount from actual closed trades (keeps history)
     resetPnlCounter: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))

@@ -269,6 +269,38 @@ export async function restartRunningBots(): Promise<void> {
     return;
   }
 
+
+  // STEP 0: Close any stale open trades from previous days.
+  // These are trades that were never squared off (server was down during market close).
+  try {
+    const now = new Date();
+    const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % 1440;
+    const openTrades = await db.select().from(tradeLog).where(eq(tradeLog.status, "open"));
+    for (const t of openTrades) {
+      const enteredAt = t.enteredAt ? new Date(t.enteredAt) : null;
+      if (!enteredAt) continue;
+      const tradeDate = enteredAt.toISOString().slice(0, 10);
+      const todayDate = new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
+      const isStale = tradeDate < todayDate;
+      const isMCX = (t.instrumentToken ?? "").startsWith("MCX");
+      const marketClosed = isMCX ? (istMin >= 23 * 60 + 30 || istMin < 9 * 60) : (istMin >= 15 * 60 + 30 || istMin < 9 * 60 + 15);
+      if (isStale || marketClosed) {
+        await db.update(tradeLog).set({
+          status: "closed",
+          exitPrice: t.entryPrice,
+          pnl: 0,
+          exitReason: isStale ? "Stale — auto-closed on startup (previous day)" : "Market Close — auto-closed on startup",
+          exitedAt: now,
+        }).where(eq(tradeLog.id, t.id));
+        console.log(`[BotRestart] Closed stale trade #${t.id} (${t.symbolLabel ?? t.symbol}) — entered ${tradeDate}`);
+      }
+    }
+    if (openTrades.length > 0) {
+      console.log(`[BotRestart] Checked ${openTrades.length} open trade(s) for staleness`);
+    }
+  } catch (cleanupErr) {
+    console.error("[BotRestart] Stale trade cleanup error:", cleanupErr);
+  }
   // Find all sessions that were "running" when the server went down
   const runningSessions = await db
     .select()

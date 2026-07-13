@@ -575,3 +575,10 @@
 - [x] Verified: Market close detection works correctly — bot returns HOLD when past stopScanMin (15:20 IST for NSE).
 - [x] E2E test: Bot starts → fetches real candles → generates correct HOLD signal → stops cleanly. sessionId now valid (was NaN before fix).
 - [x] All 119 tests pass, TypeScript 0 errors, server running clean.
+## Round 11 — User-Reported Issues (Jul 13, 2026)
+- [x] Fix symbol display: show full contract name with expiry like "NIFTY 17JUL26 24100 PE" — added formatOptionContractLabel() helper with auto-expiry estimation for paper mode
+- [x] Fix direction display: options trades now store "BUY" as direction (we always BUY options) — dashboard shows green "BUY" with correct icon
+- [x] Fix auto square-off: added force-close in "no candle data" path (handles server restart after market close) + startup cleanup in botRestart.ts closes stale trades from previous days
+- [x] Added "Close All Open" button in Dashboard trade log for manual cleanup
+- [x] Fix delta drift formula: now uses symbol-based CE/PE detection instead of direction (CE: premium + move*delta, PE: premium - move*delta)
+- [x] All 119 tests pass, TypeScript 0 errors

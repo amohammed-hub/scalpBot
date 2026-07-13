@@ -5,7 +5,7 @@ import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
-  Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink
+  Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -427,6 +427,15 @@ export default function Dashboard() {
       utils.trades.stats.invalidate();
     },
     onError: (e) => toast.error(`Reset failed: ${e.message}`),
+  });
+  const closeAllOpenMutation = trpc.trades.closeAllOpen.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Closed ${data.closed} open trade(s)`);
+      utils.trades.list.invalidate();
+      utils.trades.todayStats.invalidate();
+      utils.trades.stats.invalidate();
+    },
+    onError: (e) => toast.error(`Close failed: ${e.message}`),
   });
 
   // Kill Switch
@@ -2419,6 +2428,19 @@ export default function Dashboard() {
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Fix P&L
+              </button>
+              <button
+                onClick={() => {
+                  const openCount = trades.filter((t: any) => t.status === "open").length;
+                  if (openCount === 0) { toast.info("No open trades to close."); return; }
+                  if (!confirm(`Close all ${openCount} open trade(s) at entry price (P\&L = 0)? This cannot be undone.`)) return;
+                  closeAllOpenMutation.mutate({ sessionToken });
+                }}
+                className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-2.5 py-1.5 rounded-lg transition-colors"
+                title="Force-close all open trades at entry price"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                Close All Open
               </button>
             </div>
           </div>

@@ -1751,6 +1751,43 @@ export async function placeUpstoxOrder(
 }
 
 // ── Bot tick ──────────────────────────────────────────────────────────────────
+// Helper: format option contract label like "NIFTY 21JUL26 24100 PE" or "CRUDEOIL 20JUL26 7150 PE"
+function formatOptionContractLabel(symbol: string, strike: number, ceOrPe: string, expiry?: string): string {
+  // Clean up symbol: remove MCX_ prefix, use standard short names
+  let sym = symbol.replace(/^MCX_/, "").replace(/_/g, "").toUpperCase();
+  if (sym.includes("CRUDE") || sym.includes("OIL")) sym = "CRUDEOIL";
+  else if (sym.includes("NATGAS") || sym.includes("GAS")) sym = "NATURALGAS";
+  else if (sym.includes("BANKNIFTY")) sym = "BANKNIFTY";
+  else if (sym.includes("FINNIFTY")) sym = "FINNIFTY";
+  else if (sym.includes("NIFTY")) sym = "NIFTY";
+  // Format expiry from YYYY-MM-DD to DDMMMYY
+  let expiryStr = "";
+  let effectiveExpiry = expiry;
+  if (!effectiveExpiry) {
+    // Estimate next weekly expiry: Thursday for NSE, last Thursday of month for MCX
+    const now = new Date();
+    const dayOfWeek = now.getUTCDay(); // 0=Sun, 4=Thu
+    const daysUntilThursday = (4 - dayOfWeek + 7) % 7 || 7; // next Thursday (or today if Thursday and before market close)
+    const istHour = (now.getUTCHours() + 5 + Math.floor((now.getUTCMinutes() + 30) / 60)) % 24;
+    const isThursdayBeforeClose = dayOfWeek === 4 && istHour < 16;
+    const daysToAdd = isThursdayBeforeClose ? 0 : daysUntilThursday;
+    const nextExpiry = new Date(now.getTime() + daysToAdd * 86400000);
+    effectiveExpiry = nextExpiry.toISOString().slice(0, 10);
+  }
+  if (effectiveExpiry) {
+    const d = new Date(effectiveExpiry + "T00:00:00Z");
+    if (!isNaN(d.getTime())) {
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+      const mon = months[d.getUTCMonth()];
+      const yr = String(d.getUTCFullYear()).slice(2);
+      expiryStr = ` ${day}${mon}${yr}`;
+    }
+  }
+
+  return `${sym}${expiryStr} ${strike} ${ceOrPe}`;
+}
+
 async function tick(
   state: BotState,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
@@ -1819,6 +1856,28 @@ async function tick(
     emitActivity(state.sessionToken, "signal",
       `⏳ Waiting for market data — token: ${signalToken} | Next scan in ${state.scanIntervalSec}s`);
     if (onTick) onTick(state).catch(() => {});
+    // CRITICAL: If market is closed and there is an open trade, force square-off NOW.
+    // This handles the case where server restarts after market close — candles are empty
+    // but open trades must not carry overnight.
+    if (state.openTrade) {
+      const now3 = new Date();
+      const istMin3 = ((now3.getUTCHours() * 60 + now3.getUTCMinutes()) + 330) % 1440;
+      const isMCX3 = state.instrumentToken.startsWith("MCX");
+      const sqOffMin3 = isMCX3 ? 23 * 60 + 28 : 15 * 60 + 25;
+      if (istMin3 >= sqOffMin3 || (!isMCX3 && (istMin3 < 9 * 60 + 15))) {
+        // Market is closed — force close the open trade at last known price
+        const trade = state.openTrade;
+        const exitPx = trade.entryPrice; // Use entry price as exit (no live data available)
+        let pnl = trade.direction === "BUY" ? (exitPx - trade.entryPrice) * trade.quantity : (trade.entryPrice - exitPx) * trade.quantity;
+        // For paper mode: P&L is 0 since we exit at entry (no live data to determine actual exit)
+        // This is better than leaving trades open overnight
+        state.dailyPnl += pnl;
+        state.openTrade = null;
+        await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
+        emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
+        console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
+      }
+    }
     return;
   }
 
@@ -1922,7 +1981,9 @@ async function tick(
       const entryUnderlying = state.openTrade.entryUnderlyingPrice ?? price; // stored at trade open
       const underlyingMove = price - entryUnderlying;
       const delta = 0.5; // ATM delta approximation
-      const driftedPremium = Math.max(0.05, entryPremium + (state.openTrade.direction === "BUY" ? underlyingMove * delta : -underlyingMove * delta));
+      // For CE: underlying up = premium up. For PE: underlying up = premium down.
+      const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE");
+      const driftedPremium = Math.max(0.05, entryPremium + (isCallOption ? underlyingMove * delta : -underlyingMove * delta));
       effectivePrice = driftedPremium;
       state.optionPremiumPrice = driftedPremium;
     }
@@ -2255,6 +2316,7 @@ async function tick(
   let tradeSymbol = state.instrumentSymbol;
   let tradeLabel = state.instrumentLabel;
   let optionPremiumForSizing: number | null = null;
+  let resolvedExpiry: string | undefined; // YYYY-MM-DD from option chain
 
   // Safety: ensure underlyingToken is always set when isIndexOptions=true
   // If it was not saved to DB, derive it from instrumentToken
@@ -2345,13 +2407,14 @@ async function tick(
       const atmStrikeFb2 = underlyingPxFb2 > 0 ? Math.round(underlyingPxFb2 / strikeStepFb2) * strikeStepFb2 : 0;
       tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrikeFb2 || "ATM"}_${ceOrPe}`;
       tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrikeFb2 || "ATM"}`;
-      tradeLabel = `${state.instrumentLabel}${atmStrikeFb2 > 0 ? ` ${atmStrikeFb2}` : " ATM"} ${ceOrPe} (paper)`;
+      tradeLabel = formatOptionContractLabel(state.instrumentSymbol, atmStrikeFb2 || 0, ceOrPe, resolvedExpiry);
       optionPremiumForSizing = mockPremiumFb2;
       state.optionPremiumPrice = mockPremiumFb2;
     } else {
       tradeInstrumentToken = resolved.token;
       tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${resolved.strike}`;
-      tradeLabel = `${state.instrumentLabel} ${resolved.strike} ${ceOrPe}`;
+      resolvedExpiry = resolved.expiry;
+      tradeLabel = formatOptionContractLabel(state.instrumentSymbol, resolved.strike, ceOrPe, resolved.expiry);
       optionPremiumForSizing = resolved.premium;
       state.optionTradeToken = resolved.token;
       state.optionPremiumPrice = resolved.premium;
@@ -2386,7 +2449,7 @@ async function tick(
     const atmStrike2 = state.lastPrice > 0 ? Math.round(state.lastPrice / strikeStep2) * strikeStep2 : 0;
     const strikeTag2 = atmStrike2 > 0 ? ` ${atmStrike2}` : " ATM";
     tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrike2 || "ATM"}`;
-    tradeLabel = `${state.instrumentLabel}${strikeTag2} ${ceOrPe} (paper)`;
+    tradeLabel = formatOptionContractLabel(state.instrumentSymbol, atmStrike2 || 0, ceOrPe, resolvedExpiry);
     tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike2 || "ATM"}_${ceOrPe}`;
     // Determine mock key for fallback
     const sym2 = state.instrumentSymbol.toUpperCase();
@@ -2427,7 +2490,7 @@ async function tick(
     const atmStrike3 = state.lastPrice > 0 ? Math.round(state.lastPrice / 50) * 50 : 0;
     tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike3 || "ATM"}_${ceOrPe3}`;
     tradeSymbol = `${state.instrumentSymbol}_${ceOrPe3}_${atmStrike3 || "ATM"}`;
-    tradeLabel = `${state.instrumentLabel}${atmStrike3 > 0 ? ` ${atmStrike3}` : " ATM"} ${ceOrPe3} (paper)`;
+    tradeLabel = formatOptionContractLabel(state.instrumentSymbol, atmStrike3 || 0, ceOrPe3, resolvedExpiry);
     state.optionPremiumPrice = optionPremiumForSizing;
     emitActivity(state.sessionToken, "signal", `⚠ Safety net: using mock premium ₹${optionPremiumForSizing} for ${tradeSymbol}`);
   }
@@ -2503,8 +2566,8 @@ async function tick(
     ? optionPremiumForSizing * 0.5  // 50% of premium = SL distance for options
     : Math.abs(signal.entryPrice - signal.slPrice);
   const optionEntry = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  const partial1RPrice = signal.partial1RPrice ?? (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist);
-  const partial2RPrice = signal.partial2RPrice ?? (signal.direction === "BUY" ? optionEntry + slDist * 2 : optionEntry - slDist * 2);
+  const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode ? optionEntry + slDist : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
+  const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode ? optionEntry + slDist * 2 : (signal.direction === "BUY" ? optionEntry + slDist * 2 : optionEntry - slDist * 2));
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
@@ -2543,7 +2606,7 @@ async function tick(
   try {
     dbId = await onTradeOpen({
       symbol: tradeSymbol, symbolLabel: tradeLabel,
-      instrumentToken: tradeInstrumentToken, direction: signal.direction, mode: state.mode,
+      instrumentToken: tradeInstrumentToken, direction: isOptionsMode ? "BUY" : signal.direction, mode: state.mode,
       entryPrice: tradeEntryPrice, quantity, slPrice: tradeSl, targetPrice: tradeTarget,
       atr: signal.atr, confidence: signal.confidence, status: "open",
       upstoxOrderId: orderId, signalReason: signalLabel + (isOptionsMode ? ` [${tradeSymbol}]` : ""), enteredAt: new Date(),
@@ -2577,7 +2640,7 @@ async function tick(
 
   state.openTrade = {
     dbId, symbol: tradeSymbol, symbolLabel: tradeLabel,
-    instrumentToken: tradeInstrumentToken, direction: signal.direction, mode: state.mode,
+    instrumentToken: tradeInstrumentToken, direction: isOptionsMode ? "BUY" : signal.direction, mode: state.mode,
     entryPrice: tradeEntryPrice, quantity, slPrice: tradeSl, targetPrice: tradeTarget,
     atr: signal.atr, confidence: signal.confidence, upstoxOrderId: orderId,
     enteredAt: new Date(), trailingSlEnabled: state.trailingSlEnabled,
