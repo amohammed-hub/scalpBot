@@ -1390,7 +1390,7 @@ function build5mFromMock(candles1m: Candle[]): Candle[] {
   return result;
 }
 
-// ── Fetch option chain and resolve ATM CE/PE token ─────────────────────────
+// ── Fetch option chain and resolve ATM/OTM CE/PE token ─────────────────────────
 async function resolveAtmOptionToken(
   underlyingToken: string,
   optionType: "CE" | "PE",
@@ -1407,30 +1407,84 @@ async function resolveAtmOptionToken(
     const underlyingPrice: number = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
     if (!underlyingPrice) return null;
 
-    // Step 2: fetch option chain (nearest expiry)
+    // Step 2: fetch option chain (current week expiry — auto-rolls after each expiry)
+    let chainData: Array<{
+      expiry?: string;
+      strike_price?: number;
+      underlying_spot_price?: number;
+      call_options?: { instrument_key?: string; market_data?: { ltp?: number } };
+      put_options?: { instrument_key?: string; market_data?: { ltp?: number } };
+    }> = [];
+
     const chainResp = await axios.get(
-      `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}`,
+      `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=current_week`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
     );
-    const chain = chainResp.data?.data?.[0];
-    if (!chain) return null;
-    const chainExpiry: string | undefined = chain.expiry ?? undefined;
+    chainData = chainResp.data?.data ?? [];
 
-    const options = optionType === "CE"
-      ? (chain.call_options ?? []) as Array<{ instrument_key?: string; strike_price?: number; market_data?: { ltp?: number } }>
-      : (chain.put_options ?? []) as Array<{ instrument_key?: string; strike_price?: number; market_data?: { ltp?: number } }>;
-
-    // Find ATM: option whose strike is closest to underlying price
-    let best: ResolvedOption | null = null;
-    let bestDist = Infinity;
-    for (const opt of options) {
-      const strike = opt.strike_price ?? 0;
-      const dist = Math.abs(strike - underlyingPrice);
-      const premium = opt.market_data?.ltp ?? 0;
-      if (dist < bestDist && premium > 0.5 && opt.instrument_key) {
-        bestDist = dist;
-        best = { token: opt.instrument_key, premium, strike, expiry: chainExpiry };
+    if (chainData.length === 0) {
+      console.warn(`[BotEngine] resolveAtmOptionToken: empty chain for ${underlyingToken} (current_week). Trying next_week...`);
+      const fallbackResp = await axios.get(
+        `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=next_week`,
+        { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
+      );
+      chainData = fallbackResp.data?.data ?? [];
+      if (chainData.length === 0) {
+        console.warn(`[BotEngine] resolveAtmOptionToken: empty chain for next_week too. No options available.`);
+        return null;
       }
+    }
+
+    const chainExpiry: string | undefined = chainData[0]?.expiry ?? undefined;
+
+    // Upstox API returns data[] as flat array: each element = { strike_price, call_options: {obj}, put_options: {obj} }
+    // Build sorted list of valid options by distance from underlying price
+    const sorted = chainData
+      .filter(row => {
+        const opt = optionType === "CE" ? row.call_options : row.put_options;
+        return opt?.instrument_key && (opt?.market_data?.ltp ?? 0) > 0.5;
+      })
+      .map(row => {
+        const opt = (optionType === "CE" ? row.call_options : row.put_options)!;
+        return {
+          strike: row.strike_price ?? 0,
+          token: opt.instrument_key!,
+          premium: opt.market_data?.ltp ?? 0,
+          dist: Math.abs((row.strike_price ?? 0) - underlyingPrice),
+        };
+      })
+      .sort((a, b) => a.dist - b.dist);
+
+    if (sorted.length === 0) {
+      console.warn(`[BotEngine] resolveAtmOptionToken: no valid options in chain for ${underlyingToken} ${optionType}`);
+      return null;
+    }
+
+    // Strategy: pick 1 strike OTM for lower premium (better lot sizing & profit potential).
+    // For CE: 1 strike ABOVE ATM. For PE: 1 strike BELOW ATM.
+    // If OTM not available or premium too low (<5), fall back to ATM.
+    const atm = sorted[0]; // closest to spot
+
+    // Find 1-strike OTM candidates
+    const otmCandidates = sorted.filter(s => {
+      if (optionType === "CE") return s.strike > atm.strike;
+      return s.strike < atm.strike;
+    }).sort((a, b) => {
+      if (optionType === "CE") return a.strike - b.strike; // smallest above ATM
+      return b.strike - a.strike; // largest below ATM
+    });
+
+    let best: ResolvedOption | null = null;
+    const otm1 = otmCandidates[0]; // 1 strike OTM
+
+    if (otm1 && otm1.premium >= 5) {
+      // Use 1-OTM: lower premium = more lots = better profit potential
+      best = { token: otm1.token, premium: otm1.premium, strike: otm1.strike, expiry: chainExpiry };
+      console.log(`[BotEngine] Selected 1-OTM ${optionType}: strike ${otm1.strike} premium Rs${otm1.premium.toFixed(1)} (ATM was ${atm.strike} @ Rs${atm.premium.toFixed(1)})`);
+    } else {
+      // Fallback to ATM if OTM is illiquid
+      best = { token: atm.token, premium: atm.premium, strike: atm.strike, expiry: chainExpiry };
+      console.log(`[BotEngine] Selected ATM ${optionType}: strike ${atm.strike} premium Rs${atm.premium.toFixed(1)}`);
     }
     return best;
   } catch (err) {
@@ -1438,7 +1492,6 @@ async function resolveAtmOptionToken(
     return null;
   }
 }
-
 // ── MCX: Resolve front-month futures instrument_key ─────────────────────────
 // MCX futures tokens are numeric IDs that change every month (e.g. MCX_FO|226593).
 // Placeholder tokens like MCX_FO|GOLDM (no numeric ID) must be resolved before use.

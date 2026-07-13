@@ -55,22 +55,22 @@ interface PricePoint { time: string; price: number; }
 // spotOnly: true means the index cannot be directly traded — shown for reference/signal only.
 // isIndexOptions: when true, bot reads underlying (underlyingToken) for signals and auto-resolves ATM CE/PE at runtime.
 // underlyingToken: the index token used to fetch candles and generate signals (only for isIndexOptions instruments).
-// ONLY ATM Options (Auto) instruments are available.
-// The bot reads the underlying index/futures for signals and auto-resolves the ATM CE/PE option at trade time.
+// Bot reads the underlying index/futures for signals and auto-resolves 1-OTM CE/PE option at trade time.
+// 1-OTM = one strike away from ATM for lower premiums, better lot sizing, and higher profit potential.
 // Quantity is sized using the option PREMIUM price (~₹100–500), NOT the underlying futures price.
 const INSTRUMENTS = [
-  // ── NSE Index Options — Auto-ATM ─────────────────────────────────────────────
-  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ATM Options (Auto)",  segment: "NSE Index Options", lotSize: 15,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
-  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options (Auto)",   segment: "NSE Index Options", lotSize: 25,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
-  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options (Auto)",   segment: "NSE Index Options", lotSize: 40,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
-  // ── MCX Commodity Options — Auto-ATM ─────────────────────────────────────────
+  // ── NSE Index Options — Auto OTM ─────────────────────────────────────────────
+  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → OTM Options (Auto)",  segment: "NSE Index Options", lotSize: 15,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
+  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 25,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
+  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 40,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
+  // ── MCX Commodity Options — Auto OTM ─────────────────────────────────────────
   // Tokens are numeric front-month IDs verified from Upstox instrument master (Jul 2026).
   // These auto-resolve to the correct front-month contract via resolveMcxFuturesToken() at runtime.
-  { token: "MCX_FO|520702",  symbol: "MCX_CRUDE",  label: "Crude Oil → ATM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|520702" },
-  { token: "MCX_FO|552720",  symbol: "MCX_GOLD",   label: "Gold → ATM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|552720" },
-  { token: "MCX_FO|574822",  symbol: "MCX_SILVER", label: "Silver → ATM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|574822" },
-  { token: "MCX_FO|538685",  symbol: "MCX_NATGAS", label: "Natural Gas → ATM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|538685" },
-  { token: "MCX_FO|562048",  symbol: "MCX_COPPER", label: "Copper → ATM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 2500, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|562048" },
+  { token: "MCX_FO|520702",  symbol: "MCX_CRUDE",  label: "Crude Oil → OTM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|520702" },
+  { token: "MCX_FO|552720",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|552720" },
+  { token: "MCX_FO|574822",  symbol: "MCX_SILVER", label: "Silver → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|574822" },
+  { token: "MCX_FO|538685",  symbol: "MCX_NATGAS", label: "Natural Gas → OTM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|538685" },
+  { token: "MCX_FO|562048",  symbol: "MCX_COPPER", label: "Copper → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 2500, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|562048" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -238,9 +238,9 @@ export default function Dashboard() {
     // Resolve token: NSE index instruments use NSE_INDEX| prefix (ATM options mode)
     // MCX instruments use MCX_FO| prefix. Never use NSE_FO| for index instruments.
     const NSE_INDEX_MAP: Record<string, { token: string; label: string; lotSize: number }> = {
-      NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → ATM Options (Auto)",   lotSize: 25 },
-      BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → ATM Options (Auto)",  lotSize: 15 },
-      FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → ATM Options (Auto)",   lotSize: 40 },
+      NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → OTM Options (Auto)",   lotSize: 25 },
+      BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → OTM Options (Auto)",  lotSize: 15 },
+      FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → OTM Options (Auto)",   lotSize: 40 },
     };
     const mcxInstr = MCX_INSTRUMENTS.find(i => i.symbol === qs.symbol);
     const nseInstr = NSE_INDEX_MAP[qs.symbol];
@@ -1522,7 +1522,7 @@ export default function Dashboard() {
               {(INSTRUMENTS.find(i => i.token === config.instrumentToken) as any)?.isIndexOptions && (
                 <div className="mt-1.5 flex items-start gap-1.5 bg-teal-500/10 border border-teal-500/30 rounded-lg px-2.5 py-1.5">
                   <span className="text-teal-400 text-[10px] leading-tight">
-                    <strong>Auto-ATM Options Mode:</strong> Bot reads the index price for signals, then automatically buys the ATM CE (on BUY signal) or ATM PE (on SELL signal). Capital is sized using the option premium price.
+                    <strong>Auto-OTM Options Mode:</strong> Bot reads the index price for signals, then automatically buys 1-strike OTM CE (on BUY signal) or OTM PE (on SELL signal). Lower premiums = more lots = better profit potential. Capital is sized using the option premium price.
                   </span>
                 </div>
               )}
@@ -2234,7 +2234,7 @@ export default function Dashboard() {
                                   >
                                     <span className="text-xs font-bold text-white/60 w-4">{idx + 1}</span>
                                     <div className="flex-1 min-w-0">
-                                      <div className="text-xs font-medium text-white truncate">{r.label.replace(" → ATM Options", "")}</div>
+                                      <div className="text-xs font-medium text-white truncate">{r.label.replace(/ → (?:ATM|OTM) Options/, "")}</div>
                                       <div className="text-[10px] text-white/40">{r.reason}</div>
                                     </div>
                                     <div className="flex flex-col items-end gap-0.5">

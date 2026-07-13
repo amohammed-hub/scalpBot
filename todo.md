@@ -549,3 +549,11 @@
 - [x] Fix: botRestart.ts — JSON.parse(enabledLayers) wrapped in try-catch to prevent crash on malformed data
 - [x] Fix: db.ts — Added self-healing migration for signal_journal table (auto-creates if missing on Railway)
 - [x] All 119 tests passing, TypeScript 0 errors.
+
+## Round 8 — Option Contract Resolution Fix (Jul 13, 2026)
+- [x] Fix resolveAtmOptionToken: parse Upstox API flat array format (each element = {strike_price, call_options:{}, put_options:{}})
+- [x] Add expiry_date=current_week parameter (auto-rolls weekly) with next_week fallback
+- [x] Implement 1-strike OTM selection: lower premiums → more lots → better profit potential
+- [x] Update Dashboard labels from "ATM Options" to "OTM Options" to reflect new strategy
+- [x] Update tooltip description to explain OTM selection logic
+- [x] All 119 tests passing, TypeScript 0 errors.
