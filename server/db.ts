@@ -3,11 +3,10 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { InsertUser, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _db: any = null;
 let _initAttempted = false;
-
+let _migrationRan = false;
 async function initDb() {
   const url = process.env.DATABASE_URL;
   console.log("[Database] DATABASE_URL present:", !!url, "length:", url?.length ?? 0);
@@ -31,6 +30,19 @@ async function initDb() {
     
     const db = drizzle(pool);
     console.log("[Database] Connected successfully");
+    // Self-healing migrations: ensure columns exist that may be missing on Railway
+    if (!_migrationRan) {
+      _migrationRan = true;
+      try {
+        await pool.execute("SELECT `enabledLayers` FROM `bot_sessions` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding enabledLayers column to bot_sessions");
+          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `enabledLayers` text");
+          console.log("[Database] Migration complete: enabledLayers column added");
+        }
+      }
+    }
     return db;
   } catch (error: unknown) {
     const err = error as { message?: string; code?: string };

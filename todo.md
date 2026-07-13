@@ -534,3 +534,10 @@
 - [x] Verified: precisionMetrics.ts has no division-by-zero (all divisions guarded with > 0 checks).
 - [x] Verified: enabledLayers preserved in auto-restart, secondary slot, crash recovery.
 - [x] All 119 tests passing, TypeScript 0 errors.
+
+## Fix — enabledLayers column missing on Railway DB (Jul 13, 2025)
+- [x] Root cause: Migration 0012 file was empty, Railway DB never got the `enabledLayers` column. Manus DB had it from webdev_execute_sql.
+- [x] Fix: Added self-healing migration in db.ts — on first DB connection, checks if `enabledLayers` column exists, auto-adds it if missing.
+- [x] Fix: Merged enabledLayers into main UPDATE query (was a separate UPDATE that could fail independently).
+- [x] Fix: Wrote correct SQL in migration file (drizzle/0012_thick_dexter_bennett.sql) for documentation.
+- [x] All 119 tests passing, TypeScript 0 errors.

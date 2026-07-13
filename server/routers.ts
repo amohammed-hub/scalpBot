@@ -440,14 +440,9 @@ export const appRouter = router({
               isIndexOptions: input.isIndexOptions,
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
+              enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
             })
             .where(eq(botSessions.sessionToken, input.sessionToken));
-          // Persist enabledLayers separately (text column, JSON-encoded)
-          if (input.enabledLayers) {
-            await db.update(botSessions).set({
-              enabledLayers: JSON.stringify(input.enabledLayers),
-            }).where(eq(botSessions.sessionToken, input.sessionToken));
-          }
         } else {
           const result = await db.insert(botSessions).values({
             sessionToken: input.sessionToken,
