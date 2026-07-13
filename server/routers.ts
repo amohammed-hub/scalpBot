@@ -470,7 +470,7 @@ export const appRouter = router({
               optionType: input.optionType ?? null,
               enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
           });
-          sessionId = Number((result as unknown as { insertId: number }).insertId);
+          sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
 
         // Trade open callback — inserts into DB and returns the new row ID
@@ -500,7 +500,7 @@ export const appRouter = router({
             sessionId,
             ...trade,
           });
-          const insertId = Number((result as unknown as { insertId: number }).insertId);
+          const insertId = Number((result as unknown as [{ insertId: number }])[0].insertId);
 
           // Update session stats
           const state = getBotState(input.sessionToken);
@@ -757,7 +757,7 @@ export const appRouter = router({
           const dbInner = await getDb();
           if (!dbInner) return 0;
           const result = await dbInner.insert(tradeLog).values({ sessionToken: input.sessionToken, sessionId, ...trade });
-          return Number((result as unknown as { insertId: number }).insertId);
+          return Number((result as unknown as [{ insertId: number }])[0].insertId);
         };
         const onTradeClose = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
           const dbInner = await getDb();
@@ -1708,7 +1708,7 @@ export const appRouter = router({
             startedAt: new Date(),
             enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
           });
-          sessionId = Number((result as unknown as { insertId: number }).insertId);
+          sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
 
         const onTradeOpen = async (trade: Parameters<typeof startBot>[1] extends (t: infer T) => Promise<number> ? T : never): Promise<number> => {
@@ -1717,7 +1717,7 @@ export const appRouter = router({
           const result = await dbInner.insert(tradeLog).values({
             sessionToken: slotToken, sessionId, botSlot: input.slot, ...trade,
           });
-          return Number((result as unknown as { insertId: number }).insertId);
+          return Number((result as unknown as [{ insertId: number }])[0].insertId);
         };
         const onTradeClose = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
           const dbInner = await getDb();

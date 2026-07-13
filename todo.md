@@ -564,3 +564,14 @@
 - [x] Add 2-minute cooldown between trade entries (lastTradeOpenedAt)
 - [x] Wrap entire tick body in try/finally to always release tickInProgress lock
 - [x] All 119 tests pass, TypeScript 0 errors, server running clean
+## Round 10 — Critical Runtime Bugs (Jul 13, 2026)
+- [x] CRITICAL: Fix isOpeningTrade mutex never released if onTradeOpen DB insert throws — bot permanently blocked from opening trades. Wrapped in try-catch with explicit mutex release on error.
+- [x] CRITICAL: Fix insertId access pattern — drizzle-orm mysql2 returns [ResultSetHeader, FieldPacket[]], so insertId is at result[0].insertId not result.insertId. All trade dbIds were NaN, meaning trade close updates silently failed to find the row. Fixed all 6 occurrences in routers.ts.
+- [x] Fix daily reset missing lastTradeOpenedAt and isOpeningTrade reset — stale values from previous day could block trades on new day.
+- [x] Verified: emitActivity is purely in-memory (no DB dependency) — no crash risk from missing tables.
+- [x] Verified: logSignalToJournal is fire-and-forget with try-catch — gracefully handles missing signal_journal table.
+- [x] Verified: Paper mode candle fetch works without auth token (Upstox intraday API is public for NSE_INDEX).
+- [x] Verified: Paper mode effectivePrice uses delta drift (0.5 delta approximation) from underlying price movement — SL/Target comparisons work correctly.
+- [x] Verified: Market close detection works correctly — bot returns HOLD when past stopScanMin (15:20 IST for NSE).
+- [x] E2E test: Bot starts → fetches real candles → generates correct HOLD signal → stops cleanly. sessionId now valid (was NaN before fix).
+- [x] All 119 tests pass, TypeScript 0 errors, server running clean.

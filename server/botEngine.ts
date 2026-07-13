@@ -1842,6 +1842,8 @@ async function tick(
     state.dailyPnl = 0;
     state.tradesCount = 0;
     state.hourlyCloseSignalFired = false;
+    state.isOpeningTrade = false; // Clear stale mutex from previous day
+    state.lastTradeOpenedAt = undefined; // Clear cooldown from previous day
     state.status = "running"; // un-pause if paused from previous day limits
     state.lastError = null;
     resetDailyState(); // Clear StoplossGuard, portfolio halt, cooldowns
@@ -2537,14 +2539,25 @@ async function tick(
     // Continue anyway — the in-memory guard is still active
   }
   state.isOpeningTrade = true;
-  const dbId = await onTradeOpen({
-    symbol: tradeSymbol, symbolLabel: tradeLabel,
-    instrumentToken: tradeInstrumentToken, direction: signal.direction, mode: state.mode,
-    entryPrice: tradeEntryPrice, quantity, slPrice: tradeSl, targetPrice: tradeTarget,
-    atr: signal.atr, confidence: signal.confidence, status: "open",
-    upstoxOrderId: orderId, signalReason: signalLabel + (isOptionsMode ? ` [${tradeSymbol}]` : ""), enteredAt: new Date(),
-    partial1RPrice, partial2RPrice,
-  });
+  let dbId: number;
+  try {
+    dbId = await onTradeOpen({
+      symbol: tradeSymbol, symbolLabel: tradeLabel,
+      instrumentToken: tradeInstrumentToken, direction: signal.direction, mode: state.mode,
+      entryPrice: tradeEntryPrice, quantity, slPrice: tradeSl, targetPrice: tradeTarget,
+      atr: signal.atr, confidence: signal.confidence, status: "open",
+      upstoxOrderId: orderId, signalReason: signalLabel + (isOptionsMode ? ` [${tradeSymbol}]` : ""), enteredAt: new Date(),
+      partial1RPrice, partial2RPrice,
+    });
+  } catch (tradeOpenErr) {
+    // CRITICAL: if DB insert fails, release the mutex so bot isn't permanently blocked
+    state.isOpeningTrade = false;
+    const errMsg = tradeOpenErr instanceof Error ? tradeOpenErr.message : String(tradeOpenErr);
+    state.lastError = `Trade open DB write failed: ${errMsg}`;
+    console.error(`[BotEngine] ${state.sessionToken} — onTradeOpen failed, mutex released:`, errMsg);
+    emitActivity(state.sessionToken, "error", `⚠ Trade open failed (DB write error): ${errMsg}. Mutex released — bot will retry next signal.`);
+    return;
+  }
 
   // Determine mock key for paper-mode option premium lookup at exit time
   // Must match the same logic used at entry time above
