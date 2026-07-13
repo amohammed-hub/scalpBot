@@ -583,9 +583,9 @@
 - [x] Fix delta drift formula: now uses symbol-based CE/PE detection instead of direction (CE: premium + move*delta, PE: premium - move*delta)
 - [x] All 119 tests pass, TypeScript 0 errors
 ## Round 11b — Fix Historical Trade Direction & P&L (Jul 13, 2026)
-- [ ] Fix all existing trades in DB: flip direction from SELL to BUY for options trades
-- [ ] Recalculate P&L for closed trades: P&L = (exit - entry) * qty for BUY direction
-- [ ] Add migration endpoint or startup fix to handle this automatically on deploy
+- [x] Fix all existing trades in DB: flip direction from SELL to BUY for options trades
+- [x] Recalculate P&L for closed trades: P&L = (exit - entry) * qty for BUY direction
+- [x] Add migration endpoint or startup fix to handle this automatically on deploy (stale trade cleanup in botRestart.ts)
 - [x] Add "Close All Open" button to Dashboard for manual cleanup
 
 ## Round 12 — Full Codebase Audit (Jul 13, 2026)
