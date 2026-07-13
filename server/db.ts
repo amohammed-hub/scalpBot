@@ -5,6 +5,7 @@ import { InsertUser, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _db: any = null;
+let _pool: any = null;
 let _initAttempted = false;
 let _migrationRan = false;
 async function initDb() {
@@ -21,9 +22,16 @@ async function initDb() {
       uri: url,
       waitForConnections: true,
       connectionLimit: 10,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 30000,
       ssl: { rejectUnauthorized: false },
     });
     
+    _pool = pool;
+    // Handle pool-level connection errors gracefully
+    (pool as any).on('error', (err: any) => {
+      console.error("[Database] Pool error (will auto-reconnect):", err.code ?? err.message);
+    });
     // Test the connection immediately
     const conn = await pool.getConnection();
     conn.release();
@@ -172,4 +180,15 @@ export async function getUserByOpenId(openId: string) {
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
 
   return result.length > 0 ? result[0] : undefined;
+}
+
+/** Reset DB connection — call when a "Connection lost" error is detected */
+export function resetDbConnection() {
+  console.log("[Database] Resetting connection pool due to connection loss");
+  _db = null;
+  _initAttempted = false;
+  if (_pool) {
+    try { _pool.end(); } catch { /* ignore */ }
+    _pool = null;
+  }
 }

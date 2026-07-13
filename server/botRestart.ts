@@ -106,7 +106,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     optionMockKey: (() => {
       if (!session.isIndexOptions) return undefined;
       const sym = (session.instrumentSymbol ?? "").toUpperCase();
-      const ceOrPe = t.direction === "BUY" ? "CE" : "PE";
+      const ceOrPe = (t.symbol ?? "").includes("_CE_") || (t.symbol ?? "").endsWith("_CE") ? "CE" : "PE";
       if (sym.includes("GOLD")) return ceOrPe === "CE" ? "MCX_GOLD_CE" : "MCX_GOLD_PE";
       if (sym.includes("SILVER")) return ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
       if (sym.includes("CRUDE") || sym.includes("OIL")) return ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
@@ -160,7 +160,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       partial1RPrice: trade.partial1RPrice,
       partial2RPrice: trade.partial2RPrice,
     });
-    return (result as any).insertId ?? 0;
+    return Number((result as unknown as [{ insertId: number }])[0].insertId);
   };
 
   // Build onTradeClose callback

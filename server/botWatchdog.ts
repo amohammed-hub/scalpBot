@@ -10,7 +10,7 @@
  * the in-memory Map was cleared by an unhandled exception.
  */
 
-import { getDb } from "./db";
+import { getDb, resetDbConnection } from "./db";
 import { botSessions } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { getBotState } from "./botEngine";
@@ -27,6 +27,10 @@ export function startBotWatchdog(intervalMs = 60_000) {
       await runWatchdogCycle();
     } catch (err) {
       console.error("[BotWatchdog] Error during watchdog cycle:", err);
+      const errMsg = String(err);
+      if (errMsg.includes("Connection lost") || errMsg.includes("ECONNRESET") || errMsg.includes("PROTOCOL_CONNECTION_LOST")) {
+        resetDbConnection();
+      }
     }
   }, intervalMs);
 

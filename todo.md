@@ -582,3 +582,15 @@
 - [x] Added "Close All Open" button in Dashboard trade log for manual cleanup
 - [x] Fix delta drift formula: now uses symbol-based CE/PE detection instead of direction (CE: premium + move*delta, PE: premium - move*delta)
 - [x] All 119 tests pass, TypeScript 0 errors
+## Round 11b — Fix Historical Trade Direction & P&L (Jul 13, 2026)
+- [ ] Fix all existing trades in DB: flip direction from SELL to BUY for options trades
+- [ ] Recalculate P&L for closed trades: P&L = (exit - entry) * qty for BUY direction
+- [ ] Add migration endpoint or startup fix to handle this automatically on deploy
+- [x] Add "Close All Open" button to Dashboard for manual cleanup
+
+## Round 12 — Full Codebase Audit (Jul 13, 2026)
+- [x] BUG: optionMockKey in botRestart.ts used direction (always "BUY") instead of symbol to determine CE/PE — fixed to derive from symbol string
+- [x] BUG: insertId pattern in botRestart.ts still used old `(result as any).insertId` format — fixed to `[0].insertId`
+- [x] DB connection resilience: added enableKeepAlive, pool error handler, resetDbConnection() for auto-recovery
+- [x] Watchdog: calls resetDbConnection() on "Connection lost" errors for auto-recovery
+- [x] Cleaned up test/debug scripts from project root
