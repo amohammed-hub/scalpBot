@@ -1293,8 +1293,8 @@ export function generateHeroZeroSignal(
     reason,
     layer: "HeroZero",
     isHeroZero: true,
-    partial1RPrice: optionPremium * 2.5,   // book 50% at 2.5× (halfway to 5×)
-    partial2RPrice: optionPremium * 3.5,   // book 25% at 3.5×
+    partial1RPrice: optionPremium * 1.4,   // book 50% at +40% profit (e.g., ₹252 → ₹353)
+    partial2RPrice: optionPremium * 2.0,   // book 25% at +100% profit (e.g., ₹252 → ₹504)
   };
 }
 
@@ -2035,18 +2035,18 @@ async function tick(
       let heroExit: string | null = null;
       if (effectivePrice >= heroTarget) heroExit = "Hero Zero — 5× Target Hit";
       else if (effectivePrice <= heroCut) heroExit = "Hero Zero — 50% Cut";
-     if (heroExit) {
-       let pnl = (effectivePrice - trade.entryPrice) * trade.quantity;
-       if (trade.mode === "live" && state.accessToken) {
-          const heroOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", trade.quantity);
-          if (!heroOrderId) {
+      if (heroExit) {
+        let pnl = (effectivePrice - trade.entryPrice) * trade.quantity;
+        if (trade.mode === "live" && state.accessToken) {
+          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", trade.quantity);
+          if (!heroOrderId2) {
             state.lastError = `Hero Zero exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
             emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
             sendTelegramAlert(state, `🚨 <b>HERO ZERO EXIT FAILED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Exit order rejected. CLOSE MANUALLY ON UPSTOX.`);
             return; // do NOT close trade in DB — position still open
           }
-       }
-       // v3: paper-mode brokerage + slippage simulation
+        }
+        // v3: paper-mode brokerage + slippage simulation
         if (trade.mode === "paper") {
           const pc = getPaperCostConfig();
           pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
@@ -2056,8 +2056,10 @@ async function tick(
         recordTradeClose(state.sessionToken, state.scanIntervalSec);
         await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
         console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
+        return;
       }
-      return;
+      // Hero Zero: do NOT return here — fall through to partial booking below
+      // This allows partial profit booking to work for Hero Zero trades too
     }
 
     // ── Partial profit booking (pyramid exit) ────────────────────────────────
@@ -2580,9 +2582,11 @@ async function tick(
   // Compute partial profit levels BEFORE calling onTradeOpen so they are stored in DB
   // For options: use option premium price for partial levels (not underlying SL distance)
   const slDist = isOptionsMode && optionPremiumForSizing
-    ? optionPremiumForSizing * 0.5  // 50% of premium = SL distance for options
+    ? optionPremiumForSizing * 0.3  // 30% of premium = SL distance for options (e.g., ₹252 → SL dist = ₹76)
     : Math.abs(signal.entryPrice - signal.slPrice);
   const optionEntry = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
+  // For options: book 50% at +30% profit (1R), book 25% at +60% profit (2R)
+  // e.g., entry ₹252 → partial1R = ₹328, partial2R = ₹403
   const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode ? optionEntry + slDist : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
   const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode ? optionEntry + slDist * 2 : (signal.direction === "BUY" ? optionEntry + slDist * 2 : optionEntry - slDist * 2));
 

@@ -616,3 +616,6 @@
 - [x] Add lightweight livePrice tRPC endpoint that fetches latest 1-min candle close for running bots every 5 seconds (independent of scan interval)
 - [x] Display current price prominently in each bot slot card with "live" indicator
 - [x] Reduce allStatus polling to 3 seconds for faster price updates
+- [x] Fix: Hero Zero trades skip partial profit booking due to early return statement
+- [x] Fix: Make partial booking levels more realistic for options (book at +40% and +80% instead of 2.5× and 3.5×)
+- [x] Fix: Allow partial booking to run for Hero Zero trades before the 5× target check
