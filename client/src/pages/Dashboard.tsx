@@ -5,7 +5,7 @@ import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
-  Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle
+  Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -436,6 +436,10 @@ export default function Dashboard() {
       utils.trades.stats.invalidate();
     },
     onError: (e) => toast.error(`Close failed: ${e.message}`),
+  });
+  const clearAllHistoryMutation = trpc.trades.clearAllHistory.useMutation({
+    onSuccess: () => { toast.success("All trade history cleared — fresh start!"); utils.trades.list.invalidate(); utils.trades.todayStats.invalidate(); utils.trades.stats.invalidate(); },
+    onError: (e) => toast.error("Failed to clear: " + e.message),
   });
 
   // Kill Switch
@@ -2441,6 +2445,17 @@ export default function Dashboard() {
               >
                 <XCircle className="w-3.5 h-3.5" />
                 Close All Open
+              </button>
+              <button
+                onClick={() => {
+                  if (!confirm("DELETE ALL trade history, sessions, and signal journal? This cannot be undone. You will start completely fresh.")) return;
+                  clearAllHistoryMutation.mutate();
+                }}
+                className="flex items-center gap-1.5 text-xs text-orange-400 hover:text-orange-300 bg-orange-500/10 hover:bg-orange-500/20 px-2.5 py-1.5 rounded-lg transition-colors"
+                title="Delete ALL trade history and start fresh"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear All History
               </button>
             </div>
           </div>

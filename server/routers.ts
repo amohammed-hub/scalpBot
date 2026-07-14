@@ -1323,6 +1323,16 @@ export const appRouter = router({
         await db.update(botSessions).set({ dailyPnl: 0, tradesCount: 0 }).where(eq(botSessions.sessionToken, input.sessionToken));
         return { success: true };
       }),
+    // Wipe ALL trade history, bot sessions, and signal journal — complete fresh start
+    clearAllHistory: publicProcedure
+      .mutation(async () => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        await db.delete(tradeLog);
+        await db.update(botSessions).set({ dailyPnl: 0, tradesCount: 0 });
+        try { await (db as any).execute("DELETE FROM signal_journal"); } catch { /* table may not exist */ }
+        return { success: true };
+      }),
     // Force-close all open trades at entry price (P&L = 0) — used for cleanup
     closeAllOpen: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema.optional() }))
