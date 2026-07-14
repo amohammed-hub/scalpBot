@@ -609,3 +609,4 @@
 - [x] Round 15: Fix zero trades — double confidence filter bug, overly strict S/R proximity, time-of-day multipliers too aggressive
 - [x] Round 15: Add heartbeat activity logging every 5 min so user can see bot is alive
 - [x] Round 15: Relax signal criteria (ADX 20→15, Momentum RSI 58→54/42→46, Breakout vol 1.3→1.1, Pattern vol 1.2→1.0, 5m strict→allow neutral)
+- [x] Round 16: Fix Slot 2 'Instrument already running in Slot 1' error when starting different instrument (Gold vs Nifty)
