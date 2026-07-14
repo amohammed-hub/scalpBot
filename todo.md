@@ -594,3 +594,10 @@
 - [x] DB connection resilience: added enableKeepAlive, pool error handler, resetDbConnection() for auto-recovery
 - [x] Watchdog: calls resetDbConnection() on "Connection lost" errors for auto-recovery
 - [x] Cleaned up test/debug scripts from project root
+## Round 12b — Clear All History (Jul 14, 2026)
+- [x] Added "Clear All History" button (orange) in Trade Log section that wipes ALL trade_log, resets bot_sessions counters, and clears signal_journal in one click
+- [x] Added clearAllHistory tRPC endpoint
+## Round 13 — Live Trading Day Bugs (Jul 14, 2026)
+- [x] BUG: Trade counter showing 0 after trades close — allStatus was reading stale dbRow.tradesCount instead of querying today's actual trade_log count. Fixed by querying trade_log with gte(today start) grouped by instrumentToken.
+- [x] BUG: Stale instrument label (showing "Crude Oil" when NIFTY selected) — allStatus returned dbRow.instrumentLabel even when bot stopped. Fixed to return empty string when bot is not running so UI shows the dropdown selector instead of stale label.
+- [x] All 119 tests pass, TypeScript 0 errors

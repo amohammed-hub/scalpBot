@@ -1524,10 +1524,14 @@ export const appRouter = router({
         const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
         // Load DB rows for all 3 slot tokens in one pass
         const dbRows: Record<string, typeof botSessions.$inferSelect> = {};
+        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        const todayTradeCounts: Record<string, number> = {};
         if (db) {
           for (const tok of slotTokens) {
             const rows = await db.select().from(botSessions).where(eq(botSessions.sessionToken, tok)).limit(1);
             if (rows.length > 0) dbRows[tok] = rows[0];
+            const countRows = await db.select({ count: count() }).from(tradeLog).where(and(eq(tradeLog.sessionToken, tok), gte(tradeLog.enteredAt, todayStart)));
+            todayTradeCounts[tok] = countRows[0]?.count ?? 0;
           }
         }
         // Merge in-memory state with DB fallback — always return all 3 slots
@@ -1535,15 +1539,16 @@ export const appRouter = router({
           const inMem = getBotState(tok);
           const dbRow = dbRows[tok];
           const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
+          const isRunning = inMem?.status === "running";
           return {
             sessionToken: tok,
             slot,
             status: inMem?.status ?? dbRow?.status ?? "stopped",
-            instrumentSymbol: inMem?.instrumentSymbol ?? dbRow?.instrumentSymbol ?? "",
-            instrumentLabel: inMem?.instrumentLabel ?? dbRow?.instrumentLabel ?? "",
+            instrumentSymbol: isRunning ? (inMem?.instrumentSymbol ?? dbRow?.instrumentSymbol ?? "") : "",
+            instrumentLabel: isRunning ? (inMem?.instrumentLabel ?? dbRow?.instrumentLabel ?? "") : "",
             lastPrice: inMem?.lastPrice ?? dbRow?.lastPrice ?? 0,
             dailyPnl: inMem?.dailyPnl ?? dbRow?.dailyPnl ?? 0,
-            tradesCount: inMem?.tradesCount ?? dbRow?.tradesCount ?? 0,
+            tradesCount: inMem?.tradesCount ?? todayTradeCounts[tok] ?? 0,
             openTrade: inMem?.openTrade ?? null,
             lastSignal: inMem?.lastSignal ?? null,
             isPowerHourMode: inMem?.isPowerHourMode ?? false,
