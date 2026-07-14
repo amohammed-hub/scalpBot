@@ -612,3 +612,7 @@
 - [x] Round 16: Fix Slot 2 'Instrument already running in Slot 1' error when starting different instrument (Gold vs Nifty)
 - [x] Round 17: Fix zero trades - widen RSI ranges (Trend: 42-75 BUY, 25-58 SELL; Momentum: 45+ BUY, <55 SELL), bypass volume filters entirely, lower ROC threshold
 - [x] Fix Slot 1/2 showing wrong price (Nifty instead of Gold/NatGas) — dropdown values MCX_GOLD/MCX_NATGAS not mapping to instrument symbols GOLD/NATURALGAS
+## Round 19 — Real-time Current Price Display (Jul 14, 2026)
+- [x] Add lightweight livePrice tRPC endpoint that fetches latest 1-min candle close for running bots every 5 seconds (independent of scan interval)
+- [x] Display current price prominently in each bot slot card with "live" indicator
+- [x] Reduce allStatus polling to 3 seconds for faster price updates

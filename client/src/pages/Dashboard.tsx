@@ -330,6 +330,11 @@ export default function Dashboard() {
   // Multi-bot: all 3 slots
   const { data: allBots } = trpc.multiBots.allStatus.useQuery(
     { sessionToken },
+    { refetchInterval: 3000, staleTime: 1000 }
+  );
+  // Lightweight live price polling — updates every 5 seconds independently of scan interval
+  const { data: livePricesData } = trpc.multiBots.livePrices.useQuery(
+    { sessionToken },
     { refetchInterval: 5000, staleTime: 2000 }
   );
   const stopSecondaryMutation = trpc.multiBots.stopSecondary.useMutation({
@@ -509,7 +514,9 @@ export default function Dashboard() {
 
   // ── Derived state ─────────────────────────────────────────────────────────────
   const isRunning = botStatus?.status === "running";
-  const currentPrice = liveData?.price ?? botStatus?.lastPrice ?? 0;
+  // Use livePricesData (updates every 5s) as primary source, fallback to liveData (3s but only updates on scan tick)
+  const primaryLivePrice = livePricesData?.find(lp => lp.slot === 0)?.livePrice;
+  const currentPrice = primaryLivePrice ?? liveData?.price ?? botStatus?.lastPrice ?? 0;
   const bidPrice = liveData?.bid ?? botStatus?.bidPrice ?? 0;
   const askPrice = liveData?.ask ?? botStatus?.askPrice ?? 0;
   const latestSignal = liveData?.signal ?? null;
@@ -2055,8 +2062,19 @@ export default function Dashboard() {
                     {modeTag && (
                       <div className="text-xs text-amber-300 mb-1">{modeTag}</div>
                     )}
-                    <div className="flex items-center justify-between text-xs text-white/50 mb-2">
-                      <span>₹{(bot.lastPrice ?? 0).toFixed(2)}</span>
+                    <div className="flex items-center justify-between text-xs mb-2">
+                      {(() => {
+                        // Use livePricesData for more real-time price (updates every 5s vs scan interval)
+                        const lpEntry = livePricesData?.find(lp => lp.slot === bot.slot);
+                        const displayPrice = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+                        const isLive = !!(lpEntry && lpEntry.livePrice > 0 && (Date.now() - lpEntry.updatedAt) < 15000);
+                        return (
+                          <span className={`font-semibold ${isActive ? "text-white" : "text-white/50"}`}>
+                            {isLive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse" />}
+                            ₹{displayPrice > 0 ? displayPrice.toFixed(2) : "—"}
+                          </span>
+                        );
+                      })()}
                       <span>{bot.tradesCount ?? 0} trades</span>
                     </div>
                     {/* Unrealised P&L for open trade */}
@@ -2064,11 +2082,12 @@ export default function Dashboard() {
                       const openTrade = (bot as any).openTrade;
                       if (!openTrade || !isActive) return null;
                       // For options mode: use optionPremiumPrice (drifts with real underlying)
-                      // For futures/spot mode: use lastPrice (underlying)
+                      // For futures/spot mode: use livePricesData (more real-time) or lastPrice (underlying)
                       const isOpts = openTrade.isIndexOptions;
+                      const lpEntry = livePricesData?.find(lp => lp.slot === bot.slot);
                       const livePrice = isOpts
                         ? ((bot as any).optionPremiumPrice ?? 0)
-                        : (bot.lastPrice ?? 0);
+                        : (lpEntry?.livePrice ?? bot.lastPrice ?? 0);
                       if (livePrice === 0) return null;
                       const dir = openTrade.direction === "BUY" ? 1 : -1;
                       const unrealised = (livePrice - openTrade.entryPrice) * dir * (openTrade.quantity - (openTrade.bookedQty ?? 0));
@@ -2507,9 +2526,13 @@ export default function Dashboard() {
                     const slotBot = tradeSlot > 0
                       ? (allBots ?? []).find(b => b.slot === tradeSlot)
                       : null;
-                    const slotLastPrice = slotBot?.lastPrice ?? 0;
-                    // For primary slot: use currentPrice (live data); for other slots: use allBots lastPrice
-                    const slotEffectivePrice = tradeSlot === 0 ? currentPrice : slotLastPrice;
+                    // Use livePricesData for more real-time price (updates every 5s)
+                    const lpSlot = livePricesData?.find(lp => lp.slot === tradeSlot);
+                    const slotLastPrice = lpSlot?.livePrice ?? slotBot?.lastPrice ?? 0;
+                    // For primary slot: use currentPrice (live data) or livePrices; for other slots: use livePrices
+                    const slotEffectivePrice = tradeSlot === 0
+                      ? (lpSlot?.livePrice ?? currentPrice)
+                      : slotLastPrice;
                     // In options mode use option premium price (only available for primary slot currently)
                     // For secondary slots, use their optionPremiumPrice from allBots data
                     const slotOptionPremium = slotBot?.optionPremiumPrice ?? 0;

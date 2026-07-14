@@ -1603,6 +1603,54 @@ export const appRouter = router({
         });
       }),
 
+    // Lightweight live price endpoint — fetches only the latest 1-min candle close for each running bot.
+    // Called every 5 seconds by the frontend, independent of the full scan interval.
+    // This reduces the "lag" between dashboard and Upstox by updating prices more frequently.
+    livePrices: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const results: Array<{ sessionToken: string; slot: number; livePrice: number; updatedAt: number }> = [];
+
+        for (const tok of slotTokens) {
+          const bot = getBotState(tok);
+          if (!bot || bot.status !== "running") continue;
+
+          // Determine the correct token to fetch price for
+          const signalToken = (bot.isIndexOptions && bot.underlyingToken) ? bot.underlyingToken : bot.instrumentToken;
+
+          try {
+            // Fetch only the latest 1-min candle (lightweight — no 5m, no day, no quote)
+            const candles = await fetchUpstoxCandles(signalToken, bot.accessToken ?? undefined);
+            const latestClose = candles.length > 0 ? candles[candles.length - 1].close : 0;
+
+            // Update in-memory lastPrice if we got a valid price (keeps allStatus in sync too)
+            if (latestClose > 0) {
+              bot.lastPrice = latestClose;
+            }
+
+            const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
+            results.push({
+              sessionToken: tok,
+              slot,
+              livePrice: latestClose > 0 ? latestClose : bot.lastPrice,
+              updatedAt: Date.now(),
+            });
+          } catch {
+            // On error, return the last known price from memory
+            const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
+            results.push({
+              sessionToken: tok,
+              slot,
+              livePrice: bot.lastPrice,
+              updatedAt: bot.lastTickAt ?? Date.now(),
+            });
+          }
+        }
+
+        return results;
+      }),
+
     // Start a secondary bot on a different instrument
     startSecondary: publicProcedure
       .input(z.object({
