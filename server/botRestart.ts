@@ -13,7 +13,8 @@
 import { getDb } from "./db";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc } from "drizzle-orm";
-import { startBot, getBotState, type OpenTrade, type BotState } from "./botEngine";
+import { startBot, getBotState, fetchFullQuote, type OpenTrade, type BotState } from "./botEngine";
+import axios from "axios";
 
 // Type alias for a row from botSessions (Drizzle infers this)
 type BotSessionRow = typeof botSessions.$inferSelect;
@@ -267,14 +268,46 @@ export async function restartRunningBots(): Promise<void> {
       const isMCX = (t.instrumentToken ?? "").startsWith("MCX");
       const marketClosed = isMCX ? (istMin >= 23 * 60 + 30 || istMin < 9 * 60) : (istMin >= 15 * 60 + 30 || istMin < 9 * 60 + 15);
       if (isStale || marketClosed) {
+        // Respect carry-forward flag: if trade is marked for carry-forward, skip closing it
+        if (t.carryForward) {
+          console.log(`[BotRestart] Trade #${t.id} (${t.symbolLabel ?? t.symbol}) has carryForward=true — keeping open`);
+          continue;
+        }
+        // Try to fetch the last traded price from Upstox API
+        let exitPrice = t.entryPrice; // fallback to entry price if API fails
+        let pnl = 0;
+        const bookedPnl = t.bookedPnl ?? 0;
+        try {
+          // Look up access token for this trade's session
+          const credRow = await db.select().from(upstoxCredentials)
+            .where(eq(upstoxCredentials.sessionToken, t.sessionToken))
+            .limit(1);
+          const token = credRow[0]?.accessToken;
+          if (token && t.instrumentToken) {
+            const quote = await fetchFullQuote(t.instrumentToken, token);
+            if (quote && quote.ltp > 0) {
+              exitPrice = quote.ltp;
+            }
+          }
+        } catch (ltpErr) {
+          console.warn(`[BotRestart] Could not fetch LTP for trade #${t.id}:`, ltpErr);
+        }
+        // Calculate P&L using actual exit price
+        pnl = t.direction === "BUY"
+          ? (exitPrice - t.entryPrice) * t.quantity
+          : (t.entryPrice - exitPrice) * t.quantity;
+        const totalPnl = pnl + bookedPnl;
+        const exitReason = isStale
+          ? `Stale — auto-closed on startup (previous day) @ ₹${exitPrice.toFixed(2)}`
+          : `Market Close — auto-closed on startup @ ₹${exitPrice.toFixed(2)}`;
         await db.update(tradeLog).set({
           status: "closed",
-          exitPrice: t.entryPrice,
-          pnl: 0,
-          exitReason: isStale ? "Stale — auto-closed on startup (previous day)" : "Market Close — auto-closed on startup",
+          exitPrice,
+          pnl: totalPnl,
+          exitReason,
           exitedAt: now,
         }).where(eq(tradeLog.id, t.id));
-        console.log(`[BotRestart] Closed stale trade #${t.id} (${t.symbolLabel ?? t.symbol}) — entered ${tradeDate}`);
+        console.log(`[BotRestart] Closed stale trade #${t.id} (${t.symbolLabel ?? t.symbol}) — entered ${tradeDate} | exit @ ₹${exitPrice} | P&L: ₹${totalPnl.toFixed(0)}`);
       }
     }
     if (openTrades.length > 0) {

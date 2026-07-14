@@ -636,3 +636,7 @@
 - [x] Fix Silver MCX_SYMBOL_MAP token to MCX_FO|471725 (SILVER FUT per KG, lot 30) with options
 - [x] Add Partial Booking History column to Trade Log table
 - [x] Add Reserved hosting upgrade recommendation banner in dashboard (shows when bot is running, dismissible via localStorage)
+## Round 27 — Missing Trade + Carry Forward (Jul 15, 2026)
+- [x] BUG: Stale trade cleanup on server restart closes trades at ENTRY price (P&L=0) instead of fetching last market price — now fetches LTP from Upstox API
+- [x] BUG: Trade disappearing — root cause was Railway DB missing partialBooked columns. Added self-healing migrations that auto-add columns on server startup
+- [x] FEATURE: Carry-forward option before market close — prompt with "Square Off" vs "Carry Forward" buttons, unrealized P&L display, persists to DB, respects on restart

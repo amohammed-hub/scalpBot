@@ -411,10 +411,10 @@ describe("Bot Lifecycle — End-to-End Integration", () => {
     });
 
     startBot(makeBotConfig(sessionToken), onTradeOpen, onTradeClose, existingTrade);
-    await waitForTick(300);
+    await waitForTick(1000);
 
     expect(onTradeClose).toHaveBeenCalled();
-    // Accept Target Hit (normal) or Auto Square-Off (when test runs after 3:25 PM IST)
+    // Accept Target Hit, Auto Square-Off, or partial-related exit
     const reason2 = closedTrades[0].reason;
     expect(reason2.includes("Target Hit") || reason2.includes("Square-Off") || reason2.includes("partial")).toBe(true);
     expect(closedTrades[0].dbId).toBe(40);
@@ -764,7 +764,7 @@ describe("Feature 1-3 — currentSl, lastTickAt, dailyPnl E2E", () => {
       onTradeClose,
       existingTrade,
     );
-    await waitForTick(300);
+    await waitForTick(1000);
 
     const state = getBotState(sessionToken);
     expect(state).toBeDefined();

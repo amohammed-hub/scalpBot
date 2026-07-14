@@ -238,6 +238,8 @@ export const appRouter = router({
           // Health indicator fields
           lastTickAt: inMem?.lastTickAt ?? (row.lastTickAt ? Number(row.lastTickAt) : 0),
           lastError: inMem?.lastError ?? row.lastError ?? null,
+          // Carry-forward state
+          carryForward: inMem?.carryForward ?? false,
         };
       }),
 
@@ -693,6 +695,32 @@ export const appRouter = router({
           }
         }
         return { success: true };
+      }),
+
+    // Set carry-forward preference — if true, skip auto square-off at market close
+    setCarryForward: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema, carryForward: z.boolean() }))
+      .mutation(async ({ input }) => {
+        const state = getBotState(input.sessionToken);
+        if (!state) throw new Error("Bot not running");
+        state.carryForward = input.carryForward;
+        // Also set for slot bots
+        const slot1 = getBotState(`${input.sessionToken}-slot1`);
+        const slot2 = getBotState(`${input.sessionToken}-slot2`);
+        if (slot1) slot1.carryForward = input.carryForward;
+        if (slot2) slot2.carryForward = input.carryForward;
+        // Persist to DB on the open trade so it survives server restarts
+        const db = await getDb();
+        if (db && state.openTrade) {
+          await db.update(tradeLog).set({ carryForward: input.carryForward }).where(eq(tradeLog.id, state.openTrade.dbId));
+        }
+        if (db && slot1?.openTrade) {
+          await db.update(tradeLog).set({ carryForward: input.carryForward }).where(eq(tradeLog.id, slot1.openTrade.dbId));
+        }
+        if (db && slot2?.openTrade) {
+          await db.update(tradeLog).set({ carryForward: input.carryForward }).where(eq(tradeLog.id, slot2.openTrade.dbId));
+        }
+        return { success: true, carryForward: input.carryForward };
       }),
 
     restart: publicProcedure

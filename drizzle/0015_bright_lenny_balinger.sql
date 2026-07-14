@@ -1,0 +1,1 @@
+ALTER TABLE `trade_log` ADD `carryForward` boolean DEFAULT false;

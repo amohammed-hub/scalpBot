@@ -89,6 +89,39 @@ async function initDb() {
           console.log("[Database] Migration complete: signal_journal table created");
         }
       }
+      // Check partialBooked column on trade_log (added in Round 25)
+      try {
+        await pool.execute("SELECT `partialBooked` FROM `trade_log` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding partialBooked/bookedQty/bookedPnl to trade_log");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `partialBooked` int DEFAULT 0");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `bookedQty` int DEFAULT 0");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `bookedPnl` float DEFAULT 0");
+          console.log("[Database] Migration complete: partialBooked/bookedQty/bookedPnl columns added");
+        }
+      }
+      // Check partial1Pct column on bot_sessions (added in Round 25)
+      try {
+        await pool.execute("SELECT `partial1Pct` FROM `bot_sessions` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding partial1Pct/partial2Pct to bot_sessions");
+          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `partial1Pct` float DEFAULT 30");
+          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `partial2Pct` float DEFAULT 60");
+          console.log("[Database] Migration complete: partial1Pct/partial2Pct columns added");
+        }
+      }
+      // Check carryForward column on trade_log (added in Round 27)
+      try {
+        await pool.execute("SELECT `carryForward` FROM `trade_log` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding carryForward to trade_log");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `carryForward` boolean DEFAULT false");
+          console.log("[Database] Migration complete: carryForward column added");
+        }
+      }
     }
     return db;
   } catch (error: unknown) {

@@ -7,7 +7,7 @@ import {
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
   Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
-import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, } from "lucide-react";
+import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
@@ -482,6 +482,19 @@ export default function Dashboard() {
     onError: (e) => toast.error(`Kill switch failed: ${e.message}`),
   });
 
+  // Carry Forward
+  const carryForwardMutation = trpc.bot.setCarryForward.useMutation({
+    onSuccess: (data) => {
+      if (data.carryForward) {
+        toast.success("🌙 Carry Forward enabled — trade will be held overnight");
+      } else {
+        toast("Auto square-off re-enabled — trade will close at market close");
+      }
+      utils.bot.status.invalidate();
+    },
+    onError: (e) => toast.error(`Failed: ${e.message}`),
+  });
+
   // Preset Apply
   const applyPresetMutation = trpc.presets.applyPreset.useMutation({
     onSuccess: (data: { applied: string; botsUpdated: number }) => {
@@ -885,8 +898,8 @@ export default function Dashboard() {
           const inMCX = istMin >= 540 && istMin <= 1410;
           const inSession = isMCX ? inMCX : inNSE;
           const squareOffMin = isMCX ? (23 * 60 + 25) : (15 * 60 + 25);
-          const stopScanMin  = isMCX ? (23 * 60 + 25) : (15 * 60 + 20); // MCX: 5-min buffer (same as squareOff); NSE: 10-min buffer
-          const nearClose = istMin >= stopScanMin && istMin < squareOffMin;
+          const promptMin = isMCX ? (23 * 60 + 15) : (15 * 60 + 15); // Show carry-forward prompt 10 min before square-off
+          const nearClose = istMin >= promptMin && istMin <= squareOffMin + 3; // Show until 3 min after square-off time (in case of delay)
           return (
             <>
               {!inSession && (
@@ -901,9 +914,62 @@ export default function Dashboard() {
                 </div>
               )}
               {nearClose && activeTrade && (
-                <div className="mb-4 flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2.5 text-amber-400 text-sm">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>Market closing soon — open trade will be <strong>auto squared-off at {isMCX ? "23:25" : "15:25"} IST</strong></span>
+                <div className="mb-4 bg-gradient-to-r from-amber-500/10 to-purple-500/10 border border-amber-500/30 rounded-xl px-4 py-3 text-sm">
+                  <div className="flex items-center gap-2 text-amber-400 mb-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span className="font-semibold">Market Closing — Choose Action</span>
+                    <span className="ml-auto text-xs text-white/40">Auto square-off at {isMCX ? "23:28" : "15:25"} IST</span>
+                  </div>
+                  {(() => {
+                    const trade = activeTrade;
+                    const unrealizedPnl = trade.direction === "BUY"
+                      ? (currentPrice - trade.entryPrice) * trade.quantity
+                      : (trade.entryPrice - currentPrice) * trade.quantity;
+                    const totalPnl = unrealizedPnl + (trade.bookedPnl ?? 0);
+                    const isCarryActive = botStatus?.carryForward ?? false;
+                    return (
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                        <div className="flex items-center gap-4 text-white/70 text-xs">
+                          <span>Entry: <strong className="text-white">₹{trade.entryPrice.toFixed(2)}</strong></span>
+                          <span>LTP: <strong className="text-white">₹{currentPrice.toFixed(2)}</strong></span>
+                          <span>Unrealized P&L: <strong className={totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}>{totalPnl >= 0 ? "+" : ""}₹{totalPnl.toFixed(0)}</strong></span>
+                        </div>
+                        <div className="flex items-center gap-2 ml-auto">
+                          {isCarryActive ? (
+                            <span className="flex items-center gap-1.5 text-purple-300 text-xs bg-purple-500/15 border border-purple-500/30 rounded-lg px-3 py-1.5">
+                              <Moon className="w-3.5 h-3.5" />
+                              Carry Forward Active
+                              <button
+                                onClick={() => carryForwardMutation.mutate({ sessionToken, carryForward: false })}
+                                className="ml-2 text-white/50 hover:text-white underline"
+                              >Cancel</button>
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => carryForwardMutation.mutate({ sessionToken, carryForward: true })}
+                                className="flex items-center gap-1.5 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-300 rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
+                              >
+                                <Moon className="w-3.5 h-3.5" />
+                                Carry Forward
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm("Square off now at market price?")) {
+                                    handleManualExit();
+                                  }
+                                }}
+                                className="flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                Square Off Now
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </>

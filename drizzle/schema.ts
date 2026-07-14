@@ -124,6 +124,8 @@ export const tradeLog = mysqlTable("trade_log", {
   partialBooked: int("partialBooked").default(0),
   bookedQty: int("bookedQty").default(0),
   bookedPnl: float("bookedPnl").default(0),
+  // Carry-forward: if true, trade should not be auto-closed on server restart
+  carryForward: boolean("carryForward").default(false),
   enteredAt: timestamp("enteredAt").defaultNow().notNull(),
   exitedAt: timestamp("exitedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

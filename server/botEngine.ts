@@ -166,6 +166,8 @@ export interface BotState {
   // Heartbeat: track tick count for periodic activity logging
   tickCount?: number;
   lastHeartbeatAt?: number; // Unix timestamp ms
+  // Carry-forward: if true, skip auto square-off at market close and keep trade open overnight
+  carryForward?: boolean;
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -1342,7 +1344,7 @@ export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?
 }
 
 // ── Fetch full quote ──────────────────────────────────────────────────────────
-async function fetchFullQuote(instrumentToken: string, accessToken: string): Promise<{ ltp: number; bid: number; ask: number } | null> {
+export async function fetchFullQuote(instrumentToken: string, accessToken: string): Promise<{ ltp: number; bid: number; ask: number } | null> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded}`;
@@ -1911,6 +1913,10 @@ async function tick(
       const isMCX3 = state.instrumentToken.startsWith("MCX");
       const sqOffMin3 = isMCX3 ? 23 * 60 + 28 : 15 * 60 + 25;
       if (istMin3 >= sqOffMin3 || (!isMCX3 && (istMin3 < 9 * 60 + 15))) {
+        // Respect carry-forward: if user chose to hold overnight, skip force-close
+        if (state.carryForward) {
+          console.log(`[BotEngine] ${state.sessionToken} — carry forward active, skipping force-close (no candle data)`);
+        } else {
         // Market is closed — force close the open trade at last known price
         const trade = state.openTrade;
         const exitPx = state.lastPrice > 0 ? state.lastPrice : trade.entryPrice; // Use last known price (or entry if none)
@@ -1922,6 +1928,7 @@ async function tick(
         await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
         emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
         console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
+        }
       }
     }
     return;
@@ -2037,6 +2044,21 @@ async function tick(
 
   // Auto square-off at market close
   if (istMin2 >= squareOffMin && state.openTrade) {
+    // If user selected carry-forward, skip auto square-off and keep trade open overnight
+    if (state.carryForward) {
+      if (!state.alertsSent.has("carry_forward_active")) {
+        state.alertsSent.add("carry_forward_active");
+        const trade = state.openTrade;
+        const unrealizedPnl = trade.direction === "BUY"
+          ? (effectivePrice - trade.entryPrice) * trade.quantity
+          : (trade.entryPrice - effectivePrice) * trade.quantity;
+        const totalPnl = unrealizedPnl + trade.bookedPnl;
+        emitActivity(state.sessionToken, "market_closed", `🌙 Carry Forward Active — ${trade.symbolLabel} held overnight | Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
+        sendTelegramAlert(state, `🌙 <b>CARRY FORWARD</b>\n📊 <b>${trade.symbolLabel}</b>\n💰 Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}\n⏰ Trade held overnight — will resume tomorrow`);
+        console.log(`[BotEngine] ${state.sessionToken} — carry forward active, skipping auto square-off | Unrealized P&L: ₹${totalPnl.toFixed(0)}`);
+      }
+      return; // Skip square-off — trade stays open
+    }
    const trade = state.openTrade;
    if (trade.mode === "live" && state.accessToken) {
      const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
@@ -2144,10 +2166,15 @@ async function tick(
           `🎯 Remaining: ${trade.quantity} qty | Next target: 2R`,
         );
         // Persist partial booking state to DB so it survives server restarts
-        const { tradeLog: tl0 } = await import("../drizzle/schema"); const { eq: eq0 } = await import("drizzle-orm"); const { getDb: getDb0 } = await import("./db"); const db0 = await getDb0();
-        if (db0 && trade.dbId) {
-          await db0.update(tl0).set({ partialBooked: 1, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq0(tl0.id, trade.dbId!));
-        }
+        // Fire-and-forget DB persist (non-blocking to avoid slowing the tick)
+        (async () => {
+          try {
+            const { tradeLog: tl0 } = await import("../drizzle/schema"); const { eq: eq0 } = await import("drizzle-orm"); const { getDb: getDb0 } = await import("./db"); const db0 = await getDb0();
+            if (db0 && trade.dbId) {
+              await db0.update(tl0).set({ partialBooked: 1, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq0(tl0.id, trade.dbId!));
+            }
+          } catch (e) { console.error("[BotEngine] Failed to persist partial booking 1R:", e); }
+        })();
       }
     } else if (trade.partialBooked === 1) {
       // Safety guard: partial2RPrice must be a valid non-zero price above/below entry (same as 1R guard)
@@ -2185,10 +2212,15 @@ async function tick(
           `🛑 SL moved to 1R | Trailing ${trade.quantity} qty to target`,
         );
         // Persist partial booking state to DB so it survives server restarts
-        const { tradeLog: tl1 } = await import("../drizzle/schema"); const { eq: eq1 } = await import("drizzle-orm"); const { getDb: getDb1 } = await import("./db"); const db1 = await getDb1();
-        if (db1 && trade.dbId) {
-          await db1.update(tl1).set({ partialBooked: 2, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq1(tl1.id, trade.dbId!));
-        }
+        // Fire-and-forget DB persist (non-blocking to avoid slowing the tick)
+        (async () => {
+          try {
+            const { tradeLog: tl1 } = await import("../drizzle/schema"); const { eq: eq1 } = await import("drizzle-orm"); const { getDb: getDb1 } = await import("./db"); const db1 = await getDb1();
+            if (db1 && trade.dbId) {
+              await db1.update(tl1).set({ partialBooked: 2, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq1(tl1.id, trade.dbId!));
+            }
+          } catch (e) { console.error("[BotEngine] Failed to persist partial booking 2R:", e); }
+        })();
       }
     }
 
