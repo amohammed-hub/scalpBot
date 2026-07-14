@@ -3,7 +3,7 @@ import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { getDb } from "./db";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog } from "../drizzle/schema";
-import { eq, desc, and, gte, count } from "drizzle-orm";
+import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, type Candle } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
@@ -680,9 +680,11 @@ export const appRouter = router({
               : (lastPrice > 0 ? lastPrice : t.entryPrice);
             // For BUY direction: P&L = (exit - entry) * qty
             // For SELL direction: P&L = (entry - exit) * qty
-            const pnl = t.direction === "BUY"
+            const remainingPnl = t.direction === "BUY"
               ? (exitPx - t.entryPrice) * t.quantity
               : (t.entryPrice - exitPx) * t.quantity;
+            // Include already-booked partial profits in total P&L
+            const pnl = remainingPnl + (t.bookedPnl ?? 0);
             const capital = t.quantity * t.entryPrice; // approximate capital used
             await db.update(tradeLog).set({
               status: "closed",
@@ -877,8 +879,8 @@ export const appRouter = router({
             underlyingToken: row.underlyingToken ?? undefined,
             optionType: (row.optionType as "CE" | "PE" | "auto" | undefined) ?? undefined,
             consecutiveTickErrors: 0,
-            partial1Pct: 30,
-            partial2Pct: 60,
+            partial1Pct: row.partial1Pct ?? 30,
+            partial2Pct: row.partial2Pct ?? 60,
           },
           onTradeOpen,
           onTradeClose,
@@ -1390,8 +1392,19 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
-        await db.delete(tradeLog).where(eq(tradeLog.sessionToken, input.sessionToken));
-        await db.update(botSessions).set({ dailyPnl: 0, tradesCount: 0 }).where(eq(botSessions.sessionToken, input.sessionToken));
+        // Delete trades for primary session AND all slots (e.g., xxx-slot1, xxx-slot2)
+        await db.delete(tradeLog).where(
+          or(
+            eq(tradeLog.sessionToken, input.sessionToken),
+            like(tradeLog.sessionToken, `${input.sessionToken}-slot%`),
+          )
+        );
+        await db.update(botSessions).set({ dailyPnl: 0, tradesCount: 0 }).where(
+          or(
+            eq(botSessions.sessionToken, input.sessionToken),
+            like(botSessions.sessionToken, `${input.sessionToken}-slot%`),
+          )
+        );
         return { success: true };
       }),
     // Wipe ALL trade history, bot sessions, and signal journal — complete fresh start

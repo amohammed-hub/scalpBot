@@ -122,6 +122,28 @@ async function initDb() {
           console.log("[Database] Migration complete: carryForward column added");
         }
       }
+      // Widen exitReason column from varchar(64) to varchar(255) (BUG 5 fix — messages were being truncated)
+      try {
+        const [cols] = await pool.execute(
+          "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS WHERE TABLE_NAME='trade_log' AND COLUMN_NAME='exitReason' AND TABLE_SCHEMA=DATABASE()"
+        ) as any;
+        if (cols?.[0]?.CHARACTER_MAXIMUM_LENGTH && Number(cols[0].CHARACTER_MAXIMUM_LENGTH) < 255) {
+          console.log("[Database] Auto-migrating: widening exitReason to varchar(255)");
+          await pool.execute("ALTER TABLE `trade_log` MODIFY COLUMN `exitReason` varchar(255)");
+          console.log("[Database] Migration complete: exitReason widened");
+        }
+      } catch { /* non-fatal */ }
+      // Also widen exitReason in signal_journal if it exists
+      try {
+        const [cols2] = await pool.execute(
+          "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS WHERE TABLE_NAME='signal_journal' AND COLUMN_NAME='exitReason' AND TABLE_SCHEMA=DATABASE()"
+        ) as any;
+        if (cols2?.[0]?.CHARACTER_MAXIMUM_LENGTH && Number(cols2[0].CHARACTER_MAXIMUM_LENGTH) < 255) {
+          console.log("[Database] Auto-migrating: widening signal_journal.exitReason to varchar(255)");
+          await pool.execute("ALTER TABLE `signal_journal` MODIFY COLUMN `exitReason` varchar(255)");
+          console.log("[Database] Migration complete: signal_journal.exitReason widened");
+        }
+      } catch { /* non-fatal */ }
     }
     return db;
   } catch (error: unknown) {

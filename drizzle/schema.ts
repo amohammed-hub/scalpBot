@@ -111,7 +111,7 @@ export const tradeLog = mysqlTable("trade_log", {
   atr: float("atr"),
   confidence: float("confidence"),
   status: mysqlEnum("status", ["open", "closed", "cancelled"]).default("open").notNull(),
-  exitReason: varchar("exitReason", { length: 64 }),
+  exitReason: varchar("exitReason", { length: 255 }),
   pnl: float("pnl"),
   pnlPct: float("pnlPct"),
   upstoxOrderId: varchar("upstoxOrderId", { length: 64 }),
@@ -158,7 +158,7 @@ export const signalJournal = mysqlTable("signal_journal", {
   // Post-trade outcome (filled after trade closes)
   exitPrice: float("exitPrice"),
   pnl: float("pnl"),
-  exitReason: varchar("exitReason", { length: 64 }),
+  exitReason: varchar("exitReason", { length: 255 }),
   holdDurationMs: bigint("holdDurationMs", { mode: "number" }), // how long the trade was held
   maxFavorableExcursion: float("maxFavorableExcursion"), // max profit during trade (MFE)
   maxAdverseExcursion: float("maxAdverseExcursion"), // max loss during trade (MAE)

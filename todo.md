@@ -640,3 +640,13 @@
 - [x] BUG: Stale trade cleanup on server restart closes trades at ENTRY price (P&L=0) instead of fetching last market price — now fetches LTP from Upstox API
 - [x] BUG: Trade disappearing — root cause was Railway DB missing partialBooked columns. Added self-healing migrations that auto-add columns on server startup
 - [x] FEATURE: Carry-forward option before market close — prompt with "Square Off" vs "Carry Forward" buttons, unrealized P&L display, persists to DB, respects on restart
+
+## Round 28 — Full Codebase Audit (8 bugs fixed in one pass)
+- [x] BUG 3: bot.stop now includes bookedPnl in trade close P&L (money bug — partial profits were lost)
+- [x] BUG 1: Auto-restart preserves carryForward preference (trade safety — was lost on 3-error restart)
+- [x] BUG 2: bot.restart reads partial1Pct/partial2Pct from DB instead of hardcoding 30/60
+- [x] BUG 5: exitReason widened from varchar(64) to varchar(255) — prevents truncation of long messages
+- [x] BUG 7: Carry-forward prompt uses effectiveLivePrice for options (correct P&L display)
+- [x] BUG 8: Carry-forward mutation invalidates liveData + allStatus (UI freshness)
+- [x] BUG 4: clearAll deletes slot trades too (sessionToken-slot1, slot2, etc.)
+- [x] BUG 10: strict5mBuy/Sell now requires strict 5m alignment (bullish only, not neutral) — reduces false breakout signals

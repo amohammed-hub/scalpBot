@@ -689,8 +689,8 @@ export function generateSignal(
   // For breakout layer we require strict alignment (bullish for BUY, bearish for SELL)
   const allow5mBuy  = candles5m.length < 5 || trend5m === "bullish" || trend5m === "neutral";
   const allow5mSell = candles5m.length < 5 || trend5m === "bearish" || trend5m === "neutral";
-  const strict5mBuy  = candles5m.length < 5 || trend5m === "bullish" || trend5m === "neutral";
-  const strict5mSell = candles5m.length < 5 || trend5m === "bearish" || trend5m === "neutral";
+  const strict5mBuy  = candles5m.length < 5 || trend5m === "bullish";
+  const strict5mSell = candles5m.length < 5 || trend5m === "bearish";
 
   if (breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi > 45 && rsi < 80 && strict5mBuy) {
     direction = "BUY";
@@ -2914,6 +2914,7 @@ export function startBot(
             enabledLayers: state.enabledLayers,
             partial1Pct: state.partial1Pct,
             partial2Pct: state.partial2Pct,
+            carryForward: state.carryForward,
           }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
         }
       });

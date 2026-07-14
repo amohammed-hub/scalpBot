@@ -491,6 +491,8 @@ export default function Dashboard() {
         toast("Auto square-off re-enabled — trade will close at market close");
       }
       utils.bot.status.invalidate();
+      utils.bot.liveData.invalidate();
+      utils.multiBots.allStatus.invalidate();
     },
     onError: (e) => toast.error(`Failed: ${e.message}`),
   });
@@ -922,16 +924,18 @@ export default function Dashboard() {
                   </div>
                   {(() => {
                     const trade = activeTrade;
+                    // Use effectiveLivePrice for options-safe P&L (option premium, not underlying)
+                    const cfPrice = effectiveLivePrice > 0 ? effectiveLivePrice : currentPrice;
                     const unrealizedPnl = trade.direction === "BUY"
-                      ? (currentPrice - trade.entryPrice) * trade.quantity
-                      : (trade.entryPrice - currentPrice) * trade.quantity;
+                      ? (cfPrice - trade.entryPrice) * trade.quantity
+                      : (trade.entryPrice - cfPrice) * trade.quantity;
                     const totalPnl = unrealizedPnl + (trade.bookedPnl ?? 0);
                     const isCarryActive = botStatus?.carryForward ?? false;
                     return (
                       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                         <div className="flex items-center gap-4 text-white/70 text-xs">
                           <span>Entry: <strong className="text-white">₹{trade.entryPrice.toFixed(2)}</strong></span>
-                          <span>LTP: <strong className="text-white">₹{currentPrice.toFixed(2)}</strong></span>
+                          <span>LTP: <strong className="text-white">₹{cfPrice.toFixed(2)}</strong></span>
                           <span>Unrealized P&L: <strong className={totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}>{totalPnl >= 0 ? "+" : ""}₹{totalPnl.toFixed(0)}</strong></span>
                         </div>
                         <div className="flex items-center gap-2 ml-auto">
