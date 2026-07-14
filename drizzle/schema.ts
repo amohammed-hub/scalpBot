@@ -85,6 +85,9 @@ export const botSessions = mysqlTable("bot_sessions", {
   eodSummaryCronTaskUid: varchar("eodSummaryCronTaskUid", { length: 128 }),
   // Strategy layer selection (JSON array of enabled layer names)
   enabledLayers: text("enabledLayers"),
+  // Configurable partial profit booking percentages (persisted for restart)
+  partial1Pct: float("partial1Pct").default(30),
+  partial2Pct: float("partial2Pct").default(60),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

@@ -443,6 +443,8 @@ export const appRouter = router({
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
               enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+              partial1Pct: input.partial1Pct,
+              partial2Pct: input.partial2Pct,
             })
             .where(eq(botSessions.sessionToken, input.sessionToken));
         } else {
@@ -471,6 +473,8 @@ export const appRouter = router({
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
               enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+              partial1Pct: input.partial1Pct,
+              partial2Pct: input.partial2Pct,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -1817,6 +1821,8 @@ export const appRouter = router({
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(), stoppedAt: null, lastError: null,
             enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+            partial1Pct: input.partial1Pct,
+            partial2Pct: input.partial2Pct,
           }).where(eq(botSessions.sessionToken, slotToken));
         } else {
           const result = await db.insert(botSessions).values({
@@ -1834,6 +1840,8 @@ export const appRouter = router({
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(),
             enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+            partial1Pct: input.partial1Pct,
+            partial2Pct: input.partial2Pct,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }

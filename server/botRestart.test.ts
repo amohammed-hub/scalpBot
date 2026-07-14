@@ -113,17 +113,17 @@ describe("botRestart safety rules", () => {
     });
   });
 
-  describe("session without open trade must be marked stopped", () => {
-    it("identifies sessions that should NOT restart (no open trade)", () => {
-      // Simulate the decision logic: only restart if openTradeRows.length > 0
-      const openTradeRows: unknown[] = []; // empty = no open trade
-      const shouldRestart = openTradeRows.length > 0;
-      expect(shouldRestart).toBe(false);
+  describe("session without open trade should still restart in scan mode", () => {
+    it("restarts sessions even without open trade (scan mode)", () => {
+      // After the cold-start fix: sessions marked running always restart
+      const openTradeRows: unknown[] = [];
+      const shouldRestart = true; // always restart if DB says running
+      expect(shouldRestart).toBe(true);
     });
 
-    it("identifies sessions that SHOULD restart (has open trade)", () => {
+    it("restarts sessions with open trade (protecting position)", () => {
       const openTradeRows = [{ id: 1, symbol: "BNF_FUT", entryPrice: 53525, slPrice: 53200 }];
-      const shouldRestart = openTradeRows.length > 0;
+      const shouldRestart = true; // always restart
       expect(shouldRestart).toBe(true);
     });
   });

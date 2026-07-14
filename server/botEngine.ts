@@ -2012,12 +2012,13 @@ async function tick(
       const pc = getPaperCostConfig();
       pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
     }
-    state.dailyPnl += pnl;
+    state.dailyPnl += pnl + trade.bookedPnl;
     state.openTrade = null;
     recordTradeClose(state.sessionToken, state.scanIntervalSec);
-    await onTradeClose(trade.dbId, effectivePrice, pnl, "Market Close — Auto Square-Off");
-    console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${pnl.toFixed(0)}`);
-    emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(0)}`, { price: effectivePrice, pnl });
+    const sqTotalPnl = pnl + trade.bookedPnl;
+    await onTradeClose(trade.dbId, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
+    console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
+    emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${sqTotalPnl >= 0 ? "+" : ""}₹${sqTotalPnl.toFixed(0)}`, { price: effectivePrice, pnl: sqTotalPnl });
     return;
   }
 
@@ -2714,7 +2715,7 @@ async function tick(
       `📊 <b>${state.instrumentLabel}</b>\n` +
       `💰 Premium: ₹${signal.entryPrice.toFixed(1)} | Target: ₹${signal.targetPrice.toFixed(1)} (5×)\n` +
       `✂️ Cut: ₹${signal.slPrice.toFixed(1)} (50% loss)\n` +
-      `📊 Book 50% at ₹${(signal.partial1RPrice ?? signal.entryPrice * 2.5).toFixed(1)} | 25% at ₹${(signal.partial2RPrice ?? signal.entryPrice * 3.5).toFixed(1)}\n` +
+      `📊 Book 50% at ₹${partial1RPrice.toFixed(1)} | 25% at ₹${partial2RPrice.toFixed(1)}\n` +
       `💯 Confidence: ${(signal.confidence * 100).toFixed(0)}%`,
     );
   } else {

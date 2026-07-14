@@ -7,7 +7,7 @@ import {
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
   Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
-import { Shield, Skull, Layers, Target, Gauge, Power, Award } from "lucide-react";
+import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
@@ -283,6 +283,7 @@ export default function Dashboard() {
   // Smart Scanner state
   const [showScanner, setShowScanner] = useState<number | null>(null);
   const [scanEnabled, setScanEnabled] = useState(false);
+  const [configCollapsed, setConfigCollapsed] = useState(false);
   const { data: scanData, isLoading: scanLoading, refetch: refetchScan } = trpc.scanner.smartScan.useQuery(
     { sessionToken },
     { enabled: scanEnabled, staleTime: 30000, refetchOnWindowFocus: false }
@@ -726,7 +727,7 @@ export default function Dashboard() {
       )}
 
       {/* Sidebar */}
-      <aside className="w-64 border-r border-white/10 flex flex-col p-4 gap-2 shrink-0">
+      <aside className="w-64 border-r border-white/10 flex flex-col p-4 gap-1.5 shrink-0 bg-gradient-to-b from-white/[0.02] to-transparent">
         <div className="flex items-center gap-2 mb-6 px-2">
           <div className="w-8 h-8 bg-teal-500 rounded-lg flex items-center justify-center">
             <Zap className="w-5 h-5 text-white" />
@@ -811,7 +812,7 @@ export default function Dashboard() {
       {/* Main */}
       <main className="flex-1 overflow-auto p-6">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
           <div>
             <h1 className="text-2xl font-bold text-white">Trading Dashboard</h1>
             <p className="text-white/50 text-sm">Automated scalping — Candle breakout + EMA + VWAP + RSI</p>
@@ -887,9 +888,9 @@ export default function Dashboard() {
         })()}
 
         {/* Stats Row */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 animate-in fade-in duration-500">
           {/* Live Price card — special: shows staleness indicator */}
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 hover:border-teal-500/30 transition-all duration-200 hover:shadow-[0_0_20px_oklch(0.78_0.18_195/0.08)]">
             <div className="flex items-center justify-between mb-2">
               <span className="text-white/50 text-xs">Live Price</span>
               <div className="flex items-center gap-1.5">
@@ -901,7 +902,7 @@ export default function Dashboard() {
                 <TrendingUp className="w-4 h-4 text-teal-400" />
               </div>
             </div>
-            <div className="text-xl font-bold text-white">
+            <div className="text-2xl font-bold text-white tabular-nums tracking-tight">
               {currentPrice > 0 ? `₹${currentPrice.toFixed(2)}` : "—"}
             </div>
             {bidPrice > 0 && (
@@ -922,13 +923,13 @@ export default function Dashboard() {
             { label: "Trades Today", value: `${todayTradesCount} / ${config.maxTradesPerDay}`, sub: null, icon: Activity, color: "blue" },
             { label: "Win Rate", value: winRate, sub: allStats ? `${allStats.wins}W / ${allStats.losses}L` : null, icon: CheckCircle, color: "purple" },
           ].map((s) => (
-            <div key={s.label} className="bg-white/5 border border-white/10 rounded-2xl p-4">
+            <div key={s.label} className="bg-white/5 border border-white/10 rounded-2xl p-4 hover:border-white/20 transition-all duration-200">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-white/50 text-xs">{s.label}</span>
                 <s.icon className={`w-4 h-4 ${s.color === "teal" ? "text-teal-400" : s.color === "emerald" ? "text-emerald-400" : s.color === "red" ? "text-red-400" : s.color === "blue" ? "text-blue-400" : "text-purple-400"}`} />
               </div>
-              <div className={`text-xl font-bold ${s.color === "red" ? "text-red-400" : s.color === "emerald" ? "text-emerald-400" : "text-white"}`}>{s.value}</div>
-              {s.sub && <div className="text-xs text-white/30 mt-0.5">{s.sub}</div>}
+              <div className={`text-2xl font-bold tabular-nums tracking-tight ${s.color === "red" ? "text-red-400" : s.color === "emerald" ? "text-emerald-400" : "text-white"}`}>{s.value}</div>
+              {s.sub && <div className="text-xs text-white/40 mt-1">{s.sub}</div>}
             </div>
           ))}
         </div>
@@ -1266,7 +1267,7 @@ export default function Dashboard() {
 
         {/* Open Trade Panel */}
         {activeTrade && (
-          <div className="bg-white/5 border border-teal-500/30 rounded-2xl p-5 mb-6">
+          <div className="bg-white/5 border border-teal-500/30 rounded-2xl p-5 mb-6 shadow-[0_0_30px_oklch(0.78_0.18_195/0.08)] transition-all">
             {/* Warning: bot not running — SL/Target not being monitored */}
             {!isRunning && (
               <div className="flex items-start justify-between gap-3 bg-red-500/15 border border-red-500/40 rounded-xl p-3 mb-4">
@@ -1509,14 +1510,15 @@ export default function Dashboard() {
         )}
 
         {/* Bot Configuration */}
-        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
-          <div className="flex items-center justify-between mb-4">
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6 transition-all">
+          <div className="flex items-center justify-between mb-4 cursor-pointer select-none" onClick={() => setConfigCollapsed(!configCollapsed)}>
             <div className="flex items-center gap-2">
               <Bot className="w-5 h-5 text-teal-400" />
               <span className="font-semibold text-white">Bot Configuration & Risk Settings</span>
               {isRunning && <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">Running</span>}
+              <ChevronDown className={`w-4 h-4 text-white/40 transition-transform duration-200 ${configCollapsed ? "-rotate-90" : ""}`} />
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
               {!isRunning ? (
                 <button
                   onClick={handleStart}
@@ -1538,6 +1540,7 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+          {!configCollapsed && (<>
 
           {/* Row 1: Instrument + Mode + Capital */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
@@ -1879,6 +1882,7 @@ export default function Dashboard() {
             </div>
           </div>
 
+          </>)}
         </div>
 
         {/* ── Strategy Presets ──────────────────────────────────────────────────── */}
@@ -2537,9 +2541,9 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm border-separate border-spacing-0">
               <thead>
-                <tr className="text-white/40 text-xs border-b border-white/10">
+                <tr className="text-white/40 text-xs border-b border-white/10 sticky top-0 bg-[oklch(0.10_0.02_240)]">
                   <th className="text-left py-2 pr-4">Symbol</th>
                   <th className="text-left py-2 pr-4">Direction</th>
                   <th className="text-left py-2 pr-4">Mode</th>
