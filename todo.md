@@ -624,3 +624,4 @@
 - [x] Show current partial levels on dashboard when trade is open
 - [x] Fix botRestart.ts to restart bots even without open trade (Autoscale cold start issue)
 - [x] Remove "only restart if open trade" restriction — if DB says running, restart the bot
+- [x] Fix: Silver/NatGas option contract lookup fails because SILVER100 has no options (name-based fallback + price scale correction)

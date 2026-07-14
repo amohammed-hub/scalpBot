@@ -1644,12 +1644,53 @@ async function resolveAtmMcxOptionToken(
         (x.instrument_type ?? "").toUpperCase() === optionType &&
         (x.expiry ?? 0) > nowMs,
       );
-      if (candidates.length > 0) {
+      // FALLBACK: If no options match the exact underlying_key (e.g., SILVER100 has no options,
+      // only SILVER/SILVERM do), try matching by commodity name instead.
+      let optionCandidates = candidates;
+      let effectiveUnderlyingPrice = underlyingPrice; // May be overridden if price scales differ
+      if (optionCandidates.length === 0) {
+        // Find the name of the futures contract we're using
+        const futuresRow = instruments.find(x => x.instrument_key === futuresToken);
+        const commodityName = futuresRow?.name?.toUpperCase() ?? "";
+        if (commodityName) {
+          // Match all options with the same commodity name (e.g., "SILVER", "NATURALGAS")
+          optionCandidates = instruments.filter(x =>
+            (x.name ?? "").toUpperCase() === commodityName &&
+            (x.instrument_type ?? "").toUpperCase() === optionType &&
+            (x.expiry ?? 0) > nowMs,
+          );
+          if (optionCandidates.length > 0) {
+            console.log(`[BotEngine] MCX: exact underlying_key match failed for ${futuresToken}, using name-based fallback (${commodityName}): found ${optionCandidates.length} options`);
+            // The options may be linked to a different futures contract with a different price scale
+            // (e.g., SILVER100 is per 10g ~₹2163, but SILVER options use per-KG strikes ~₹99,500)
+            // Fetch the ACTUAL underlying price that the options are based on
+            const optionsUnderlyingKey = optionCandidates[0].underlying_key;
+            if (optionsUnderlyingKey && optionsUnderlyingKey !== futuresToken) {
+              try {
+                const ulResp = await axios.get(
+                  `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(optionsUnderlyingKey)}`,
+                  { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
+                );
+                const ulData = ulResp.data?.data;
+                const ulKey = ulData ? Object.keys(ulData)[0] : null;
+                const realUlPrice: number = ulKey ? (ulData[ulKey]?.last_price ?? 0) : 0;
+                if (realUlPrice > 0) {
+                  console.log(`[BotEngine] MCX: options underlying ${optionsUnderlyingKey} price = ₹${realUlPrice} (bot futures price was ₹${underlyingPrice})`);
+                  effectiveUnderlyingPrice = realUlPrice;
+                }
+              } catch (ulErr) {
+                console.warn(`[BotEngine] MCX: could not fetch options underlying price, using bot futures price for ATM matching`);
+              }
+            }
+          }
+        }
+      }
+      if (optionCandidates.length > 0) {
         // Nearest expiry only
-        const nearestExpiry = Math.min(...candidates.map(c => c.expiry ?? Infinity));
-        const chain = candidates
+        const nearestExpiry = Math.min(...optionCandidates.map(c => c.expiry ?? Infinity));
+        const chain = optionCandidates
           .filter(c => c.expiry === nearestExpiry)
-          .sort((a, b) => Math.abs((a.strike_price ?? 0) - underlyingPrice) - Math.abs((b.strike_price ?? 0) - underlyingPrice));
+          .sort((a, b) => Math.abs((a.strike_price ?? 0) - effectiveUnderlyingPrice) - Math.abs((b.strike_price ?? 0) - effectiveUnderlyingPrice));
         // Take the 4 strikes closest to ATM and fetch their live premiums in one call
         const near = chain.slice(0, 4).filter(c => c.instrument_key);
         if (near.length > 0) {
