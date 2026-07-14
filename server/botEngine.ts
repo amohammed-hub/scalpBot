@@ -160,6 +160,9 @@ export interface BotState {
   lastTradingDay?: string;
   // Cooldown: prevent rapid-fire entries (minimum 2 minutes between trades)
   lastTradeOpenedAt?: number; // Unix timestamp ms
+  // Heartbeat: track tick count for periodic activity logging
+  tickCount?: number;
+  lastHeartbeatAt?: number; // Unix timestamp ms
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -589,10 +592,10 @@ export function calcDayMomentumScore(
 
 function getTimeOfDayMultiplier(istMin: number): { multiplier: number; label: string; skip: boolean } {
   if (istMin >= 555 && istMin < 570)  return { multiplier: 0,    label: "Opening Volatility",    skip: true  };
-  if (istMin >= 570 && istMin < 600)  return { multiplier: 0.75, label: "Settling",               skip: false };
-  if (istMin >= 600 && istMin < 690)  return { multiplier: 1.15, label: "Prime Morning",          skip: false };
-  if (istMin >= 690 && istMin < 780)  return { multiplier: 0.85, label: "Midday Lull",            skip: false };
-  if (istMin >= 780 && istMin < 840)  return { multiplier: 0.95, label: "Afternoon",              skip: false };
+  if (istMin >= 570 && istMin < 600)  return { multiplier: 0.90, label: "Settling",               skip: false };
+  if (istMin >= 600 && istMin < 690)  return { multiplier: 1.10, label: "Prime Morning",          skip: false };
+  if (istMin >= 690 && istMin < 780)  return { multiplier: 0.95, label: "Midday",            skip: false };
+  if (istMin >= 780 && istMin < 840)  return { multiplier: 1.00, label: "Afternoon",              skip: false };
   if (istMin >= 840 && istMin < 900)  return { multiplier: 1.10, label: "Institutional Window",   skip: false };
   if (istMin >= 900 && istMin < 930)  return { multiplier: 1.20, label: "Power Hour",             skip: false };
   return { multiplier: 1.0, label: "Normal", skip: false };
@@ -603,7 +606,7 @@ export function generateSignal(
   candles: Candle[],
   slMultiplier = 1.5,
   tpMultiplier = 3.0,
-  minConf = 0.65, // raised from 0.60 — research shows higher threshold reduces false signals
+  minConf = 0.55, // lowered from 0.65 — was too strict, caused zero trades during midday hours
   candles5m: Candle[] = [],
   prevDayHigh = 0,
   prevDayLow = 0,
@@ -662,7 +665,7 @@ export function generateSignal(
   }
   // Tightened S/R proximity filter: 0.05% (was 0.1%) — 0.1% was too wide for BankNifty
   // e.g. BankNifty at 53000: 0.1% = ±53 pts (too many rejections), 0.05% = ±26 pts
-  const nearSR = srLevels.length > 0 && isNearSupportResistance(price, srLevels, 0.0005);
+  const nearSR = srLevels.length > 0 && isNearSupportResistance(price, srLevels, 0.0002);
 
   let direction: "BUY" | "SELL" | "HOLD" = "HOLD";
   let confidence = 0;
@@ -681,8 +684,8 @@ export function generateSignal(
   // For breakout layer we require strict alignment (bullish for BUY, bearish for SELL)
   const allow5mBuy  = candles5m.length < 5 || trend5m === "bullish" || trend5m === "neutral";
   const allow5mSell = candles5m.length < 5 || trend5m === "bearish" || trend5m === "neutral";
-  const strict5mBuy  = candles5m.length < 5 || trend5m === "bullish";
-  const strict5mSell = candles5m.length < 5 || trend5m === "bearish";
+  const strict5mBuy  = candles5m.length < 5 || trend5m === "bullish" || trend5m === "neutral";
+  const strict5mSell = candles5m.length < 5 || trend5m === "bearish" || trend5m === "neutral";
 
   if (breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.3 && rsi > 45 && rsi < 80 && strict5mBuy) {
     direction = "BUY";
@@ -704,12 +707,12 @@ export function generateSignal(
     const body1 = Math.abs(c1.close - c1.open);
     const range2 = c2.high - c2.low;
 
-    if (c1.close < c1.open && c2.close > c2.open && c2.close > c1.open && c2.open < c1.close && volRatio >= 1.2 && price > vwap && allow5mBuy) {
+    if (c1.close < c1.open && c2.close > c2.open && c2.close > c1.open && c2.open < c1.close && volRatio >= 1.0 && price > vwap && allow5mBuy) {
       direction = "BUY";
       confidence = Math.min(0.88, 0.68 + (body2 / (body1 || 1) - 1) * 0.1);
       reason = `[Pattern] Bullish Engulfing | Vol ${volRatio.toFixed(1)}x | Above VWAP | 5m:${trend5m}`;
       layer = "Pattern";
-    } else if (c1.close > c1.open && c2.close < c2.open && c2.close < c1.open && c2.open > c1.close && volRatio >= 1.2 && price < vwap && allow5mSell) {
+    } else if (c1.close > c1.open && c2.close < c2.open && c2.close < c1.open && c2.open > c1.close && volRatio >= 1.0 && price < vwap && allow5mSell) {
       direction = "SELL";
       confidence = Math.min(0.88, 0.68 + (body2 / (body1 || 1) - 1) * 0.1);
       reason = `[Pattern] Bearish Engulfing | Vol ${volRatio.toFixed(1)}x | Below VWAP | 5m:${trend5m}`;
@@ -740,7 +743,7 @@ export function generateSignal(
   // ── Layer 3: EMA/VWAP Trend ───────────────────────────────────────────────
   // ADX threshold raised from 12 to 20 — research shows ADX > 20 needed for reliable trends
   // (Omega-Xi production bot uses ADX > 20; below 20 = ranging/choppy market)
-  if (direction === "HOLD" && candles.length >= 21 && adx > 20) {
+  if (direction === "HOLD" && candles.length >= 21 && adx > 15) {
     const emaDiffPct = Math.abs(e9 - e21) / e21;
     if (e9 > e21 && price > vwap && rsi > 50 && rsi < 72 && allow5mBuy) {
       direction = "BUY";
@@ -758,14 +761,14 @@ export function generateSignal(
   // ── Layer 4: Momentum ─────────────────────────────────────────────────────
   if (direction === "HOLD" && candles.length >= 5) {
     const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
-    if (rsi > 58 && roc3 > 0.0005 && price > vwap && allow5mBuy) {
+    if (rsi > 54 && roc3 > 0.0005 && price > vwap && allow5mBuy) {
       direction = "BUY";
-      confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 58) * 0.005);
+      confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 54) * 0.005);
       reason = `[Momentum] RSI(${rsi.toFixed(0)}) | +${(roc3 * 100).toFixed(2)}% in 3c | Above VWAP | 5m:${trend5m}`;
       layer = "Momentum";
-    } else if (rsi < 42 && roc3 < -0.0005 && price < vwap && allow5mSell) {
+    } else if (rsi < 46 && roc3 < -0.0005 && price < vwap && allow5mSell) {
       direction = "SELL";
-      confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (42 - rsi) * 0.005);
+      confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (46 - rsi) * 0.005);
       reason = `[Momentum] RSI(${rsi.toFixed(0)}) | ${(roc3 * 100).toFixed(2)}% in 3c | Below VWAP | 5m:${trend5m}`;
       layer = "Momentum";
     }
@@ -971,7 +974,7 @@ export function generateSignal(
     return {
       direction: "HOLD", confidence: 0, entryPrice: price,
       slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
-      reason: `Near S/R level — entry rejected (within 0.1% of pivot/support/resistance)`,
+      reason: `Near S/R level — entry rejected (within 0.02% of pivot/support/resistance)`,
       layer: "None",
     };
   }
@@ -2286,13 +2289,27 @@ async function tick(
     signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
   }
 
+  // ── Heartbeat: emit periodic activity so user knows bot is alive ──────────
+  state.tickCount = (state.tickCount ?? 0) + 1;
+  const heartbeatIntervalMs = 5 * 60 * 1000; // 5 minutes
+  const now4 = Date.now();
+  if (!state.lastHeartbeatAt || (now4 - state.lastHeartbeatAt) >= heartbeatIntervalMs) {
+    state.lastHeartbeatAt = now4;
+    const rsiHb = calcRSI(state.candles.map(c => c.close), 14);
+    const adxHb = calcADX(state.candles, 14);
+    const vwapHb = calcVWAP(state.candles);
+    const priceVsVwap = price > vwapHb ? "above" : "below";
+    emitActivity(state.sessionToken, "signal",
+      `⏱ Scanning... ₹${price.toFixed(1)} (${priceVsVwap} VWAP) | RSI(${rsiHb.toFixed(0)}) | ADX(${adxHb.toFixed(0)}) | Signal: ${signal.direction} | ${signal.reason?.slice(0, 60) ?? ""}`,
+    );
+  }
   state.lastSignal = signal;
   // Emit tick signal to activity log
   if (signal.direction !== "HOLD") {
     const slPct = signal.entryPrice > 0 ? (Math.abs(signal.entryPrice - signal.slPrice) / signal.entryPrice * 100).toFixed(1) : "?";
     emitActivity(state.sessionToken, "signal", `◆ ${signal.direction} signal @ ₹${signal.entryPrice.toFixed(2)} | ${(signal.confidence * 100).toFixed(0)}% conf | ${signal.layer} | SL ₹${signal.slPrice.toFixed(2)} (${slPct}%) | Target ₹${signal.targetPrice.toFixed(2)} | ATR ${signal.atr.toFixed(1)} | ${signal.reason}`, { price: signal.entryPrice, confidence: signal.confidence });
   }
-  if (signal.direction === "HOLD" || signal.confidence < state.minConfidence / 100) return;
+  if (signal.direction === "HOLD") return; // confidence already checked inside generateSignal (tod multiplier applied there)
 
   // ── Layer filter: skip signals from disabled layers ─────────────────────────
   if (state.enabledLayers && state.enabledLayers.length > 0 && signal.layer !== "None") {

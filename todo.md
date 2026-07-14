@@ -606,3 +606,6 @@
 - [x] Also fix: Trade that was +1600 profit now showing loss — P&L not locked at exit, keeps drifting because trade is still "Open"
 ## Round 14b — Incorrect Open Trade P&L Display (Jul 14, 2026)
 - [x] BUG: Open trade P- [ ] BUG: Open trade P&L showingL showing ₹25,150 for a ₹252 entry with 100 qty — impossible. The live P&L is using underlying index price (e.g. 7700+252=~7952 Crude Oil price) instead of option premium for calculation. Must use option premium price for P&L on open options trades.
+- [x] Round 15: Fix zero trades — double confidence filter bug, overly strict S/R proximity, time-of-day multipliers too aggressive
+- [x] Round 15: Add heartbeat activity logging every 5 min so user can see bot is alive
+- [x] Round 15: Relax signal criteria (ADX 20→15, Momentum RSI 58→54/42→46, Breakout vol 1.3→1.1, Pattern vol 1.2→1.0, 5m strict→allow neutral)
