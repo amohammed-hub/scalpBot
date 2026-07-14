@@ -405,6 +405,7 @@ export const appRouter = router({
             bookedPnl: t.bookedPnl ?? 0,
             isIndexOptions: input.isIndexOptions,
             optionMockKey: restoredOptionMockKey,
+            carryForward: !!(existingOpenTrades[0].carryForward),
           };
         }
 
@@ -620,6 +621,7 @@ export const appRouter = router({
             consecutiveTickErrors: 0,
             partial1Pct: input.partial1Pct,
             partial2Pct: input.partial2Pct,
+            carryForward: existingOpenTrade?.carryForward ?? false,
           },
           onTradeOpen,
           onTradeClose,
@@ -822,6 +824,7 @@ export const appRouter = router({
             if (sym0.includes("BANK"))       return ceOrPe0 === "CE" ? "BNF_CE"        : "BNF_PE";
             return ceOrPe0 === "CE" ? "NIFTY_CE" : "NIFTY_PE";
           })(),
+          carryForward: !!(openTradeRows[0].carryForward),
         } : null;
         // Reuse same onTradeOpen / onTradeClose callbacks as bot.start
         const onTradeOpen = async (trade: Parameters<typeof startBot>[1] extends (t: infer T) => unknown ? T : never): Promise<number> => {
@@ -881,6 +884,7 @@ export const appRouter = router({
             consecutiveTickErrors: 0,
             partial1Pct: row.partial1Pct ?? 30,
             partial2Pct: row.partial2Pct ?? 60,
+            carryForward: existingOpenTrade?.carryForward ?? false,
           },
           onTradeOpen,
           onTradeClose,
@@ -1008,23 +1012,26 @@ export const appRouter = router({
         if (trades[0].status !== "open") throw new Error("Trade is already closed");
         const trade = trades[0];
 
-        let pnl = trade.direction === "BUY"
+        let remainPnl = trade.direction === "BUY"
           ? (input.exitPrice - trade.entryPrice) * trade.quantity
           : (trade.entryPrice - input.exitPrice) * trade.quantity;
 
         // Apply paper-mode brokerage + slippage (consistent with auto-exit paths)
         if (trade.mode === "paper") {
           const pc = getPaperCostConfig();
-          pnl = applyPaperCosts(pnl, trade.entryPrice, input.exitPrice, trade.quantity, pc.brokerage, pc.slippagePct);
+          remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, input.exitPrice, trade.quantity, pc.brokerage, pc.slippagePct);
         }
+        // Include already-booked partial profits in total P&L
+        const pnl = remainPnl + (trade.bookedPnl ?? 0);
 
         // Place real exit order in live mode
         let orderId: string | null = null;
         if (trade.mode === "live") {
+          // Use trade's own sessionToken for credential lookup (handles cross-session fallback)
           const creds = await db
             .select()
             .from(upstoxCredentials)
-            .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+            .where(eq(upstoxCredentials.sessionToken, trade.sessionToken))
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken && trade.instrumentToken) {
             const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
@@ -1989,9 +1996,11 @@ export const appRouter = router({
             const exitPx = isOption && optionPremium > 0
               ? optionPremium
               : (lastPrice > 0 ? lastPrice : t.entryPrice);
-            const pnl = t.direction === "BUY"
+            const remainingPnl = t.direction === "BUY"
               ? (exitPx - t.entryPrice) * t.quantity
               : (t.entryPrice - exitPx) * t.quantity;
+            // Include already-booked partial profits in total P&L
+            const pnl = remainingPnl + (t.bookedPnl ?? 0);
             const capital = t.quantity * t.entryPrice;
             await db.update(tradeLog).set({
               status: "closed",

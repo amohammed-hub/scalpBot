@@ -88,6 +88,7 @@ export interface OpenTrade {
   entryUnderlyingPrice?: number; // underlying index price at trade entry (for paper mode delta P&L drift)
   signalReason?: string; // full signal reason string
   signalLayer?: string; // extracted layer name e.g. "Breakout", "MCXEvening"
+  carryForward?: boolean; // user chose to hold overnight
 }
 
 export interface BotState {

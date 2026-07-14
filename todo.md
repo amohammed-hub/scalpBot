@@ -650,3 +650,10 @@
 - [x] BUG 8: Carry-forward mutation invalidates liveData + allStatus (UI freshness)
 - [x] BUG 4: clearAll deletes slot trades too (sessionToken-slot1, slot2, etc.)
 - [x] BUG 10: strict5mBuy/Sell now requires strict 5m alignment (bullish only, not neutral) — reduces false breakout signals
+
+## Round 29 — Deep Reliability Audit Pass 2
+- [x] BUG A: manualExit now includes bookedPnl in total P&L (money bug)
+- [x] BUG B: stopSecondary now includes bookedPnl in total P&L (money bug)
+- [x] BUG C: botRestart now passes carryForward from DB to startBot config
+- [x] BUG D: manual restart now passes carryForward from open trade
+- [x] BUG E: manualExit uses trade.sessionToken for credential lookup (not input.sessionToken)

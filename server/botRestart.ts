@@ -228,6 +228,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       enabledLayers: session.enabledLayers ? (() => { try { return JSON.parse(session.enabledLayers!); } catch { return undefined; } })() : undefined,
       partial1Pct: session.partial1Pct ?? 30,
       partial2Pct: session.partial2Pct ?? 60,
+      carryForward: existingOpenTrade ? !!(openTradeRows[0]?.carryForward) : false,
     },
     onTradeOpen,
     onTradeClose,
