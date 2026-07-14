@@ -2465,7 +2465,7 @@ export const appRouter = router({
           { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options",    lotSize: 40 },
           { token: "MCX_FO|520702",               symbol: "MCX_CRUDE", label: "Crude Oil → ATM Options",   lotSize: 100 },
           { token: "MCX_FO|552720",               symbol: "MCX_GOLD",  label: "Gold → ATM Options",        lotSize: 100 },
-          { token: "MCX_FO|574822",               symbol: "MCX_SILVER",label: "Silver → ATM Options",      lotSize: 30 },
+          { token: "MCX_FO|471725",               symbol: "MCX_SILVER",label: "Silver → ATM Options",      lotSize: 30 },
           { token: "MCX_FO|538685",               symbol: "MCX_NATGAS",label: "Natural Gas → ATM Options", lotSize: 1250 },
         ];
 

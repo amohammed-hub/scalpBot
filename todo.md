@@ -633,3 +633,6 @@
 - [x] BUG FIX: Partial booking events now persist to DB immediately (survive restarts)
 - [x] BUG FIX: Slot quick-start passes partial1Pct/partial2Pct/trailingSlEnabled/trailingSlPct
 - [x] BUG FIX: Scanner quick-start passes partial1Pct/partial2Pct/trailingSlEnabled/trailingSlPct
+- [x] Fix Silver MCX_SYMBOL_MAP token to MCX_FO|471725 (SILVER FUT per KG, lot 30) with options
+- [x] Add Partial Booking History column to Trade Log table
+- [x] Add Reserved hosting upgrade recommendation banner in dashboard (shows when bot is running, dismissible via localStorage)

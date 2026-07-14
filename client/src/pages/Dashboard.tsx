@@ -70,7 +70,7 @@ const INSTRUMENTS = [
   // These auto-resolve to the correct front-month contract via resolveMcxFuturesToken() at runtime.
   { token: "MCX_FO|520702",  symbol: "MCX_CRUDE",  label: "Crude Oil → OTM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|520702" },
   { token: "MCX_FO|552720",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|552720" },
-  { token: "MCX_FO|574822",  symbol: "MCX_SILVER", label: "Silver → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|574822" },
+  { token: "MCX_FO|471725",  symbol: "MCX_SILVER", label: "Silver → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|471725" },
   { token: "MCX_FO|538685",  symbol: "MCX_NATGAS", label: "Natural Gas → OTM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|538685" },
   { token: "MCX_FO|562048",  symbol: "MCX_COPPER", label: "Copper → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 2500, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|562048" },
 ];
@@ -286,6 +286,9 @@ export default function Dashboard() {
   const [showScanner, setShowScanner] = useState<number | null>(null);
   const [scanEnabled, setScanEnabled] = useState(false);
   const [configCollapsed, setConfigCollapsed] = useState(false);
+  const [hostingBannerDismissed, setHostingBannerDismissed] = useState(() => {
+    return localStorage.getItem("hosting-banner-dismissed") === "true";
+  });
   const { data: scanData, isLoading: scanLoading, refetch: refetchScan } = trpc.scanner.smartScan.useQuery(
     { sessionToken },
     { enabled: scanEnabled, staleTime: 30000, refetchOnWindowFocus: false }
@@ -852,6 +855,24 @@ export default function Dashboard() {
               <button onClick={() => navigate("/settings")} className="underline hover:opacity-80">Go to Settings to add it</button>
               {" "}— or switch to Paper mode.
             </span>
+          </div>
+        )}
+
+        {/* Reserved Hosting Upgrade Banner */}
+        {!hostingBannerDismissed && (botStatus?.status === "running" || allBots?.some((b: any) => b.status === "running")) && (
+          <div className="mb-4 flex items-center gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 text-amber-300 text-sm">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+            <span className="flex-1">
+              <strong>Autoscale hosting may cause gaps.</strong> Serverless instances spin down to 0 when idle, causing 10-30s cold starts that can miss signals.
+              Consider upgrading to <strong>Reserved hosting</strong> or adding an external keep-alive ping (e.g. UptimeRobot every 5 min) for uninterrupted bot operation.
+            </span>
+            <button
+              onClick={() => { setHostingBannerDismissed(true); localStorage.setItem("hosting-banner-dismissed", "true"); }}
+              className="shrink-0 p-1 rounded hover:bg-amber-500/20 transition-colors"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 
@@ -2561,13 +2582,14 @@ export default function Dashboard() {
                   <th className="text-right py-2 pr-4">Lots</th>
                   <th className="text-right py-2 pr-4">Capital</th>
                   <th className="text-right py-2 pr-4">P&L</th>
+                  <th className="text-center py-2 pr-4">Partial</th>
                   <th className="text-left py-2 pr-4">Status</th>
                   <th className="text-right py-2">Del</th>
                 </tr>
               </thead>
               <tbody>
                 {trades.length === 0 ? (
-                      <tr><td colSpan={14} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
+                      <tr><td colSpan={15} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
                 ) : (
                   trades.slice(0, 30).map((t: typeof trades[0]) => {
                     // Compute live P&L for open trades
@@ -2665,6 +2687,24 @@ export default function Dashboard() {
                           {livePnl !== undefined && livePnl !== null
                             ? `${livePnl > 0 ? "+" : ""}₹${livePnl.toFixed(0)}${t.status === "open" ? " ●" : ""}`
                             : "—"}
+                        </td>
+                        <td className="py-2.5 pr-4 text-center">
+                          {(t as any).partialBooked > 0 ? (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">
+                                  {(t as any).partialBooked === 1 ? "50% booked" : "75% booked"}
+                                </span>
+                              </div>
+                              {(t as any).bookedPnl ? (
+                                <span className={`text-[10px] font-mono ${(t as any).bookedPnl > 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                                  {(t as any).bookedPnl > 0 ? "+" : ""}₹{Number((t as any).bookedPnl).toFixed(0)}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-white/20 text-[10px]">—</span>
+                          )}
                         </td>
                         <td className="py-2.5 pr-4">
                           <span className={`text-xs px-2 py-0.5 rounded-full ${

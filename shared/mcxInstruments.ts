@@ -36,11 +36,11 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Silver",
     symbol: "SILVER",
-    instrumentToken: "MCX_FO|574822",   // SILVER front-month Jul 2026
+    instrumentToken: "MCX_FO|471725",   // SILVER FUT (per KG, has options chain)
     upstoxName: "SILVER",
-    lotSize: 30000,    // 30 kg (30,000 grams)
+    lotSize: 30,       // 30 kg per lot
     tickSize: 1,
-    tickValue: 30000,
+    tickValue: 30,     // ₹1 × 30 kg = ₹30 per tick
     margin: 120000,
     bestTimes: "9:00–11:30 AM, 7:30–9:30 PM",
     category: "metal",

@@ -23,7 +23,7 @@ const INSTRUMENTS = [
   { token: "NSE_INDEX|Nifty Bank",         label: "Bank Nifty (Spot)" },
   { token: "NSE_INDEX|Nifty Fin Service",  label: "Fin Nifty (Spot)" },
   { token: "MCX_FO|552720",               label: "Gold (MCX)" },
-  { token: "MCX_FO|574822",               label: "Silver (MCX)" },
+  { token: "MCX_FO|471725",               label: "Silver (MCX)" },
   { token: "MCX_FO|520702",               label: "Crude Oil (MCX)" },
   { token: "MCX_FO|538685",               label: "Natural Gas (MCX)" },
   { token: "NSE_EQ|INE009A01021",         label: "Reliance Industries" },
