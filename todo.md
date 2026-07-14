@@ -601,3 +601,6 @@
 - [x] BUG: Trade counter showing 0 after trades close — allStatus was reading stale dbRow.tradesCount instead of querying today's actual trade_log count. Fixed by querying trade_log with gte(today start) grouped by instrumentToken.
 - [x] BUG: Stale instrument label (showing "Crude Oil" when NIFTY selected) — allStatus returned dbRow.instrumentLabel even when bot stopped. Fixed to return empty string when bot is not running so UI shows the dropdown selector instead of stale label.
 - [x] All 119 tests pass, TypeScript 0 errors
+## Round 14 — Stop Bot Leaves Trades Open (Jul 14, 2026)
+- [x] CRITICAL BUG: Stopping a bot slot does NOT close open trades — they remain "Open" with stale P&L. Must auto-close all open trades at current price when bot is stopped.
+- [x] Also fix: Trade that was +1600 profit now showing loss — P&L not locked at exit, keeps drifting because trade is still "Open"

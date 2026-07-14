@@ -638,6 +638,12 @@ export const appRouter = router({
     stop: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .mutation(async ({ input }) => {
+        // Capture bot state BEFORE stopping (need lastPrice for closing trades)
+        const botState = getBotState(input.sessionToken);
+        const lastPrice = botState?.lastPrice ?? 0;
+        // For options trades, use the option premium price (not underlying)
+        const optionPremium = (botState as any)?.optionPremiumPrice ?? 0;
+
         stopBot(input.sessionToken);
         // Clear activity log for this session (stale events confuse UX on next start)
         try {
@@ -650,6 +656,33 @@ export const appRouter = router({
             .update(botSessions)
             .set({ status: "stopped", stoppedAt: new Date() })
             .where(eq(botSessions.sessionToken, input.sessionToken));
+
+          // Auto-close all open trades for this session at last known price
+          const openTrades = await db.select().from(tradeLog).where(
+            and(eq(tradeLog.sessionToken, input.sessionToken), eq(tradeLog.status, "open"))
+          );
+          const now = new Date();
+          for (const t of openTrades) {
+            // For options trades: use option premium price, not underlying
+            const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
+            const exitPx = isOption && optionPremium > 0
+              ? optionPremium
+              : (lastPrice > 0 ? lastPrice : t.entryPrice);
+            // For BUY direction: P&L = (exit - entry) * qty
+            // For SELL direction: P&L = (entry - exit) * qty
+            const pnl = t.direction === "BUY"
+              ? (exitPx - t.entryPrice) * t.quantity
+              : (t.entryPrice - exitPx) * t.quantity;
+            const capital = t.quantity * t.entryPrice; // approximate capital used
+            await db.update(tradeLog).set({
+              status: "closed",
+              exitPrice: exitPx,
+              pnl,
+              pnlPct: capital > 0 ? (pnl / capital) * 100 : 0,
+              exitReason: "Bot Stopped — Auto-Closed",
+              exitedAt: now,
+            }).where(eq(tradeLog.id, t.id));
+          }
         }
         return { success: true };
       }),
@@ -1826,11 +1859,41 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema, slot: z.number().min(1).max(2) }))
       .mutation(async ({ input }) => {
         const slotToken = `${input.sessionToken}-slot${input.slot}`;
+        // Capture bot state BEFORE stopping (need lastPrice for closing trades)
+        const botState = getBotState(slotToken);
+        const lastPrice = botState?.lastPrice ?? 0;
+        const optionPremium = (botState as any)?.optionPremiumPrice ?? 0;
+
         stopBot(slotToken);
         const db = await getDb();
         if (db) {
           await db.update(botSessions).set({ status: "stopped", stoppedAt: new Date() })
             .where(eq(botSessions.sessionToken, slotToken));
+
+          // Auto-close all open trades for this slot at last known price
+          const openTrades = await db.select().from(tradeLog).where(
+            and(eq(tradeLog.sessionToken, slotToken), eq(tradeLog.status, "open"))
+          );
+          const now = new Date();
+          for (const t of openTrades) {
+            // For options trades: use option premium price, not underlying
+            const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
+            const exitPx = isOption && optionPremium > 0
+              ? optionPremium
+              : (lastPrice > 0 ? lastPrice : t.entryPrice);
+            const pnl = t.direction === "BUY"
+              ? (exitPx - t.entryPrice) * t.quantity
+              : (t.entryPrice - exitPx) * t.quantity;
+            const capital = t.quantity * t.entryPrice;
+            await db.update(tradeLog).set({
+              status: "closed",
+              exitPrice: exitPx,
+              pnl,
+              pnlPct: capital > 0 ? (pnl / capital) * 100 : 0,
+              exitReason: "Bot Stopped — Auto-Closed",
+              exitedAt: now,
+            }).where(eq(tradeLog.id, t.id));
+          }
         }
         return { success: true };
       }),
