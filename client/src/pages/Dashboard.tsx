@@ -242,7 +242,20 @@ export default function Dashboard() {
       BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → OTM Options (Auto)",  lotSize: 15 },
       FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → OTM Options (Auto)",   lotSize: 40 },
     };
-    const mcxInstr = MCX_INSTRUMENTS.find(i => i.symbol === qs.symbol);
+    // Map dropdown values (MCX_CRUDE, MCX_GOLD, etc.) to actual MCX instrument symbols (CRUDEOIL, GOLD, etc.)
+    const MCX_SYMBOL_MAP: Record<string, string> = {
+      MCX_CRUDE: "CRUDEOIL",
+      MCX_GOLD: "GOLD",
+      MCX_SILVER: "SILVER",
+      MCX_NATGAS: "NATURALGAS",
+      MCX_COPPER: "COPPER",
+      MCX_ZINC: "ZINC",
+      MCX_ALUMINIUM: "ALUMINIUM",
+      MCX_LEAD: "LEAD",
+      MCX_NICKEL: "NICKEL",
+    };
+    const mcxSymbol = MCX_SYMBOL_MAP[qs.symbol] ?? qs.symbol;
+    const mcxInstr = MCX_INSTRUMENTS.find(i => i.symbol === mcxSymbol);
     const nseInstr = NSE_INDEX_MAP[qs.symbol];
     const resolvedToken = mcxInstr ? mcxInstr.instrumentToken : nseInstr ? nseInstr.token : `NSE_INDEX|Nifty 50`;
     const resolvedLabel = mcxInstr ? mcxInstr.label : nseInstr ? nseInstr.label : qs.symbol;
