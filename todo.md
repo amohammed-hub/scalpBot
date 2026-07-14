@@ -622,3 +622,5 @@
 - [x] Add configurable partial booking levels (partial1R% and partial2R%) in Settings UI
 - [x] Wire configurable partial levels into botEngine trade open logic
 - [x] Show current partial levels on dashboard when trade is open
+- [x] Fix botRestart.ts to restart bots even without open trade (Autoscale cold start issue)
+- [x] Remove "only restart if open trade" restriction — if DB says running, restart the bot

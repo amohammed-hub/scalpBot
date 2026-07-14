@@ -1,14 +1,14 @@
 /**
  * botRestart.ts
  * On server startup, query the DB for any botSessions with status="running"
- * AND a confirmed open trade. Only restart bots that have an active trade to protect.
- * Sessions without an open trade are marked "stopped" — they do NOT restart automatically
- * because there is nothing to protect and restarting them could generate phantom signals.
+ * and restart them. This ensures bots survive Autoscale cold starts (serverless scale-to-0).
+ * If there is an open trade, it is restored so the bot can continue managing it.
+ * If there is no open trade, the bot restarts in scanning mode (looking for new signals).
  *
  * SAFETY RULES:
- * 1. Only restart if there is an open trade in trade_log for this session.
+ * 1. If the bot key is already in memory, skip it.
  * 2. partial1RPrice and partial2RPrice MUST be recalculated from entry/SL — never 0.
- * 3. If the bot key is already in memory, skip it.
+ * 3. Access token is loaded from DB for market data access.
  */
 import { getDb } from "./db";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
@@ -30,14 +30,12 @@ type BotSessionRow = typeof botSessions.$inferSelect;
 export async function restartSingleSession(session: BotSessionRow): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
-
   // Skip if already running in memory
   if (getBotState(session.sessionToken)) {
     console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} already in memory — skipping`);
     return false;
   }
-
-  // SAFETY RULE 1: Only restart if there is a confirmed open trade.
+  // Check if there is an open trade to restore
   const openTradeRows = await db
     .select()
     .from(tradeLog)
@@ -46,79 +44,61 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       eq(tradeLog.status, "open"),
     ))
     .limit(1);
-
-  if (openTradeRows.length === 0) {
-    // No open trade — mark session as stopped so it doesn't restart again
-    await db.update(botSessions)
-      .set({ status: "stopped" })
-      .where(eq(botSessions.sessionToken, session.sessionToken));
-    console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — no open trade, marked stopped (restart manually)`);
-    return false;
+  // Build existingOpenTrade if there is one to restore
+  let existingOpenTrade: OpenTrade | undefined = undefined;
+  if (openTradeRows.length > 0) {
+    const t = openTradeRows[0];
+    const slDist = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice));
+    const partial1RPrice = t.partial1RPrice ?? (t.direction === "BUY"
+      ? t.entryPrice + slDist
+      : t.entryPrice - slDist);
+    const partial2RPrice = t.partial2RPrice ?? (t.direction === "BUY"
+      ? t.entryPrice + slDist * 2
+      : t.entryPrice - slDist * 2);
+    existingOpenTrade = {
+      dbId: t.id,
+      symbol: t.symbol,
+      symbolLabel: t.symbolLabel ?? t.symbol,
+      instrumentToken: t.instrumentToken ?? session.instrumentToken ?? "",
+      direction: t.direction,
+      mode: t.mode,
+      entryPrice: t.entryPrice,
+      quantity: t.quantity,
+      slPrice: t.slPrice ?? 0,
+      targetPrice: t.targetPrice ?? 0,
+      atr: t.atr ?? 0,
+      confidence: t.confidence ?? 0,
+      upstoxOrderId: t.upstoxOrderId ?? undefined,
+      enteredAt: t.enteredAt,
+      trailingSlEnabled: session.trailingSlEnabled ?? false,
+      trailingSlPct: session.trailingSlPct ?? 0.5,
+      currentSl: session.currentSl ?? t.slPrice ?? 0,
+      isReEntry: false,
+      partial1RPrice,
+      partial2RPrice,
+      partialBooked: 0,
+      bookedQty: 0,
+      bookedPnl: 0,
+      isIndexOptions: !!(session.isIndexOptions),
+      entryUnderlyingPrice: session.isIndexOptions ? (session.lastPrice ?? undefined) : undefined,
+      optionMockKey: (() => {
+        if (!session.isIndexOptions) return undefined;
+        const sym = (session.instrumentSymbol ?? "").toUpperCase();
+        const ceOrPe = (t.symbol ?? "").includes("_CE_") || (t.symbol ?? "").endsWith("_CE") ? "CE" : "PE";
+        if (sym.includes("GOLD")) return ceOrPe === "CE" ? "MCX_GOLD_CE" : "MCX_GOLD_PE";
+        if (sym.includes("SILVER")) return ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
+        if (sym.includes("CRUDE") || sym.includes("OIL")) return ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
+        if (sym.includes("NATGAS") || sym.includes("GAS")) return ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+        if (sym.includes("COPPER")) return ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
+        if (sym.includes("ZINC")) return ceOrPe === "CE" ? "MCX_ZINC_CE" : "MCX_ZINC_PE";
+        if (sym.includes("BANK")) return ceOrPe === "CE" ? "BNF_CE" : "BNF_PE";
+        return ceOrPe === "CE" ? "NIFTY_CE" : "NIFTY_PE";
+      })(),
+    };
+    console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — restoring open trade #${t.id} ${t.direction} ${t.symbol} @ ₹${t.entryPrice} | SL: ₹${t.slPrice} | 1R: ₹${partial1RPrice.toFixed(2)}`);
+  } else {
+    console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — no open trade, restarting in scan mode`);
   }
-
-  const t = openTradeRows[0];
-
-  // SAFETY RULE 2: Use stored partial profit levels from DB (written at trade open).
-  // Fall back to calculation ONLY if the DB values are null.
-  // Setting them to 0 causes immediate false partial booking on the first tick.
-  const slDist = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice));
-  const partial1RPrice = t.partial1RPrice ?? (t.direction === "BUY"
-    ? t.entryPrice + slDist
-    : t.entryPrice - slDist);
-  const partial2RPrice = t.partial2RPrice ?? (t.direction === "BUY"
-    ? t.entryPrice + slDist * 2
-    : t.entryPrice - slDist * 2);
-
-  const existingOpenTrade: OpenTrade = {
-    dbId: t.id,
-    symbol: t.symbol,
-    symbolLabel: t.symbolLabel ?? t.symbol,
-    instrumentToken: t.instrumentToken ?? session.instrumentToken ?? "",
-    direction: t.direction,
-    mode: t.mode,
-    entryPrice: t.entryPrice,
-    quantity: t.quantity,
-    slPrice: t.slPrice ?? 0,
-    targetPrice: t.targetPrice ?? 0,
-    atr: t.atr ?? 0,
-    confidence: t.confidence ?? 0,
-    upstoxOrderId: t.upstoxOrderId ?? undefined,
-    enteredAt: t.enteredAt,
-    trailingSlEnabled: session.trailingSlEnabled ?? false,
-    trailingSlPct: session.trailingSlPct ?? 0.5,
-    // Use currentSl from bot_sessions (written by onTick — reflects trailing SL)
-    // Fall back to original slPrice if not yet written
-    currentSl: session.currentSl ?? t.slPrice ?? 0,
-    isReEntry: false,
-    partial1RPrice,
-    partial2RPrice,
-    partialBooked: 0,
-    bookedQty: 0,
-    bookedPnl: 0,
-    // CRITICAL: preserve options mode state so effectivePrice uses premium, not underlying
-    isIndexOptions: !!(session.isIndexOptions),
-    // Use the entry price of the underlying at trade open time for delta drift calculation.
-    // Since we don't store entryUnderlyingPrice in DB, use lastPrice from bot_sessions as a reasonable
-    // approximation (it's the most recent underlying price before restart). This is imperfect but
-    // far better than using the current tick price (which would make underlyingMove=0 on first tick).
-    entryUnderlyingPrice: session.isIndexOptions ? (session.lastPrice ?? undefined) : undefined,
-    // Reconstruct optionMockKey for paper-mode premium drift
-    optionMockKey: (() => {
-      if (!session.isIndexOptions) return undefined;
-      const sym = (session.instrumentSymbol ?? "").toUpperCase();
-      const ceOrPe = (t.symbol ?? "").includes("_CE_") || (t.symbol ?? "").endsWith("_CE") ? "CE" : "PE";
-      if (sym.includes("GOLD")) return ceOrPe === "CE" ? "MCX_GOLD_CE" : "MCX_GOLD_PE";
-      if (sym.includes("SILVER")) return ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
-      if (sym.includes("CRUDE") || sym.includes("OIL")) return ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
-      if (sym.includes("NATGAS") || sym.includes("GAS")) return ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
-      if (sym.includes("COPPER")) return ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
-      if (sym.includes("ZINC")) return ceOrPe === "CE" ? "MCX_ZINC_CE" : "MCX_ZINC_PE";
-      if (sym.includes("BANK")) return ceOrPe === "CE" ? "BNF_CE" : "BNF_PE";
-      return ceOrPe === "CE" ? "NIFTY_CE" : "NIFTY_PE";
-    })(),
-  };
-
-  console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — restoring open trade #${t.id} ${t.direction} ${t.symbol} @ ₹${t.entryPrice} | SL: ₹${t.slPrice} | 1R: ₹${partial1RPrice.toFixed(2)}`);
 
   // Look up access token
   const credRows = await db
@@ -254,7 +234,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     onTick,
   );
 
-  console.log(`[BotRestart] ✅ Restarted bot for session ${session.sessionToken.slice(0, 8)} — ${session.instrumentSymbol} ${session.mode} mode — protecting open trade #${t.id}`);
+  console.log(`[BotRestart] ✅ Restarted bot for session ${session.sessionToken.slice(0, 8)} — ${session.instrumentSymbol} ${session.mode} mode${existingOpenTrade ? ` — protecting open trade #${existingOpenTrade.dbId}` : " — scan mode"}`);
   return true;
 }
 
@@ -314,7 +294,7 @@ export async function restartRunningBots(): Promise<void> {
     return;
   }
 
-  console.log(`[BotRestart] Found ${runningSessions.length} session(s) marked running — checking for open trades...`);
+  console.log(`[BotRestart] Found ${runningSessions.length} session(s) marked running — restarting all...`);
 
   for (const session of runningSessions) {
     try {
