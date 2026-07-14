@@ -120,6 +120,10 @@ export const tradeLog = mysqlTable("trade_log", {
   // Partial profit booking levels — stored so they survive server restarts exactly
   partial1RPrice: float("partial1RPrice"),
   partial2RPrice: float("partial2RPrice"),
+  // Partial booking state — persisted so it survives server restarts
+  partialBooked: int("partialBooked").default(0),
+  bookedQty: int("bookedQty").default(0),
+  bookedPnl: float("bookedPnl").default(0),
   enteredAt: timestamp("enteredAt").defaultNow().notNull(),
   exitedAt: timestamp("exitedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

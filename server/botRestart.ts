@@ -76,9 +76,9 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       isReEntry: false,
       partial1RPrice,
       partial2RPrice,
-      partialBooked: 0,
-      bookedQty: 0,
-      bookedPnl: 0,
+      partialBooked: (t.partialBooked ?? 0) as 0 | 1 | 2,
+      bookedQty: t.bookedQty ?? 0,
+      bookedPnl: t.bookedPnl ?? 0,
       isIndexOptions: !!(session.isIndexOptions),
       entryUnderlyingPrice: session.isIndexOptions ? (session.lastPrice ?? undefined) : undefined,
       optionMockKey: (() => {

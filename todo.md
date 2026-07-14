@@ -625,3 +625,11 @@
 - [x] Fix botRestart.ts to restart bots even without open trade (Autoscale cold start issue)
 - [x] Remove "only restart if open trade" restriction — if DB says running, restart the bot
 - [x] Fix: Silver/NatGas option contract lookup fails because SILVER100 has no options (name-based fallback + price scale correction)
+- [x] BUG FIX: Kill switch P&L now includes bookedPnl from partial bookings
+- [x] BUG FIX: Auto square-off uses state.lastPrice instead of entry price (no more P&L=0)
+- [x] BUG FIX: partialBooked/bookedQty/bookedPnl columns added to trade_log (persisted to DB)
+- [x] BUG FIX: botRestart.ts reads partial booking state from DB (no more double-booking)
+- [x] BUG FIX: All 4 open-trade restore paths in routers.ts read partial state from DB
+- [x] BUG FIX: Partial booking events now persist to DB immediately (survive restarts)
+- [x] BUG FIX: Slot quick-start passes partial1Pct/partial2Pct/trailingSlEnabled/trailingSlPct
+- [x] BUG FIX: Scanner quick-start passes partial1Pct/partial2Pct/trailingSlEnabled/trailingSlPct

@@ -282,10 +282,12 @@ export async function executeKillSwitch(
         await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, trade.quantity);
       }
 
-      const pnl = trade.direction === "BUY"
+      const remainingPnl = trade.direction === "BUY"
         ? (exitPrice - trade.entryPrice) * trade.quantity
         : (trade.entryPrice - exitPrice) * trade.quantity;
 
+      // Include already-booked partial profits in total P&L
+      const pnl = remainingPnl + (trade.bookedPnl ?? 0);
       await onTradeClose(trade.dbId, exitPrice, pnl, "Kill Switch — Emergency Close");
       bot.openTrade = null;
       bot.dailyPnl += pnl;

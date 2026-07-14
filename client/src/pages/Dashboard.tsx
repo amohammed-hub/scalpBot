@@ -277,6 +277,8 @@ export default function Dashboard() {
       underlyingToken: resolvedToken,
       telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
       enabledLayers: config.enabledLayers,
+      partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
+      trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
     });
   };
 
@@ -2323,6 +2325,8 @@ export default function Dashboard() {
                                         isIndexOptions: true,
                                         underlyingToken: r.token,
                                         telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+                                        partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
+                                        trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct, enabledLayers: config.enabledLayers,
                                       });
                                     }}
                                   >

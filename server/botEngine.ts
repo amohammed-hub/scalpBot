@@ -1913,8 +1913,8 @@ async function tick(
       if (istMin3 >= sqOffMin3 || (!isMCX3 && (istMin3 < 9 * 60 + 15))) {
         // Market is closed — force close the open trade at last known price
         const trade = state.openTrade;
-        const exitPx = trade.entryPrice; // Use entry price as exit (no live data available)
-        let pnl = trade.direction === "BUY" ? (exitPx - trade.entryPrice) * trade.quantity : (trade.entryPrice - exitPx) * trade.quantity;
+        const exitPx = state.lastPrice > 0 ? state.lastPrice : trade.entryPrice; // Use last known price (or entry if none)
+        let pnl = (trade.direction === "BUY" ? (exitPx - trade.entryPrice) * trade.quantity : (trade.entryPrice - exitPx) * trade.quantity) + (trade.bookedPnl ?? 0);
         // For paper mode: P&L is 0 since we exit at entry (no live data to determine actual exit)
         // This is better than leaving trades open overnight
         state.dailyPnl += pnl;
@@ -2143,6 +2143,11 @@ async function tick(
           `✅ Locked: ₹${bookPnl.toFixed(0)} | SL moved to Breakeven\n` +
           `🎯 Remaining: ${trade.quantity} qty | Next target: 2R`,
         );
+        // Persist partial booking state to DB so it survives server restarts
+        const { tradeLog: tl0 } = await import("../drizzle/schema"); const { eq: eq0 } = await import("drizzle-orm"); const { getDb: getDb0 } = await import("./db"); const db0 = await getDb0();
+        if (db0 && trade.dbId) {
+          await db0.update(tl0).set({ partialBooked: 1, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq0(tl0.id, trade.dbId!));
+        }
       }
     } else if (trade.partialBooked === 1) {
       // Safety guard: partial2RPrice must be a valid non-zero price above/below entry (same as 1R guard)
@@ -2179,6 +2184,11 @@ async function tick(
           `✅ Locked: ₹${bookPnl.toFixed(0)} | Total locked: ₹${trade.bookedPnl.toFixed(0)}\n` +
           `🛑 SL moved to 1R | Trailing ${trade.quantity} qty to target`,
         );
+        // Persist partial booking state to DB so it survives server restarts
+        const { tradeLog: tl1 } = await import("../drizzle/schema"); const { eq: eq1 } = await import("drizzle-orm"); const { getDb: getDb1 } = await import("./db"); const db1 = await getDb1();
+        if (db1 && trade.dbId) {
+          await db1.update(tl1).set({ partialBooked: 2, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq1(tl1.id, trade.dbId!));
+        }
       }
     }
 
