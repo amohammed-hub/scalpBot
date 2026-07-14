@@ -268,6 +268,8 @@ export const appRouter = router({
         underlyingToken: z.string().optional(), // e.g. "NSE_INDEX|Nifty Bank"
         optionType: z.enum(["CE", "PE", "auto"]).optional(), // "auto" = CE for BUY, PE for SELL
         enabledLayers: z.array(z.string()).optional(),
+        partial1Pct: z.number().default(30), // Book 50% at this % profit (e.g., 30 = +30%)
+        partial2Pct: z.number().default(60), // Book 25% at this % profit (e.g., 60 = +60%)
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -610,6 +612,8 @@ export const appRouter = router({
             optionType: input.optionType,
             enabledLayers: input.enabledLayers,
             consecutiveTickErrors: 0,
+            partial1Pct: input.partial1Pct,
+            partial2Pct: input.partial2Pct,
           },
           onTradeOpen,
           onTradeClose,
@@ -841,6 +845,8 @@ export const appRouter = router({
             underlyingToken: row.underlyingToken ?? undefined,
             optionType: (row.optionType as "CE" | "PE" | "auto" | undefined) ?? undefined,
             consecutiveTickErrors: 0,
+            partial1Pct: 30,
+            partial2Pct: 60,
           },
           onTradeOpen,
           onTradeClose,
@@ -1678,6 +1684,8 @@ export const appRouter = router({
         underlyingToken: z.string().optional(),
         optionType: z.enum(["CE", "PE", "auto"]).optional(),
         enabledLayers: z.array(z.string()).optional(),
+        partial1Pct: z.number().default(30),
+        partial2Pct: z.number().default(60),
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -1886,6 +1894,8 @@ export const appRouter = router({
           optionType: input.optionType,
           enabledLayers: input.enabledLayers,
           consecutiveTickErrors: 0,
+          partial1Pct: input.partial1Pct,
+          partial2Pct: input.partial2Pct,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;

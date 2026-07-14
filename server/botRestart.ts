@@ -245,6 +245,8 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       optionType: (session.optionType ?? undefined) as "CE" | "PE" | "auto" | undefined,
       consecutiveTickErrors: 0,
       enabledLayers: session.enabledLayers ? (() => { try { return JSON.parse(session.enabledLayers!); } catch { return undefined; } })() : undefined,
+      partial1Pct: 30,
+      partial2Pct: 60,
     },
     onTradeOpen,
     onTradeClose,

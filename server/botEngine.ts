@@ -155,6 +155,9 @@ export interface BotState {
   // Layer selection: user can enable/disable specific strategy layers
   enabledLayers?: string[];
   // HourlyClose: track if first-hour signal already fired today
+  // Partial profit booking config (% profit levels)
+  partial1Pct: number;  // Book 50% at this % profit (e.g., 30 = +30%)
+  partial2Pct: number;  // Book 25% at this % profit (e.g., 60 = +60%)
   hourlyCloseSignalFired?: boolean;
   // Daily reset: track last trading day (IST date string YYYY-MM-DD) to reset counters
   lastTradingDay?: string;
@@ -1293,8 +1296,7 @@ export function generateHeroZeroSignal(
     reason,
     layer: "HeroZero",
     isHeroZero: true,
-    partial1RPrice: optionPremium * 1.4,   // book 50% at +40% profit (e.g., ₹252 → ₹353)
-    partial2RPrice: optionPremium * 2.0,   // book 25% at +100% profit (e.g., ₹252 → ₹504)
+    // Do NOT set partial1RPrice/partial2RPrice here — let the trade-open code use configurable state.partial1Pct/partial2Pct
   };
 }
 
@@ -2581,14 +2583,20 @@ async function tick(
 
   // Compute partial profit levels BEFORE calling onTradeOpen so they are stored in DB
   // For options: use option premium price for partial levels (not underlying SL distance)
+  const p1Pct = state.partial1Pct / 100; // e.g., 30 → 0.30
+  const p2Pct = state.partial2Pct / 100; // e.g., 60 → 0.60
   const slDist = isOptionsMode && optionPremiumForSizing
-    ? optionPremiumForSizing * 0.3  // 30% of premium = SL distance for options (e.g., ₹252 → SL dist = ₹76)
+    ? optionPremiumForSizing * p1Pct  // Use configurable partial1Pct for options (e.g., 30% of ₹252 = ₹76)
     : Math.abs(signal.entryPrice - signal.slPrice);
   const optionEntry = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  // For options: book 50% at +30% profit (1R), book 25% at +60% profit (2R)
-  // e.g., entry ₹252 → partial1R = ₹328, partial2R = ₹403
-  const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode ? optionEntry + slDist : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
-  const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode ? optionEntry + slDist * 2 : (signal.direction === "BUY" ? optionEntry + slDist * 2 : optionEntry - slDist * 2));
+  // For options: book 50% at partial1Pct profit, book 25% at partial2Pct profit
+  // e.g., entry ₹252 with partial1Pct=30 → partial1R = ₹328, partial2Pct=60 → partial2R = ₹403
+  const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode
+    ? optionEntry * (1 + p1Pct)  // e.g., ₹252 × 1.30 = ₹328
+    : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
+  const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode
+    ? optionEntry * (1 + p2Pct)  // e.g., ₹252 × 1.60 = ₹403
+    : (signal.direction === "BUY" ? optionEntry + slDist * (p2Pct / p1Pct) : optionEntry - slDist * (p2Pct / p1Pct)));
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
@@ -2820,6 +2828,8 @@ export function startBot(
             optionType: state.optionType,
             consecutiveTickErrors: 0,
             enabledLayers: state.enabledLayers,
+            partial1Pct: state.partial1Pct,
+            partial2Pct: state.partial2Pct,
           }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
         }
       });

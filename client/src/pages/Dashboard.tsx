@@ -46,6 +46,8 @@ interface BotConfig {
   minConfidence: number;
   scanIntervalSec: number;
   enabledLayers: string[];
+  partial1Pct: number;  // Book 50% at this % profit (e.g., 30 = +30%)
+  partial2Pct: number;  // Book 25% at this % profit (e.g., 60 = +60%)
 }
 
 interface PricePoint { time: string; price: number; }
@@ -200,6 +202,8 @@ export default function Dashboard() {
       minConfidence: 60,
       scanIntervalSec: 60,
       enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "InstFootprint", "HourlyClose", "BoomingBulls"],
+      partial1Pct: 30,
+      partial2Pct: 60,
     };
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(LS_CONFIG) ?? "null") }; }
     catch { return defaults; }
@@ -641,6 +645,8 @@ export default function Dashboard() {
       isIndexOptions,
       underlyingToken,
       enabledLayers: config.enabledLayers,
+      partial1Pct: config.partial1Pct,
+      partial2Pct: config.partial2Pct,
     });
   };
 
@@ -1656,6 +1662,42 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Partial Profit Booking Levels */}
+          <div className="mt-5 p-4 bg-gradient-to-br from-emerald-500/5 to-emerald-500/[0.02] rounded-xl border border-emerald-500/20">
+            <div className="flex items-center gap-2 mb-3">
+              <BarChart2 className="w-4 h-4 text-emerald-400" />
+              <span className="text-sm font-semibold text-white">Partial Profit Booking</span>
+              <span className="text-[10px] text-white/40 ml-auto">Options trades</span>
+            </div>
+            <div className="text-xs text-white/50 mb-3">
+              Auto-books partial profits to lock in gains. 50% at 1st level, 25% at 2nd, ride remaining 25% to target.
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-xs text-white/60">Book 50% at</label>
+                  <span className="text-sm font-bold text-emerald-400">+{config.partial1Pct}%</span>
+                </div>
+                <input type="range" min="10" max="100" step="5" value={config.partial1Pct} disabled={isRunning}
+                  onChange={(e) => setConfig(c => ({ ...c, partial1Pct: Number(e.target.value) }))}
+                  className="w-full accent-emerald-500 disabled:opacity-50" />
+                <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>+10%</span><span>+100%</span></div>
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-xs text-white/60">Book 25% at</label>
+                  <span className="text-sm font-bold text-emerald-400">+{config.partial2Pct}%</span>
+                </div>
+                <input type="range" min="20" max="200" step="10" value={config.partial2Pct} disabled={isRunning}
+                  onChange={(e) => setConfig(c => ({ ...c, partial2Pct: Number(e.target.value) }))}
+                  className="w-full accent-emerald-500 disabled:opacity-50" />
+                <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>+20%</span><span>+200%</span></div>
+              </div>
+            </div>
+            <div className="text-[10px] text-white/40 mt-2">
+              Example: Entry ₹252 → Book 50% at ₹{(252 * (1 + config.partial1Pct / 100)).toFixed(0)} | Book 25% at ₹{(252 * (1 + config.partial2Pct / 100)).toFixed(0)} | Ride 25% to target
+            </div>
+          </div>
           {/* Trailing SL */}
           <div className="mt-5 flex flex-col sm:flex-row sm:items-center gap-4 p-4 bg-white/5 rounded-xl border border-white/10">
             <div className="flex items-center gap-3 flex-1">

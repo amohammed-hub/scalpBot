@@ -619,3 +619,6 @@
 - [x] Fix: Hero Zero trades skip partial profit booking due to early return statement
 - [x] Fix: Make partial booking levels more realistic for options (book at +40% and +80% instead of 2.5× and 3.5×)
 - [x] Fix: Allow partial booking to run for Hero Zero trades before the 5× target check
+- [x] Add configurable partial booking levels (partial1R% and partial2R%) in Settings UI
+- [x] Wire configurable partial levels into botEngine trade open logic
+- [x] Show current partial levels on dashboard when trade is open
