@@ -632,8 +632,10 @@ export default function Dashboard() {
     // For options mode: use option premium price (not underlying spot) as exit price
     const exitPriceToUse = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
       ? optionPremiumPrice
-      : currentPrice;
-    if (!exitPriceToUse) { toast.error("No current price available."); return; }
+      : isIndexOptions
+        ? 0  // Don't use underlying price for options — it's wrong
+        : currentPrice;
+    if (!exitPriceToUse) { toast.error("No option premium price available. Wait for bot to fetch it, or use 'Close All Open' button."); return; }
     manualExitMutation.mutate({ sessionToken, tradeId: trade.id, exitPrice: exitPriceToUse });
   };
 
@@ -659,8 +661,9 @@ export default function Dashboard() {
 
   // Only calculate unrealized P&L when we have a real live price (not 0, not same as entry)
   // For options mode, use option premium price for unrealized P&L; otherwise use underlying price
-  const effectiveLivePrice = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
-    ? optionPremiumPrice
+  // IMPORTANT: For options, NEVER use underlying price as fallback — it gives absurd P&L
+  const effectiveLivePrice = isIndexOptions
+    ? (optionPremiumPrice && optionPremiumPrice > 0 ? optionPremiumPrice : 0)
     : currentPrice;
   const unrealizedPnl = activeTrade && effectiveLivePrice > 0
       ? activeTrade.direction === "BUY"
@@ -2497,11 +2500,24 @@ export default function Dashboard() {
                     // In options mode use option premium price (only available for primary slot currently)
                     // For secondary slots, use their optionPremiumPrice from allBots data
                     const slotOptionPremium = slotBot?.optionPremiumPrice ?? 0;
-                    const liveEffectivePrice = tradeSlot === 0 && isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
-                      ? optionPremiumPrice
-                      : (tradeSlot > 0 && slotOptionPremium > 0)
-                        ? slotOptionPremium
-                        : slotEffectivePrice;
+                    // Detect if this trade is an options trade (symbol contains CE or PE)
+                    const isOptionTrade = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE") ||
+                      (t.symbolLabel ?? "").includes(" CE") || (t.symbolLabel ?? "").includes(" PE");
+                    // For options trades: ONLY use option premium price, NEVER fall back to underlying
+                    // Using underlying price (e.g. 7700) with option entry (e.g. 252) gives absurd P&L
+                    let liveEffectivePrice = 0;
+                    if (isOptionTrade) {
+                      // Options: must use option premium price only
+                      if (tradeSlot === 0 && optionPremiumPrice && optionPremiumPrice > 0) {
+                        liveEffectivePrice = optionPremiumPrice;
+                      } else if (tradeSlot > 0 && slotOptionPremium > 0) {
+                        liveEffectivePrice = slotOptionPremium;
+                      }
+                      // If no option premium available, liveEffectivePrice stays 0 → P&L shows as null
+                    } else {
+                      // Non-options: use underlying/futures price as before
+                      liveEffectivePrice = slotEffectivePrice;
+                    }
                     const livePnl = t.status === "open" && liveEffectivePrice > 0
                       ? t.direction === "BUY"
                         ? (liveEffectivePrice - t.entryPrice) * t.quantity

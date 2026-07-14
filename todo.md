@@ -604,3 +604,5 @@
 ## Round 14 — Stop Bot Leaves Trades Open (Jul 14, 2026)
 - [x] CRITICAL BUG: Stopping a bot slot does NOT close open trades — they remain "Open" with stale P&L. Must auto-close all open trades at current price when bot is stopped.
 - [x] Also fix: Trade that was +1600 profit now showing loss — P&L not locked at exit, keeps drifting because trade is still "Open"
+## Round 14b — Incorrect Open Trade P&L Display (Jul 14, 2026)
+- [x] BUG: Open trade P- [ ] BUG: Open trade P&L showingL showing ₹25,150 for a ₹252 entry with 100 qty — impossible. The live P&L is using underlying index price (e.g. 7700+252=~7952 Crude Oil price) instead of option premium for calculation. Must use option premium price for P&L on open options trades.
