@@ -610,3 +610,4 @@
 - [x] Round 15: Add heartbeat activity logging every 5 min so user can see bot is alive
 - [x] Round 15: Relax signal criteria (ADX 20→15, Momentum RSI 58→54/42→46, Breakout vol 1.3→1.1, Pattern vol 1.2→1.0, 5m strict→allow neutral)
 - [x] Round 16: Fix Slot 2 'Instrument already running in Slot 1' error when starting different instrument (Gold vs Nifty)
+- [x] Round 17: Fix zero trades - widen RSI ranges (Trend: 42-75 BUY, 25-58 SELL; Momentum: 45+ BUY, <55 SELL), bypass volume filters entirely, lower ROC threshold

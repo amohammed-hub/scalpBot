@@ -629,8 +629,8 @@ export function generateSignal(
   // NSE/BSE index instruments (Nifty, BankNifty, Sensex) return volume=0 from Upstox
   // because they are calculated values, not traded instruments. When all volume is 0,
   // bypass volume filters by treating volRatio as 1.5 (passes all vol checks).
-  const isIndexInstrument = avgVol === 0 && lastVol === 0;
-  const volRatio = isIndexInstrument ? 1.5 : (avgVol > 0 ? lastVol / avgVol : 1);
+  // Always bypass volume filters — volume checks were causing zero trades.
+  const volRatio = 1.5;
 
   const now = new Date();
   const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
@@ -687,14 +687,14 @@ export function generateSignal(
   const strict5mBuy  = candles5m.length < 5 || trend5m === "bullish" || trend5m === "neutral";
   const strict5mSell = candles5m.length < 5 || trend5m === "bearish" || trend5m === "neutral";
 
-  if (breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.3 && rsi > 45 && rsi < 80 && strict5mBuy) {
+  if (breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi > 45 && rsi < 80 && strict5mBuy) {
     direction = "BUY";
-    confidence = Math.min(0.95, 0.65 + breakoutUpPct * 200 + (volRatio - 1.3) * 0.1);
+    confidence = Math.min(0.95, 0.65 + breakoutUpPct * 200 + (volRatio - 1.0) * 0.1);
     reason = `[Breakout] Above ${highestHigh.toFixed(1)} | Vol ${volRatio.toFixed(1)}x | RSI(${rsi.toFixed(0)}) | 5m:${trend5m} | thr:${(dynamicBreakoutThreshold * 100).toFixed(3)}%`;
     layer = "Breakout";
-  } else if (breakoutDnPct > dynamicBreakoutThreshold && volRatio >= 1.3 && rsi < 55 && rsi > 20 && strict5mSell) {
+  } else if (breakoutDnPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi < 55 && rsi > 20 && strict5mSell) {
     direction = "SELL";
-    confidence = Math.min(0.95, 0.65 + breakoutDnPct * 200 + (volRatio - 1.3) * 0.1);
+    confidence = Math.min(0.95, 0.65 + breakoutDnPct * 200 + (volRatio - 1.0) * 0.1);
     reason = `[Breakout] Below ${lowestLow.toFixed(1)} | Vol ${volRatio.toFixed(1)}x | RSI(${rsi.toFixed(0)}) | 5m:${trend5m} | thr:${(dynamicBreakoutThreshold * 100).toFixed(3)}%`;
     layer = "Breakout";
   }
@@ -745,12 +745,12 @@ export function generateSignal(
   // (Omega-Xi production bot uses ADX > 20; below 20 = ranging/choppy market)
   if (direction === "HOLD" && candles.length >= 21 && adx > 15) {
     const emaDiffPct = Math.abs(e9 - e21) / e21;
-    if (e9 > e21 && price > vwap && rsi > 50 && rsi < 72 && allow5mBuy) {
+    if (e9 > e21 && price > vwap && rsi > 42 && rsi < 75 && allow5mBuy) {
       direction = "BUY";
       confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 18) * 0.005);
       reason = `[Trend] EMA9>${e21.toFixed(1)} | VWAP | RSI(${rsi.toFixed(0)}) | ADX(${adx.toFixed(0)}) | 5m:${trend5m}`;
       layer = "Trend";
-    } else if (e9 < e21 && price < vwap && rsi < 50 && rsi > 28 && allow5mSell) {
+    } else if (e9 < e21 && price < vwap && rsi < 58 && rsi > 25 && allow5mSell) {
       direction = "SELL";
       confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 18) * 0.005);
       reason = `[Trend] EMA9<${e21.toFixed(1)} | VWAP | RSI(${rsi.toFixed(0)}) | ADX(${adx.toFixed(0)}) | 5m:${trend5m}`;
@@ -761,14 +761,14 @@ export function generateSignal(
   // ── Layer 4: Momentum ─────────────────────────────────────────────────────
   if (direction === "HOLD" && candles.length >= 5) {
     const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
-    if (rsi > 54 && roc3 > 0.0005 && price > vwap && allow5mBuy) {
+    if (rsi > 45 && roc3 > 0.0003 && price > vwap && allow5mBuy) {
       direction = "BUY";
-      confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 54) * 0.005);
+      confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 45) * 0.005);
       reason = `[Momentum] RSI(${rsi.toFixed(0)}) | +${(roc3 * 100).toFixed(2)}% in 3c | Above VWAP | 5m:${trend5m}`;
       layer = "Momentum";
-    } else if (rsi < 46 && roc3 < -0.0005 && price < vwap && allow5mSell) {
+    } else if (rsi < 55 && roc3 < -0.0003 && price < vwap && allow5mSell) {
       direction = "SELL";
-      confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (46 - rsi) * 0.005);
+      confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (55 - rsi) * 0.005);
       reason = `[Momentum] RSI(${rsi.toFixed(0)}) | ${(roc3 * 100).toFixed(2)}% in 3c | Below VWAP | 5m:${trend5m}`;
       layer = "Momentum";
     }
