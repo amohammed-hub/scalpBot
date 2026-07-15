@@ -661,3 +661,11 @@
 ## Round 30 — BankNifty Option Chain Fix
 - [x] BankNifty option chain lookup failing: weekly expiry discontinued in 2024, now uses current_month
 - [x] Smart expiry fallback: BankNifty → current_month/next_month; Nifty → current_week/next_week/current_month/next_month
+
+## Round 31 — Critical P&L Display Fix
+- [x] Fix options P&L showing wrong value (using underlying price instead of option premium when fetchFullQuote fails)
+- [x] Add fallback to delta approximation when fetchFullQuote returns null (never use raw underlying for options P&L)
+- [x] Fix isCallOption detection to also check symbolLabel for " CE" format
+- [x] Skip fetchFullQuote for PAPER_OPT tokens (they don't exist on Upstox)
+- [x] Use state.optionTradeToken (real resolved token) instead of trade.instrumentToken for live quotes
+- [x] Restore optionTradeToken from existingOpenTrade.instrumentToken on bot restart

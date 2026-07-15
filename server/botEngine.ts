@@ -2030,11 +2030,26 @@ async function tick(
   let effectivePrice = price; // default: underlying price
   if (state.openTrade?.isIndexOptions) {
     if (state.accessToken && state.openTrade.instrumentToken) {
-      // Live mode: fetch current option premium from Upstox
-      const optQuote = await fetchFullQuote(state.openTrade.instrumentToken, state.accessToken);
+      // Fetch current option premium from Upstox using the REAL option token
+      // state.optionTradeToken has the resolved real token (e.g. MCX_FO|..., NFO_OPT|...)
+      // trade.instrumentToken may be a fake PAPER_OPT|... token that Upstox won't recognize
+      const realOptToken = state.optionTradeToken ?? state.openTrade.instrumentToken;
+      const isPaperToken = realOptToken.startsWith("PAPER_OPT|");
+      const optQuote = isPaperToken ? null : await fetchFullQuote(realOptToken, state.accessToken);
       if (optQuote && optQuote.ltp > 0) {
         effectivePrice = optQuote.ltp;
         state.optionPremiumPrice = optQuote.ltp; // update for Dashboard display
+      } else {
+        // fetchFullQuote failed — fall back to delta approximation instead of using underlying price
+        const entryPremium = state.openTrade.entryPrice;
+        const entryUnderlying = state.openTrade.entryUnderlyingPrice ?? price;
+        const underlyingMove = price - entryUnderlying;
+        const delta = 0.5;
+        const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE")
+          || (state.openTrade.symbolLabel ?? "").includes(" CE");
+        const driftedPremium = Math.max(0.05, entryPremium + (isCallOption ? underlyingMove * delta : -underlyingMove * delta));
+        effectivePrice = driftedPremium;
+        state.optionPremiumPrice = driftedPremium;
       }
     } else {
       // Paper mode (no access token): derive drifting option premium from real underlying price.
@@ -2045,7 +2060,8 @@ async function tick(
       const underlyingMove = price - entryUnderlying;
       const delta = 0.5; // ATM delta approximation
       // For CE: underlying up = premium up. For PE: underlying up = premium down.
-      const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE");
+      const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE")
+        || (state.openTrade.symbolLabel ?? "").includes(" CE");
       const driftedPremium = Math.max(0.05, entryPremium + (isCallOption ? underlyingMove * delta : -underlyingMove * delta));
       effectivePrice = driftedPremium;
       state.optionPremiumPrice = driftedPremium;
@@ -2862,6 +2878,15 @@ export function startBot(
     lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0, isPowerHourMode: false,
     isMCXEveningMode: false, heroZeroMode: false, alertsSent: new Set<string>(),
   };
+
+  // Restore optionTradeToken from existing open trade so live quote fetching works after restart
+  if (existingOpenTrade && existingOpenTrade.isIndexOptions && existingOpenTrade.instrumentToken) {
+    const token = existingOpenTrade.instrumentToken;
+    // Only restore if it's a real option token (not a fake PAPER_OPT|... token)
+    if (!token.startsWith("PAPER_OPT|")) {
+      state.optionTradeToken = token;
+    }
+  }
 
   const intervalMs = Math.max(15, config.scanIntervalSec) * 1000;
   const handle = setInterval(() => {
