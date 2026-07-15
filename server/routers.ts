@@ -1068,14 +1068,15 @@ export const appRouter = router({
         if (trades[0].status !== "open") throw new Error("Trade is already closed");
         const trade = trades[0];
 
+        const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
         let remainPnl = trade.direction === "BUY"
-          ? (input.exitPrice - trade.entryPrice) * trade.quantity
-          : (trade.entryPrice - input.exitPrice) * trade.quantity;
+          ? (input.exitPrice - trade.entryPrice) * remainingQty
+          : (trade.entryPrice - input.exitPrice) * remainingQty;
 
         // Apply paper-mode brokerage + slippage (consistent with auto-exit paths)
         if (trade.mode === "paper") {
           const pc = getPaperCostConfig();
-          remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, input.exitPrice, trade.quantity, pc.brokerage, pc.slippagePct);
+          remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, input.exitPrice, remainingQty, pc.brokerage, pc.slippagePct);
         }
         // Include already-booked partial profits in total P&L
         const pnl = remainPnl + (trade.bookedPnl ?? 0);
@@ -1091,7 +1092,7 @@ export const appRouter = router({
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken && trade.instrumentToken) {
             const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
-            orderId = await placeUpstoxOrder(creds[0].accessToken, trade.instrumentToken, exitDir, trade.quantity);
+            orderId = await placeUpstoxOrder(creds[0].accessToken, trade.instrumentToken, exitDir, remainingQty);
           }
         }
 
@@ -1877,7 +1878,8 @@ export const appRouter = router({
                 try {
                   const optQuote = await fetchFullQuote(bot.optionTradeToken, bot.accessToken);
                   if (optQuote && optQuote.ltp > 0) {
-                    optPremium = optQuote.ltp;
+                    const bestPriceQ = optQuote.bid > 0 ? Math.max(optQuote.bid, optQuote.ltp) : optQuote.ltp;
+                    optPremium = bestPriceQ;
                     bot.optionPremiumPrice = optPremium;
                   }
                 } catch { /* fall through to delta approx */ }

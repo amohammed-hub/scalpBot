@@ -736,3 +736,19 @@
 - [x] All 119 tests passing
 - [x] All 119 tests passing after fix
 - [x] Add detailed logging for Power Hour score breakdown
+
+## Full Deep Audit — One-Pass Fix (Jul 15 2025)
+- [x] FIX A: Remove trade.quantity -= bookQty from partial booking (prevents double-subtraction at SL/Target exit)
+- [x] FIX B: Auto square-off uses remainingQty (not full quantity) for P&L and live order
+- [x] FIX B: Auto square-off dailyPnl uses bookedPnlAddedToDaily guard (no double-count)
+- [x] FIX B2: Hero Zero exit uses remainingQty for P&L, order, and paper costs
+- [x] FIX B2: Hero Zero dailyPnl uses bookedPnlAddedToDaily guard
+- [x] FIX C: No-data square-off uses optionPremiumPrice for options (not underlying spot)
+- [x] FIX C: No-data square-off uses remainingQty for P&L
+- [x] FIX D: manualExit uses remainingQty for P&L calc, paper costs, and live order
+- [x] FIX F: botRestart stale trade close uses max(bid, LTP) for exit price
+- [x] FIX F: botRestart stale trade close uses remainingQty for P&L
+- [x] FIX G: botRestart entryUnderlyingPrice removes session.lastPrice fallback (was using CURRENT price as entry)
+- [x] FIX H: livePrices uses max(bid, LTP) for option premium display (not stale LTP)
+- [x] Kill switch uses remainingQty for live order and dailyPnl with bookedPnlAddedToDaily guard
+- [x] Carry-forward unrealized P&L uses remainingQty

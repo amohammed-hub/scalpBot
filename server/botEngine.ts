@@ -1940,8 +1940,11 @@ async function tick(
         } else {
         // Market is closed — force close the open trade at last known price
         const trade = state.openTrade;
-        const exitPx = state.lastPrice > 0 ? state.lastPrice : trade.entryPrice; // Use last known price (or entry if none)
-        let pnl = (trade.direction === "BUY" ? (exitPx - trade.entryPrice) * trade.quantity : (trade.entryPrice - exitPx) * trade.quantity) + (trade.bookedPnl ?? 0);
+        const exitPx = trade.isIndexOptions
+          ? (state.optionPremiumPrice && state.optionPremiumPrice > 0 ? state.optionPremiumPrice : trade.entryPrice)
+          : (state.lastPrice > 0 ? state.lastPrice : trade.entryPrice);
+        const noDataRemQty = trade.quantity - (trade.bookedQty ?? 0);
+        let pnl = (trade.direction === "BUY" ? (exitPx - trade.entryPrice) * noDataRemQty : (trade.entryPrice - exitPx) * noDataRemQty) + (trade.bookedPnl ?? 0);
         // For paper mode: P&L is 0 since we exit at entry (no live data to determine actual exit)
         // This is better than leaving trades open overnight
         state.dailyPnl += pnl;
@@ -2107,10 +2110,11 @@ async function tick(
       if (!state.alertsSent.has("carry_forward_active")) {
         state.alertsSent.add("carry_forward_active");
         const trade = state.openTrade;
+        const cfRemQty = trade.quantity - (trade.bookedQty ?? 0);
         const unrealizedPnl = trade.direction === "BUY"
-          ? (effectivePrice - trade.entryPrice) * trade.quantity
-          : (trade.entryPrice - effectivePrice) * trade.quantity;
-        const totalPnl = unrealizedPnl + trade.bookedPnl;
+          ? (effectivePrice - trade.entryPrice) * cfRemQty
+          : (trade.entryPrice - effectivePrice) * cfRemQty;
+        const totalPnl = unrealizedPnl + (trade.bookedPnlAddedToDaily ? 0 : trade.bookedPnl);
         emitActivity(state.sessionToken, "market_closed", `🌙 Carry Forward Active — ${trade.symbolLabel} held overnight | Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
         sendTelegramAlert(state, `🌙 <b>CARRY FORWARD</b>\n📊 <b>${trade.symbolLabel}</b>\n💰 Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}\n⏰ Trade held overnight — will resume tomorrow`);
         console.log(`[BotEngine] ${state.sessionToken} — carry forward active, skipping auto square-off | Unrealized P&L: ₹${totalPnl.toFixed(0)}`);
@@ -2119,7 +2123,7 @@ async function tick(
     }
    const trade = state.openTrade;
    if (trade.mode === "live" && state.accessToken) {
-     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", trade.quantity);
+     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", (trade.quantity - (trade.bookedQty ?? 0)));
       if (!sqOffId) {
         state.lastError = `Auto square-off REJECTED — close ${trade.symbolLabel} manually on Upstox`;
         emitActivity(state.sessionToken, "error", `⚠ AUTO SQUARE-OFF FAILED — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
@@ -2127,13 +2131,18 @@ async function tick(
         return; // do NOT close trade in DB — position still open
       }
    }
-    let pnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
+    const sqRemaining = trade.quantity - (trade.bookedQty ?? 0);
+    let pnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * sqRemaining : (trade.entryPrice - effectivePrice) * sqRemaining;
     // v3: paper-mode brokerage + slippage simulation
     if (trade.mode === "paper") {
       const pc = getPaperCostConfig();
-      pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
+      pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, sqRemaining, pc.brokerage, pc.slippagePct);
     }
-    state.dailyPnl += pnl + trade.bookedPnl;
+    if (trade.bookedPnlAddedToDaily) {
+      state.dailyPnl += pnl;
+    } else {
+      state.dailyPnl += pnl + trade.bookedPnl;
+    }
     state.openTrade = null;
     recordTradeClose(state.sessionToken, state.scanIntervalSec);
     const sqTotalPnl = pnl + trade.bookedPnl;
@@ -2160,9 +2169,10 @@ async function tick(
       if (effectivePrice >= heroTarget) heroExit = "Hero Zero — 5× Target Hit";
       else if (effectivePrice <= heroCut) heroExit = "Hero Zero — 50% Cut";
       if (heroExit) {
-        let pnl = (effectivePrice - trade.entryPrice) * trade.quantity;
+        const heroRemQty = trade.quantity - (trade.bookedQty ?? 0);
+        let pnl = (effectivePrice - trade.entryPrice) * heroRemQty;
         if (trade.mode === "live" && state.accessToken) {
-          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", trade.quantity);
+          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", heroRemQty);
           if (!heroOrderId2) {
             state.lastError = `Hero Zero exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
             emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
@@ -2173,9 +2183,13 @@ async function tick(
         // v3: paper-mode brokerage + slippage simulation
         if (trade.mode === "paper") {
           const pc = getPaperCostConfig();
-          pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
+          pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, heroRemQty, pc.brokerage, pc.slippagePct);
         }
-        state.dailyPnl += pnl + trade.bookedPnl;
+        if (trade.bookedPnlAddedToDaily) {
+          state.dailyPnl += pnl;
+        } else {
+          state.dailyPnl += pnl + trade.bookedPnl;
+        }
         state.openTrade = null;
         recordTradeClose(state.sessionToken, state.scanIntervalSec);
         await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
@@ -2211,7 +2225,6 @@ async function tick(
        }
        trade.bookedQty += bookQty;
         trade.bookedPnl += bookPnl;
-        trade.quantity   -= bookQty;
         trade.partialBooked = 1;
         // Move SL to breakeven
         trade.currentSl = trade.entryPrice;
@@ -2258,7 +2271,6 @@ async function tick(
        }
        trade.bookedQty += bookQty;
         trade.bookedPnl += bookPnl;
-        trade.quantity   -= bookQty;
         trade.partialBooked = 2;
         // Trail SL to 1R level
         trade.currentSl = trade.direction === "BUY" ? trade.partial1RPrice : trade.partial1RPrice;

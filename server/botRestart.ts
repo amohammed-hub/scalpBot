@@ -82,7 +82,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       bookedPnl: t.bookedPnl ?? 0,
       isIndexOptions: !!(session.isIndexOptions),
       entryUnderlyingPrice: session.isIndexOptions
-        ? ((t as any).entryUnderlyingPrice ?? session.lastPrice ?? undefined)
+        ? ((t as any).entryUnderlyingPrice ?? undefined)
         : undefined,
       optionMockKey: (() => {
         if (!session.isIndexOptions) return undefined;
@@ -291,16 +291,17 @@ export async function restartRunningBots(): Promise<void> {
           if (token && t.instrumentToken) {
             const quote = await fetchFullQuote(t.instrumentToken, token);
             if (quote && quote.ltp > 0) {
-              exitPrice = quote.ltp;
+              exitPrice = quote.bid > 0 ? Math.max(quote.bid, quote.ltp) : quote.ltp;
             }
           }
         } catch (ltpErr) {
           console.warn(`[BotRestart] Could not fetch LTP for trade #${t.id}:`, ltpErr);
         }
         // Calculate P&L using actual exit price
+        const staleRemQty = t.quantity - (t.bookedQty ?? 0);
         pnl = t.direction === "BUY"
-          ? (exitPrice - t.entryPrice) * t.quantity
-          : (t.entryPrice - exitPrice) * t.quantity;
+          ? (exitPrice - t.entryPrice) * staleRemQty
+          : (t.entryPrice - exitPrice) * staleRemQty;
         const totalPnl = pnl + bookedPnl;
         const exitReason = isStale
           ? `Stale — auto-closed on startup (previous day) @ ₹${exitPrice.toFixed(2)}`

@@ -295,7 +295,7 @@ export async function executeKillSwitch(
 
       if (trade.mode === "live" && bot.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
-        await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, trade.quantity);
+        await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)));
       }
 
       const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
@@ -305,7 +305,11 @@ export async function executeKillSwitch(
       const pnl = remainingPnl + (trade.bookedPnl ?? 0);
       await onTradeClose(trade.dbId, exitPrice, pnl, "Kill Switch — Emergency Close");
       bot.openTrade = null;
-      bot.dailyPnl += pnl;
+      if ((trade as any).bookedPnlAddedToDaily) {
+        bot.dailyPnl += remainingPnl;
+      } else {
+        bot.dailyPnl += pnl;
+      }
       closedTrades++;
     }
 
