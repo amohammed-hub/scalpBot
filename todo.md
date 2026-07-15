@@ -707,4 +707,11 @@
 - [x] Volume condition always fails (index instruments return volume=0) — bypassed for index
 - [x] Lower score threshold from 4/6 to 3/5 for Power Hour entries (volume excluded)
 - [x] Extend stopScanMin from 3:20 to 3:25 PM to give Power Hour more time
+
+## MCX Option SL Not Triggering — Critical Fix
+- [x] Root cause: broken-delta safety guard blocked SL checks INDEFINITELY when optionTradeToken was null
+- [x] Fix: Add 5-minute grace period — after 5 min, trust delta approximation and enforce SL/Target
+- [x] Fix: MCX option restore now tries exact-strike resolution (was skipped entirely for MCX)
+- [x] Fix: When entryUnderlyingPrice missing, use last known optionPremiumPrice instead of freezing at entry
+- [x] All 119 tests passing after fix
 - [x] Add detailed logging for Power Hour score breakdown

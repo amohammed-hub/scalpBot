@@ -2071,10 +2071,15 @@ async function tick(
       // Base premium is the entry price of the open trade (already a real option premium).
       const entryPremium = state.openTrade.entryPrice;
       const entryUnderlying = state.openTrade.entryUnderlyingPrice;
-      // If no reliable entryUnderlyingPrice, use entryPrice as effectivePrice (safety guard will block exits)
+      // If no reliable entryUnderlyingPrice, use current price as a rough reference
+      // (better than freezing at entry which prevents SL from ever firing)
       if (!entryUnderlying || entryUnderlying <= 0) {
-        effectivePrice = entryPremium;
-        state.optionPremiumPrice = entryPremium;
+        // No entryUnderlyingPrice means we can't compute delta drift.
+        // Use the last known optionPremiumPrice if available, otherwise keep entryPremium.
+        // This ensures SL can still fire if the premium was previously tracked.
+        effectivePrice = state.optionPremiumPrice && state.optionPremiumPrice > 0
+          ? state.optionPremiumPrice
+          : entryPremium;
       } else {
       const underlyingMove = price - entryUnderlying;
       const delta = 0.5; // ATM delta approximation
@@ -2285,21 +2290,24 @@ async function tick(
 
     // ── Full exit: SL or Target ───────────────────────────────────────────────
     let exitReason: string | null = null;
-    // SAFETY GUARD: For options trades using delta approximation, if effectivePrice is within 2% of entryPrice
-    // AND we don't have a real quote (optionTradeToken not set), it likely means
-    // the delta approximation is broken (entryUnderlyingPrice = current price after restart).
-    // In this case, skip exit checks to prevent premature SL kills.
+    // SAFETY GUARD: For options trades using delta approximation without a real quote,
+    // only skip SL/Target checks for the FIRST 5 minutes after trade open (grace period for token resolution).
+    // After 5 minutes, trust the delta approximation and enforce SL/Target — never leave a trade unprotected.
+    const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
     const isOptionsWithBrokenDelta = trade.isIndexOptions
       && !state.optionTradeToken
-      && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.02;
+      && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.01
+      && tradeAgeMs < 5 * 60 * 1000; // Only skip for first 5 minutes
     if (isOptionsWithBrokenDelta) {
-      // Don't check SL/Target — delta approximation is unreliable
+      // Grace period: don't check SL/Target for first 5 minutes while token resolves
       if (!state.alertsSent.has("broken_delta_guard")) {
         state.alertsSent.add("broken_delta_guard");
-        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — SAFETY: skipping SL/Target check (delta approx unreliable, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
-        emitActivity(state.sessionToken, "error", `⚠ Delta approximation unreliable — skipping SL/Target until real quote available. Premium ≈ entry price.`);
+        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — SAFETY: skipping SL/Target for 5min grace period (delta approx unreliable, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
+        emitActivity(state.sessionToken, "error", `⚠ Delta approximation unreliable — grace period (5min) for token resolution. SL/Target will activate after.`);
       }
     } else {
+      // For options: direction in trade is always "BUY" (we buy CE or PE).
+      // SL triggers when premium drops below SL price. Target triggers when premium rises above target.
       if (trade.direction === "BUY") { if (effectivePrice <= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice >= trade.targetPrice) exitReason = "Target Hit"; }
       else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
     }
@@ -2961,11 +2969,21 @@ export function startBot(
           let resolvedToken: string | null = null;
           
           // Priority 1: Resolve the EXACT strike (most accurate)
-          if (exactStrike > 0 && !isMcxToken) {
-            resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, state.accessToken!);
-            if (resolvedToken) {
-              console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — resolved EXACT strike ${exactStrike} ${ceOrPe}: ${resolvedToken}`);
-              emitActivity(state.sessionToken, "bot_start", `✓ Resolved EXACT strike ${exactStrike} ${ceOrPe} → token ${resolvedToken.slice(-20)}`, { price: exactStrike });
+          if (exactStrike > 0) {
+            if (isMcxToken) {
+              // MCX: use ATM resolver but filter for exact strike match
+              const mcxResolved = await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, state.accessToken!);
+              if (mcxResolved?.token && Math.abs(mcxResolved.strike - exactStrike) < 100) {
+                resolvedToken = mcxResolved.token;
+                console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — MCX resolved strike ${mcxResolved.strike} ${ceOrPe} (target: ${exactStrike}): ${resolvedToken}`);
+                emitActivity(state.sessionToken, "bot_start", `✓ MCX Resolved strike ${mcxResolved.strike} ${ceOrPe} → token ${resolvedToken.slice(-20)}`, { price: exactStrike });
+              }
+            } else {
+              resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, state.accessToken!);
+              if (resolvedToken) {
+                console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — resolved EXACT strike ${exactStrike} ${ceOrPe}: ${resolvedToken}`);
+                emitActivity(state.sessionToken, "bot_start", `✓ Resolved EXACT strike ${exactStrike} ${ceOrPe} → token ${resolvedToken.slice(-20)}`, { price: exactStrike });
+              }
             }
           }
           
