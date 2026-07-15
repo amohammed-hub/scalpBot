@@ -169,6 +169,8 @@ export interface BotState {
   lastHeartbeatAt?: number; // Unix timestamp ms
   // Carry-forward: if true, skip auto square-off at market close and keep trade open overnight
   carryForward?: boolean;
+  // Pending option token resolution promise (awaited before first tick)
+  _pendingOptionResolve?: Promise<void>;
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -2042,7 +2044,12 @@ async function tick(
       } else {
         // fetchFullQuote failed — fall back to delta approximation instead of using underlying price
         const entryPremium = state.openTrade.entryPrice;
-        const entryUnderlying = state.openTrade.entryUnderlyingPrice ?? price;
+        const entryUnderlying = state.openTrade.entryUnderlyingPrice;
+        // If no reliable entryUnderlyingPrice, use entryPrice as effectivePrice (safety guard will block exits)
+        if (!entryUnderlying || entryUnderlying <= 0) {
+          effectivePrice = entryPremium;
+          state.optionPremiumPrice = entryPremium;
+        } else {
         const underlyingMove = price - entryUnderlying;
         const delta = 0.5;
         const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE")
@@ -2050,13 +2057,19 @@ async function tick(
         const driftedPremium = Math.max(0.05, entryPremium + (isCallOption ? underlyingMove * delta : -underlyingMove * delta));
         effectivePrice = driftedPremium;
         state.optionPremiumPrice = driftedPremium;
+        }
       }
     } else {
       // Paper mode (no access token): derive drifting option premium from real underlying price.
       // Use delta approximation: ATM option moves ~0.5x the underlying for every 1 point move.
       // Base premium is the entry price of the open trade (already a real option premium).
       const entryPremium = state.openTrade.entryPrice;
-      const entryUnderlying = state.openTrade.entryUnderlyingPrice ?? price; // stored at trade open
+      const entryUnderlying = state.openTrade.entryUnderlyingPrice;
+      // If no reliable entryUnderlyingPrice, use entryPrice as effectivePrice (safety guard will block exits)
+      if (!entryUnderlying || entryUnderlying <= 0) {
+        effectivePrice = entryPremium;
+        state.optionPremiumPrice = entryPremium;
+      } else {
       const underlyingMove = price - entryUnderlying;
       const delta = 0.5; // ATM delta approximation
       // For CE: underlying up = premium up. For PE: underlying up = premium down.
@@ -2065,6 +2078,7 @@ async function tick(
       const driftedPremium = Math.max(0.05, entryPremium + (isCallOption ? underlyingMove * delta : -underlyingMove * delta));
       effectivePrice = driftedPremium;
       state.optionPremiumPrice = driftedPremium;
+      }
     }
   }
 
@@ -2913,7 +2927,8 @@ export function startBot(
     } else if (state.accessToken) {
       // Paper mode with PAPER_OPT token: try to re-resolve the real option token
       // so we can fetch live quotes for accurate P&L display
-      (async () => {
+      // MUST resolve synchronously before starting tick interval
+      state._pendingOptionResolve = (async () => {
         try {
           const sym = existingOpenTrade.symbol ?? "";
           const ceOrPe = sym.includes("_CE_") || sym.endsWith("_CE") || sym.includes("CE") ? "CE" : "PE";
@@ -2930,6 +2945,8 @@ export function startBot(
               state.optionPremiumPrice = quote.ltp;
             }
             console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — re-resolved option token for paper trade: ${resolved.token} | premium: ₹${state.optionPremiumPrice ?? "N/A"}`);
+          } else {
+            console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — option re-resolution returned no token`);
           }
         } catch (e) {
           console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — failed to re-resolve option token: ${(e as Error).message}`);
@@ -2940,7 +2957,15 @@ export function startBot(
 
   const intervalMs = Math.max(15, config.scanIntervalSec) * 1000;
   const handle = setInterval(() => {
-    tick(state, onTradeOpen, onTradeClose, onTick)
+    // Wait for pending option token resolution before first tick
+    const doTick = async () => {
+      if (state._pendingOptionResolve) {
+        await state._pendingOptionResolve;
+        state._pendingOptionResolve = undefined;
+      }
+      await tick(state, onTradeOpen, onTradeClose, onTick);
+    };
+    doTick()
       .then(() => {
         // Reset consecutive error counter on successful tick
         state.consecutiveTickErrors = 0;

@@ -1689,16 +1689,31 @@ export const appRouter = router({
 
             // For options bots: compute optionPremiumPrice via delta approximation if not yet set by tick
             let optPremium = bot.optionPremiumPrice ?? 0;
-            if (bot.isIndexOptions && bot.openTrade && optPremium === 0 && latestClose > 0) {
-              // Delta approximation: premium ≈ entryPremium + delta * (currentUnderlying - entryUnderlying)
-              const entryPremium = bot.openTrade.entryPrice;
-              const entryUnderlying = bot.openTrade.entryUnderlyingPrice ?? latestClose;
-              const underlyingMove = latestClose - entryUnderlying;
-              const delta = 0.5;
-              const isCall = bot.openTrade.symbol.includes("_CE_") || bot.openTrade.symbol.endsWith("_CE")
-                || (bot.openTrade.symbolLabel ?? "").includes(" CE");
-              optPremium = Math.max(0.05, entryPremium + (isCall ? underlyingMove * delta : -underlyingMove * delta));
-              bot.optionPremiumPrice = optPremium; // cache for next poll
+            if (bot.isIndexOptions && bot.openTrade) {
+              // Priority 1: Fetch real option quote if we have a resolved token
+              if (bot.optionTradeToken && bot.accessToken && !bot.optionTradeToken.startsWith("PAPER_OPT|")) {
+                try {
+                  const optQuote = await fetchFullQuote(bot.optionTradeToken, bot.accessToken);
+                  if (optQuote && optQuote.ltp > 0) {
+                    optPremium = optQuote.ltp;
+                    bot.optionPremiumPrice = optPremium;
+                  }
+                } catch { /* fall through to delta approx */ }
+              }
+              // Priority 2: Delta approximation (only if no real quote AND entryUnderlyingPrice is reliable)
+              if (optPremium === 0 && latestClose > 0) {
+                const entryPremium = bot.openTrade.entryPrice;
+                const entryUnderlying = bot.openTrade.entryUnderlyingPrice;
+                // Only use delta approx if we have a REAL entryUnderlyingPrice (not null/0)
+                if (entryUnderlying && entryUnderlying > 0 && Math.abs(latestClose - entryUnderlying) / entryUnderlying > 0.001) {
+                  const underlyingMove = latestClose - entryUnderlying;
+                  const delta = 0.5;
+                  const isCall = bot.openTrade.symbol.includes("_CE_") || bot.openTrade.symbol.endsWith("_CE")
+                    || (bot.openTrade.symbolLabel ?? "").includes(" CE");
+                  optPremium = Math.max(0.05, entryPremium + (isCall ? underlyingMove * delta : -underlyingMove * delta));
+                  bot.optionPremiumPrice = optPremium;
+                }
+              }
             }
 
             const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
@@ -2909,3 +2924,4 @@ export const appRouter = router({
   }),
 });
 export type AppRouter = typeof appRouter;
+import { fetchFullQuote } from "./botEngine";
