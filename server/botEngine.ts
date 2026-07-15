@@ -2958,6 +2958,7 @@ export function startBot(
             resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, state.accessToken!);
             if (resolvedToken) {
               console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — resolved EXACT strike ${exactStrike} ${ceOrPe}: ${resolvedToken}`);
+              emitActivity(state.sessionToken, "bot_start", `✓ Resolved EXACT strike ${exactStrike} ${ceOrPe} → token ${resolvedToken.slice(-20)}`, { price: exactStrike });
             }
           }
           
@@ -2969,6 +2970,7 @@ export function startBot(
             if (resolved?.token) {
               resolvedToken = resolved.token;
               console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — fell back to ATM resolution: ${resolvedToken}`);
+              emitActivity(state.sessionToken, "bot_start", `⚠ Fell back to ATM resolution (not exact strike): ${resolvedToken?.slice(-20)}`, { price: 0 });
             }
           }
           
@@ -2980,11 +2982,14 @@ export function startBot(
               state.optionPremiumPrice = quote.ltp;
             }
             console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — option token set: ${resolvedToken} | premium: ₹${state.optionPremiumPrice ?? "N/A"}`);
+            emitActivity(state.sessionToken, "bot_start", `Option token restored — premium ₹${(state.optionPremiumPrice ?? 0).toFixed(1)} | token: ...${resolvedToken.slice(-15)}`, { price: state.optionPremiumPrice ?? 0 });
           } else {
             console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — option re-resolution returned no token`);
+            emitActivity(state.sessionToken, "error", `Option token re-resolution FAILED — P&L will show ₹0 until next tick resolves it`);
           }
         } catch (e) {
           console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — failed to re-resolve option token: ${(e as Error).message}`);
+          emitActivity(state.sessionToken, "error", `Option token re-resolve error: ${(e as Error).message}`);
         }
       })();
     }

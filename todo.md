@@ -1,5 +1,12 @@
 # Upstox Trading Dashboard — TODO
 
+## Dashboard Redesign — Neon Terminal (Option 2)
+- [x] Top Metrics Strip: 5 cards (Realized P&L, Unrealized P&L, Win Rate, Avg Win, Profit Factor)
+- [x] Two-column middle: Equity Curve (left) + Open Positions panel (right)
+- [x] Redesigned Bot Slot Cards with clear Realized vs Unrealized labels
+- [x] "Scanning..." state with pulse animation for idle bots
+- [x] P&L Fix: emitActivity for option token resolution (visible in Bot Activity Log)
+
 ## Backend
 - [x] Database schema: upstox_credentials, bot_sessions, trade_log tables
 - [x] tRPC router: upstox credentials save/load
