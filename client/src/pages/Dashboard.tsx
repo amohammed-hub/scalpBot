@@ -8,7 +8,7 @@ import {
   Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
 import { trpc } from "@/lib/trpc";
@@ -736,7 +736,17 @@ export default function Dashboard() {
   const todayTradesCount = todayStats?.todayTrades ?? 0;
   const todayPnl = todayStats?.todayPnl ?? 0;
   const winRate = allStats && allStats.totalTrades > 0 ? `${allStats.winRate.toFixed(0)}%` : "—";
-  const totalPnl = allStats?.totalPnl ?? 0;
+  const [showAllTrades, setShowAllTrades] = useState(false);
+  const totalPnl = showAllTrades ? (allStats?.totalPnl ?? 0) : (todayStats?.todayPnl ?? 0);
+  // Filter trades to show only today's by default
+  const todayStart = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }, []);
+  const filteredTrades = useMemo(() => {
+    if (showAllTrades) return trades;
+    return trades.filter((t: any) => {
+      const enteredAt = new Date(t.enteredAt).getTime();
+      return enteredAt >= todayStart;
+    });
+  }, [trades, showAllTrades, todayStart]);
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
@@ -2576,10 +2586,16 @@ export default function Dashboard() {
               <span className="font-semibold text-white">Trade Log</span>
             </div>
             <div className="flex items-center gap-4 text-sm">
-              <span className="text-white/40">Total: <span className="text-white">{allStats?.totalTrades ?? 0}</span></span>
-              <span className="text-emerald-400">Wins: {allStats?.wins ?? 0}</span>
-              <span className="text-red-400">Losses: {allStats?.losses ?? 0}</span>
+              <span className="text-white/40">Total: <span className="text-white">{showAllTrades ? (allStats?.totalTrades ?? 0) : (todayStats?.todayTrades ?? 0)}</span></span>
+              <span className="text-emerald-400">Wins: {showAllTrades ? (allStats?.wins ?? 0) : (todayStats?.wins ?? 0)}</span>
+              <span className="text-red-400">Losses: {showAllTrades ? (allStats?.losses ?? 0) : (todayStats?.losses ?? 0)}</span>
               <span className={totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}>P&L: {totalPnl >= 0 ? "+" : ""}₹{totalPnl.toFixed(0)}</span>
+              <button
+                onClick={() => setShowAllTrades(!showAllTrades)}
+                className={`px-2 py-0.5 rounded text-xs font-medium transition ${showAllTrades ? "bg-teal-500/20 text-teal-400 border border-teal-500/30" : "bg-white/10 text-white/60 border border-white/10"}`}
+              >
+                {showAllTrades ? "All Time" : "Today"}
+              </button>
               <button
                 onClick={() => {
                   if (trades.length === 0) { toast.info("No trades to export."); return; }
@@ -2686,7 +2702,7 @@ export default function Dashboard() {
                 {trades.length === 0 ? (
                       <tr><td colSpan={15} className="text-center text-white/30 py-8">No trades yet. Start the bot to begin.</td></tr>
                 ) : (
-                  trades.slice(0, 30).map((t: typeof trades[0]) => {
+                  filteredTrades.slice(0, 30).map((t: typeof trades[0]) => {
                     // Compute live P&L for open trades
                     // For slot 1/2 trades, use that slot's lastPrice from allBots instead of primary currentPrice
                     const tradeSlot = (t as any).botSlot ?? 0;

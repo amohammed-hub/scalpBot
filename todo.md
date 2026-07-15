@@ -687,3 +687,10 @@
 - [x] SAFETY GUARD: Skip trailing SL update when delta approximation is unreliable (prevents SL from trailing to entry)
 - [x] BUG FIX: remainPnl now uses remaining quantity (trade.quantity - bookedQty) instead of full quantity after partial booking
 - [x] BUG FIX: Live mode exit order now uses remaining quantity (not full quantity) when partial was booked
+- [x] Round 33: Bot stop auto-close fix — fetch real option premium before closing, keep trade open if no premium available
+- [x] Round 33: stopSecondary endpoint — same fix for slot bot stops
+- [x] Round 33: resolveSpecificOptionToken — resolve exact strike (not ATM) for open trades after restart
+- [x] Round 33: livePrices Priority 1.5 — on-the-fly specific strike resolution when no optionTradeToken cached
+- [x] Round 33: Trade Log shows "Today" by default with toggle to "All Time"
+- [x] Round 33: Trade Log header stats switch between today/all-time based on toggle
+- [x] Round 33: dailyPnl fix — correctly adds totalPnl (including bookedPnl) when partial booking happened before restart

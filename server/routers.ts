@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "./db";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, type Candle } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, type Candle } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
 import {
@@ -656,7 +656,8 @@ export const appRouter = router({
         const lastPrice = botState?.lastPrice ?? 0;
         // For options trades, use the option premium price (not underlying)
         const optionPremium = (botState as any)?.optionPremiumPrice ?? 0;
-
+        const accessToken = (botState as any)?.accessToken ?? null;
+        const optionTradeToken = (botState as any)?.optionTradeToken ?? null;
         stopBot(input.sessionToken);
         // Clear activity log for this session (stale events confuse UX on next start)
         try {
@@ -669,7 +670,6 @@ export const appRouter = router({
             .update(botSessions)
             .set({ status: "stopped", stoppedAt: new Date() })
             .where(eq(botSessions.sessionToken, input.sessionToken));
-
           // Auto-close all open trades for this session at last known price
           const openTrades = await db.select().from(tradeLog).where(
             and(eq(tradeLog.sessionToken, input.sessionToken), eq(tradeLog.status, "open"))
@@ -678,17 +678,59 @@ export const appRouter = router({
           for (const t of openTrades) {
             // For options trades: use option premium price, not underlying
             const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
-            const exitPx = isOption && optionPremium > 0
-              ? optionPremium
-              : (lastPrice > 0 ? lastPrice : t.entryPrice);
+            let exitPx = 0;
+            if (isOption) {
+              // Priority 1: in-memory optionPremiumPrice
+              if (optionPremium > 0) {
+                exitPx = optionPremium;
+              }
+              // Priority 2: fetch real quote using optionTradeToken
+              if (exitPx === 0 && accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
+                try {
+                  const q = await fetchFullQuote(optionTradeToken, accessToken);
+                  if (q && q.ltp > 0) exitPx = q.ltp;
+                } catch { /* non-fatal */ }
+              }
+              // Priority 3: try to resolve token from trade symbol and fetch
+              if (exitPx === 0 && accessToken) {
+                try {
+                 const sym = (t.symbol ?? "").toUpperCase();
+                 const isMcx = sym.includes("CRUDE") || sym.includes("GOLD") || sym.includes("SILVER") || sym.includes("NATGAS");
+                 const optType: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
+                  let resolvedTokenStr: string | null = null;
+                  if (isMcx) {
+                    const underlying = botState?.instrumentToken ?? "";
+                    const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
+                    resolvedTokenStr = resolved?.token ?? null;
+                  } else {
+                    const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                    const resolved = await resolveAtmOptionToken(underlying, optType, accessToken);
+                    resolvedTokenStr = resolved?.token ?? null;
+                  }
+                  if (resolvedTokenStr) {
+                    const q = await fetchFullQuote(resolvedTokenStr, accessToken);
+                    if (q && q.ltp > 0) exitPx = q.ltp;
+                  }
+                } catch { /* non-fatal */ }
+              }
+              // If STILL no valid premium: DON'T close the trade. Keep it open.
+              if (exitPx === 0) {
+                console.log(`[BotStop] Options trade ${t.symbol} #${t.id}: no valid premium available — keeping trade OPEN`);
+                continue; // Skip this trade, don't close it
+              }
+            } else {
+              // Non-options: use lastPrice or entry as fallback
+              exitPx = lastPrice > 0 ? lastPrice : t.entryPrice;
+            }
             // For BUY direction: P&L = (exit - entry) * qty
             // For SELL direction: P&L = (entry - exit) * qty
+            const remainingQty = t.quantity - (t.bookedQty ?? 0);
             const remainingPnl = t.direction === "BUY"
-              ? (exitPx - t.entryPrice) * t.quantity
-              : (t.entryPrice - exitPx) * t.quantity;
+              ? (exitPx - t.entryPrice) * remainingQty
+              : (t.entryPrice - exitPx) * remainingQty;
             // Include already-booked partial profits in total P&L
             const pnl = remainingPnl + (t.bookedPnl ?? 0);
-            const capital = t.quantity * t.entryPrice; // approximate capital used
+            const capital = t.quantity * t.entryPrice;
             await db.update(tradeLog).set({
               status: "closed",
               exitPrice: exitPx,
@@ -1701,6 +1743,24 @@ export const appRouter = router({
                   }
                 } catch { /* fall through to delta approx */ }
               }
+              // Priority 1.5: No resolved token yet — try to resolve from trade symbol on-the-fly
+              if (optPremium === 0 && !bot.optionTradeToken && bot.accessToken && bot.openTrade) {
+                try {
+                  const sym = ((bot.openTrade as any).symbolLabel ?? (bot.openTrade as any).symbol ?? "").toUpperCase();
+                  const ceOrPe: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
+                  const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)/);
+                  const exactStrike = strikeMatch ? parseInt(strikeMatch[1], 10) : 0;
+                  const underlyingToken = bot.underlyingToken ?? bot.instrumentToken;
+                  if (exactStrike > 0 && !underlyingToken.startsWith("MCX_FO|")) {
+                    const resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, bot.accessToken);
+                    if (resolvedToken) {
+                      bot.optionTradeToken = resolvedToken;
+                      const q = await fetchFullQuote(resolvedToken, bot.accessToken);
+                      if (q && q.ltp > 0) { optPremium = q.ltp; bot.optionPremiumPrice = optPremium; }
+                    }
+                  }
+                } catch { /* non-fatal */ }
+              }
               // Priority 2: Delta approximation (only if no real quote AND entryUnderlyingPrice is reliable)
               if (optPremium === 0 && latestClose > 0) {
                 const entryPremium = bot.openTrade.entryPrice;
@@ -2010,13 +2070,13 @@ export const appRouter = router({
         const botState = getBotState(slotToken);
         const lastPrice = botState?.lastPrice ?? 0;
         const optionPremium = (botState as any)?.optionPremiumPrice ?? 0;
-
+        const accessToken = (botState as any)?.accessToken ?? null;
+        const optionTradeToken = (botState as any)?.optionTradeToken ?? null;
         stopBot(slotToken);
         const db = await getDb();
         if (db) {
           await db.update(botSessions).set({ status: "stopped", stoppedAt: new Date() })
             .where(eq(botSessions.sessionToken, slotToken));
-
           // Auto-close all open trades for this slot at last known price
           const openTrades = await db.select().from(tradeLog).where(
             and(eq(tradeLog.sessionToken, slotToken), eq(tradeLog.status, "open"))
@@ -2025,12 +2085,42 @@ export const appRouter = router({
           for (const t of openTrades) {
             // For options trades: use option premium price, not underlying
             const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
-            const exitPx = isOption && optionPremium > 0
-              ? optionPremium
-              : (lastPrice > 0 ? lastPrice : t.entryPrice);
+            let exitPx = 0;
+            if (isOption) {
+              if (optionPremium > 0) exitPx = optionPremium;
+              if (exitPx === 0 && accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
+                try {
+                  const q = await fetchFullQuote(optionTradeToken, accessToken);
+                  if (q && q.ltp > 0) exitPx = q.ltp;
+                } catch { /* non-fatal */ }
+              }
+              if (exitPx === 0 && accessToken) {
+                try {
+                  const sym = (t.symbol ?? "").toUpperCase();
+                  const isMcx = sym.includes("CRUDE") || sym.includes("GOLD") || sym.includes("SILVER") || sym.includes("NATGAS");
+                  const optType: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
+                  if (isMcx) {
+                    const underlying = botState?.instrumentToken ?? "";
+                    const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
+                    if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.ltp; }
+                  } else {
+                    const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                    const resolved = await resolveAtmOptionToken(underlying, optType, accessToken);
+                    if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.ltp; }
+                  }
+                } catch { /* non-fatal */ }
+              }
+              if (exitPx === 0) {
+                console.log(`[BotStop] Slot trade ${t.symbol} #${t.id}: no valid premium — keeping trade OPEN`);
+                continue;
+              }
+            } else {
+              exitPx = lastPrice > 0 ? lastPrice : t.entryPrice;
+            }
+            const remainingQty = t.quantity - (t.bookedQty ?? 0);
             const remainingPnl = t.direction === "BUY"
-              ? (exitPx - t.entryPrice) * t.quantity
-              : (t.entryPrice - exitPx) * t.quantity;
+              ? (exitPx - t.entryPrice) * remainingQty
+              : (t.entryPrice - exitPx) * remainingQty;
             // Include already-booked partial profits in total P&L
             const pnl = remainingPnl + (t.bookedPnl ?? 0);
             const capital = t.quantity * t.entryPrice;
@@ -2925,4 +3015,3 @@ export const appRouter = router({
   }),
 });
 export type AppRouter = typeof appRouter;
-import { fetchFullQuote } from "./botEngine";

@@ -1405,7 +1405,7 @@ function build5mFromMock(candles1m: Candle[]): Candle[] {
 }
 
 // ── Fetch option chain and resolve ATM/OTM CE/PE token ─────────────────────────
-async function resolveAtmOptionToken(
+export async function resolveAtmOptionToken(
   underlyingToken: string,
   optionType: "CE" | "PE",
   accessToken: string,
@@ -1627,7 +1627,7 @@ export interface ResolvedOption {
   tradingSymbol?: string;
 }
 
-async function resolveAtmMcxOptionToken(
+export async function resolveAtmMcxOptionToken(
   futuresToken: string,
   optionType: "CE" | "PE",
   accessToken: string,
@@ -2939,21 +2939,44 @@ export function startBot(
       // MUST resolve synchronously before starting tick interval
       state._pendingOptionResolve = (async () => {
         try {
-          const sym = existingOpenTrade.symbol ?? "";
-          const ceOrPe = sym.includes("_CE_") || sym.endsWith("_CE") || sym.includes("CE") ? "CE" : "PE";
+          const sym = (existingOpenTrade.symbol ?? existingOpenTrade.symbolLabel ?? "").toUpperCase();
+          const ceOrPe: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
           const underlyingToken = state.underlyingToken ?? state.instrumentToken;
           const isMcxToken = underlyingToken.startsWith("MCX_FO|");
-          const resolved = isMcxToken
-            ? await resolveAtmMcxOptionToken(underlyingToken, ceOrPe as "CE" | "PE", state.accessToken!)
-            : await resolveAtmOptionToken(underlyingToken, ceOrPe as "CE" | "PE", state.accessToken!);
-          if (resolved && resolved.token) {
-            state.optionTradeToken = resolved.token;
+          
+          // Try to extract exact strike from symbol (e.g., "NIFTY 16JUL26 24100 CE" → 24100)
+          const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)/);
+          const exactStrike = strikeMatch ? parseInt(strikeMatch[1], 10) : 0;
+          
+          let resolvedToken: string | null = null;
+          
+          // Priority 1: Resolve the EXACT strike (most accurate)
+          if (exactStrike > 0 && !isMcxToken) {
+            resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, state.accessToken!);
+            if (resolvedToken) {
+              console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — resolved EXACT strike ${exactStrike} ${ceOrPe}: ${resolvedToken}`);
+            }
+          }
+          
+          // Priority 2: Fall back to ATM resolution (might be wrong strike but better than nothing)
+          if (!resolvedToken) {
+            const resolved = isMcxToken
+              ? await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, state.accessToken!)
+              : await resolveAtmOptionToken(underlyingToken, ceOrPe, state.accessToken!);
+            if (resolved?.token) {
+              resolvedToken = resolved.token;
+              console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — fell back to ATM resolution: ${resolvedToken}`);
+            }
+          }
+          
+          if (resolvedToken) {
+            state.optionTradeToken = resolvedToken;
             // Also fetch initial quote to set optionPremiumPrice immediately
-            const quote = await fetchFullQuote(resolved.token, state.accessToken!);
+            const quote = await fetchFullQuote(resolvedToken, state.accessToken!);
             if (quote && quote.ltp > 0) {
               state.optionPremiumPrice = quote.ltp;
             }
-            console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — re-resolved option token for paper trade: ${resolved.token} | premium: ₹${state.optionPremiumPrice ?? "N/A"}`);
+            console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — option token set: ${resolvedToken} | premium: ₹${state.optionPremiumPrice ?? "N/A"}`);
           } else {
             console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — option re-resolution returned no token`);
           }
@@ -3093,4 +3116,45 @@ export function getAllRunningBotsForSession(sessionToken: string): BotState[] {
     }
   }
   return results;
+}
+
+// Resolve a specific option token by strike price (for restoring open trades after restart)
+export async function resolveSpecificOptionToken(
+  underlyingToken: string,
+  optionType: "CE" | "PE",
+  strike: number,
+  accessToken: string,
+): Promise<string | null> {
+  try {
+    // Determine instrument name for option chain API
+    let instrumentName = "";
+    if (underlyingToken.includes("Nifty Bank") || underlyingToken.includes("NIFTY_BANK")) {
+      instrumentName = "Nifty Bank";
+    } else if (underlyingToken.includes("Nifty 50") || underlyingToken.includes("NIFTY_50")) {
+      instrumentName = "Nifty 50";
+    } else {
+      // MCX — use resolveAtmMcxOptionToken approach
+      return null; // MCX specific strikes handled separately
+    }
+
+    const chainResp = await axios.get(
+      `https://api.upstox.com/v2/option/chain?instrument_name=${encodeURIComponent(instrumentName)}&expiry_date=`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+    );
+    const chainData: any[] = chainResp.data?.data ?? [];
+    
+    // Find the exact strike
+    for (const row of chainData) {
+      if (Math.abs((row.strike_price ?? 0) - strike) < 1) {
+        const opt = optionType === "CE" ? row.call_options : row.put_options;
+        if (opt?.instrument_key) {
+          return opt.instrument_key;
+        }
+      }
+    }
+    return null;
+  } catch (e) {
+    console.log(`[resolveSpecificOptionToken] Failed for ${underlyingToken} ${strike} ${optionType}:`, (e as Error).message);
+    return null;
+  }
 }
