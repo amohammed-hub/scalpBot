@@ -669,3 +669,16 @@
 - [x] Skip fetchFullQuote for PAPER_OPT tokens (they don't exist on Upstox)
 - [x] Use state.optionTradeToken (real resolved token) instead of trade.instrumentToken for live quotes
 - [x] Restore optionTradeToken from existingOpenTrade.instrumentToken on bot restart
+## Round 32 — Options P&L Always-Live Fix
+- [x] Add entryUnderlyingPrice column to trade_log (stores underlying price at trade entry for delta approximation)
+- [x] Self-healing migration for entryUnderlyingPrice column
+- [x] Store entryUnderlyingPrice when opening options trades in botEngine
+- [x] livePrices endpoint now returns optionPremiumPrice for options bots (computed via delta approx if not yet set by tick)
+- [x] Frontend Trade Log P&L: multi-source priority for options premium (liveData > livePrices > allBots > delta approx)
+- [x] Frontend Trade Log P&L: delta approximation fallback using entryUnderlyingPrice from DB or in-memory openTrade
+- [x] Frontend Open Trade panel: effectiveLivePrice now includes all fallback sources
+- [x] Frontend slot card unrealized P&L: uses livePrices optionPremiumPrice + delta fallback
+- [x] Premium badge shows delta-approximated value with "~" indicator when exact premium unavailable
+- [x] Manual exit uses effectiveLivePrice (includes all fallbacks) instead of just optionPremiumPrice
+- [x] botRestart.ts: use DB entryUnderlyingPrice first, fall back to session.lastPrice only if not available
+- [x] Paper mode options restart: re-resolve real option token from Upstox option chain for live quote fetching

@@ -126,6 +126,8 @@ export const tradeLog = mysqlTable("trade_log", {
   bookedPnl: float("bookedPnl").default(0),
   // Carry-forward: if true, trade should not be auto-closed on server restart
   carryForward: boolean("carryForward").default(false),
+  // Options mode: underlying price at time of entry (for delta approximation P&L when live premium unavailable)
+  entryUnderlyingPrice: float("entryUnderlyingPrice"),
   enteredAt: timestamp("enteredAt").defaultNow().notNull(),
   exitedAt: timestamp("exitedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

@@ -1668,7 +1668,7 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
         const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
-        const results: Array<{ sessionToken: string; slot: number; livePrice: number; updatedAt: number }> = [];
+        const results: Array<{ sessionToken: string; slot: number; livePrice: number; updatedAt: number; optionPremiumPrice?: number }> = [];
 
         for (const tok of slotTokens) {
           const bot = getBotState(tok);
@@ -1687,12 +1687,27 @@ export const appRouter = router({
               bot.lastPrice = latestClose;
             }
 
+            // For options bots: compute optionPremiumPrice via delta approximation if not yet set by tick
+            let optPremium = bot.optionPremiumPrice ?? 0;
+            if (bot.isIndexOptions && bot.openTrade && optPremium === 0 && latestClose > 0) {
+              // Delta approximation: premium ≈ entryPremium + delta * (currentUnderlying - entryUnderlying)
+              const entryPremium = bot.openTrade.entryPrice;
+              const entryUnderlying = bot.openTrade.entryUnderlyingPrice ?? latestClose;
+              const underlyingMove = latestClose - entryUnderlying;
+              const delta = 0.5;
+              const isCall = bot.openTrade.symbol.includes("_CE_") || bot.openTrade.symbol.endsWith("_CE")
+                || (bot.openTrade.symbolLabel ?? "").includes(" CE");
+              optPremium = Math.max(0.05, entryPremium + (isCall ? underlyingMove * delta : -underlyingMove * delta));
+              bot.optionPremiumPrice = optPremium; // cache for next poll
+            }
+
             const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
             results.push({
               sessionToken: tok,
               slot,
               livePrice: latestClose > 0 ? latestClose : bot.lastPrice,
               updatedAt: Date.now(),
+              optionPremiumPrice: bot.isIndexOptions ? (bot.optionPremiumPrice ?? undefined) : undefined,
             });
           } catch {
             // On error, return the last known price from memory
@@ -1702,6 +1717,7 @@ export const appRouter = router({
               slot,
               livePrice: bot.lastPrice,
               updatedAt: bot.lastTickAt ?? Date.now(),
+              optionPremiumPrice: bot.isIndexOptions ? (bot.optionPremiumPrice ?? undefined) : undefined,
             });
           }
         }

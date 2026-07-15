@@ -677,11 +677,9 @@ export default function Dashboard() {
     const trade = openTrade ?? (inMemOpenTrade ? { id: inMemOpenTrade.dbId, entryPrice: inMemOpenTrade.entryPrice, direction: inMemOpenTrade.direction, quantity: inMemOpenTrade.quantity } : null);
     if (!trade || !trade.id) { toast.error("No open trade to exit."); return; }
     // For options mode: use option premium price (not underlying spot) as exit price
-    const exitPriceToUse = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
-      ? optionPremiumPrice
-      : isIndexOptions
-        ? 0  // Don't use underlying price for options — it's wrong
-        : currentPrice;
+    const exitPriceToUse = isIndexOptions
+      ? (effectiveLivePrice > 0 ? effectiveLivePrice : 0)
+      : currentPrice;
     if (!exitPriceToUse) { toast.error("No option premium price available. Wait for bot to fetch it, or use 'Close All Open' button."); return; }
     manualExitMutation.mutate({ sessionToken, tradeId: trade.id, exitPrice: exitPriceToUse });
   };
@@ -709,9 +707,25 @@ export default function Dashboard() {
   // Only calculate unrealized P&L when we have a real live price (not 0, not same as entry)
   // For options mode, use option premium price for unrealized P&L; otherwise use underlying price
   // IMPORTANT: For options, NEVER use underlying price as fallback — it gives absurd P&L
-  const effectiveLivePrice = isIndexOptions
-    ? (optionPremiumPrice && optionPremiumPrice > 0 ? optionPremiumPrice : 0)
-    : currentPrice;
+  const effectiveLivePrice = (() => {
+    if (!isIndexOptions) return currentPrice;
+    // Priority: liveData optionPremiumPrice > livePrices optionPremiumPrice > delta approximation
+    if (optionPremiumPrice && optionPremiumPrice > 0) return optionPremiumPrice;
+    const lpPrimary = livePricesData?.find(lp => lp.slot === 0);
+    const lpOptPremium = (lpPrimary as any)?.optionPremiumPrice ?? 0;
+    if (lpOptPremium > 0) return lpOptPremium;
+    // Delta approximation fallback using underlying price + entryUnderlyingPrice
+    if (activeTrade && currentPrice > 0) {
+      const entryUnderlying = (activeTrade as any).entryUnderlyingPrice ?? (inMemOpenTrade as any)?.entryUnderlyingPrice;
+      if (entryUnderlying && entryUnderlying > 0) {
+        const underlyingMove = currentPrice - entryUnderlying;
+        const delta = 0.5;
+        const isCall = (activeTrade.symbol ?? "").includes("CE") || ((activeTrade as any).symbolLabel ?? "").includes(" CE");
+        return Math.max(0.05, activeTrade.entryPrice + (isCall ? underlyingMove * delta : -underlyingMove * delta));
+      }
+    }
+    return 0;
+  })();
   const unrealizedPnl = activeTrade && effectiveLivePrice > 0
       ? activeTrade.direction === "BUY"
         ? (effectiveLivePrice - activeTrade.entryPrice) * activeTrade.quantity
@@ -1399,9 +1413,9 @@ export default function Dashboard() {
                   <span className="text-sm font-semibold text-teal-300">
                     {activeTrade.symbolLabel ?? ('symbol' in activeTrade ? activeTrade.symbol : null) ?? config.instrumentLabel}
                   </span>
-                  {isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0 && (
+                  {isIndexOptions && effectiveLivePrice > 0 && (
                     <span className="text-xs bg-teal-500/15 text-teal-400 border border-teal-500/30 px-2 py-0.5 rounded-full">
-                      Premium ₹{optionPremiumPrice.toFixed(1)}
+                      Premium ₹{effectiveLivePrice.toFixed(1)}{!optionPremiumPrice || optionPremiumPrice === 0 ? " ~" : ""}
                     </span>
                   )}
                   {isIndexOptions && currentPrice > 0 && (
@@ -1447,9 +1461,9 @@ export default function Dashboard() {
             <div className="grid grid-cols-4 gap-3 mb-4">
               {(() => {
                 // In options mode: Entry/Current/SL/Target are all in option premium space
-                // currentPrice is the underlying — use optionPremiumPrice for the Current cell
-                const displayCurrent = isIndexOptions && optionPremiumPrice && optionPremiumPrice > 0
-                  ? optionPremiumPrice
+                // currentPrice is the underlying — use effectiveLivePrice (already includes all fallbacks)
+                const displayCurrent = isIndexOptions
+                  ? (effectiveLivePrice > 0 ? effectiveLivePrice : null)
                   : (currentPrice > 0 ? currentPrice : null);
                 const currentLabel = isIndexOptions ? "Premium Now" : "Current";
                 const currentColor = displayCurrent && displayCurrent > activeTrade.entryPrice
@@ -2224,9 +2238,20 @@ export default function Dashboard() {
                       // For futures/spot mode: use livePricesData (more real-time) or lastPrice (underlying)
                       const isOpts = openTrade.isIndexOptions;
                       const lpEntry = livePricesData?.find(lp => lp.slot === bot.slot);
-                      const livePrice = isOpts
-                        ? ((bot as any).optionPremiumPrice ?? 0)
-                        : (lpEntry?.livePrice ?? bot.lastPrice ?? 0);
+                      let livePrice = 0;
+                      if (isOpts) {
+                        // Priority: livePrices optionPremiumPrice > allBots optionPremiumPrice > delta approx
+                        livePrice = (lpEntry as any)?.optionPremiumPrice ?? (bot as any).optionPremiumPrice ?? 0;
+                        if (livePrice === 0 && openTrade.entryUnderlyingPrice && (lpEntry?.livePrice ?? bot.lastPrice) > 0) {
+                          const curUnderlying = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+                          const underlyingMove = curUnderlying - openTrade.entryUnderlyingPrice;
+                          const delta = 0.5;
+                          const isCall = (openTrade.symbol ?? "").includes("CE") || (openTrade.symbolLabel ?? "").includes(" CE");
+                          livePrice = Math.max(0.05, openTrade.entryPrice + (isCall ? underlyingMove * delta : -underlyingMove * delta));
+                        }
+                      } else {
+                        livePrice = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+                      }
                       if (livePrice === 0) return null;
                       const dir = openTrade.direction === "BUY" ? 1 : -1;
                       const unrealised = (livePrice - openTrade.entryPrice) * dir * (openTrade.quantity - (openTrade.bookedQty ?? 0));
@@ -2675,9 +2700,12 @@ export default function Dashboard() {
                     const slotEffectivePrice = tradeSlot === 0
                       ? (lpSlot?.livePrice ?? currentPrice)
                       : slotLastPrice;
-                    // In options mode use option premium price (only available for primary slot currently)
-                    // For secondary slots, use their optionPremiumPrice from allBots data
-                    const slotOptionPremium = slotBot?.optionPremiumPrice ?? 0;
+                    // In options mode use option premium price from multiple sources:
+                    // 1. livePrices endpoint (updates every 5s, now includes optionPremiumPrice)
+                    // 2. allBots data (from full tick cycle)
+                    // 3. Delta approximation fallback (when bot hasn't ticked or isn't running)
+                    const lpOptionPremium = (lpSlot as any)?.optionPremiumPrice ?? 0;
+                    const slotOptionPremium = lpOptionPremium || (slotBot?.optionPremiumPrice ?? 0);
                     // Detect if this trade is an options trade (symbol contains CE or PE)
                     const isOptionTrade = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE") ||
                       (t.symbolLabel ?? "").includes(" CE") || (t.symbolLabel ?? "").includes(" PE");
@@ -2685,13 +2713,35 @@ export default function Dashboard() {
                     // Using underlying price (e.g. 7700) with option entry (e.g. 252) gives absurd P&L
                     let liveEffectivePrice = 0;
                     if (isOptionTrade) {
-                      // Options: must use option premium price only
+                      // Options: use option premium price from best available source
+                      // Source priority: liveData optionPremiumPrice > livePrices optionPremiumPrice > allBots optionPremiumPrice > delta approximation
                       if (tradeSlot === 0 && optionPremiumPrice && optionPremiumPrice > 0) {
                         liveEffectivePrice = optionPremiumPrice;
+                      } else if (tradeSlot === 0 && lpOptionPremium > 0) {
+                        liveEffectivePrice = lpOptionPremium;
                       } else if (tradeSlot > 0 && slotOptionPremium > 0) {
                         liveEffectivePrice = slotOptionPremium;
                       }
-                      // If no option premium available, liveEffectivePrice stays 0 → P&L shows as null
+                      // Fallback: delta approximation using underlying price + entryUnderlyingPrice from DB
+                      if (liveEffectivePrice === 0 && t.status === "open") {
+                        // Try DB value first, then in-memory openTrade (for trades opened before this fix)
+                        let entryUnderlying = (t as any).entryUnderlyingPrice;
+                        if (!entryUnderlying || entryUnderlying <= 0) {
+                          // Check in-memory open trade from liveData (primary) or allBots (slots)
+                          if (tradeSlot === 0 && (inMemOpenTrade as any)?.entryUnderlyingPrice) {
+                            entryUnderlying = (inMemOpenTrade as any).entryUnderlyingPrice;
+                          } else if (tradeSlot > 0 && (slotBot as any)?.openTrade?.entryUnderlyingPrice) {
+                            entryUnderlying = (slotBot as any).openTrade.entryUnderlyingPrice;
+                          }
+                        }
+                        const currentUnderlying = slotEffectivePrice;
+                        if (entryUnderlying && entryUnderlying > 0 && currentUnderlying > 0) {
+                          const underlyingMove = currentUnderlying - entryUnderlying;
+                          const delta = 0.5;
+                          const isCall = (t.symbol ?? "").includes("CE") || (t.symbolLabel ?? "").includes(" CE");
+                          liveEffectivePrice = Math.max(0.05, t.entryPrice + (isCall ? underlyingMove * delta : -underlyingMove * delta));
+                        }
+                      }
                     } else {
                       // Non-options: use underlying/futures price as before
                       liveEffectivePrice = slotEffectivePrice;

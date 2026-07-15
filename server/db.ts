@@ -133,6 +133,16 @@ async function initDb() {
           console.log("[Database] Migration complete: exitReason widened");
         }
       } catch { /* non-fatal */ }
+      // Check entryUnderlyingPrice column on trade_log (added in Round 32 — for options delta P&L)
+      try {
+        await pool.execute("SELECT `entryUnderlyingPrice` FROM `trade_log` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding entryUnderlyingPrice to trade_log");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `entryUnderlyingPrice` float DEFAULT NULL");
+          console.log("[Database] Migration complete: entryUnderlyingPrice column added");
+        }
+      }
       // Also widen exitReason in signal_journal if it exists
       try {
         const [cols2] = await pool.execute(

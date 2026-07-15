@@ -2750,6 +2750,7 @@ async function tick(
       atr: signal.atr, confidence: signal.confidence, status: "open",
       upstoxOrderId: orderId, signalReason: signalLabel + (isOptionsMode ? ` [${tradeSymbol}]` : ""), enteredAt: new Date(),
       partial1RPrice, partial2RPrice,
+      entryUnderlyingPrice: isOptionsMode ? price : undefined,
     });
   } catch (tradeOpenErr) {
     // CRITICAL: if DB insert fails, release the mutex so bot isn't permanently blocked
@@ -2850,6 +2851,8 @@ export type TradeInsert = {
   // Partial profit levels — stored in DB so they survive server restarts exactly
   partial1RPrice: number;
   partial2RPrice: number;
+  // Options mode: underlying price at entry (for delta approximation when live premium unavailable)
+  entryUnderlyingPrice?: number;
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -2885,6 +2888,31 @@ export function startBot(
     // Only restore if it's a real option token (not a fake PAPER_OPT|... token)
     if (!token.startsWith("PAPER_OPT|")) {
       state.optionTradeToken = token;
+    } else if (state.accessToken) {
+      // Paper mode with PAPER_OPT token: try to re-resolve the real option token
+      // so we can fetch live quotes for accurate P&L display
+      (async () => {
+        try {
+          const sym = existingOpenTrade.symbol ?? "";
+          const ceOrPe = sym.includes("_CE_") || sym.endsWith("_CE") || sym.includes("CE") ? "CE" : "PE";
+          const underlyingToken = state.underlyingToken ?? state.instrumentToken;
+          const isMcxToken = underlyingToken.startsWith("MCX_FO|");
+          const resolved = isMcxToken
+            ? await resolveAtmMcxOptionToken(underlyingToken, ceOrPe as "CE" | "PE", state.accessToken!)
+            : await resolveAtmOptionToken(underlyingToken, ceOrPe as "CE" | "PE", state.accessToken!);
+          if (resolved && resolved.token) {
+            state.optionTradeToken = resolved.token;
+            // Also fetch initial quote to set optionPremiumPrice immediately
+            const quote = await fetchFullQuote(resolved.token, state.accessToken!);
+            if (quote && quote.ltp > 0) {
+              state.optionPremiumPrice = quote.ltp;
+            }
+            console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — re-resolved option token for paper trade: ${resolved.token} | premium: ₹${state.optionPremiumPrice ?? "N/A"}`);
+          }
+        } catch (e) {
+          console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — failed to re-resolve option token: ${(e as Error).message}`);
+        }
+      })();
     }
   }
 

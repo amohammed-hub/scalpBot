@@ -81,7 +81,9 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       bookedQty: t.bookedQty ?? 0,
       bookedPnl: t.bookedPnl ?? 0,
       isIndexOptions: !!(session.isIndexOptions),
-      entryUnderlyingPrice: session.isIndexOptions ? (session.lastPrice ?? undefined) : undefined,
+      entryUnderlyingPrice: session.isIndexOptions
+        ? ((t as any).entryUnderlyingPrice ?? session.lastPrice ?? undefined)
+        : undefined,
       optionMockKey: (() => {
         if (!session.isIndexOptions) return undefined;
         const sym = (session.instrumentSymbol ?? "").toUpperCase();
