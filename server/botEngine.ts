@@ -2252,31 +2252,53 @@ async function tick(
 
     // ── Trailing SL ──────────────────────────────────────────────────────────
     if (trade.trailingSlEnabled) {
-      const trailDist = trade.entryPrice * (trade.trailingSlPct / 100);
-      if (trade.direction === "BUY") { const newSl = effectivePrice - trailDist; if (newSl > trade.currentSl) trade.currentSl = newSl; }
-      else { const newSl = effectivePrice + trailDist; if (newSl < trade.currentSl) trade.currentSl = newSl; }
+      // Only trail if we have a reliable effectivePrice (not broken delta approximation)
+      const trailReliable = !(trade.isIndexOptions && !state.optionTradeToken && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.02);
+      if (trailReliable) {
+        const trailDist = trade.entryPrice * (trade.trailingSlPct / 100);
+        if (trade.direction === "BUY") { const newSl = effectivePrice - trailDist; if (newSl > trade.currentSl) trade.currentSl = newSl; }
+        else { const newSl = effectivePrice + trailDist; if (newSl < trade.currentSl) trade.currentSl = newSl; }
+      }
     }
 
     // ── Full exit: SL or Target ───────────────────────────────────────────────
     let exitReason: string | null = null;
-    if (trade.direction === "BUY") { if (effectivePrice <= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice >= trade.targetPrice) exitReason = "Target Hit"; }
-    else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
+    // SAFETY GUARD: For options trades using delta approximation, if effectivePrice is within 2% of entryPrice
+    // AND we don't have a real quote (optionTradeToken not set), it likely means
+    // the delta approximation is broken (entryUnderlyingPrice = current price after restart).
+    // In this case, skip exit checks to prevent premature SL kills.
+    const isOptionsWithBrokenDelta = trade.isIndexOptions
+      && !state.optionTradeToken
+      && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.02;
+    if (isOptionsWithBrokenDelta) {
+      // Don't check SL/Target — delta approximation is unreliable
+      if (!state.alertsSent.has("broken_delta_guard")) {
+        state.alertsSent.add("broken_delta_guard");
+        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — SAFETY: skipping SL/Target check (delta approx unreliable, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
+        emitActivity(state.sessionToken, "error", `⚠ Delta approximation unreliable — skipping SL/Target until real quote available. Premium ≈ entry price.`);
+      }
+    } else {
+      if (trade.direction === "BUY") { if (effectivePrice <= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice >= trade.targetPrice) exitReason = "Target Hit"; }
+      else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
+    }
 
     if (exitReason) {
-      let remainPnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - effectivePrice) * trade.quantity;
+      // Use remaining quantity (after partial booking) for P&L on the remaining position
+      const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
+      let remainPnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * remainingQty : (trade.entryPrice - effectivePrice) * remainingQty;
       // v3: paper-mode brokerage + slippage simulation
       if (trade.mode === "paper") {
         const pc = getPaperCostConfig();
-        remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, effectivePrice, trade.quantity, pc.brokerage, pc.slippagePct);
+        remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, effectivePrice, remainingQty, pc.brokerage, pc.slippagePct);
       }
       const totalPnl  = remainPnl + trade.bookedPnl;
       if (trade.mode === "live" && state.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
-        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, trade.quantity);
+        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, remainingQty);
         if (!exitOrderId) {
           // Retry once after 2 seconds — network blip or brief Upstox outage
           await new Promise(r => setTimeout(r, 2000));
-          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, trade.quantity);
+          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, remainingQty);
         }
         if (!exitOrderId) {
           // Both attempts failed — keep trade open, alert user to close manually

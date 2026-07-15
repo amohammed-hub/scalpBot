@@ -682,3 +682,8 @@
 - [x] Manual exit uses effectiveLivePrice (includes all fallbacks) instead of just optionPremiumPrice
 - [x] botRestart.ts: use DB entryUnderlyingPrice first, fall back to session.lastPrice only if not available
 - [x] Paper mode options restart: re-resolve real option token from Upstox option chain for live quote fetching
+- [x] BUG: NIFTY 24150 PE was prematurely killed by broken delta approximation (same root cause as CRUDEOIL ₹0 P&L)
+- [x] SAFETY GUARD: Skip SL/Target exit check when delta approximation is unreliable (effectivePrice within 2% of entry + no real quote)
+- [x] SAFETY GUARD: Skip trailing SL update when delta approximation is unreliable (prevents SL from trailing to entry)
+- [x] BUG FIX: remainPnl now uses remaining quantity (trade.quantity - bookedQty) instead of full quantity after partial booking
+- [x] BUG FIX: Live mode exit order now uses remaining quantity (not full quantity) when partial was booked
