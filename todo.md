@@ -701,3 +701,10 @@
 - [x] Round 33: Trade Log shows "Today" by default with toggle to "All Time"
 - [x] Round 33: Trade Log header stats switch between today/all-time based on toggle
 - [x] Round 33: dailyPnl fix — correctly adds totalPnl (including bookedPnl) when partial booking happened before restart
+
+## Power Hour (3:00-3:30 PM) — No Trades Bug
+- [x] Fix Power Hour signal too strict — bot scans but never enters trades after 3 PM
+- [x] Volume condition always fails (index instruments return volume=0) — bypassed for index
+- [x] Lower score threshold from 4/6 to 3/5 for Power Hour entries (volume excluded)
+- [x] Extend stopScanMin from 3:20 to 3:25 PM to give Power Hour more time
+- [x] Add detailed logging for Power Hour score breakdown

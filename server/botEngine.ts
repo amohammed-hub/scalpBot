@@ -1062,56 +1062,61 @@ export function generatePowerHourSignal(
   const e21arr = ema(closes1m, 21);
   const e9 = e9arr[e9arr.length - 1];
   const e21 = e21arr[e21arr.length - 1];
+  // Index instruments (NIFTY, BANKNIFTY) return volume=0 — bypass volume condition entirely
+  const isIndexInstrument = avgDayVol === 0;
   const last5Vol = candles1m.slice(-5).reduce((a, c) => a + c.volume, 0) / 5;
   const recentVolRatio = avgDayVol > 0 ? last5Vol / avgDayVol : 1;
+  // Volume condition: always true for index instruments (they have no volume data)
+  const volConditionMet = isIndexInstrument ? true : (volSurge >= 1.2 || recentVolRatio >= 1.3);
 
-  // Score-based approach — each condition adds 1 point
+  // Score-based approach — 5 core conditions (volume excluded for index instruments)
+  // Threshold: 3/5 for entry (was 4/6 which was too strict with volume always failing)
   const bullConditions = [
-    dayTrendStrength > 0.002,          // day is up >0.2%
+    dayTrendStrength > 0.001,          // day is up >0.1% (relaxed from 0.2%)
     price > dayVwap,                   // price above day VWAP
-    pricePositionInRange > 0.5,        // price in upper half of day range
-    e9 > e21 && rsi1m > 50 && rsi1m < 78, // 1m momentum bullish
+    pricePositionInRange > 0.4,        // price in upper 60% of day range (relaxed from 50%)
+    e9 > e21 && rsi1m > 45 && rsi1m < 80, // 1m momentum bullish (relaxed RSI)
     macd5m.histogram > 0,              // 5m MACD bullish
-    volSurge >= 1.2 || recentVolRatio >= 1.3, // volume confirming
   ];
   const bearConditions = [
-    dayTrendStrength < -0.002,
+    dayTrendStrength < -0.001,         // day is down >0.1%
     price < dayVwap,
-    pricePositionInRange < 0.5,
-    e9 < e21 && rsi1m < 50 && rsi1m > 22,
+    pricePositionInRange < 0.6,        // price in lower 60% of day range
+    e9 < e21 && rsi1m < 55 && rsi1m > 20, // 1m momentum bearish (relaxed RSI)
     macd5m.histogram < 0,
-    volSurge >= 1.2 || recentVolRatio >= 1.3,
   ];
 
   const bullScore = bullConditions.filter(Boolean).length;
   const bearScore = bearConditions.filter(Boolean).length;
+  // Effective threshold: 3/5 core conditions + volume must be met (auto-true for index)
+  const POWER_HOUR_THRESHOLD = 3;
 
   let direction: "BUY" | "SELL" | "HOLD" = "HOLD";
   let confidence = 0;
   let reason = "";
 
-  if (bullScore >= 4 && bullScore > bearScore) {
+  if (bullScore >= POWER_HOUR_THRESHOLD && bullScore > bearScore && volConditionMet) {
     // Don't buy if price is already at day high (range exhausted)
-    if (pricePositionInRange > 0.92) {
+    if (pricePositionInRange > 0.95) {
       return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[PowerHour] Price at day high — range exhausted, skipping BUY`, layer: "None", isPowerHour: true };
     }
     direction = "BUY";
-    confidence = Math.min(0.95, 0.65 + bullScore * 0.05 + Math.max(0, dayTrendStrength * 10));
-    reason = `[PowerHour] Bullish day(${(dayTrendStrength * 100).toFixed(2)}%) | Above VWAP(${dayVwap.toFixed(1)}) | VolSurge:${volSurge.toFixed(1)}x | Score:${bullScore}/6 | RSI(${rsi1m.toFixed(0)}) | ADX(${adx5m.toFixed(0)}) | Range:${dayLow.toFixed(1)}–${dayHigh.toFixed(1)}`;
-  } else if (bearScore >= 4 && bearScore > bullScore) {
-    if (pricePositionInRange < 0.08) {
+    confidence = Math.min(0.95, 0.65 + bullScore * 0.06 + Math.max(0, dayTrendStrength * 10));
+    reason = `[PowerHour] Bullish day(${(dayTrendStrength * 100).toFixed(2)}%) | Above VWAP(${dayVwap.toFixed(1)}) | Vol:${isIndexInstrument ? "idx-bypass" : volSurge.toFixed(1) + "x"} | Score:${bullScore}/5 | RSI(${rsi1m.toFixed(0)}) | ADX(${adx5m.toFixed(0)}) | Range:${dayLow.toFixed(1)}–${dayHigh.toFixed(1)}`;
+  } else if (bearScore >= POWER_HOUR_THRESHOLD && bearScore > bullScore && volConditionMet) {
+    if (pricePositionInRange < 0.05) {
       return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[PowerHour] Price at day low — range exhausted, skipping SELL`, layer: "None", isPowerHour: true };
     }
     direction = "SELL";
-    confidence = Math.min(0.95, 0.65 + bearScore * 0.05 + Math.max(0, Math.abs(dayTrendStrength) * 10));
-    reason = `[PowerHour] Bearish day(${(dayTrendStrength * 100).toFixed(2)}%) | Below VWAP(${dayVwap.toFixed(1)}) | VolSurge:${volSurge.toFixed(1)}x | Score:${bearScore}/6 | RSI(${rsi1m.toFixed(0)}) | ADX(${adx5m.toFixed(0)}) | Range:${dayLow.toFixed(1)}–${dayHigh.toFixed(1)}`;
+    confidence = Math.min(0.95, 0.65 + bearScore * 0.06 + Math.max(0, Math.abs(dayTrendStrength) * 10));
+    reason = `[PowerHour] Bearish day(${(dayTrendStrength * 100).toFixed(2)}%) | Below VWAP(${dayVwap.toFixed(1)}) | Vol:${isIndexInstrument ? "idx-bypass" : volSurge.toFixed(1) + "x"} | Score:${bearScore}/5 | RSI(${rsi1m.toFixed(0)}) | ADX(${adx5m.toFixed(0)}) | Range:${dayLow.toFixed(1)}–${dayHigh.toFixed(1)}`;
   }
 
   if (direction === "HOLD") {
     return {
       direction: "HOLD", confidence: 0, entryPrice: price,
       slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
-      reason: `[PowerHour] No clear setup | Bull:${bullScore} Bear:${bearScore} | DayTrend:${(dayTrendStrength * 100).toFixed(2)}% | VWAP:${dayVwap.toFixed(1)}`,
+      reason: `[PowerHour] No clear setup | Bull:${bullScore}/5 Bear:${bearScore}/5 (need ${POWER_HOUR_THRESHOLD}) | DayTrend:${(dayTrendStrength * 100).toFixed(2)}% | VWAP:${dayVwap.toFixed(1)} | EMA9${e9 > e21 ? ">" : "<"}EMA21 | RSI(${rsi1m.toFixed(0)}) | MACD:${macd5m.histogram > 0 ? "+" : "-"} | Vol:${isIndexInstrument ? "idx(bypass)" : volSurge.toFixed(1) + "x"}`,
       layer: "None", isPowerHour: true,
     };
   }
@@ -1977,11 +1982,11 @@ async function tick(
   state.lastTradingDay = todayStr;
   const isMCX = state.instrumentToken.startsWith("MCX");
   const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
-  const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 20; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:20, square-off at 15:25
+  const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 25; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:25 (was 15:20 — too early, killed Power Hour), square-off at 15:25
 
-  // NSE Power Hour: 3:00–3:20 PM IST
+  // NSE Power Hour: 3:00–3:25 PM IST (extended from 3:20 — the last 5 mins are prime institutional action)
   const powerHourStart = 15 * 60;
-  const powerHourEnd   = 15 * 60 + 20;
+  const powerHourEnd   = 15 * 60 + 25;
   const inPowerHour = !isMCX && istMin2 >= powerHourStart && istMin2 < powerHourEnd;
   // Send Telegram alert when Power Hour window opens (once per session)
   if (inPowerHour && !state.alertsSent.has("powerHour")) {
@@ -2458,9 +2463,11 @@ async function tick(
     const adxHb = calcADX(state.candles, 14);
     const vwapHb = calcVWAP(state.candles);
     const priceVsVwap = price > vwapHb ? "above" : "below";
-    emitActivity(state.sessionToken, "signal",
-      `⏱ Scanning... ₹${price.toFixed(1)} (${priceVsVwap} VWAP) | RSI(${rsiHb.toFixed(0)}) | ADX(${adxHb.toFixed(0)}) | Signal: ${signal.direction} | ${signal.reason?.slice(0, 60) ?? ""}`,
-    );
+    // Enhanced heartbeat: show Power Hour score breakdown when in Power Hour mode
+    const heartbeatMsg = state.isPowerHourMode
+      ? `⚡ PowerHour Scanning... ₹${price.toFixed(1)} (${priceVsVwap} VWAP) | RSI(${rsiHb.toFixed(0)}) | ADX(${adxHb.toFixed(0)}) | ${signal.reason ?? "HOLD"}`
+      : `⏱ Scanning... ₹${price.toFixed(1)} (${priceVsVwap} VWAP) | RSI(${rsiHb.toFixed(0)}) | ADX(${adxHb.toFixed(0)}) | Signal: ${signal.direction} | ${signal.reason?.slice(0, 80) ?? ""}`;
+    emitActivity(state.sessionToken, "signal", heartbeatMsg);
   }
   state.lastSignal = signal;
   // Emit tick signal to activity log
