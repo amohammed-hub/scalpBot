@@ -2939,14 +2939,17 @@ export function startBot(
       // MUST resolve synchronously before starting tick interval
       state._pendingOptionResolve = (async () => {
         try {
-          const sym = (existingOpenTrade.symbol ?? existingOpenTrade.symbolLabel ?? "").toUpperCase();
+          const sym = (existingOpenTrade.symbolLabel ?? existingOpenTrade.symbol ?? "").toUpperCase();
           const ceOrPe: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
           const underlyingToken = state.underlyingToken ?? state.instrumentToken;
           const isMcxToken = underlyingToken.startsWith("MCX_FO|");
           
           // Try to extract exact strike from symbol (e.g., "NIFTY 16JUL26 24100 CE" → 24100)
-          const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)/);
-          const exactStrike = strikeMatch ? parseInt(strikeMatch[1], 10) : 0;
+          // Handles both "NIFTY 16JUL26 24100 CE" and "NIFTY_CE_24100" formats
+          const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
+          const exactStrike = strikeMatch
+            ? parseInt(strikeMatch[1] ?? strikeMatch[4] ?? "0", 10)
+            : 0;
           
           let resolvedToken: string | null = null;
           
@@ -3126,32 +3129,42 @@ export async function resolveSpecificOptionToken(
   accessToken: string,
 ): Promise<string | null> {
   try {
-    // Determine instrument name for option chain API
-    let instrumentName = "";
-    if (underlyingToken.includes("Nifty Bank") || underlyingToken.includes("NIFTY_BANK")) {
-      instrumentName = "Nifty Bank";
-    } else if (underlyingToken.includes("Nifty 50") || underlyingToken.includes("NIFTY_50")) {
-      instrumentName = "Nifty 50";
-    } else {
-      // MCX — use resolveAtmMcxOptionToken approach
-      return null; // MCX specific strikes handled separately
+    // MCX not supported here — use resolveAtmMcxOptionToken
+    if (underlyingToken.startsWith("MCX_FO|")) return null;
+    
+    // Use same API as resolveAtmOptionToken: instrument_key + expiry_date
+    const isBankNifty = underlyingToken.toLowerCase().includes("nifty bank");
+    const expiryOrder = isBankNifty
+      ? ["current_month", "next_month"]
+      : ["current_week", "next_week", "current_month", "next_month"];
+    
+    let chainData: any[] = [];
+    for (const expiry of expiryOrder) {
+      try {
+        const resp = await axios.get(
+          `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${expiry}`,
+          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+        );
+        chainData = resp.data?.data ?? [];
+        if (chainData.length > 0) break;
+      } catch { /* try next expiry */ }
     }
-
-    const chainResp = await axios.get(
-      `https://api.upstox.com/v2/option/chain?instrument_name=${encodeURIComponent(instrumentName)}&expiry_date=`,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
-    );
-    const chainData: any[] = chainResp.data?.data ?? [];
+    if (chainData.length === 0) {
+      console.log(`[resolveSpecificOptionToken] No chain data for ${underlyingToken} strike ${strike} ${optionType}`);
+      return null;
+    }
     
     // Find the exact strike
     for (const row of chainData) {
       if (Math.abs((row.strike_price ?? 0) - strike) < 1) {
         const opt = optionType === "CE" ? row.call_options : row.put_options;
         if (opt?.instrument_key) {
+          console.log(`[resolveSpecificOptionToken] ✓ Resolved ${underlyingToken} ${strike} ${optionType} → ${opt.instrument_key}`);
           return opt.instrument_key;
         }
       }
     }
+    console.log(`[resolveSpecificOptionToken] Strike ${strike} not found in ${chainData.length} rows for ${underlyingToken}`);
     return null;
   } catch (e) {
     console.log(`[resolveSpecificOptionToken] Failed for ${underlyingToken} ${strike} ${optionType}:`, (e as Error).message);

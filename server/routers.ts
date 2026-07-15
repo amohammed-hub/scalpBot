@@ -691,18 +691,27 @@ export const appRouter = router({
                   if (q && q.ltp > 0) exitPx = q.ltp;
                 } catch { /* non-fatal */ }
               }
-              // Priority 3: try to resolve token from trade symbol and fetch
-              if (exitPx === 0 && accessToken) {
-                try {
-                 const sym = (t.symbol ?? "").toUpperCase();
+             // Priority 3: try to resolve token from trade symbol and fetch
+             if (exitPx === 0 && accessToken) {
+               try {
+                 const sym = ((t as any).symbolLabel ?? t.symbol ?? "").toUpperCase();
                  const isMcx = sym.includes("CRUDE") || sym.includes("GOLD") || sym.includes("SILVER") || sym.includes("NATGAS");
                  const optType: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
+                 // Extract exact strike from symbol
+                 const stopStrikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
+                 const stopExactStrike = stopStrikeMatch ? parseInt(stopStrikeMatch[1] ?? stopStrikeMatch[4] ?? "0", 10) : 0;
                   let resolvedTokenStr: string | null = null;
-                  if (isMcx) {
+                  // Try specific strike resolution first
+                  if (stopExactStrike > 0 && !isMcx) {
+                    const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                    resolvedTokenStr = await resolveSpecificOptionToken(underlying, optType, stopExactStrike, accessToken);
+                  }
+                  // Fallback to ATM resolution
+                  if (!resolvedTokenStr && isMcx) {
                     const underlying = botState?.instrumentToken ?? "";
                     const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
                     resolvedTokenStr = resolved?.token ?? null;
-                  } else {
+                  } else if (!resolvedTokenStr) {
                     const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
                     const resolved = await resolveAtmOptionToken(underlying, optType, accessToken);
                     resolvedTokenStr = resolved?.token ?? null;
@@ -1748,8 +1757,8 @@ export const appRouter = router({
                 try {
                   const sym = ((bot.openTrade as any).symbolLabel ?? (bot.openTrade as any).symbol ?? "").toUpperCase();
                   const ceOrPe: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
-                  const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)/);
-                  const exactStrike = strikeMatch ? parseInt(strikeMatch[1], 10) : 0;
+                  const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
+                  const exactStrike = strikeMatch ? parseInt(strikeMatch[1] ?? strikeMatch[4] ?? "0", 10) : 0;
                   const underlyingToken = bot.underlyingToken ?? bot.instrumentToken;
                   if (exactStrike > 0 && !underlyingToken.startsWith("MCX_FO|")) {
                     const resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, bot.accessToken);
@@ -2095,15 +2104,24 @@ export const appRouter = router({
                 } catch { /* non-fatal */ }
               }
               if (exitPx === 0 && accessToken) {
-                try {
-                  const sym = (t.symbol ?? "").toUpperCase();
+               try {
+                  const sym = ((t as any).symbolLabel ?? t.symbol ?? "").toUpperCase();
                   const isMcx = sym.includes("CRUDE") || sym.includes("GOLD") || sym.includes("SILVER") || sym.includes("NATGAS");
                   const optType: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
-                  if (isMcx) {
+                  // Extract exact strike
+                  const stopStrikeMatch2 = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
+                  const stopExactStrike2 = stopStrikeMatch2 ? parseInt(stopStrikeMatch2[1] ?? stopStrikeMatch2[4] ?? "0", 10) : 0;
+                  // Try specific strike resolution first
+                  if (stopExactStrike2 > 0 && !isMcx) {
+                    const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                    const resolvedToken = await resolveSpecificOptionToken(underlying, optType, stopExactStrike2, accessToken);
+                    if (resolvedToken) { const q = await fetchFullQuote(resolvedToken, accessToken); if (q && q.ltp > 0) exitPx = q.ltp; }
+                  }
+                  if (exitPx === 0 && isMcx) {
                     const underlying = botState?.instrumentToken ?? "";
                     const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
                     if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.ltp; }
-                  } else {
+                  } else if (exitPx === 0) {
                     const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
                     const resolved = await resolveAtmOptionToken(underlying, optType, accessToken);
                     if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.ltp; }
