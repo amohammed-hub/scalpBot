@@ -8,6 +8,7 @@ import {
   Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
@@ -449,12 +450,24 @@ export default function Dashboard() {
   });
   const resetPnlMutation = trpc.trades.resetPnlCounter.useMutation({
     onSuccess: (data) => {
-      toast.success(`P&L counter reset. Recalculated: ₹${(data.recalculatedPnl ?? 0).toFixed(0)} from ${data.tradeCount} trades.`);
+      const fixMsg = (data as any).fixedTrades > 0 ? ` (${(data as any).fixedTrades} trade(s) auto-corrected)` : "";
+      toast.success(`P&L recalculated: ₹${(data.recalculatedPnl ?? 0).toFixed(0)} from ${data.tradeCount} trades.${fixMsg}`);
       utils.bot.status.invalidate();
       utils.trades.todayStats.invalidate();
       utils.trades.stats.invalidate();
+      utils.trades.list.invalidate();
     },
     onError: (e) => toast.error(`Reset failed: ${e.message}`),
+  });
+  const correctExitMutation = trpc.trades.correctTradeExit.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Exit corrected: ₹${(data.oldExit ?? 0).toFixed(0)} → ₹${data.newExit.toFixed(0)} | P&L: ₹${(data.oldPnl ?? 0).toFixed(0)} → ₹${data.newPnl.toFixed(0)}`);
+      utils.trades.list.invalidate();
+      utils.trades.todayStats.invalidate();
+      utils.trades.stats.invalidate();
+      utils.bot.status.invalidate();
+    },
+    onError: (e) => toast.error(`Correction failed: ${e.message}`),
   });
   const closeAllOpenMutation = trpc.trades.closeAllOpen.useMutation({
     onSuccess: (data) => {
@@ -2940,6 +2953,22 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td className="py-2.5 text-right">
+                          {t.status === "closed" && (
+                            <button
+                              onClick={() => {
+                                const currentExit = t.exitPrice ?? t.entryPrice;
+                                const input = prompt(`Correct exit price for ${t.symbolLabel ?? t.symbol}\n\nCurrent exit: ₹${currentExit}\nEntry: ₹${t.entryPrice}\n\nEnter the correct exit price:`, String(currentExit));
+                                if (!input) return;
+                                const newExit = parseFloat(input);
+                                if (isNaN(newExit) || newExit <= 0) { toast.error("Invalid price"); return; }
+                                correctExitMutation.mutate({ tradeId: t.id, correctExitPrice: newExit });
+                              }}
+                              className="text-blue-400/60 hover:text-blue-400 transition-colors p-1 rounded hover:bg-blue-500/10 mr-1"
+                              title="Correct exit price"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               if (!confirm(`Delete trade #${t.id} (${t.symbolLabel ?? t.symbol})? This cannot be undone.`)) return;

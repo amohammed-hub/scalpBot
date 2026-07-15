@@ -1566,12 +1566,48 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
-        // Reset all 3 slots: primary + slot1 + slot2
+        // First: auto-fix any trades that were closed with wrong exit price
+        // (Bot Stopped — Auto-Closed trades where exitPrice equals a stale LTP from delta approximation)
         const allTokens = [
           input.sessionToken,
           `${input.sessionToken}-slot1`,
           `${input.sessionToken}-slot2`,
         ];
+        const { inArray: inArrayReset } = await import("drizzle-orm");
+        // Find all closed trades for these sessions
+        const allClosedTrades = await db.select().from(tradeLog).where(
+          and(
+            inArrayReset(tradeLog.sessionToken, allTokens),
+            eq(tradeLog.status, "closed"),
+          )
+        );
+        // Auto-fix: for options trades closed by "Bot Stopped" with suspicious exit prices,
+        // try to fetch the real current price and update
+        let fixedCount = 0;
+        for (const t of allClosedTrades) {
+          const isOption = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE");
+          if (!isOption) continue;
+          // Only fix trades that were auto-closed and have suspicious P&L
+          const isBotStopped = (t.exitReason ?? "").includes("Bot Stopped") || (t.exitReason ?? "").includes("Kill Switch");
+          if (!isBotStopped) continue;
+          // For BUY options: if exit < entry but the option might have been in profit, it's suspicious
+          // We can't fetch real price now (market closed), but we can fix the P&L calculation
+          // to use remainingQty properly
+          const remainingQty = t.quantity - (t.bookedQty ?? 0);
+          const correctRemainingPnl = t.direction === "BUY"
+            ? ((t.exitPrice ?? t.entryPrice) - t.entryPrice) * remainingQty
+            : (t.entryPrice - (t.exitPrice ?? t.entryPrice)) * remainingQty;
+          const correctPnl = correctRemainingPnl + (t.bookedPnl ?? 0);
+          // If stored P&L differs from correct calculation, fix it
+          if (Math.abs((t.pnl ?? 0) - correctPnl) > 1) {
+            await db.update(tradeLog).set({
+              pnl: correctPnl,
+              pnlPct: (t.quantity * t.entryPrice) > 0 ? (correctPnl / (t.quantity * t.entryPrice)) * 100 : 0,
+            }).where(eq(tradeLog.id, t.id));
+            fixedCount++;
+          }
+        }
+        // Now recalculate dailyPnl from the (possibly fixed) trades
         let totalPnl = 0;
         let totalCount = 0;
         for (const tok of allTokens) {
@@ -1593,7 +1629,39 @@ export const appRouter = router({
           totalPnl += realPnl;
           totalCount += realCount;
         }
-        return { success: true, recalculatedPnl: totalPnl, tradeCount: totalCount };
+        return { success: true, recalculatedPnl: totalPnl, tradeCount: totalCount, fixedTrades: fixedCount };
+      }),
+    /** Correct a specific trade's exit price (for fixing wrong auto-close prices) */
+    correctTradeExit: publicProcedure
+      .input(z.object({
+        tradeId: z.number(),
+        correctExitPrice: z.number().positive(),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const trades = await db.select().from(tradeLog).where(eq(tradeLog.id, input.tradeId)).limit(1);
+        if (trades.length === 0) throw new Error("Trade not found");
+        const t = trades[0];
+        if (t.status !== "closed") throw new Error("Can only correct closed trades");
+        const remainingQty = t.quantity - (t.bookedQty ?? 0);
+        const remainingPnl = t.direction === "BUY"
+          ? (input.correctExitPrice - t.entryPrice) * remainingQty
+          : (t.entryPrice - input.correctExitPrice) * remainingQty;
+        const pnl = remainingPnl + (t.bookedPnl ?? 0);
+        await db.update(tradeLog).set({
+          exitPrice: input.correctExitPrice,
+          pnl,
+          pnlPct: (t.quantity * t.entryPrice) > 0 ? (pnl / (t.quantity * t.entryPrice)) * 100 : 0,
+          exitReason: (t.exitReason ?? "") + " [P&L corrected]",
+        }).where(eq(tradeLog.id, input.tradeId));
+        // Also update the session's dailyPnl
+        const sessionTrades = await db.select().from(tradeLog).where(
+          and(eq(tradeLog.sessionToken, t.sessionToken), eq(tradeLog.status, "closed"))
+        );
+        const newDailyPnl = sessionTrades.reduce((sum: number, tr: any) => sum + (tr.id === t.id ? pnl : (tr.pnl ?? 0)), 0);
+        await db.update(botSessions).set({ dailyPnl: newDailyPnl }).where(eq(botSessions.sessionToken, t.sessionToken));
+        return { success: true, oldPnl: t.pnl, newPnl: pnl, oldExit: t.exitPrice, newExit: input.correctExitPrice };
       }),
     exportData: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
