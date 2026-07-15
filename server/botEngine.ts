@@ -1427,23 +1427,32 @@ async function resolveAtmOptionToken(
       put_options?: { instrument_key?: string; market_data?: { ltp?: number } };
     }> = [];
 
-    const chainResp = await axios.get(
-      `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=current_week`,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
-    );
-    chainData = chainResp.data?.data ?? [];
+    // BankNifty no longer has weekly expiry (discontinued 2024). Nifty has weekly (Tuesday).
+    // Strategy: BankNifty → current_month first; Nifty → current_week first; both fall through all options.
+    const isBankNifty = underlyingToken.toLowerCase().includes("nifty bank") || underlyingToken.toLowerCase().includes("banknifty");
+    const expiryOrder = isBankNifty
+      ? ["current_month", "next_month"]
+      : ["current_week", "next_week", "current_month", "next_month"];
 
-    if (chainData.length === 0) {
-      console.warn(`[BotEngine] resolveAtmOptionToken: empty chain for ${underlyingToken} (current_week). Trying next_week...`);
-      const fallbackResp = await axios.get(
-        `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=next_week`,
-        { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
-      );
-      chainData = fallbackResp.data?.data ?? [];
-      if (chainData.length === 0) {
-        console.warn(`[BotEngine] resolveAtmOptionToken: empty chain for next_week too. No options available.`);
-        return null;
+    for (const expiry of expiryOrder) {
+      try {
+        const resp = await axios.get(
+          `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${expiry}`,
+          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
+        );
+        chainData = resp.data?.data ?? [];
+        if (chainData.length > 0) {
+          console.log(`[BotEngine] resolveAtmOptionToken: found ${chainData.length} contracts for ${underlyingToken} (${expiry})`);
+          break;
+        }
+        console.warn(`[BotEngine] resolveAtmOptionToken: empty chain for ${underlyingToken} (${expiry}). Trying next...`);
+      } catch (e) {
+        console.warn(`[BotEngine] resolveAtmOptionToken: error fetching ${expiry} for ${underlyingToken}:`, e instanceof Error ? e.message : String(e));
       }
+    }
+    if (chainData.length === 0) {
+      console.warn(`[BotEngine] resolveAtmOptionToken: no options found after trying all expiries (${expiryOrder.join(', ')}) for ${underlyingToken}`);
+      return null;
     }
 
     const chainExpiry: string | undefined = chainData[0]?.expiry ?? undefined;

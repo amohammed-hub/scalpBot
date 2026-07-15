@@ -657,3 +657,7 @@
 - [x] BUG C: botRestart now passes carryForward from DB to startBot config
 - [x] BUG D: manual restart now passes carryForward from open trade
 - [x] BUG E: manualExit uses trade.sessionToken for credential lookup (not input.sessionToken)
+
+## Round 30 — BankNifty Option Chain Fix
+- [x] BankNifty option chain lookup failing: weekly expiry discontinued in 2024, now uses current_month
+- [x] Smart expiry fallback: BankNifty → current_month/next_month; Nifty → current_week/next_week/current_month/next_month
