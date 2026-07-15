@@ -89,6 +89,7 @@ export interface OpenTrade {
   signalReason?: string; // full signal reason string
   signalLayer?: string; // extracted layer name e.g. "Breakout", "MCXEvening"
   carryForward?: boolean; // user chose to hold overnight
+  bookedPnlAddedToDaily?: boolean; // true if bookedPnl was already added to dailyPnl in this session
 }
 
 export interface BotState {
@@ -2198,6 +2199,7 @@ async function tick(
         // Move SL to breakeven
         trade.currentSl = trade.entryPrice;
         state.dailyPnl += bookPnl;
+        trade.bookedPnlAddedToDaily = true;
         console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 50% @ ₹${trade.partial1RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→BE`);
         sendTelegramAlert(state,
           `💰 <b>PARTIAL PROFIT BOOKED (50%)</b>\n` +
@@ -2244,6 +2246,7 @@ async function tick(
         // Trail SL to 1R level
         trade.currentSl = trade.direction === "BUY" ? trade.partial1RPrice : trade.partial1RPrice;
         state.dailyPnl += bookPnl;
+        trade.bookedPnlAddedToDaily = true;
         console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 25% @ ₹${trade.partial2RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→1R`);
         sendTelegramAlert(state,
           `💰 <b>PARTIAL PROFIT BOOKED (25% more)</b>\n` +
@@ -2328,7 +2331,13 @@ async function tick(
         state.lastSlDirection = trade.direction;
         state.reEntryCandles = 0;
       }
-      state.dailyPnl += remainPnl;
+      // If bookedPnl was already added to dailyPnl during partial booking in THIS session,
+      // only add remainPnl. Otherwise (restart case), add totalPnl (includes bookedPnl).
+      if (trade.bookedPnlAddedToDaily) {
+        state.dailyPnl += remainPnl;
+      } else {
+        state.dailyPnl += totalPnl;
+      }
       state.openTrade = null;
       recordTradeClose(state.sessionToken, state.scanIntervalSec);
       await onTradeClose(trade.dbId, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));

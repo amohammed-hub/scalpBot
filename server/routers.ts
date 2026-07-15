@@ -406,6 +406,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions,
             optionMockKey: restoredOptionMockKey,
             carryForward: !!(existingOpenTrades[0].carryForward),
+            entryUnderlyingPrice: (t as any).entryUnderlyingPrice ?? undefined,
           };
         }
 
@@ -1850,7 +1851,7 @@ export const appRouter = router({
             partial1RPrice: p1, partial2RPrice: p2, partialBooked: (t.partialBooked ?? 0) as 0 | 1 | 2,
             bookedQty: t.bookedQty ?? 0, bookedPnl: t.bookedPnl ?? 0, isIndexOptions: input.isIndexOptions,
             optionMockKey: restoredOptionMockKey,
-            entryUnderlyingPrice: input.isIndexOptions ? t.entryPrice : undefined,
+            entryUnderlyingPrice: (t as any).entryUnderlyingPrice ?? undefined,
           };
         }
 
