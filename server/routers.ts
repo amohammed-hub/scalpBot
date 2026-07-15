@@ -1760,12 +1760,30 @@ export const appRouter = router({
                   const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
                   const exactStrike = strikeMatch ? parseInt(strikeMatch[1] ?? strikeMatch[4] ?? "0", 10) : 0;
                   const underlyingToken = bot.underlyingToken ?? bot.instrumentToken;
-                  if (exactStrike > 0 && !underlyingToken.startsWith("MCX_FO|")) {
+                  if (exactStrike > 0) {
+                    // For MCX options: use resolveAtmMcxOptionToken with strike filter
+                    if (underlyingToken.startsWith("MCX_FO|")) {
+                      const resolved = await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, bot.accessToken);
+                      if (resolved?.token) {
+                        bot.optionTradeToken = resolved.token;
+                        const q = await fetchFullQuote(resolved.token, bot.accessToken);
+                        if (q && q.ltp > 0) {
+                          const bestPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                          optPremium = bestPrice;
+                          bot.optionPremiumPrice = optPremium;
+                        }
+                      }
+                    } else {
                     const resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, bot.accessToken);
                     if (resolvedToken) {
                       bot.optionTradeToken = resolvedToken;
                       const q = await fetchFullQuote(resolvedToken, bot.accessToken);
-                      if (q && q.ltp > 0) { optPremium = q.ltp; bot.optionPremiumPrice = optPremium; }
+                      if (q && q.ltp > 0) {
+                        const bestPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                        optPremium = bestPrice;
+                        bot.optionPremiumPrice = optPremium;
+                      }
+                    }
                     }
                   }
                 } catch { /* non-fatal */ }

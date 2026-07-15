@@ -713,5 +713,17 @@
 - [x] Fix: Add 5-minute grace period — after 5 min, trust delta approximation and enforce SL/Target
 - [x] Fix: MCX option restore now tries exact-strike resolution (was skipped entirely for MCX)
 - [x] Fix: When entryUnderlyingPrice missing, use last known optionPremiumPrice instead of freezing at entry
+
+## Critical Fix — P&L Inversion, Partial Booking, Capital Overshoot
+- [x] Bug 1: P&L showing -₹5055 when SILVER PE is in profit — root cause: fetchFullQuote used LTP (stale ₹4000) instead of bid (₹5188) for illiquid options
+- [x] Fix: effectivePrice now uses max(bid, LTP) for options — bid is the real exit price for BUY positions
+- [x] Bug 2: Partial booking not triggering for CRUDEOIL PE — root cause: effectivePrice was wrong (stale LTP), so it never reached partial1RPrice
+- [x] Fix: With correct bid-based effectivePrice, partial booking will trigger when premium rises to 1R level
+- [x] Bug 3: Capital ₹1.2L on ₹1L capital — root cause: portfolio exposure cap used combined capital (3 bots × ₹1L = ₹3L), so 40% < 80% passed
+- [x] Fix: Added per-bot capital cap — total trade cost (premium × qty) must NOT exceed bot's own capital
+- [x] Fix: livePrices endpoint now resolves MCX options (removed MCX_FO| skip guard)
+- [x] Fix: botRestart onTradeOpen now persists entryUnderlyingPrice to DB
+- [x] Fix: Dashboard P&L uses remaining qty (quantity - bookedQty) for unrealized P&L
+- [x] All 119 tests passing
 - [x] All 119 tests passing after fix
 - [x] Add detailed logging for Power Hour score breakdown

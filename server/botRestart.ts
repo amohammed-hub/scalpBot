@@ -119,6 +119,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     atr: number; confidence: number; status: "open" | "closed" | "cancelled";
     upstoxOrderId?: string; signalReason: string; enteredAt: Date;
     partial1RPrice: number; partial2RPrice: number;
+    entryUnderlyingPrice?: number;
   }): Promise<number> => {
     const dbInner = await getDb();
     if (!dbInner) return 0;
@@ -142,6 +143,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       enteredAt: trade.enteredAt,
       partial1RPrice: trade.partial1RPrice,
       partial2RPrice: trade.partial2RPrice,
+      entryUnderlyingPrice: trade.entryUnderlyingPrice,
     });
     return Number((result as unknown as [{ insertId: number }])[0].insertId);
   };

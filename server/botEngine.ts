@@ -1360,7 +1360,10 @@ export async function fetchFullQuote(instrumentToken: string, accessToken: strin
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
     const data = resp.data?.data?.[instrumentToken] ?? resp.data?.data?.[Object.keys(resp.data?.data ?? {})[0]];
     if (!data) return null;
-    return { ltp: data.last_price ?? 0, bid: data.depth?.buy?.[0]?.price ?? data.last_price ?? 0, ask: data.depth?.sell?.[0]?.price ?? data.last_price ?? 0 };
+    const ltp = data.last_price ?? 0;
+    const bid = data.depth?.buy?.[0]?.price ?? ltp;
+    const ask = data.depth?.sell?.[0]?.price ?? ltp;
+    return { ltp, bid, ask };
   } catch { return null; }
 }
 
@@ -2045,8 +2048,12 @@ async function tick(
       const isPaperToken = realOptToken.startsWith("PAPER_OPT|");
       const optQuote = isPaperToken ? null : await fetchFullQuote(realOptToken, state.accessToken);
       if (optQuote && optQuote.ltp > 0) {
-        effectivePrice = optQuote.ltp;
-        state.optionPremiumPrice = optQuote.ltp; // update for Dashboard display
+        // For options we hold (BUY direction): the exit price is the BID (what we can sell at).
+        // Use bid when available and > 0; if bid is significantly higher than LTP (illiquid option),
+        // prefer bid as it represents the real market value for exit.
+        const bestExitPrice = optQuote.bid > 0 ? Math.max(optQuote.bid, optQuote.ltp) : optQuote.ltp;
+        effectivePrice = bestExitPrice;
+        state.optionPremiumPrice = bestExitPrice; // update for Dashboard display
       } else {
         // fetchFullQuote failed — fall back to delta approximation instead of using underlying price
         const entryPremium = state.openTrade.entryPrice;
@@ -2703,10 +2710,20 @@ async function tick(
     // Safety cap: max quantity such that total premium outlay <= 2x risk amount
     const maxQtyByCost = Math.floor((riskAmount * 2) / optionPremiumForSizing / lotSize) * lotSize;
     quantity = Math.min(quantity, Math.max(lotSize, maxQtyByCost));
+    // Per-bot capital cap: total trade cost must NOT exceed bot's own capital
+    const maxQtyByCapital = Math.floor(state.capital / optionPremiumForSizing / lotSize) * lotSize;
+    if (maxQtyByCapital > 0) {
+      quantity = Math.min(quantity, maxQtyByCapital);
+    }
   } else {
     const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
     const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
     quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
+    // Per-bot capital cap for non-options: total trade cost must NOT exceed bot's own capital
+    const maxQtyByCapital = Math.floor(state.capital / signal.entryPrice / lotSize) * lotSize;
+    if (maxQtyByCapital > 0) {
+      quantity = Math.min(quantity, maxQtyByCapital);
+    }
   }
 
   // ── v3 Risk Gate: Portfolio exposure cap (80% of combined capital) ──────────

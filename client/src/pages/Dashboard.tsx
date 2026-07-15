@@ -2852,8 +2852,8 @@ export default function Dashboard() {
                     }
                     const livePnl = t.status === "open" && liveEffectivePrice > 0
                       ? t.direction === "BUY"
-                        ? (liveEffectivePrice - t.entryPrice) * t.quantity
-                        : (t.entryPrice - liveEffectivePrice) * t.quantity
+                        ? (liveEffectivePrice - t.entryPrice) * (t.quantity - (t.bookedQty ?? 0))
+                        : (t.entryPrice - liveEffectivePrice) * (t.quantity - (t.bookedQty ?? 0))
                       : t.pnl;
                     return (
                       <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
