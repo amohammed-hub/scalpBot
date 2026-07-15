@@ -272,21 +272,36 @@ export async function executeKillSwitch(
     // Close open trade at market
     if (bot.openTrade) {
       const trade = bot.openTrade;
-      // For options trades, use the current option premium (not underlying spot) for exit P&L
-      const exitPrice = trade.isIndexOptions && bot.optionPremiumPrice
-        ? bot.optionPremiumPrice
-        : (bot.lastPrice || trade.entryPrice);
+      // For options trades: try to get real bid price from Upstox, fall back to optionPremiumPrice
+      let exitPrice = 0;
+      if (trade.isIndexOptions) {
+        // Try fetching real quote with bid price
+        if (bot.accessToken && (bot as any).optionTradeToken && !(bot as any).optionTradeToken.startsWith("PAPER_OPT|")) {
+          try {
+            const { fetchFullQuote } = await import("./botEngine");
+            const q = await fetchFullQuote((bot as any).optionTradeToken, bot.accessToken);
+            if (q && q.ltp > 0) exitPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+          } catch { /* non-fatal */ }
+        }
+        // Fallback to in-memory optionPremiumPrice (which is now bid-based from tick cycle)
+        if (exitPrice === 0 && bot.optionPremiumPrice && bot.optionPremiumPrice > 0) {
+          exitPrice = bot.optionPremiumPrice;
+        }
+        // Last resort: entry price (don't use underlying spot for options!)
+        if (exitPrice === 0) exitPrice = trade.entryPrice;
+      } else {
+        exitPrice = bot.lastPrice || trade.entryPrice;
+      }
 
       if (trade.mode === "live" && bot.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
         await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, trade.quantity);
       }
 
+      const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
       const remainingPnl = trade.direction === "BUY"
-        ? (exitPrice - trade.entryPrice) * trade.quantity
-        : (trade.entryPrice - exitPrice) * trade.quantity;
-
-      // Include already-booked partial profits in total P&L
+        ? (exitPrice - trade.entryPrice) * remainingQty
+        : (trade.entryPrice - exitPrice) * remainingQty;
       const pnl = remainingPnl + (trade.bookedPnl ?? 0);
       await onTradeClose(trade.dbId, exitPrice, pnl, "Kill Switch — Emergency Close");
       bot.openTrade = null;

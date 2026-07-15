@@ -688,7 +688,7 @@ export const appRouter = router({
               if (exitPx === 0 && accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
                 try {
                   const q = await fetchFullQuote(optionTradeToken, accessToken);
-                  if (q && q.ltp > 0) exitPx = q.ltp;
+                  if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
                 } catch { /* non-fatal */ }
               }
              // Priority 3: try to resolve token from trade symbol and fetch
@@ -701,13 +701,17 @@ export const appRouter = router({
                  const stopStrikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
                  const stopExactStrike = stopStrikeMatch ? parseInt(stopStrikeMatch[1] ?? stopStrikeMatch[4] ?? "0", 10) : 0;
                   let resolvedTokenStr: string | null = null;
-                  // Try specific strike resolution first
-                  if (stopExactStrike > 0 && !isMcx) {
+                  // Try specific strike resolution first (including MCX)
+                  if (stopExactStrike > 0 && isMcx) {
+                    const underlying = botState?.instrumentToken ?? "";
+                    const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
+                    resolvedTokenStr = resolved?.token ?? null;
+                  } else if (stopExactStrike > 0) {
                     const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
                     resolvedTokenStr = await resolveSpecificOptionToken(underlying, optType, stopExactStrike, accessToken);
                   }
                   // Fallback to ATM resolution
-                  if (!resolvedTokenStr && isMcx) {
+                  if (!resolvedTokenStr && isMcx && stopExactStrike === 0) {
                     const underlying = botState?.instrumentToken ?? "";
                     const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
                     resolvedTokenStr = resolved?.token ?? null;
@@ -718,7 +722,7 @@ export const appRouter = router({
                   }
                   if (resolvedTokenStr) {
                     const q = await fetchFullQuote(resolvedTokenStr, accessToken);
-                    if (q && q.ltp > 0) exitPx = q.ltp;
+                    if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
                   }
                 } catch { /* non-fatal */ }
               }
@@ -1488,10 +1492,68 @@ export const appRouter = router({
         const openTrades = await db.select().from(tradeLog).where(whereClause);
         const now = new Date();
         for (const t of openTrades) {
+          // For options: try to get real exit price from Upstox
+          const isOption = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE");
+          let exitPx = t.entryPrice; // fallback
+          if (isOption) {
+            // Try to get access token from the session's bot state or credentials
+            const botState = getBotState(t.sessionToken);
+            const accessToken = (botState as any)?.accessToken ?? null;
+            const optionTradeToken = (botState as any)?.optionTradeToken ?? null;
+            // Priority 1: in-memory optionPremiumPrice (already bid-based)
+            if (botState?.optionPremiumPrice && botState.optionPremiumPrice > 0) {
+              exitPx = botState.optionPremiumPrice;
+            }
+            // Priority 2: fetch real quote
+            if (exitPx === t.entryPrice && accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
+              try {
+                const q = await fetchFullQuote(optionTradeToken, accessToken);
+                if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+              } catch { /* non-fatal */ }
+            }
+            // Priority 3: resolve from symbol
+            if (exitPx === t.entryPrice && accessToken) {
+              try {
+                const sym = ((t as any).symbolLabel ?? t.symbol ?? "").toUpperCase();
+                const isMcx = sym.includes("CRUDE") || sym.includes("GOLD") || sym.includes("SILVER") || sym.includes("NATGAS");
+                const optType: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
+                const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
+                const exactStrike = strikeMatch ? parseInt(strikeMatch[1] ?? strikeMatch[4] ?? "0", 10) : 0;
+                let resolvedToken: string | null = null;
+                if (isMcx) {
+                  const underlying = botState?.instrumentToken ?? "";
+                  const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
+                  resolvedToken = resolved?.token ?? null;
+                } else if (exactStrike > 0) {
+                  const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                  resolvedToken = await resolveSpecificOptionToken(underlying, optType, exactStrike, accessToken);
+                }
+                if (!resolvedToken) {
+                  const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                  const resolved = await resolveAtmOptionToken(underlying, optType, accessToken);
+                  resolvedToken = resolved?.token ?? null;
+                }
+                if (resolvedToken) {
+                  const q = await fetchFullQuote(resolvedToken, accessToken);
+                  if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                }
+              } catch { /* non-fatal */ }
+            }
+          } else {
+            // Non-options: use bot's lastPrice if available
+            const botState = getBotState(t.sessionToken);
+            if (botState?.lastPrice && botState.lastPrice > 0) exitPx = botState.lastPrice;
+          }
+          const remainingQty = t.quantity - (t.bookedQty ?? 0);
+          const remainingPnl = t.direction === "BUY"
+            ? (exitPx - t.entryPrice) * remainingQty
+            : (t.entryPrice - exitPx) * remainingQty;
+          const pnl = remainingPnl + (t.bookedPnl ?? 0);
           await db.update(tradeLog).set({
             status: "closed",
-            exitPrice: t.entryPrice,
-            pnl: 0,
+            exitPrice: exitPx,
+            pnl,
+            pnlPct: (t.quantity * t.entryPrice) > 0 ? (pnl / (t.quantity * t.entryPrice)) * 100 : 0,
             exitReason: "Manual cleanup — force-closed",
             exitedAt: now,
           }).where(eq(tradeLog.id, t.id));
@@ -2118,7 +2180,7 @@ export const appRouter = router({
               if (exitPx === 0 && accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
                 try {
                   const q = await fetchFullQuote(optionTradeToken, accessToken);
-                  if (q && q.ltp > 0) exitPx = q.ltp;
+                  if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
                 } catch { /* non-fatal */ }
               }
               if (exitPx === 0 && accessToken) {
@@ -2129,20 +2191,24 @@ export const appRouter = router({
                   // Extract exact strike
                   const stopStrikeMatch2 = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
                   const stopExactStrike2 = stopStrikeMatch2 ? parseInt(stopStrikeMatch2[1] ?? stopStrikeMatch2[4] ?? "0", 10) : 0;
-                  // Try specific strike resolution first
-                  if (stopExactStrike2 > 0 && !isMcx) {
-                    const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
-                    const resolvedToken = await resolveSpecificOptionToken(underlying, optType, stopExactStrike2, accessToken);
-                    if (resolvedToken) { const q = await fetchFullQuote(resolvedToken, accessToken); if (q && q.ltp > 0) exitPx = q.ltp; }
-                  }
-                  if (exitPx === 0 && isMcx) {
+                  // Try specific strike resolution first (including MCX)
+                  if (stopExactStrike2 > 0 && isMcx) {
                     const underlying = botState?.instrumentToken ?? "";
                     const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
-                    if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.ltp; }
+                    if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp; }
+                  } else if (stopExactStrike2 > 0) {
+                    const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                    const resolvedToken = await resolveSpecificOptionToken(underlying, optType, stopExactStrike2, accessToken);
+                    if (resolvedToken) { const q = await fetchFullQuote(resolvedToken, accessToken); if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp; }
+                  }
+                  if (exitPx === 0 && isMcx && stopExactStrike2 === 0) {
+                    const underlying = botState?.instrumentToken ?? "";
+                    const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
+                    if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp; }
                   } else if (exitPx === 0) {
                     const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
                     const resolved = await resolveAtmOptionToken(underlying, optType, accessToken);
-                    if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.ltp; }
+                    if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp; }
                   }
                 } catch { /* non-fatal */ }
               }

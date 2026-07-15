@@ -724,6 +724,15 @@
 - [x] Fix: livePrices endpoint now resolves MCX options (removed MCX_FO| skip guard)
 - [x] Fix: botRestart onTradeOpen now persists entryUnderlyingPrice to DB
 - [x] Fix: Dashboard P&L uses remaining qty (quantity - bookedQty) for unrealized P&L
+
+## Complete Exit Path Audit — ALL paths now use max(bid, LTP) for options
+- [x] bot.stop (primary): fetchFullQuote now returns max(bid, LTP) instead of just LTP
+- [x] bot.stopSecondary (slots): same fix applied
+- [x] killSwitch (emergency close): now fetches real quote with bid, falls back to optionPremiumPrice, never uses underlying spot
+- [x] closeAllOpen: now fetches real option price instead of using entryPrice (which gave ₹0 P&L)
+- [x] MCX resolution enabled in all stop paths (removed !isMcx guard)
+- [x] All exit paths use remainingQty (quantity - bookedQty) for P&L calculation
+- [x] All 119 tests passing
 - [x] All 119 tests passing
 - [x] All 119 tests passing after fix
 - [x] Add detailed logging for Power Hour score breakdown
