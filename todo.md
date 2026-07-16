@@ -799,3 +799,15 @@
 - [x] Request admin password (ADMIN_PASSWORD) — set
 - [x] Request admin password (ADMIN_PASSWORD) — set
 - [x] Admin OTP bypass: allow admin number to login with fixed code 000000 without Twilio SMS
+
+## Admin Panel Integration into Dashboard
+- [x] Add "Admin" nav item in Dashboard sidebar (visible only when user.role === 'admin')
+- [x] Create AdminPanel component with tabs: Users, Subscriptions, Activity
+- [x] Users tab: list all registered users with mobile, name, role, last login, grant/revoke buttons
+- [x] Subscriptions tab: all subscriptions with plan, status, expiry, amount paid
+- [x] Stats cards: total revenue, active paid, trial users (integrated at top of admin panel)
+- [x] Activity tab: user bot sessions, trade counts, daily P&L per user
+- [x] Remove separate /admin route from App.tsx
+- [x] Admin endpoints accept scalpbot_auth cookie (role=admin) — no separate admin login needed
+- [x] All TypeScript errors fixed (removed _verifyAdmin placeholder)
+- [x] All 122 tests passing

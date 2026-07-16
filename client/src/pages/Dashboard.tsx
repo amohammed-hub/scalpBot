@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { AdminPanel } from "@/components/AdminPanel";
 import { useLocation, Link } from "wouter";
 import QRModal from "@/components/QRModal";
 import {
@@ -183,6 +184,7 @@ function HealthDot({
 export default function Dashboard() {
   const [, navigate] = useLocation();
   const [qrOpen, setQrOpen] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
   const sessionToken = getSessionToken();
 
   // ── Mobile Auth Check ──────────────────────────────────────────────────────
@@ -920,6 +922,14 @@ export default function Dashboard() {
           <span className="text-base">📊</span>
           Precision Verify
         </button>
+        {/* Admin Panel — only visible to admin users */}
+        {meQuery.data?.role === "admin" && (
+          <button onClick={() => setShowAdminPanel(!showAdminPanel)}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors ${showAdminPanel ? "bg-red-500/20 text-red-400 border border-red-500/30" : "text-red-400 hover:bg-red-500/10 border border-red-500/20"}`}>
+            <Shield className="w-4 h-4" />
+            Admin Panel
+          </button>
+        )}
         <div className="mt-auto px-2 pb-2 space-y-2">
           {/* User Info */}
           {meQuery.data && (
@@ -983,6 +993,9 @@ export default function Dashboard() {
       </aside>
 
       {/* Main */}
+      {showAdminPanel && meQuery.data?.role === "admin" ? (
+        <AdminPanel onClose={() => setShowAdminPanel(false)} />
+      ) : (
       <main className="flex-1 overflow-auto p-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
@@ -3158,6 +3171,7 @@ export default function Dashboard() {
           </div>
         </div>
       </main>
+      )}
 
       {/* QR Modal */}
       <QRModal open={qrOpen} onClose={() => setQrOpen(false)} />

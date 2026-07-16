@@ -3479,6 +3479,7 @@ export const appRouter = router({
   // Admin Panel
   // ══════════════════════════════════════════════════════════════════════════
   admin: router({
+
     login: publicProcedure
       .input(z.object({ password: z.string() }))
       .mutation(async ({ input, ctx }) => {
@@ -3506,6 +3507,14 @@ export const appRouter = router({
 
     verify: publicProcedure
       .query(async ({ ctx }) => {
+        // Accept scalpbot_auth cookie with role=admin OR legacy scalpbot_admin cookie
+        const authToken = ctx.req?.cookies?.scalpbot_auth;
+        if (authToken) {
+          try {
+            const decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as { role?: string };
+            if (decoded.role === "admin") return { authenticated: true };
+          } catch {}
+        }
         const token = ctx.req?.cookies?.scalpbot_admin;
         if (!token) return { authenticated: false };
         try {
@@ -3519,24 +3528,40 @@ export const appRouter = router({
     users: publicProcedure
       .query(async ({ ctx }) => {
         // Verify admin
-        const token = ctx.req?.cookies?.scalpbot_admin;
-        if (!token) throw new Error("Unauthorized");
-        try {
-          jwt.verify(token, process.env.JWT_SECRET || "fallback-secret");
-        } catch {
-          throw new Error("Unauthorized");
+        // Accept scalpbot_auth (role=admin) OR scalpbot_admin cookie
+        const authToken = ctx.req?.cookies?.scalpbot_auth;
+        let isAdminVerified = false;
+        if (authToken) {
+          try {
+            const decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as { role?: string };
+            if (decoded.role === "admin") isAdminVerified = true;
+          } catch {}
+        }
+        if (!isAdminVerified) {
+          const token = ctx.req?.cookies?.scalpbot_admin;
+          if (!token) throw new Error("Unauthorized");
+          try { jwt.verify(token, process.env.JWT_SECRET || "fallback-secret"); }
+          catch { throw new Error("Unauthorized"); }
         }
         return getAllAppUsers();
       }),
 
     subscriptions: publicProcedure
       .query(async ({ ctx }) => {
-        const token = ctx.req?.cookies?.scalpbot_admin;
-        if (!token) throw new Error("Unauthorized");
-        try {
-          jwt.verify(token, process.env.JWT_SECRET || "fallback-secret");
-        } catch {
-          throw new Error("Unauthorized");
+        // Accept scalpbot_auth (role=admin) OR scalpbot_admin cookie
+        const authToken = ctx.req?.cookies?.scalpbot_auth;
+        let isAdminVerified = false;
+        if (authToken) {
+          try {
+            const decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as { role?: string };
+            if (decoded.role === "admin") isAdminVerified = true;
+          } catch {}
+        }
+        if (!isAdminVerified) {
+          const token = ctx.req?.cookies?.scalpbot_admin;
+          if (!token) throw new Error("Unauthorized");
+          try { jwt.verify(token, process.env.JWT_SECRET || "fallback-secret"); }
+          catch { throw new Error("Unauthorized"); }
         }
         return getAllSubscriptions();
       }),
@@ -3548,12 +3573,20 @@ export const appRouter = router({
         days: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const token = ctx.req?.cookies?.scalpbot_admin;
-        if (!token) throw new Error("Unauthorized");
-        try {
-          jwt.verify(token, process.env.JWT_SECRET || "fallback-secret");
-        } catch {
-          throw new Error("Unauthorized");
+        // Accept scalpbot_auth (role=admin) OR scalpbot_admin cookie
+        const authToken = ctx.req?.cookies?.scalpbot_auth;
+        let isAdminVerified = false;
+        if (authToken) {
+          try {
+            const decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as { role?: string };
+            if (decoded.role === "admin") isAdminVerified = true;
+          } catch {}
+        }
+        if (!isAdminVerified) {
+          const token = ctx.req?.cookies?.scalpbot_admin;
+          if (!token) throw new Error("Unauthorized");
+          try { jwt.verify(token, process.env.JWT_SECRET || "fallback-secret"); }
+          catch { throw new Error("Unauthorized"); }
         }
         return adminGrantSubscription({
           sessionToken: input.sessionToken,
@@ -3565,24 +3598,40 @@ export const appRouter = router({
     revokeAccess: publicProcedure
       .input(z.object({ sessionToken: z.string() }))
       .mutation(async ({ input, ctx }) => {
-        const token = ctx.req?.cookies?.scalpbot_admin;
-        if (!token) throw new Error("Unauthorized");
-        try {
-          jwt.verify(token, process.env.JWT_SECRET || "fallback-secret");
-        } catch {
-          throw new Error("Unauthorized");
+        // Accept scalpbot_auth (role=admin) OR scalpbot_admin cookie
+        const authToken = ctx.req?.cookies?.scalpbot_auth;
+        let isAdminVerified = false;
+        if (authToken) {
+          try {
+            const decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as { role?: string };
+            if (decoded.role === "admin") isAdminVerified = true;
+          } catch {}
+        }
+        if (!isAdminVerified) {
+          const token = ctx.req?.cookies?.scalpbot_admin;
+          if (!token) throw new Error("Unauthorized");
+          try { jwt.verify(token, process.env.JWT_SECRET || "fallback-secret"); }
+          catch { throw new Error("Unauthorized"); }
         }
         return adminRevokeAccess(input.sessionToken);
       }),
 
     stats: publicProcedure
       .query(async ({ ctx }) => {
-        const token = ctx.req?.cookies?.scalpbot_admin;
-        if (!token) throw new Error("Unauthorized");
-        try {
-          jwt.verify(token, process.env.JWT_SECRET || "fallback-secret");
-        } catch {
-          throw new Error("Unauthorized");
+        // Accept scalpbot_auth (role=admin) OR scalpbot_admin cookie
+        const authToken = ctx.req?.cookies?.scalpbot_auth;
+        let isAdminVerified = false;
+        if (authToken) {
+          try {
+            const decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as { role?: string };
+            if (decoded.role === "admin") isAdminVerified = true;
+          } catch {}
+        }
+        if (!isAdminVerified) {
+          const token = ctx.req?.cookies?.scalpbot_admin;
+          if (!token) throw new Error("Unauthorized");
+          try { jwt.verify(token, process.env.JWT_SECRET || "fallback-secret"); }
+          catch { throw new Error("Unauthorized"); }
         }
         const db = await getDb();
         if (!db) return { totalUsers: 0, activeSubscriptions: 0, totalRevenue: 0, trialUsers: 0 };
@@ -3614,12 +3663,20 @@ export const appRouter = router({
 
     userActivity: publicProcedure
       .query(async ({ ctx }) => {
-        const token = ctx.req?.cookies?.scalpbot_admin;
-        if (!token) throw new Error("Unauthorized");
-        try {
-          jwt.verify(token, process.env.JWT_SECRET || "fallback-secret");
-        } catch {
-          throw new Error("Unauthorized");
+        // Accept scalpbot_auth (role=admin) OR scalpbot_admin cookie
+        const authToken = ctx.req?.cookies?.scalpbot_auth;
+        let isAdminVerified = false;
+        if (authToken) {
+          try {
+            const decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as { role?: string };
+            if (decoded.role === "admin") isAdminVerified = true;
+          } catch {}
+        }
+        if (!isAdminVerified) {
+          const token = ctx.req?.cookies?.scalpbot_admin;
+          if (!token) throw new Error("Unauthorized");
+          try { jwt.verify(token, process.env.JWT_SECRET || "fallback-secret"); }
+          catch { throw new Error("Unauthorized"); }
         }
         const db = await getDb();
         if (!db) return [];
