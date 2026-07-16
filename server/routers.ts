@@ -3585,6 +3585,57 @@ export const appRouter = router({
         }
         return { success: true };
       }),
+
+    userActivity: publicProcedure
+      .query(async ({ ctx }) => {
+        const token = ctx.req?.cookies?.scalpbot_admin;
+        if (!token) throw new Error("Unauthorized");
+        try {
+          jwt.verify(token, process.env.JWT_SECRET || "fallback-secret");
+        } catch {
+          throw new Error("Unauthorized");
+        }
+        const db = await getDb();
+        if (!db) return [];
+
+        const sessions = await db.select({
+          sessionToken: botSessions.sessionToken,
+          status: botSessions.status,
+          mode: botSessions.mode,
+          instrumentSymbol: botSessions.instrumentSymbol,
+          tradesCount: botSessions.tradesCount,
+          dailyPnl: botSessions.dailyPnl,
+          startedAt: botSessions.startedAt,
+        }).from(botSessions);
+
+        const tradeCounts = await db.select({
+          sessionToken: tradeLog.sessionToken,
+          totalTrades: count(),
+        }).from(tradeLog).groupBy(tradeLog.sessionToken);
+
+        const tradeMap = new Map<string, number>(tradeCounts.map((t: any) => [t.sessionToken, t.totalTrades as number]));
+
+        const userActivity: Record<string, { sessionToken: string; bots: any[]; totalTrades: number }> = {};
+        for (const s of sessions) {
+          if (!userActivity[s.sessionToken]) {
+            userActivity[s.sessionToken] = {
+              sessionToken: s.sessionToken,
+              bots: [],
+              totalTrades: tradeMap.get(s.sessionToken) ?? 0,
+            };
+          }
+          userActivity[s.sessionToken].bots.push({
+            status: s.status,
+            mode: s.mode,
+            symbol: s.instrumentSymbol,
+            tradesCount: s.tradesCount ?? 0,
+            dailyPnl: s.dailyPnl ?? 0,
+            startedAt: s.startedAt,
+          });
+        }
+
+        return Object.values(userActivity);
+      }),
   }),
 });
 export type AppRouter = typeof appRouter;

@@ -793,7 +793,7 @@
 - [x] Admin panel: Subscription management (grant/extend/revoke access)
 - [x] Admin panel: Revenue dashboard (total revenue, active subscribers, MRR)
 - [x] Admin panel: Payment history (all Razorpay payments with order IDs)
-- [ ] Admin panel: User activity (bots running, trade counts) — next iteration
+- [x] Admin panel: User activity (bots running, trade counts, daily P&L)
 - [x] Admin panel: Kill access (instantly revoke user)
 - [x] Request Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER) — set
 - [x] Request admin password (ADMIN_PASSWORD) — set

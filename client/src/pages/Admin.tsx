@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Loader2, Shield, Users, CreditCard, TrendingUp, Ban, Gift, LogOut } from "lucide-react";
+import { Loader2, Shield, Users, CreditCard, TrendingUp, Ban, Gift, LogOut, Activity } from "lucide-react";
 
 export default function Admin() {
   const [password, setPassword] = useState("");
@@ -69,6 +69,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const statsQuery = trpc.admin.stats.useQuery();
   const usersQuery = trpc.admin.users.useQuery();
   const subsQuery = trpc.admin.subscriptions.useQuery();
+  const activityQuery = trpc.admin.userActivity.useQuery();
   const [grantModal, setGrantModal] = useState<{ sessionToken: string; mobile: string } | null>(null);
   const [grantPlan, setGrantPlan] = useState<"trial" | "monthly" | "quarterly" | "half_yearly" | "yearly">("monthly");
   const [grantDays, setGrantDays] = useState("");
@@ -240,6 +241,62 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       </div>
 
       {/* Grant Modal */}
+      {/* User Activity Table */}
+      <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden mb-6">
+        <div className="px-6 py-4 border-b border-white/10">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Activity className="w-5 h-5 text-blue-400" /> User Activity ({activityQuery.data?.length ?? 0})
+          </h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-white/5">
+              <tr>
+                <th className="text-left px-4 py-3 text-white/50 font-medium">Session</th>
+                <th className="text-left px-4 py-3 text-white/50 font-medium">Bots</th>
+                <th className="text-left px-4 py-3 text-white/50 font-medium">Running</th>
+                <th className="text-left px-4 py-3 text-white/50 font-medium">Total Trades</th>
+                <th className="text-left px-4 py-3 text-white/50 font-medium">Today P&L</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {activityQuery.data?.map((ua: any) => {
+                const runningBots = ua.bots.filter((b: any) => b.status === "running");
+                const totalDailyPnl = ua.bots.reduce((sum: number, b: any) => sum + (b.dailyPnl ?? 0), 0);
+                return (
+                  <tr key={ua.sessionToken} className="hover:bg-white/5">
+                    <td className="px-4 py-3 font-mono text-xs text-white/50">{ua.sessionToken.slice(0, 8)}...</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {ua.bots.map((b: any, i: number) => (
+                          <span key={i} className={`px-1.5 py-0.5 rounded text-[10px] ${b.status === "running" ? "bg-green-500/20 text-green-300" : "bg-white/10 text-white/40"}`}>
+                            {b.symbol} ({b.mode})
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded text-xs ${runningBots.length > 0 ? "bg-green-500/20 text-green-300" : "bg-white/10 text-white/40"}`}>
+                        {runningBots.length}/{ua.bots.length}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-white/70">{ua.totalTrades}</td>
+                    <td className={`px-4 py-3 font-medium ${totalDailyPnl > 0 ? "text-green-400" : totalDailyPnl < 0 ? "text-red-400" : "text-white/40"}`}>
+                      {totalDailyPnl > 0 ? "+" : ""}₹{totalDailyPnl.toFixed(0)}
+                    </td>
+                  </tr>
+                );
+              })}
+              {(!activityQuery.data || activityQuery.data.length === 0) && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-white/30">No bot activity yet</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {grantModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
           <div className="bg-[#1a1f2e] border border-white/10 rounded-xl p-6 w-full max-w-sm space-y-4">
