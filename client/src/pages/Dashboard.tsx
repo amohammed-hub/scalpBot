@@ -325,9 +325,6 @@ export default function Dashboard() {
   const [showScanner, setShowScanner] = useState<number | null>(null);
   const [scanEnabled, setScanEnabled] = useState(false);
   const [configCollapsed, setConfigCollapsed] = useState(false);
-  const [hostingBannerDismissed, setHostingBannerDismissed] = useState(() => {
-    return localStorage.getItem("hosting-banner-dismissed") === "true";
-  });
   const { data: scanData, isLoading: scanLoading, refetch: refetchScan } = trpc.scanner.smartScan.useQuery(
     { sessionToken },
     { enabled: scanEnabled, staleTime: 30000, refetchOnWindowFocus: false }
@@ -1045,23 +1042,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Reserved Hosting Upgrade Banner */}
-        {!hostingBannerDismissed && (botStatus?.status === "running" || allBots?.some((b: any) => b.status === "running")) && (
-          <div className="mb-4 flex items-center gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 text-amber-300 text-sm">
-            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
-            <span className="flex-1">
-              <strong>Autoscale hosting may cause gaps.</strong> Serverless instances spin down to 0 when idle, causing 10-30s cold starts that can miss signals.
-              Consider upgrading to <strong>Reserved hosting</strong> or adding an external keep-alive ping (e.g. UptimeRobot every 5 min) for uninterrupted bot operation.
-            </span>
-            <button
-              onClick={() => { setHostingBannerDismissed(true); localStorage.setItem("hosting-banner-dismissed", "true"); }}
-              className="shrink-0 p-1 rounded hover:bg-amber-500/20 transition-colors"
-              title="Dismiss"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
 
         {/* Market Status Badge + Auto Square-Off Warning */}
         {(() => {
