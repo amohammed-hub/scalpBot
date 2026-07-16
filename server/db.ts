@@ -455,7 +455,7 @@ export async function sendOtp(mobile: string): Promise<{ success: boolean; messa
  * Verify OTP code for a mobile number.
  * Returns the app_user record (creates one if first-time).
  */
-export async function verifyOtp(mobile: string, code: string): Promise<{ success: boolean; user?: typeof appUsers.$inferSelect; message?: string }> {
+export async function verifyOtp(mobile: string, code: string, clientSessionToken?: string): Promise<{ success: boolean; user?: typeof appUsers.$inferSelect; message?: string }> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
@@ -484,7 +484,7 @@ export async function verifyOtp(mobile: string, code: string): Promise<{ success
 
   if (userRows.length === 0) {
     // Create new user with a session token
-    const sessionToken = crypto.randomUUID();
+    const sessionToken = clientSessionToken || crypto.randomUUID();
     // Auto-assign admin role if this is the admin's mobile number
     const isAdmin = ENV.adminMobile && (mobile === ENV.adminMobile || mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""));
     await db.insert(appUsers).values({
@@ -498,10 +498,13 @@ export async function verifyOtp(mobile: string, code: string): Promise<{ success
     // Update last login
     // Also promote to admin if this is the admin's mobile (handles case where user registered before admin role was set up)
     const isAdmin = ENV.adminMobile && (mobile === ENV.adminMobile || mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""));
+    // If client provides a sessionToken, update the user's record to match
+    // This ensures credentials/trades stored under the localStorage token stay linked
     await db.update(appUsers).set({
       isVerified: true,
       lastLoginAt: new Date(),
       ...(isAdmin && userRows[0].role !== "admin" ? { role: "admin" as const } : {}),
+      ...(clientSessionToken ? { sessionToken: clientSessionToken } : {}),
     }).where(eq(appUsers.id, userRows[0].id));
     userRows = await db.select().from(appUsers).where(eq(appUsers.id, userRows[0].id)).limit(1);
   }

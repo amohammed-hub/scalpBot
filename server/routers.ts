@@ -2099,10 +2099,12 @@ export const appRouter = router({
         // Load access token for BOTH paper and live modes (paper uses it for real market data)
         let accessToken: string | null = null;
         {
+          // Slot bots (e.g. "abc-slot1") store credentials under the base token "abc"
+          const baseTokenForCreds = input.sessionToken.replace(/-slot[12]$/, "");
           const creds = await db
             .select()
             .from(upstoxCredentials)
-            .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+            .where(eq(upstoxCredentials.sessionToken, baseTokenForCreds))
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken) {
             accessToken = creds[0].accessToken;
@@ -3438,13 +3440,14 @@ export const appRouter = router({
       .input(z.object({
         mobile: z.string().min(10).max(15),
         code: z.string().length(6),
+        sessionToken: z.string().optional(), // Client's localStorage token — update user record to match
       }))
       .mutation(async ({ input, ctx }) => {
         let mobile = input.mobile.trim();
         if (!mobile.startsWith("+")) {
           mobile = "+91" + mobile;
         }
-        const result = await verifyOtp(mobile, input.code);
+        const result = await verifyOtp(mobile, input.code, input.sessionToken);
         if (!result.success || !result.user) {
           return { success: false, message: result.message ?? "Verification failed" };
         }

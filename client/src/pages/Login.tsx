@@ -40,10 +40,8 @@ export default function Login() {
   const verifyOtpMutation = trpc.mobileAuth.verifyOtp.useMutation({
     onSuccess: (data) => {
       if (data.success && data.user) {
-        // Store session token in localStorage for backward compatibility
-        if (data.user.sessionToken) {
-          localStorage.setItem("scalpbot_session", data.user.sessionToken);
-        }
+        // Do NOT overwrite localStorage sessionToken — the server was updated to match it.
+        // The localStorage token is the identity key linked to credentials, trades, etc.
         // Store auth token for API calls
         if (data.token) {
           localStorage.setItem("scalpbot_auth_token", data.token);
@@ -83,7 +81,9 @@ export default function Login() {
       toast.error("Enter the 6-digit OTP");
       return;
     }
-    verifyOtpMutation.mutate({ mobile, code: otp });
+    // Pass the current localStorage sessionToken so the server updates the user record to match
+    const currentToken = localStorage.getItem("scalpbot_session") || undefined;
+    verifyOtpMutation.mutate({ mobile, code: otp, sessionToken: currentToken });
   };
 
   const handleSetName = () => {
