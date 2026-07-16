@@ -272,7 +272,11 @@ export async function restartRunningBots(): Promise<void> {
       const tradeDate = enteredAt.toISOString().slice(0, 10);
       const todayDate = new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
       const isStale = tradeDate < todayDate;
-      const isMCX = (t.instrumentToken ?? "").startsWith("MCX");
+      // Check if trade is MCX: either instrumentToken starts with MCX, or symbol contains MCX commodity names
+      // (paper trades use PAPER_OPT| prefix, so we also check the symbol)
+      const mcxCommodities = ["CRUDEOIL", "CRUDE", "GOLD", "SILVER", "NATURALGAS", "COPPER", "ZINC", "LEAD", "ALUMINIUM", "NICKEL"];
+      const symbolUpper = (t.symbol ?? "").toUpperCase();
+      const isMCX = (t.instrumentToken ?? "").startsWith("MCX") || mcxCommodities.some(c => symbolUpper.includes(c));
       const marketClosed = isMCX ? (istMin >= 23 * 60 + 30 || istMin < 9 * 60) : (istMin >= 15 * 60 + 30 || istMin < 9 * 60 + 15);
       if (isStale || marketClosed) {
         // Respect carry-forward flag: if trade is marked for carry-forward, skip closing it
@@ -286,17 +290,21 @@ export async function restartRunningBots(): Promise<void> {
         const bookedPnl = t.bookedPnl ?? 0;
         try {
           // Look up access token for this trade's session
+          // BUG 19 fix: slot bots store creds under base token (strip -slot1/-slot2)
+          const baseSessionToken = t.sessionToken.replace(/-slot[12]$/, "");
           const credRow = await db.select().from(upstoxCredentials)
-            .where(eq(upstoxCredentials.sessionToken, t.sessionToken))
+            .where(eq(upstoxCredentials.sessionToken, baseSessionToken))
             .limit(1);
           const token = credRow[0]?.accessToken;
           if (token && t.instrumentToken) {
-            // BUG 17 fix: For options trades, the instrumentToken might be the underlying index.
-            // Skip fetching if it's an index token (would give index price, not option premium).
+            // BUG 17 fix: For options trades, the instrumentToken might be the underlying index
+            // or a fake PAPER_OPT token. Skip fetching in both cases.
+            const isPaperToken = t.instrumentToken.startsWith("PAPER_OPT|");
             const isIndexToken = t.instrumentToken.startsWith("NSE_INDEX|") || t.instrumentToken.startsWith("MCX_FO|");
             const isOptionTrade = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE");
-            if (isIndexToken && isOptionTrade) {
-              // For stale option trades, close at entry price (0 P&L on remaining) since we can't get the real option premium
+            if (isPaperToken || (isIndexToken && isOptionTrade)) {
+              // For paper/stale option trades, close at entry price (0 P&L on remaining)
+              // since we can't get the real option premium from a fake or index token
               exitPrice = t.entryPrice;
             } else {
               const quote = await fetchFullQuote(t.instrumentToken, token);

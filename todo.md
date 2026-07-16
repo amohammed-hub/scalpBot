@@ -830,3 +830,5 @@
 - [x] BUG 17: stale trade cleanup — skip index token fetch for options trades
 - [x] BUG 19: botRestart slot bot credential lookup — strip -slot1/-slot2 suffix
 - [x] BUG 20: EOD summary timezone — fixed to IST midnight
+- [x] BUG 21: MCX paper trades incorrectly closed at NSE market hours (isMCX check failed for PAPER_OPT tokens)
+- [x] BUG 19b: Stale trade cleanup also needed slot bot credential fix (strip -slot1/-slot2)
