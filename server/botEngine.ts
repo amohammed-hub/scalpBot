@@ -2594,32 +2594,10 @@ async function tick(
         emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Would buy ${wouldBuy} but option contract lookup failed. Underlying price ₹${state.lastPrice.toFixed(2)} fetched OK (token valid). Issue: no live option contracts matched for ${resolvedUnderlying}. Check: is this contract expired? Try refreshing token or restarting bot.`);
         return;
       }
-      // Paper mode with no token: use mock premium (clearly labelled)
-      emitActivity(state.sessionToken, "signal", `⚠ No Upstox token — using mock premium for paper trade (connect token in Settings for real prices)`);
-      const symFb2 = state.instrumentSymbol.toUpperCase();
-      let mockKeyFb2: string;
-      if (symFb2.includes("GOLD"))       mockKeyFb2 = ceOrPe === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
-      else if (symFb2.includes("SILVER")) mockKeyFb2 = ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
-      else if (symFb2.includes("CRUDE") || symFb2.includes("OIL")) mockKeyFb2 = ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
-      else if (symFb2.includes("NATGAS") || symFb2.includes("GAS")) mockKeyFb2 = ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
-      else if (symFb2.includes("COPPER")) mockKeyFb2 = ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
-      else if (symFb2.includes("BANK"))   mockKeyFb2 = ceOrPe === "CE" ? "BNF_CE"        : "BNF_PE";
-      else                               mockKeyFb2 = ceOrPe === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
-      const mockPremiumFb2 = mockPrices[mockKeyFb2] ?? (ceOrPe === "CE" ? 150 : 120);
-      const underlyingPxFb2 = state.lastPrice;
-      let strikeStepFb2 = 50;
-      if (symFb2.includes("GOLD")) strikeStepFb2 = 100;
-      else if (symFb2.includes("SILVER")) strikeStepFb2 = 1000;
-      else if (symFb2.includes("CRUDE") || symFb2.includes("OIL")) strikeStepFb2 = 50;
-      else if (symFb2.includes("NATGAS") || symFb2.includes("GAS")) strikeStepFb2 = 5;
-      else if (symFb2.includes("BANK")) strikeStepFb2 = 100;
-      else if (symFb2.includes("NIFTY") || symFb2.includes("FIN")) strikeStepFb2 = 50;
-      const atmStrikeFb2 = underlyingPxFb2 > 0 ? Math.round(underlyingPxFb2 / strikeStepFb2) * strikeStepFb2 : 0;
-      tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrikeFb2 || "ATM"}_${ceOrPe}`;
-      tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrikeFb2 || "ATM"}`;
-      tradeLabel = formatOptionContractLabel(state.instrumentSymbol, atmStrikeFb2 || 0, ceOrPe, resolvedExpiry);
-      optionPremiumForSizing = mockPremiumFb2;
-      state.optionPremiumPrice = mockPremiumFb2;
+      // Paper mode with no token: SKIP the trade (never use mock prices — they create fake trades)
+      console.warn(`[BotEngine] ${state.sessionToken} — No access token, cannot resolve option. Skipping trade.`);
+      emitActivity(state.sessionToken, "error", `⚠ SKIPPED: No Upstox access token — cannot get real option prices. Go to Settings → connect your Upstox account.`);
+      return;
     } else {
       tradeInstrumentToken = resolved.token;
       tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${resolved.strike}`;
@@ -2642,67 +2620,19 @@ async function tick(
     }
     } // end !optionPremiumForSizing guard
   } else if (isOptionsMode && !state.accessToken) {
-    // Paper mode with options but no access token.
-    // Try to resolve ATM option token and get real premium from Upstox public candle API.
-    // If that fails, fall back to mock premium.
-    const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
-      : state.optionType === "PE" ? "PE"
-      : signal.direction === "BUY" ? "CE" : "PE";
-    const symU2 = state.instrumentSymbol.toUpperCase();
-    let strikeStep2 = 50;
-    if (symU2.includes("GOLD")) strikeStep2 = 100;
-    else if (symU2.includes("SILVER")) strikeStep2 = 1000;
-    else if (symU2.includes("CRUDE") || symU2.includes("OIL")) strikeStep2 = 50;
-    else if (symU2.includes("NATGAS") || symU2.includes("GAS")) strikeStep2 = 5;
-    else if (symU2.includes("BANK")) strikeStep2 = 100;
-    else if (symU2.includes("NIFTY") || symU2.includes("FIN")) strikeStep2 = 50;
-    const atmStrike2 = state.lastPrice > 0 ? Math.round(state.lastPrice / strikeStep2) * strikeStep2 : 0;
-    const strikeTag2 = atmStrike2 > 0 ? ` ${atmStrike2}` : " ATM";
-    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${atmStrike2 || "ATM"}`;
-    tradeLabel = formatOptionContractLabel(state.instrumentSymbol, atmStrike2 || 0, ceOrPe, resolvedExpiry);
-    tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike2 || "ATM"}_${ceOrPe}`;
-    // Determine mock key for fallback
-    const sym2 = state.instrumentSymbol.toUpperCase();
-    let mockKey2: string;
-    if (sym2.includes("GOLD"))       mockKey2 = ceOrPe === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
-    else if (sym2.includes("SILVER")) mockKey2 = ceOrPe === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
-    else if (sym2.includes("CRUDE") || sym2.includes("OIL")) mockKey2 = ceOrPe === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
-    else if (sym2.includes("NATGAS") || sym2.includes("GAS")) mockKey2 = ceOrPe === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
-    else if (sym2.includes("COPPER")) mockKey2 = ceOrPe === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
-    else if (sym2.includes("ZINC"))   mockKey2 = ceOrPe === "CE" ? "MCX_ZINC_CE"   : "MCX_ZINC_PE";
-    else if (sym2.includes("BANK"))   mockKey2 = ceOrPe === "CE" ? "BNF_CE"        : "BNF_PE";
-    else if (sym2.includes("FIN") || sym2.includes("FINNIFTY")) mockKey2 = ceOrPe === "CE" ? "NIFTY_CE" : "NIFTY_PE";
-    else                              mockKey2 = ceOrPe === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
-    const fallbackPremium = mockPrices[mockKey2] ?? (ceOrPe === "CE" ? 150 : 120);
-    // Use mock premium as sizing basis — delta drift at exit will produce realistic P&L
-    optionPremiumForSizing = fallbackPremium;
-    state.optionPremiumPrice = fallbackPremium;
-    emitActivity(state.sessionToken, "signal", `⚠ Paper options: using mock premium ₹${fallbackPremium} for ${tradeSymbol} (no access token)`);
+    // No access token — SKIP the trade entirely (never use mock prices)
+    console.warn(`[BotEngine] ${state.sessionToken} — Options mode but no access token. Skipping trade.`);
+    emitActivity(state.sessionToken, "error", `⚠ SKIPPED: No Upstox access token — cannot resolve option contract or get real prices. Connect your account in Settings.`);
+    return;
   }
 
-  // ── ABSOLUTE SAFETY NET ─────────────────────────────────────────────────────────
-  // If isOptionsMode=true but optionPremiumForSizing is still null at this point,
-  // it means all option resolution paths were skipped (e.g. underlyingToken was null
-  // and accessToken path was skipped). Force-set from mockPrices to prevent spot price
-  // from leaking as entry price (which causes ₹24,000+ entries and absurd P&L).
+  // ── SAFETY NET: Skip if no option premium resolved ─────────────────────────────
+  // If isOptionsMode=true but optionPremiumForSizing is still null/0, skip the trade.
+  // This prevents spot price from leaking as entry price (₹24,000+ entries).
   if (isOptionsMode && !optionPremiumForSizing) {
-    const sym3 = state.instrumentSymbol.toUpperCase();
-    const ceOrPe3: "CE" | "PE" = signal.direction === "BUY" ? "CE" : "PE";
-    let mockKey3: string;
-    if (sym3.includes("BANK"))                                   mockKey3 = ceOrPe3 === "CE" ? "BNF_CE"        : "BNF_PE";
-    else if (sym3.includes("FIN") || sym3.includes("FINNIFTY")) mockKey3 = ceOrPe3 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
-    else if (sym3.includes("GOLD"))                             mockKey3 = ceOrPe3 === "CE" ? "MCX_GOLD_CE"   : "MCX_GOLD_PE";
-    else if (sym3.includes("SILVER"))                           mockKey3 = ceOrPe3 === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
-    else if (sym3.includes("CRUDE") || sym3.includes("OIL"))   mockKey3 = ceOrPe3 === "CE" ? "MCX_CRUDE_CE"  : "MCX_CRUDE_PE";
-    else if (sym3.includes("NATGAS") || sym3.includes("GAS"))  mockKey3 = ceOrPe3 === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
-    else                                                         mockKey3 = ceOrPe3 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
-    optionPremiumForSizing = mockPrices[mockKey3] ?? (ceOrPe3 === "CE" ? 150 : 120);
-    const atmStrike3 = state.lastPrice > 0 ? Math.round(state.lastPrice / 50) * 50 : 0;
-    tradeInstrumentToken = `PAPER_OPT|${state.instrumentSymbol}_${atmStrike3 || "ATM"}_${ceOrPe3}`;
-    tradeSymbol = `${state.instrumentSymbol}_${ceOrPe3}_${atmStrike3 || "ATM"}`;
-    tradeLabel = formatOptionContractLabel(state.instrumentSymbol, atmStrike3 || 0, ceOrPe3, resolvedExpiry);
-    state.optionPremiumPrice = optionPremiumForSizing;
-    emitActivity(state.sessionToken, "signal", `⚠ Safety net: using mock premium ₹${optionPremiumForSizing} for ${tradeSymbol}`);
+    console.warn(`[BotEngine] ${state.sessionToken} — Options mode but optionPremiumForSizing is null/0. Skipping trade to prevent fake entry.`);
+    emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Could not determine option premium. This usually means the option contract lookup failed. Try refreshing your Upstox token.`);
+    return;
   }
 
   // ── Position sizing ───────────────────────────────────────────────────────────────

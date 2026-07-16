@@ -345,20 +345,18 @@ export const appRouter = router({
           accessToken = creds[0].accessToken;
         }
 
-        // FALLBACK: If no credentials found by sessionToken, try to find them via user's mobile.
-        // This handles the case where token migration hasn't run yet (user didn't re-login after fix).
+        // FALLBACK: If no credentials found by sessionToken, search ALL credentials directly.
+        // Single-user system — no need to verify identity via appUsers.
         if (!accessToken) {
-          const userRow = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-          if (userRow.length > 0) {
-            // Look for credentials under ANY token — single-user system optimization
-            const allCreds = await db.select().from(upstoxCredentials).limit(10);
-            const credWithToken = allCreds.find((c: any) => !!c.accessToken);
-            if (credWithToken) {
-              accessToken = credWithToken.accessToken;
-              // Auto-migrate the credential to the current sessionToken
-              await db.update(upstoxCredentials).set({ sessionToken: input.sessionToken }).where(eq(upstoxCredentials.id, credWithToken.id));
-              console.log(`[bot.start] FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${input.sessionToken.slice(0, 8)}...`);
-            }
+          const allCreds = await db.select().from(upstoxCredentials).limit(10);
+          const credWithToken = allCreds.find((c: any) => !!c.accessToken);
+          if (credWithToken) {
+            accessToken = credWithToken.accessToken;
+            // Auto-migrate the credential to the current sessionToken
+            await db.update(upstoxCredentials).set({ sessionToken: input.sessionToken }).where(eq(upstoxCredentials.id, credWithToken.id));
+            console.log(`[bot.start] FALLBACK: Migrated credentials from ${credWithToken.sessionToken?.slice(0, 8) ?? "null"}... to ${input.sessionToken.slice(0, 8)}...`);
+          } else {
+            console.log(`[bot.start] No credentials with valid accessToken found in DB at all.`);
           }
         }
 
@@ -371,10 +369,13 @@ export const appRouter = router({
           if (!input.underlyingToken) (input as any).underlyingToken = input.instrumentToken;
         }
 
+        // REFUSE to start bot in ANY mode without access token.
+        // Mock prices create fake trades (₹85 crude, ₹280 gold) that confuse the user.
+        if (!accessToken) {
+          throw new Error("No Upstox access token found. Go to Settings → paste your Access Token or use 'Get Token Automatically'. Token expires daily — refresh it each morning before 9:15 AM.");
+        }
+
         if (input.mode === "live") {
-          if (!accessToken) {
-            throw new Error("No Upstox access token. Connect your account first.");
-          }
           // Paper-trade safety gate: require at least 3 closed paper trades before going live
           const paperTradeRows = await db
             .select({ count: count() })
@@ -2136,8 +2137,8 @@ export const appRouter = router({
               console.log(`[bot.startSecondary] FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${baseTokenForCreds.slice(0, 8)}...`);
             }
           }
-          if (input.mode === "live" && !accessToken) {
-            throw new Error("No Upstox access token. Connect your account first.");
+          if (!accessToken) {
+            throw new Error("No Upstox access token found. Go to Settings → paste your Access Token or use 'Get Token Automatically'. Token expires daily — refresh it each morning before 9:15 AM.");
           }
         }
 

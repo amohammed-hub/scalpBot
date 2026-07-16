@@ -832,4 +832,4 @@
 - [x] BUG 20: EOD summary timezone — fixed to IST midnight
 - [x] BUG 21: MCX paper trades incorrectly closed at NSE market hours (isMCX check failed for PAPER_OPT tokens)
 - [x] BUG 19b: Stale trade cleanup also needed slot bot credential fix (strip -slot1/-slot2)
-- [ ] BUG 23: New trades still show ₹0 P&L even after sessionToken fix and re-login — investigate botEngine P&L calculation
+- [x] BUG 23: New trades still show ₹0 P&L — ROOT CAUSE: verifyOtp didn't migrate upstox_credentials/bot_sessions/trade_log to new sessionToken. Fixed with full token migration on login + fallback credential lookup in bot.start/botRestart.
