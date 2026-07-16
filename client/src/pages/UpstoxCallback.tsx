@@ -17,6 +17,8 @@ export default function UpstoxCallback() {
     const serverStatus = params.get("status");
     const msg = params.get("msg");
 
+    let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+
     if (serverStatus === "success") {
       // Server already exchanged the code and saved the token to DB.
       // Update localStorage so Dashboard token indicator turns green.
@@ -32,15 +34,20 @@ export default function UpstoxCallback() {
       }
       setStatus("success");
       // Auto-redirect to settings after 3 seconds
-      setTimeout(() => navigate("/settings"), 3000);
+      redirectTimer = setTimeout(() => navigate("/settings"), 3000);
     } else if (serverStatus === "error") {
-      setErrorMsg(msg ? decodeURIComponent(msg) : "Unknown error from server.");
+      // URLSearchParams.get() already decodes percent-encoding — don't double-decode
+      setErrorMsg(msg || "Unknown error from server.");
       setStatus("error");
     } else {
       // No status param — page was opened directly without going through Upstox
       setErrorMsg(`This page should only be opened after completing Upstox login.\n\nURL received: ${window.location.href}`);
       setStatus("error");
     }
+
+    return () => {
+      if (redirectTimer) clearTimeout(redirectTimer);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

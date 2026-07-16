@@ -411,11 +411,9 @@ export async function sendOtp(mobile: string): Promise<{ success: boolean; messa
   const code = isAdminBypass ? "000000" : String(Math.floor(100000 + Math.random() * 900000));
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
-  // Store in DB
-  await db.insert(otpCodes).values({ mobile, code, expiresAt });
-
   // Admin bypass: skip Twilio entirely
   if (isAdminBypass) {
+    await db.insert(otpCodes).values({ mobile, code, expiresAt });
     console.log(`[OTP] Admin bypass for ${mobile} — code is 000000`);
     return { success: true, message: "OTP sent successfully (admin bypass)" };
   }
@@ -447,6 +445,9 @@ export async function sendOtp(mobile: string): Promise<{ success: boolean; messa
     console.error("[OTP] Twilio send failed:", err);
     throw new Error("Failed to send OTP. Please try again.");
   }
+
+  // Only store OTP in DB after successful SMS send
+  await db.insert(otpCodes).values({ mobile, code, expiresAt });
 
   return { success: true, message: "OTP sent successfully" };
 }
@@ -503,25 +504,30 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
     const newToken = clientSessionToken;
     if (newToken && oldToken && newToken !== oldToken) {
       console.log(`[verifyOtp] Token migration: ${oldToken.slice(0, 8)}... → ${newToken.slice(0, 8)}... for mobile ${mobile}`);
-      // Migrate upstox_credentials (primary + slots)
-      await db.update(upstoxCredentials).set({ sessionToken: newToken }).where(eq(upstoxCredentials.sessionToken, oldToken));
-      await db.update(upstoxCredentials).set({ sessionToken: newToken + "-slot1" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot1"));
-      await db.update(upstoxCredentials).set({ sessionToken: newToken + "-slot2" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot2"));
-      // Migrate bot_sessions (primary + slots)
-      await db.update(botSessions).set({ sessionToken: newToken }).where(eq(botSessions.sessionToken, oldToken));
-      await db.update(botSessions).set({ sessionToken: newToken + "-slot1" }).where(eq(botSessions.sessionToken, oldToken + "-slot1"));
-      await db.update(botSessions).set({ sessionToken: newToken + "-slot2" }).where(eq(botSessions.sessionToken, oldToken + "-slot2"));
-      // Migrate trade_log (primary + slots)
-      await db.update(tradeLog).set({ sessionToken: newToken }).where(eq(tradeLog.sessionToken, oldToken));
-      await db.update(tradeLog).set({ sessionToken: newToken + "-slot1" }).where(eq(tradeLog.sessionToken, oldToken + "-slot1"));
-      await db.update(tradeLog).set({ sessionToken: newToken + "-slot2" }).where(eq(tradeLog.sessionToken, oldToken + "-slot2"));
-      // Migrate signal_journal (primary + slots)
-      await db.update(signalJournal).set({ sessionToken: newToken }).where(eq(signalJournal.sessionToken, oldToken));
-      await db.update(signalJournal).set({ sessionToken: newToken + "-slot1" }).where(eq(signalJournal.sessionToken, oldToken + "-slot1"));
-      await db.update(signalJournal).set({ sessionToken: newToken + "-slot2" }).where(eq(signalJournal.sessionToken, oldToken + "-slot2"));
-      // Migrate subscriptions
-      await db.update(subscriptions).set({ sessionToken: newToken }).where(eq(subscriptions.sessionToken, oldToken));
-      console.log(`[verifyOtp] Token migration complete for mobile ${mobile}`);
+      try {
+        // Migrate upstox_credentials (primary + slots)
+        await db.update(upstoxCredentials).set({ sessionToken: newToken }).where(eq(upstoxCredentials.sessionToken, oldToken));
+        await db.update(upstoxCredentials).set({ sessionToken: newToken + "-slot1" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot1"));
+        await db.update(upstoxCredentials).set({ sessionToken: newToken + "-slot2" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot2"));
+        // Migrate bot_sessions (primary + slots)
+        await db.update(botSessions).set({ sessionToken: newToken }).where(eq(botSessions.sessionToken, oldToken));
+        await db.update(botSessions).set({ sessionToken: newToken + "-slot1" }).where(eq(botSessions.sessionToken, oldToken + "-slot1"));
+        await db.update(botSessions).set({ sessionToken: newToken + "-slot2" }).where(eq(botSessions.sessionToken, oldToken + "-slot2"));
+        // Migrate trade_log (primary + slots)
+        await db.update(tradeLog).set({ sessionToken: newToken }).where(eq(tradeLog.sessionToken, oldToken));
+        await db.update(tradeLog).set({ sessionToken: newToken + "-slot1" }).where(eq(tradeLog.sessionToken, oldToken + "-slot1"));
+        await db.update(tradeLog).set({ sessionToken: newToken + "-slot2" }).where(eq(tradeLog.sessionToken, oldToken + "-slot2"));
+        // Migrate signal_journal (primary + slots)
+        await db.update(signalJournal).set({ sessionToken: newToken }).where(eq(signalJournal.sessionToken, oldToken));
+        await db.update(signalJournal).set({ sessionToken: newToken + "-slot1" }).where(eq(signalJournal.sessionToken, oldToken + "-slot1"));
+        await db.update(signalJournal).set({ sessionToken: newToken + "-slot2" }).where(eq(signalJournal.sessionToken, oldToken + "-slot2"));
+        // Migrate subscriptions
+        await db.update(subscriptions).set({ sessionToken: newToken }).where(eq(subscriptions.sessionToken, oldToken));
+        console.log(`[verifyOtp] Token migration complete for mobile ${mobile}`);
+      } catch (migrationErr) {
+        console.error(`[verifyOtp] Token migration FAILED for mobile ${mobile}:`, migrationErr);
+        // Continue with login even if migration fails — user can still access account
+      }
     }
     // Update user record
     await db.update(appUsers).set({

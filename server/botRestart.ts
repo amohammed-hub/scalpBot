@@ -281,7 +281,7 @@ export async function restartRunningBots(): Promise<void> {
     for (const t of openTrades) {
       const enteredAt = t.enteredAt ? new Date(t.enteredAt) : null;
       if (!enteredAt) continue;
-      const tradeDate = enteredAt.toISOString().slice(0, 10);
+      const tradeDate = new Date(enteredAt.getTime() + 330 * 60000).toISOString().slice(0, 10);
       const todayDate = new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
       const isStale = tradeDate < todayDate;
       // Check if trade is MCX: either instrumentToken starts with MCX, or symbol contains MCX commodity names
@@ -312,7 +312,7 @@ export async function restartRunningBots(): Promise<void> {
             // BUG 17 fix: For options trades, the instrumentToken might be the underlying index
             // or a fake PAPER_OPT token. Skip fetching in both cases.
             const isPaperToken = t.instrumentToken.startsWith("PAPER_OPT|");
-            const isIndexToken = t.instrumentToken.startsWith("NSE_INDEX|") || t.instrumentToken.startsWith("MCX_FO|");
+            const isIndexToken = t.instrumentToken.startsWith("NSE_INDEX|");
             const isOptionTrade = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE");
             if (isPaperToken || (isIndexToken && isOptionTrade)) {
               // For paper/stale option trades, close at entry price (0 P&L on remaining)

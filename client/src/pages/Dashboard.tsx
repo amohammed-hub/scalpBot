@@ -768,6 +768,8 @@ export default function Dashboard() {
     bookedPnl: (inMemOpenTrade as any).bookedPnl ?? 0,
     bookedQty: (inMemOpenTrade as any).bookedQty ?? 0,
     currentSl: (inMemOpenTrade as any).currentSl ?? inMemOpenTrade.slPrice,
+    averageCount: (inMemOpenTrade as any).averageCount ?? 0,
+    originalEntryPrice: (inMemOpenTrade as any).originalEntryPrice ?? inMemOpenTrade.entryPrice,
   } : openTrade ? { ...openTrade, upstoxOrderId: openTrade.upstoxOrderId ?? null } : null;
 
   // Only calculate unrealized P&L when we have a real live price (not 0, not same as entry)
@@ -1157,7 +1159,9 @@ export default function Dashboard() {
           const isMCXInstrument = config.instrumentToken.startsWith("MCX");
           const sessionStart = isMCXInstrument ? 540 : 555;
           const sessionEnd = isMCXInstrument ? 1410 : 930;
-          const inSessionNow = istMin2 >= sessionStart && istMin2 <= sessionEnd;
+          const dayOfWeek = new Date(now2.getTime() + 330 * 60000).getDay(); // IST day: 0=Sun, 6=Sat
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+          const inSessionNow = !isWeekend && istMin2 >= sessionStart && istMin2 <= sessionEnd;
           const elapsed = inSessionNow ? istMin2 - sessionStart : 0;
           const total = sessionEnd - sessionStart;
           const remaining = inSessionNow ? sessionEnd - istMin2 : 0;
@@ -1186,7 +1190,7 @@ export default function Dashboard() {
                     </div>
                   </>
                 ) : (
-                  <div className="text-xs text-white/30">Market closed</div>
+                  <div className="text-xs text-white/30">{isWeekend ? "Weekend — Market closed" : "Market closed"}</div>
                 )}
               </div>
               <div className="bg-white/5 border border-white/10 rounded-xl p-3">

@@ -17,6 +17,16 @@ import { getDb } from "./db";
 import { tradeLog, signalJournal } from "../drizzle/schema";
 import { eq, and, desc, gte, lte, sql, inArray } from "drizzle-orm";
 
+// IST timezone helper — converts a Date to IST date string (YYYY-MM-DD)
+function toISTDateKey(d: Date): string {
+  const istMs = d.getTime() + 330 * 60000;
+  return new Date(istMs).toISOString().slice(0, 10);
+}
+// IST hour (0-23) from a Date
+function toISTHour(d: Date): number {
+  return Math.floor(((d.getUTCHours() * 60 + d.getUTCMinutes()) + 330) % 1440 / 60);
+}
+
 // Inferred row types from drizzle select
 type TradeRow = typeof tradeLog.$inferSelect;
 type SignalRow = typeof signalJournal.$inferSelect;
@@ -176,7 +186,7 @@ export async function computePrecisionMetrics(
     const ddAmt = peak - runningEquity;
     if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownAmount = ddAmt; }
 
-    const dateKey = t.enteredAt.toISOString().slice(0, 10);
+    const dateKey = toISTDateKey(t.enteredAt);
     const existing = equityByDate.get(dateKey) ?? { equity: capital, trades: 0 };
     equityByDate.set(dateKey, { equity: runningEquity, trades: existing.trades + 1 });
   }
@@ -191,7 +201,7 @@ export async function computePrecisionMetrics(
   const dailyReturns: number[] = [];
   const tradesByDay = new Map<string, number>();
   for (const t of trades) {
-    const dateKey = t.enteredAt.toISOString().slice(0, 10);
+    const dateKey = toISTDateKey(t.enteredAt);
     tradesByDay.set(dateKey, (tradesByDay.get(dateKey) ?? 0) + (t.pnl ?? 0));
   }
   for (const pnl of Array.from(tradesByDay.values())) {
@@ -216,10 +226,14 @@ export async function computePrecisionMetrics(
       currentWinStreak++;
       currentLossStreak = 0;
       if (currentWinStreak > maxWinStreak) maxWinStreak = currentWinStreak;
-    } else {
+    } else if ((t.pnl ?? 0) < 0) {
       currentLossStreak++;
       currentWinStreak = 0;
       if (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak;
+    } else {
+      // Breakeven: reset both streaks
+      currentWinStreak = 0;
+      currentLossStreak = 0;
     }
   }
   const lastTrade = trades[trades.length - 1];
@@ -232,7 +246,7 @@ export async function computePrecisionMetrics(
   // ── Time Analysis (best/worst hour) ────────────────────────────────────────
   const byHour = new Map<number, { pnl: number; trades: number }>();
   for (const t of trades) {
-    const hour = t.enteredAt.getHours();
+    const hour = toISTHour(t.enteredAt);
     const existing = byHour.get(hour) ?? { pnl: 0, trades: 0 };
     byHour.set(hour, { pnl: existing.pnl + (t.pnl ?? 0), trades: existing.trades + 1 });
   }
@@ -252,8 +266,8 @@ export async function computePrecisionMetrics(
     : 0;
 
   // ── Date range ─────────────────────────────────────────────────────────────
-  const actualFrom = trades[0].enteredAt.toISOString().slice(0, 10);
-  const actualTo = trades[trades.length - 1].enteredAt.toISOString().slice(0, 10);
+  const actualFrom = toISTDateKey(trades[0].enteredAt);
+  const actualTo = toISTDateKey(trades[trades.length - 1].enteredAt);
 
   return {
     totalSignals, signalsTaken, signalsRejected, signalPrecision,
@@ -424,12 +438,12 @@ export async function computeDailyReports(
   // Group by date
   const byDate = new Map<string, { trades: TradeRow[]; signals: SignalRow[] }>();
   for (const t of trades) {
-    const dateKey = t.enteredAt.toISOString().slice(0, 10);
+    const dateKey = toISTDateKey(t.enteredAt);
     if (!byDate.has(dateKey)) byDate.set(dateKey, { trades: [], signals: [] });
     byDate.get(dateKey)!.trades.push(t);
   }
   for (const s of signals) {
-    const dateKey = s.signalAt.toISOString().slice(0, 10);
+    const dateKey = toISTDateKey(s.signalAt);
     if (!byDate.has(dateKey)) byDate.set(dateKey, { trades: [], signals: [] });
     byDate.get(dateKey)!.signals.push(s);
   }
@@ -439,7 +453,7 @@ export async function computeDailyReports(
     const dayTrades = data.trades;
     const daySignals = data.signals;
     const dayWins = dayTrades.filter(t => (t.pnl ?? 0) > 0).length;
-    const dayLosses = dayTrades.filter(t => (t.pnl ?? 0) <= 0).length;
+    const dayLosses = dayTrades.filter(t => (t.pnl ?? 0) < 0).length;
     const dayPnl = dayTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
     const dayWinRate = dayTrades.length > 0 ? (dayWins / dayTrades.length) * 100 : 0;
     const bestTrade = dayTrades.length > 0 ? Math.max(...dayTrades.map(t => t.pnl ?? 0)) : 0;
