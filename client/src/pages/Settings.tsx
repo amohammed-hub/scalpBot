@@ -321,11 +321,12 @@ export default function Settings() {
 
   // ── Mobile Auth Check ──────────────────────────────────────────────────────
   const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
-    staleTime: 60_000,
-    retry: false,
+    staleTime: 5_000,
+    retry: 2,
+    retryDelay: 500,
   });
   useEffect(() => {
-    if (meQuery.isFetched && !meQuery.data) {
+    if (meQuery.isFetched && !meQuery.data && !localStorage.getItem("scalpbot_auth_token")) {
       navigate("/login");
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);

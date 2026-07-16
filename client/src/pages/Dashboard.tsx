@@ -189,12 +189,15 @@ export default function Dashboard() {
 
   // ── Mobile Auth Check ──────────────────────────────────────────────────────
   const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
-    staleTime: 60_000,
-    retry: false,
+    staleTime: 5_000,
+    retry: 2,
+    retryDelay: 500,
   });
 
   useEffect(() => {
-    if (meQuery.isFetched && !meQuery.data) {
+    // Only redirect to login if me query returned null AND there's no auth token in localStorage.
+    // This prevents the race condition where the cookie was just set but the query cached null.
+    if (meQuery.isFetched && !meQuery.data && !localStorage.getItem("scalpbot_auth_token")) {
       navigate("/login");
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);

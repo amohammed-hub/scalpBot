@@ -8,6 +8,7 @@ import { Loader2, Smartphone, Shield, ArrowRight } from "lucide-react";
 
 export default function Login() {
   const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
   const [step, setStep] = useState<"mobile" | "otp" | "name">("mobile");
   const [mobile, setMobile] = useState("");
   const [otp, setOtp] = useState("");
@@ -38,7 +39,7 @@ export default function Login() {
   });
 
   const verifyOtpMutation = trpc.mobileAuth.verifyOtp.useMutation({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       if (data.success && data.user) {
         // Do NOT overwrite localStorage sessionToken — the server was updated to match it.
         // The localStorage token is the identity key linked to credentials, trades, etc.
@@ -46,12 +47,16 @@ export default function Login() {
         if (data.token) {
           localStorage.setItem("scalpbot_auth_token", data.token);
         }
+        // Invalidate the me query cache and WAIT for it to complete before navigating.
+        // This ensures Dashboard won't use a stale cached null result.
+        await utils.mobileAuth.me.invalidate();
         // If user has no name, ask for it
         if (!data.user.name) {
           setStep("name");
         } else {
           toast.success(`Welcome back, ${data.user.name}!`);
-          navigate("/dashboard");
+          // Small delay to ensure cookie is processed by browser before next request
+          setTimeout(() => navigate("/dashboard"), 100);
         }
       } else {
         toast.error(data.message ?? "Verification failed");

@@ -27,7 +27,9 @@ const sessionTokenSchema = z.string().min(8).max(128);
 
 // Helper: verify admin access via cookie (checks role, mobile, and ADMIN_MOBILE)
 async function verifyAdminAccess(ctx: any): Promise<boolean> {
-  const authToken = ctx.req?.cookies?.scalpbot_auth;
+  const authToken = ctx.req?.cookies?.scalpbot_auth
+    || ctx.req?.headers?.authorization?.replace("Bearer ", "")
+    || (ctx.req?.headers?.["x-auth-token"] as string | undefined);
   if (authToken) {
     try {
       const decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as { userId?: number; role?: string; mobile?: string };
@@ -1706,7 +1708,9 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         // SECURITY: Admin-only operation
-        const authTok = ctx.req?.cookies?.scalpbot_auth;
+        const authTok = ctx.req?.cookies?.scalpbot_auth
+          || ctx.req?.headers?.authorization?.replace("Bearer ", "")
+          || (ctx.req?.headers?.["x-auth-token"] as string | undefined);
         let isAdmin = false;
         if (authTok) {
           try {
@@ -3302,7 +3306,9 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input, ctx }) => {
         // Admin bypass: admin always has full access
-        const adminToken = ctx.req?.cookies?.scalpbot_auth;
+        const adminToken = ctx.req?.cookies?.scalpbot_auth
+          || ctx.req?.headers?.authorization?.replace("Bearer ", "")
+          || (ctx.req?.headers?.["x-auth-token"] as string | undefined);
         if (adminToken) {
           try {
             const decoded = jwt.verify(adminToken, process.env.JWT_SECRET || "fallback-secret") as { userId: number; mobile: string; role: string };
@@ -3514,8 +3520,10 @@ export const appRouter = router({
     me: publicProcedure
       .input(z.object({}).optional())
       .query(async ({ ctx }) => {
-        // Read JWT from cookie
-        const token = ctx.req?.cookies?.scalpbot_auth;
+        // Read JWT from cookie OR Authorization header OR X-Auth-Token header
+        const token = ctx.req?.cookies?.scalpbot_auth
+          || ctx.req?.headers?.authorization?.replace("Bearer ", "")
+          || (ctx.req?.headers?.["x-auth-token"] as string | undefined);
         if (!token) return null;
 
         try {
@@ -3539,7 +3547,9 @@ export const appRouter = router({
     updateName: publicProcedure
       .input(z.object({ name: z.string().min(1).max(128) }))
       .mutation(async ({ input, ctx }) => {
-        const token = ctx.req?.cookies?.scalpbot_auth;
+        const token = ctx.req?.cookies?.scalpbot_auth
+          || ctx.req?.headers?.authorization?.replace("Bearer ", "")
+          || (ctx.req?.headers?.["x-auth-token"] as string | undefined);
         if (!token) throw new Error("Not authenticated");
         const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as { userId: number };
         const db = await getDb();
