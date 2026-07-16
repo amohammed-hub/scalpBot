@@ -287,10 +287,18 @@ export const appRouter = router({
 
         // ── Subscription Enforcement ────────────────────────────────────────
         const access = await checkAccess(input.sessionToken);
-        if (!access.hasAccess) {
+        // Admin bypass: check if this sessionToken belongs to admin
+        const isAdminSession = ENV.adminMobile && input.sessionToken ? await (async () => {
+          const db = await getDb();
+          if (!db) return false;
+          const { appUsers } = await import("../drizzle/schema");
+          const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+          return rows.length > 0 && rows[0].role === "admin";
+        })() : false;
+        if (!access.hasAccess && !isAdminSession) {
           throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
         }
-        if (access.plan === "trial") {
+        if (access.plan === "trial" && !isAdminSession) {
           if (input.mode === "live") {
             throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
           }
@@ -2019,10 +2027,18 @@ export const appRouter = router({
 
         // ── Subscription Enforcement ────────────────────────────────────────
         const slotAccess = await checkAccess(input.sessionToken);
-        if (!slotAccess.hasAccess) {
+        // Admin bypass for slot bots
+        const isSlotAdminSession = ENV.adminMobile && input.sessionToken ? await (async () => {
+          const db = await getDb();
+          if (!db) return false;
+          const { appUsers } = await import("../drizzle/schema");
+          const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+          return rows.length > 0 && rows[0].role === "admin";
+        })() : false;
+        if (!slotAccess.hasAccess && !isSlotAdminSession) {
           throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
         }
-        if (slotAccess.plan === "trial") {
+        if (slotAccess.plan === "trial" && !isSlotAdminSession) {
           if (input.mode === "live") {
             throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
           }
@@ -3221,7 +3237,17 @@ export const appRouter = router({
     /** Check if session has active access */
     checkAccess: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        // Admin bypass: admin always has full access
+        const adminToken = ctx.req?.cookies?.scalpbot_auth;
+        if (adminToken) {
+          try {
+            const decoded = jwt.verify(adminToken, process.env.JWT_SECRET || "fallback-secret") as { userId: number; mobile: string; role: string };
+            if (decoded.role === "admin") {
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false };
+            }
+          } catch {}
+        }
         const access = await checkAccess(input.sessionToken);
         const trialUsed = await hasUsedTrial(input.sessionToken);
         return { ...access, trialUsed };

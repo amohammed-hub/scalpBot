@@ -800,7 +800,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
       {/* ── Subscription Paywall Overlay ─────────────────────────────────────── */}
-      {accessQuery.data && !accessQuery.data.hasAccess && (
+      {accessQuery.data && !accessQuery.data.hasAccess && meQuery.data?.role !== "admin" && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="max-w-lg w-full bg-[oklch(0.15_0.02_240)] border border-white/10 rounded-2xl p-8 text-center space-y-6">
             <div className="w-16 h-16 mx-auto bg-teal-500/20 rounded-full flex items-center justify-center">
