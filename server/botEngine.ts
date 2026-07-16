@@ -635,11 +635,11 @@ export function generateSignal(
 
   const avgVol = candles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
   const lastVol = candles[candles.length - 1].volume;
-  // NSE/BSE index instruments (Nifty, BankNifty, Sensex) return volume=0 from Upstox
-  // because they are calculated values, not traded instruments. When all volume is 0,
-  // bypass volume filters by treating volRatio as 1.5 (passes all vol checks).
-  // Always bypass volume filters — volume checks were causing zero trades.
-  const volRatio = 1.5;
+  // NSE/BSE index instruments (Nifty, BankNifty, Sensex) return volume=0 from Upstox.
+  // Only bypass volume filters for instruments where ALL candles have 0 volume (index instruments).
+  // MCX instruments (CRUDEOIL, GOLD, SILVER) DO have real volume data — use it.
+  const allVolZero = candles.slice(-10).every(c => c.volume === 0);
+  const volRatio = allVolZero ? 1.5 : (avgVol > 0 ? lastVol / avgVol : 1.0);
 
   const now = new Date();
   const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
@@ -750,35 +750,46 @@ export function generateSignal(
   }
 
   // ── Layer 3: EMA/VWAP Trend ───────────────────────────────────────────────
-  // ADX threshold raised from 12 to 20 — research shows ADX > 20 needed for reliable trends
+  // ADX threshold raised to 20 — research shows ADX > 20 needed for reliable trends
   // (Omega-Xi production bot uses ADX > 20; below 20 = ranging/choppy market)
-  if (direction === "HOLD" && candles.length >= 21 && adx > 15) {
+  // RSI tightened: BUY only when RSI > 55 (confirmed uptrend) or RSI < 40 (oversold bounce)
+  // No entries in RSI 40-55 no-man's land (choppy, no conviction)
+  // Pullback requirement: price must be within 0.15% of EMA9 or VWAP (don't chase)
+  if (direction === "HOLD" && candles.length >= 21 && adx > 20) {
     const emaDiffPct = Math.abs(e9 - e21) / e21;
-    if (e9 > e21 && price > vwap && rsi > 42 && rsi < 75 && allow5mBuy) {
+    const distFromEma9 = Math.abs(price - e9) / e9;
+    const distFromVwap = Math.abs(price - vwap) / vwap;
+    const nearPullback = distFromEma9 < 0.0015 || distFromVwap < 0.0015; // within 0.15% of EMA9 or VWAP
+    if (e9 > e21 && price > vwap && (rsi > 55 || rsi < 40) && allow5mBuy && nearPullback) {
       direction = "BUY";
-      confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 18) * 0.005);
-      reason = `[Trend] EMA9>${e21.toFixed(1)} | VWAP | RSI(${rsi.toFixed(0)}) | ADX(${adx.toFixed(0)}) | 5m:${trend5m}`;
+      confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 20) * 0.005);
+      reason = `[Trend] EMA9>${e21.toFixed(1)} | VWAP | RSI(${rsi.toFixed(0)}) | ADX(${adx.toFixed(0)}) | pullback | 5m:${trend5m}`;
       layer = "Trend";
-    } else if (e9 < e21 && price < vwap && rsi < 58 && rsi > 25 && allow5mSell) {
+    } else if (e9 < e21 && price < vwap && (rsi < 45 || rsi > 60) && allow5mSell && nearPullback) {
       direction = "SELL";
-      confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 18) * 0.005);
-      reason = `[Trend] EMA9<${e21.toFixed(1)} | VWAP | RSI(${rsi.toFixed(0)}) | ADX(${adx.toFixed(0)}) | 5m:${trend5m}`;
+      confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 20) * 0.005);
+      reason = `[Trend] EMA9<${e21.toFixed(1)} | VWAP | RSI(${rsi.toFixed(0)}) | ADX(${adx.toFixed(0)}) | pullback | 5m:${trend5m}`;
       layer = "Trend";
     }
   }
 
   // ── Layer 4: Momentum ─────────────────────────────────────────────────────
+  // Momentum threshold raised from 0.03% to 0.1% — 0.03% is noise, not real momentum
+  // Pullback requirement: price must be within 0.15% of EMA9 or VWAP (don't chase)
   if (direction === "HOLD" && candles.length >= 5) {
     const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
-    if (rsi > 45 && roc3 > 0.0003 && price > vwap && allow5mBuy) {
+    const distFromEma9_m = Math.abs(price - e9) / e9;
+    const distFromVwap_m = Math.abs(price - vwap) / vwap;
+    const nearPullback_m = distFromEma9_m < 0.0015 || distFromVwap_m < 0.0015;
+    if (rsi > 55 && roc3 > 0.001 && price > vwap && allow5mBuy && nearPullback_m) {
       direction = "BUY";
-      confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 45) * 0.005);
-      reason = `[Momentum] RSI(${rsi.toFixed(0)}) | +${(roc3 * 100).toFixed(2)}% in 3c | Above VWAP | 5m:${trend5m}`;
+      confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 55) * 0.005);
+      reason = `[Momentum] RSI(${rsi.toFixed(0)}) | +${(roc3 * 100).toFixed(2)}% in 3c | Above VWAP | pullback | 5m:${trend5m}`;
       layer = "Momentum";
-    } else if (rsi < 55 && roc3 < -0.0003 && price < vwap && allow5mSell) {
+    } else if (rsi < 45 && roc3 < -0.001 && price < vwap && allow5mSell && nearPullback_m) {
       direction = "SELL";
-      confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (55 - rsi) * 0.005);
-      reason = `[Momentum] RSI(${rsi.toFixed(0)}) | ${(roc3 * 100).toFixed(2)}% in 3c | Below VWAP | 5m:${trend5m}`;
+      confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (45 - rsi) * 0.005);
+      reason = `[Momentum] RSI(${rsi.toFixed(0)}) | ${(roc3 * 100).toFixed(2)}% in 3c | Below VWAP | pullback | 5m:${trend5m}`;
       layer = "Momentum";
     }
   }
@@ -986,6 +997,29 @@ export function generateSignal(
       reason: `Near S/R level — entry rejected (within 0.02% of pivot/support/resistance)`,
       layer: "None",
     };
+  }
+
+  // ── 2-Candle Confirmation Filter ─────────────────────────────────────────────
+  // Require at least 2 consecutive candles in the signal direction before entry.
+  // This prevents entering on a single spike candle (falling knife / dead cat bounce).
+  // Only applies to Trend, Momentum, MACD_BB layers (not Breakout/Pattern which have their own confirmation).
+  if (direction !== "HOLD" && (layer === "Trend" || layer === "Momentum" || layer === "MACD_BB")) {
+    const len = candles.length;
+    if (len >= 3) {
+      const c_2 = candles[len - 2]; // second-to-last candle
+      const c_1 = candles[len - 1]; // last candle
+      const bullish2 = c_2.close > c_2.open && c_1.close > c_1.open;
+      const bearish2 = c_2.close < c_2.open && c_1.close < c_1.open;
+      const confirmed = direction === "BUY" ? bullish2 : bearish2;
+      if (!confirmed) {
+        return {
+          direction: "HOLD", confidence: 0, entryPrice: price,
+          slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
+          reason: `2-candle confirmation failed — waiting for consecutive ${direction === "BUY" ? "bullish" : "bearish"} candles | ${reason}`,
+          layer: "None",
+        };
+      }
+    }
   }
 
   if (direction === "HOLD" || confidence < minConf) {
@@ -1468,35 +1502,10 @@ export async function resolveAtmOptionToken(
 
     const chainExpiry: string | undefined = chainData[0]?.expiry ?? undefined;
 
-    // ── SAFETY: Skip same-day expiry for NSE options ──────────────────────────
-    // If the chain expiry is TODAY, try fetching next_week/next_month instead
+    // NOTE: Same-day expiry is ALLOWED — expiry day has highest gamma = biggest moves for scalping.
+    // The key is tighter SL + faster exit on expiry day, not avoiding it entirely.
     if (chainExpiry) {
-      const expiryDate = new Date(chainExpiry + "T00:00:00+05:30");
-      const todayIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-      const isSameDay = expiryDate.getFullYear() === todayIST.getFullYear() &&
-        expiryDate.getMonth() === todayIST.getMonth() &&
-        expiryDate.getDate() === todayIST.getDate();
-      if (isSameDay) {
-        console.warn(`[BotEngine] NSE: chain expiry ${chainExpiry} is TODAY — skipping, trying next expiry`);
-        // Try next expiry
-        const nextExpiries = isBankNifty ? ["next_month"] : ["next_week", "next_month"];
-        for (const nextExp of nextExpiries) {
-          try {
-            const resp2 = await axios.get(
-              `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${nextExp}`,
-              { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
-            );
-            const nextChain = resp2.data?.data ?? [];
-            if (nextChain.length > 0) {
-              chainData = nextChain;
-              console.log(`[BotEngine] NSE: switched to ${nextExp} expiry (${nextChain[0]?.expiry}) to avoid same-day expiry`);
-              break;
-            }
-          } catch (e2) {
-            console.warn(`[BotEngine] NSE: error fetching ${nextExp}:`, e2 instanceof Error ? e2.message : String(e2));
-          }
-        }
-      }
+      console.log(`[BotEngine] NSE: using chain expiry ${chainExpiry} (same-day expiry allowed for high-gamma scalping)`);
     }
 
     // Upstox API returns data[] as flat array: each element = { strike_price, call_options: {obj}, put_options: {obj} }
@@ -1740,26 +1749,8 @@ export async function resolveAtmMcxOptionToken(
         }
       }
       if (optionCandidates.length > 0) {
-        // ── SAFETY: Skip same-day expiry options ──────────────────────────────
-        // Options expiring today suffer extreme theta decay and are very risky.
-        // Filter out any option expiring within the current trading day (before midnight IST).
-        const nowForExpiry = new Date();
-        // End of today IST = midnight tonight = 18:30 UTC today
-        const todayEndIST = new Date(nowForExpiry);
-        todayEndIST.setUTCHours(18, 30, 0, 0); // midnight IST = 18:30 UTC
-        if (todayEndIST.getTime() < nowForExpiry.getTime()) {
-          todayEndIST.setDate(todayEndIST.getDate() + 1); // already past midnight IST, use tomorrow
-        }
-        // Filter: keep only options expiring AFTER today (at least 1 day remaining)
-        const nonExpiryDayCandidates = optionCandidates.filter(c => (c.expiry ?? 0) > todayEndIST.getTime());
-        if (nonExpiryDayCandidates.length > 0) {
-          optionCandidates = nonExpiryDayCandidates;
-          console.log(`[BotEngine] MCX: filtered out same-day expiry options, ${optionCandidates.length} candidates remaining (next expiry)`);
-        } else {
-          // ALL options expire today — log warning but still use them (better than no trade)
-          console.warn(`[BotEngine] MCX: ALL available options expire today! Using them as last resort.`);
-        }
-        // Nearest expiry (now guaranteed to be at least tomorrow unless all expire today)
+        // NOTE: Same-day expiry is ALLOWED — expiry day has highest gamma = biggest moves for scalping.
+        // MCX options on expiry day have maximum gamma → fast premium moves → ideal for scalping.
         const nearestExpiry = Math.min(...optionCandidates.map(c => c.expiry ?? Infinity));
         const chain = optionCandidates
           .filter(c => c.expiry === nearestExpiry)

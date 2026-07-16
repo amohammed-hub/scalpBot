@@ -833,3 +833,14 @@
 - [x] BUG 21: MCX paper trades incorrectly closed at NSE market hours (isMCX check failed for PAPER_OPT tokens)
 - [x] BUG 19b: Stale trade cleanup also needed slot bot credential fix (strip -slot1/-slot2)
 - [x] BUG 23: New trades still show ₹0 P&L — ROOT CAUSE: verifyOtp didn't migrate upstox_credentials/bot_sessions/trade_log to new sessionToken. Fixed with full token migration on login + fallback credential lookup in bot.start/botRestart.
+
+## Signal Engine Upgrade — Tighter Entry Filters (July 16, 2026)
+- [x] Remove same-day expiry ban (NSE path) — user WANTS expiry-day trades for high gamma movement
+- [x] Remove same-day expiry ban (MCX path) — same reason, expiry day = maximum gamma
+- [x] Fix volRatio: restore real volume calculation for MCX instruments (only bypass for NSE index where volume=0)
+- [x] Fix ADX threshold: changed from 15 to 20 in Layer 3 (Trend) — ADX > 20 = reliable trend
+- [x] Tighten RSI ranges in Layer 3: BUY requires RSI > 55 or RSI < 40 (no entries in 40-55 no-man's land)
+- [x] Tighten RSI ranges in Layer 3: SELL requires RSI < 45 or RSI > 60
+- [x] Increase momentum threshold in Layer 4: roc3 from 0.0003 (0.03%) to 0.001 (0.1%) — filters noise
+- [x] Add pullback requirement to Layer 3 and 4: price must be within 0.15% of EMA9 or VWAP (don't chase)
+- [x] Add 2-candle confirmation filter: require 2 consecutive candles in signal direction for Trend/Momentum/MACD_BB layers
