@@ -1,7 +1,7 @@
 import { eq, and, desc, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { InsertUser, users, subscriptions, appUsers, otpCodes } from "../drizzle/schema";
+import { InsertUser, users, subscriptions, appUsers, otpCodes, upstoxCredentials, botSessions, tradeLog, signalJournal } from "../drizzle/schema";
 import { ENV } from './_core/env';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _db: any = null;
@@ -498,13 +498,37 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
     // Update last login
     // Also promote to admin if this is the admin's mobile (handles case where user registered before admin role was set up)
     const isAdmin = ENV.adminMobile && (mobile === ENV.adminMobile || mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""));
-    // If client provides a sessionToken, update the user's record to match
-    // This ensures credentials/trades stored under the localStorage token stay linked
+    // If client provides a sessionToken that DIFFERS from stored one, migrate ALL related data
+    const oldToken = userRows[0].sessionToken;
+    const newToken = clientSessionToken;
+    if (newToken && oldToken && newToken !== oldToken) {
+      console.log(`[verifyOtp] Token migration: ${oldToken.slice(0, 8)}... → ${newToken.slice(0, 8)}... for mobile ${mobile}`);
+      // Migrate upstox_credentials (primary + slots)
+      await db.update(upstoxCredentials).set({ sessionToken: newToken }).where(eq(upstoxCredentials.sessionToken, oldToken));
+      await db.update(upstoxCredentials).set({ sessionToken: newToken + "-slot1" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot1"));
+      await db.update(upstoxCredentials).set({ sessionToken: newToken + "-slot2" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot2"));
+      // Migrate bot_sessions (primary + slots)
+      await db.update(botSessions).set({ sessionToken: newToken }).where(eq(botSessions.sessionToken, oldToken));
+      await db.update(botSessions).set({ sessionToken: newToken + "-slot1" }).where(eq(botSessions.sessionToken, oldToken + "-slot1"));
+      await db.update(botSessions).set({ sessionToken: newToken + "-slot2" }).where(eq(botSessions.sessionToken, oldToken + "-slot2"));
+      // Migrate trade_log (primary + slots)
+      await db.update(tradeLog).set({ sessionToken: newToken }).where(eq(tradeLog.sessionToken, oldToken));
+      await db.update(tradeLog).set({ sessionToken: newToken + "-slot1" }).where(eq(tradeLog.sessionToken, oldToken + "-slot1"));
+      await db.update(tradeLog).set({ sessionToken: newToken + "-slot2" }).where(eq(tradeLog.sessionToken, oldToken + "-slot2"));
+      // Migrate signal_journal (primary + slots)
+      await db.update(signalJournal).set({ sessionToken: newToken }).where(eq(signalJournal.sessionToken, oldToken));
+      await db.update(signalJournal).set({ sessionToken: newToken + "-slot1" }).where(eq(signalJournal.sessionToken, oldToken + "-slot1"));
+      await db.update(signalJournal).set({ sessionToken: newToken + "-slot2" }).where(eq(signalJournal.sessionToken, oldToken + "-slot2"));
+      // Migrate subscriptions
+      await db.update(subscriptions).set({ sessionToken: newToken }).where(eq(subscriptions.sessionToken, oldToken));
+      console.log(`[verifyOtp] Token migration complete for mobile ${mobile}`);
+    }
+    // Update user record
     await db.update(appUsers).set({
       isVerified: true,
       lastLoginAt: new Date(),
       ...(isAdmin && userRows[0].role !== "admin" ? { role: "admin" as const } : {}),
-      ...(clientSessionToken ? { sessionToken: clientSessionToken } : {}),
+      ...(newToken ? { sessionToken: newToken } : {}),
     }).where(eq(appUsers.id, userRows[0].id));
     userRows = await db.select().from(appUsers).where(eq(appUsers.id, userRows[0].id)).limit(1);
   }

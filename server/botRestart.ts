@@ -111,7 +111,17 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     .from(upstoxCredentials)
     .where(eq(upstoxCredentials.sessionToken, baseToken))
     .limit(1);
-  const accessToken = credRows[0]?.accessToken ?? null;
+  let accessToken = credRows[0]?.accessToken ?? null;
+  // FALLBACK: If no credentials found, try any credential row (single-user system)
+  if (!accessToken) {
+    const allCreds = await db.select().from(upstoxCredentials).limit(10);
+    const credWithToken = allCreds.find((c: any) => !!c.accessToken);
+    if (credWithToken) {
+      accessToken = credWithToken.accessToken;
+      await db.update(upstoxCredentials).set({ sessionToken: baseToken }).where(eq(upstoxCredentials.id, credWithToken.id));
+      console.log(`[BotRestart] FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${baseToken.slice(0, 8)}...`);
+    }
+  }
 
   // Build onTradeOpen callback
   const onTradeOpen = async (trade: {

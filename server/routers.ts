@@ -345,6 +345,23 @@ export const appRouter = router({
           accessToken = creds[0].accessToken;
         }
 
+        // FALLBACK: If no credentials found by sessionToken, try to find them via user's mobile.
+        // This handles the case where token migration hasn't run yet (user didn't re-login after fix).
+        if (!accessToken) {
+          const userRow = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+          if (userRow.length > 0) {
+            // Look for credentials under ANY token — single-user system optimization
+            const allCreds = await db.select().from(upstoxCredentials).limit(10);
+            const credWithToken = allCreds.find((c: any) => !!c.accessToken);
+            if (credWithToken) {
+              accessToken = credWithToken.accessToken;
+              // Auto-migrate the credential to the current sessionToken
+              await db.update(upstoxCredentials).set({ sessionToken: input.sessionToken }).where(eq(upstoxCredentials.id, credWithToken.id));
+              console.log(`[bot.start] FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${input.sessionToken.slice(0, 8)}...`);
+            }
+          }
+        }
+
         // Server-side safety guard: NSE_INDEX and MCX_FO tokens are ALWAYS options mode.
         // This prevents accidental direct futures/spot trading regardless of what the frontend sends.
         const isIndexToken = input.instrumentToken.startsWith("NSE_INDEX|") || input.instrumentToken.startsWith("MCX_FO|");
@@ -2108,6 +2125,16 @@ export const appRouter = router({
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken) {
             accessToken = creds[0].accessToken;
+          }
+          // FALLBACK: same as primary bot — find credentials under any token
+          if (!accessToken) {
+            const allCreds = await db.select().from(upstoxCredentials).limit(10);
+            const credWithToken = allCreds.find((c: any) => !!c.accessToken);
+            if (credWithToken) {
+              accessToken = credWithToken.accessToken;
+              await db.update(upstoxCredentials).set({ sessionToken: baseTokenForCreds }).where(eq(upstoxCredentials.id, credWithToken.id));
+              console.log(`[bot.startSecondary] FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${baseTokenForCreds.slice(0, 8)}...`);
+            }
           }
           if (input.mode === "live" && !accessToken) {
             throw new Error("No Upstox access token. Connect your account first.");
