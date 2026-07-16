@@ -82,20 +82,6 @@ export default function HeroZeroScanner() {
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
 
-  // Auth loading gate
-  if (!meQuery.isFetched || (meQuery.isLoading && !localStorage.getItem("scalpbot_auth_token"))) {
-    return (
-      <div className="min-h-screen bg-[oklch(0.10_0.02_240)] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 bg-teal-500 rounded-xl flex items-center justify-center animate-pulse">
-            <Zap className="w-7 h-7 text-white" />
-          </div>
-          <p className="text-white/50 text-sm">Loading ScalpBot...</p>
-        </div>
-      </div>
-    );
-  }
-
   const [underlying, setUnderlying] = useState<"NIFTY" | "BANKNIFTY" | "FINNIFTY">("NIFTY");
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
@@ -150,6 +136,20 @@ export default function HeroZeroScanner() {
   const candidates = data?.candidates ?? [];
   const heroZeroCandidates = candidates.filter(c => c.isHeroZeroRange);
   const otherCandidates = candidates.filter(c => !c.isHeroZeroRange);
+
+  // ── Auth Loading Gate (MUST be after all hooks) ────────────────────────────
+  if (!meQuery.isFetched || (meQuery.isLoading && !localStorage.getItem("scalpbot_auth_token"))) {
+    return (
+      <div className="min-h-screen bg-[oklch(0.10_0.02_240)] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-teal-500 rounded-xl flex items-center justify-center animate-pulse">
+            <Zap className="w-7 h-7 text-white" />
+          </div>
+          <p className="text-white/50 text-sm">Loading ScalpBot...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[oklch(0.11_0.025_240)] text-white p-4 md:p-6">
