@@ -1,7 +1,7 @@
-import { eq } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, subscriptions } from "../drizzle/schema";
 import { ENV } from './_core/env';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _db: any = null;
@@ -256,4 +256,124 @@ export function resetDbConnection() {
     try { _pool.end(); } catch { /* ignore */ }
     _pool = null;
   }
+}
+
+// ── Subscription Helpers ─────────────────────────────────────────────────────
+
+/** Check if a session has active access (trial or paid) */
+export async function checkAccess(sessionToken: string): Promise<{
+  hasAccess: boolean;
+  plan: string | null;
+  expiresAt: Date | null;
+  daysLeft: number;
+}> {
+  const db = await getDb();
+  if (!db) return { hasAccess: false, plan: null, expiresAt: null, daysLeft: 0 };
+
+  const now = new Date();
+  const rows = await db
+    .select()
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.sessionToken, sessionToken),
+        eq(subscriptions.status, "active")
+      )
+    )
+    .orderBy(desc(subscriptions.expiresAt))
+    .limit(1);
+
+  if (rows.length === 0) {
+    return { hasAccess: false, plan: null, expiresAt: null, daysLeft: 0 };
+  }
+
+  const sub = rows[0];
+  if (sub.expiresAt < now) {
+    // Mark as expired
+    await db
+      .update(subscriptions)
+      .set({ status: "expired" })
+      .where(eq(subscriptions.id, sub.id));
+    return { hasAccess: false, plan: null, expiresAt: null, daysLeft: 0 };
+  }
+
+  const daysLeft = Math.ceil((sub.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  return { hasAccess: true, plan: sub.plan, expiresAt: sub.expiresAt, daysLeft };
+}
+
+/** Check if session has ever had a trial */
+export async function hasUsedTrial(sessionToken: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  const rows = await db
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.sessionToken, sessionToken),
+        eq(subscriptions.plan, "trial")
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+/** Start a 2-day free trial for a session */
+export async function startTrial(sessionToken: string): Promise<{ success: boolean; expiresAt: Date | null; error?: string }> {
+  const used = await hasUsedTrial(sessionToken);
+  if (used) {
+    return { success: false, expiresAt: null, error: "Trial already used" };
+  }
+
+  const db = await getDb();
+  if (!db) return { success: false, expiresAt: null, error: "Database unavailable" };
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // 2 days
+
+  await db.insert(subscriptions).values({
+    sessionToken,
+    plan: "trial",
+    status: "active",
+    startsAt: now,
+    expiresAt,
+  });
+
+  return { success: true, expiresAt };
+}
+
+/** Record a paid subscription after Razorpay payment verification */
+export async function activateSubscription(params: {
+  sessionToken: string;
+  plan: "monthly" | "quarterly" | "half_yearly" | "yearly";
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  amountPaid: number;
+}): Promise<{ success: boolean; expiresAt: Date }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  const now = new Date();
+  const durationDays: Record<string, number> = {
+    monthly: 30,
+    quarterly: 90,
+    half_yearly: 180,
+    yearly: 365,
+  };
+  const days = durationDays[params.plan] || 30;
+  const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+
+  await db.insert(subscriptions).values({
+    sessionToken: params.sessionToken,
+    plan: params.plan,
+    status: "active",
+    razorpayOrderId: params.razorpayOrderId,
+    razorpayPaymentId: params.razorpayPaymentId,
+    amountPaid: params.amountPaid,
+    startsAt: now,
+    expiresAt,
+  });
+
+  return { success: true, expiresAt };
 }

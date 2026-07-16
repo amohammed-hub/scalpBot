@@ -1,12 +1,76 @@
 import { Button } from "@/components/ui/button";
-import { useLocation } from "wouter";
-import { Bot, TrendingUp, Shield, Zap, BarChart2, QrCode } from "lucide-react";
-import { useState } from "react";
+import { useLocation, Link } from "wouter";
+import { Bot, TrendingUp, Shield, Zap, BarChart2, QrCode, Check, Crown, Loader2 } from "lucide-react";
+import { useState, useCallback } from "react";
 import QRModal from "@/components/QRModal";
+import { trpc } from "@/lib/trpc";
+import { toast } from "sonner";
 
 export default function Home() {
   const [, navigate] = useLocation();
   const [qrOpen, setQrOpen] = useState(false);
+  const [checkingOut, setCheckingOut] = useState<string | null>(null);
+
+  // Get session token for subscription
+  const getSessionToken = useCallback(() => {
+    let token = localStorage.getItem("scalpbot_session");
+    if (!token) {
+      token = crypto.randomUUID();
+      localStorage.setItem("scalpbot_session", token);
+    }
+    return token;
+  }, []);
+
+  const createOrderMutation = trpc.subscription.createOrder.useMutation({
+    onSuccess: (data) => {
+      // Open Razorpay checkout
+      const options = {
+        key: data.keyId,
+        amount: data.amount,
+        currency: data.currency,
+        name: "ScalpBot",
+        description: `${data.planLabel} Subscription`,
+        order_id: data.orderId,
+        handler: async (response: any) => {
+          // Verify payment on server
+          try {
+            await verifyPaymentMutation.mutateAsync({
+              sessionToken: getSessionToken(),
+              plan: checkingOut as any,
+              razorpayOrderId: response.razorpay_order_id,
+              razorpayPaymentId: response.razorpay_payment_id,
+              razorpaySignature: response.razorpay_signature,
+            });
+            toast.success("Payment successful! Subscription activated.");
+            navigate("/dashboard");
+          } catch (e: any) {
+            toast.error(`Payment verification failed: ${e.message}`);
+          }
+          setCheckingOut(null);
+        },
+        modal: {
+          ondismiss: () => setCheckingOut(null),
+        },
+        theme: { color: "#14b8a6" },
+      };
+      const rzp = new (window as any).Razorpay(options);
+      rzp.open();
+    },
+    onError: (e) => {
+      toast.error(e.message);
+      setCheckingOut(null);
+    },
+  });
+
+  const verifyPaymentMutation = trpc.subscription.verifyPayment.useMutation();
+
+  const handleSubscribe = (plan: "monthly" | "quarterly" | "half_yearly" | "yearly") => {
+    setCheckingOut(plan);
+    createOrderMutation.mutate({
+      sessionToken: getSessionToken(),
+      plan,
+    });
+  };
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white">
@@ -94,6 +158,97 @@ export default function Home() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Pricing */}
+        <div className="mt-20 text-center" id="pricing">
+          <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/30 rounded-full px-4 py-1.5 text-purple-400 text-sm mb-4">
+            <Crown className="w-4 h-4" />
+            Simple Pricing
+          </div>
+          <h2 className="text-3xl font-bold text-white mb-3">Choose Your Plan</h2>
+          <p className="text-white/50 mb-10">Start with a 2-day free trial. Full access to all features.</p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+            {/* Monthly */}
+            <div className="relative bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-teal-500/40 transition-colors">
+              <h3 className="text-lg font-semibold text-white mb-1">Monthly</h3>
+              <div className="flex items-baseline gap-1 mb-4">
+                <span className="text-3xl font-bold text-white">₹9,999</span>
+                <span className="text-white/40 text-sm">/month</span>
+              </div>
+              <ul className="space-y-2.5 text-left mb-6">
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Live + Paper Trading</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> NSE + MCX Markets</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> 3 Parallel Bots</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Hero Zero Scanner</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> P&L Analytics</li>
+              </ul>
+              <Button className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20" onClick={() => handleSubscribe("monthly")} disabled={!!checkingOut}>
+                {checkingOut === "monthly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe"}
+              </Button>
+            </div>
+
+            {/* 3 Months */}
+            <div className="relative bg-white/5 border border-teal-500/50 rounded-2xl p-6 ring-1 ring-teal-500/20">
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-teal-500 text-white text-xs font-bold px-3 py-1 rounded-full">POPULAR</div>
+              <h3 className="text-lg font-semibold text-white mb-1">3 Months</h3>
+              <div className="flex items-baseline gap-1 mb-1">
+                <span className="text-3xl font-bold text-white">₹24,999</span>
+              </div>
+              <p className="text-teal-400 text-xs mb-4">Save 17% — ₹8,333/month</p>
+              <ul className="space-y-2.5 text-left mb-6">
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Everything in Monthly</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Telegram Alerts</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Carry Forward Mode</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Backtest Engine</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Priority Support</li>
+              </ul>
+              <Button className="w-full bg-teal-500 hover:bg-teal-600 text-white" onClick={() => handleSubscribe("quarterly")} disabled={!!checkingOut}>
+                {checkingOut === "quarterly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe"}
+              </Button>
+            </div>
+
+            {/* 6 Months */}
+            <div className="relative bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-teal-500/40 transition-colors">
+              <h3 className="text-lg font-semibold text-white mb-1">6 Months</h3>
+              <div className="flex items-baseline gap-1 mb-1">
+                <span className="text-3xl font-bold text-white">₹44,999</span>
+              </div>
+              <p className="text-teal-400 text-xs mb-4">Save 25% — ₹7,500/month</p>
+              <ul className="space-y-2.5 text-left mb-6">
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Everything in 3 Months</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Custom Strategy Builder</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Multi-Account Support</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Advanced Analytics</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Dedicated Onboarding</li>
+              </ul>
+              <Button className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20" onClick={() => handleSubscribe("half_yearly")} disabled={!!checkingOut}>
+                {checkingOut === "half_yearly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe"}
+              </Button>
+            </div>
+
+            {/* Yearly */}
+            <div className="relative bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-teal-500/40 transition-colors">
+              <h3 className="text-lg font-semibold text-white mb-1">1 Year</h3>
+              <div className="flex items-baseline gap-1 mb-1">
+                <span className="text-3xl font-bold text-white">₹79,999</span>
+              </div>
+              <p className="text-teal-400 text-xs mb-4">Save 33% — ₹6,667/month</p>
+              <ul className="space-y-2.5 text-left mb-6">
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Everything in 6 Months</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Lifetime Updates</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> 1-on-1 Strategy Call</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Early Access Features</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Best Value</li>
+              </ul>
+              <Button className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20" onClick={() => handleSubscribe("yearly")} disabled={!!checkingOut}>
+                {checkingOut === "yearly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe"}
+              </Button>
+            </div>
+          </div>
+
+          <p className="text-white/40 text-sm mt-6">All plans include a 2-day free trial. No refunds on cancellation — access continues until the end of your billing period.</p>
         </div>
 
         {/* Disclaimer */}

@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import QRModal from "@/components/QRModal";
 import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
@@ -184,6 +184,23 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const [qrOpen, setQrOpen] = useState(false);
   const sessionToken = getSessionToken();
+
+  // ── Subscription Access Control ────────────────────────────────────────────
+  const accessQuery = trpc.subscription.checkAccess.useQuery(
+    { sessionToken },
+    { staleTime: 60_000, refetchOnWindowFocus: false }
+  );
+  const startTrialMutation = trpc.subscription.startTrial.useMutation({
+    onSuccess: (data) => {
+      if (data.success) {
+        toast.success("2-day free trial activated! Paper trading NSE only.");
+        accessQuery.refetch();
+      } else {
+        toast.error(data.error || "Could not start trial");
+      }
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   // Config — persisted in localStorage (not sensitive, just UI preferences)
   const [config, setConfig] = useState<BotConfig>(() => {
@@ -763,6 +780,65 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
+      {/* ── Subscription Paywall Overlay ─────────────────────────────────────── */}
+      {accessQuery.data && !accessQuery.data.hasAccess && (
+        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-lg w-full bg-[oklch(0.15_0.02_240)] border border-white/10 rounded-2xl p-8 text-center space-y-6">
+            <div className="w-16 h-16 mx-auto bg-teal-500/20 rounded-full flex items-center justify-center">
+              <ShieldAlert className="w-8 h-8 text-teal-400" />
+            </div>
+            <h2 className="text-2xl font-bold text-white">Subscription Required</h2>
+            <p className="text-white/60 text-sm leading-relaxed">
+              {accessQuery.data.trialUsed
+                ? "Your free trial has expired. Subscribe to continue using ScalpBot for live and paper trading."
+                : "Start your 2-day free trial to explore ScalpBot with paper trading on NSE (NIFTY/BANKNIFTY). No payment required."}
+            </p>
+            <div className="flex flex-col gap-3">
+              {!accessQuery.data.trialUsed && (
+                <button
+                  onClick={() => startTrialMutation.mutate({ sessionToken })}
+                  disabled={startTrialMutation.isPending}
+                  className="w-full py-3 px-6 bg-teal-500 hover:bg-teal-400 text-black font-bold rounded-lg transition-all active:scale-[0.97] disabled:opacity-50"
+                >
+                  {startTrialMutation.isPending ? "Activating..." : "Start Free Trial (2 Days)"}
+                </button>
+              )}
+              <button
+                onClick={() => navigate("/")}
+                className="w-full py-3 px-6 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-lg border border-white/20 transition-all active:scale-[0.97]"
+              >
+                View Pricing Plans
+              </button>
+            </div>
+            <p className="text-white/30 text-xs">
+              Trial: Paper trade NSE only | No MCX | No live trading
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Trial/Plan Banner ────────────────────────────────────────────────── */}
+      {accessQuery.data?.hasAccess && accessQuery.data.plan === "trial" && (
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between gap-3 px-4 py-2 bg-teal-600 text-white text-sm font-medium shadow-lg">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            <span>
+              <strong>Free Trial</strong> — {accessQuery.data.daysLeft} day{accessQuery.data.daysLeft !== 1 ? "s" : ""} remaining.
+              Paper trading NSE only.
+            </span>
+          </div>
+          <button onClick={() => navigate("/")} className="shrink-0 text-xs bg-white/20 hover:bg-white/30 px-3 py-1 rounded-md transition-colors">
+            Upgrade
+          </button>
+        </div>
+      )}
+      {accessQuery.data?.hasAccess && accessQuery.data.plan && accessQuery.data.plan !== "trial" && (
+        <div className="fixed top-0 left-64 right-0 z-40 flex items-center gap-2 px-4 py-1.5 bg-emerald-600/80 text-white text-xs font-medium">
+          <Award className="w-3.5 h-3.5" />
+          <span>{accessQuery.data.plan.replace("_", " ").replace(/^\w/, (c: string) => c.toUpperCase())} Plan — {accessQuery.data.daysLeft} days left</span>
+        </div>
+      )}
+
       {/* Morning Reminder Banner */}
       {showReminder && (
         <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between gap-3 px-4 py-3 bg-amber-500 text-black text-sm font-medium shadow-lg">

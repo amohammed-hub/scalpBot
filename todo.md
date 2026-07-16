@@ -752,3 +752,26 @@
 - [x] FIX H: livePrices uses max(bid, LTP) for option premium display (not stale LTP)
 - [x] Kill switch uses remainingQty for live order and dailyPnl with bookedPnlAddedToDaily guard
 - [x] Carry-forward unrealized P&L uses remainingQty
+
+## Subscription & Monetization Infrastructure (Jul 16 2025)
+- [x] Database: subscriptions table added to drizzle/schema.ts (plan, status, razorpayOrderId, razorpayPaymentId, amountPaid, startsAt, expiresAt)
+- [x] Migration: 0017_volatile_skullbuster.sql generated and applied to Manus TiDB
+- [x] server/db.ts: checkAccess() — returns hasAccess, plan, daysLeft for a sessionToken
+- [x] server/db.ts: hasUsedTrial() — checks if session has ever used a trial
+- [x] server/db.ts: startTrial() — creates 2-day trial record (one-time only)
+- [x] server/db.ts: activateSubscription() — records paid subscription after Razorpay verification
+- [x] server/routers.ts: subscription.checkAccess endpoint
+- [x] server/routers.ts: subscription.startTrial endpoint
+- [x] server/routers.ts: subscription.createOrder endpoint (creates Razorpay order via API)
+- [x] server/routers.ts: subscription.verifyPayment endpoint (HMAC signature verification + activate)
+- [x] Dashboard.tsx: Subscription paywall overlay (shows when no active subscription)
+- [x] Dashboard.tsx: "Start Free Trial" button on paywall
+- [x] Dashboard.tsx: Trial banner with days remaining
+- [x] Dashboard.tsx: Paid plan badge with expiry
+- [x] Home.tsx: Pricing section with 4 plans (Monthly ₹9,999, 3-Month ₹24,999, 6-Month ₹44,999, Yearly ₹79,999)
+- [x] Home.tsx: Subscribe buttons wired to Razorpay checkout flow
+- [x] client/index.html: Razorpay checkout.js script loaded
+- [ ] Razorpay API keys (RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET) — waiting for user to activate Payment Gateway
+- [ ] Trial enforcement: block MCX + live trading during trial (server-side)
+- [ ] Railway DB: apply subscriptions migration on production
+- [ ] Push subscription code to GitHub for Railway auto-deploy

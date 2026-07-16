@@ -1,7 +1,7 @@
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
-import { getDb } from "./db";
+import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription } from "./db";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, type Candle } from "./botEngine";
@@ -3176,13 +3176,141 @@ export const appRouter = router({
       }),
 
     /** Get daily performance reports */
-    dailyReports: publicProcedure
+   dailyReports: publicProcedure
+     .input(z.object({
+       sessionToken: sessionTokenSchema,
+       days: z.number().min(1).max(365).default(30),
+     }))
+     .query(async ({ input }) => {
+       return computeDailyReports(input.sessionToken, input.days);
+     }),
+  }),
+
+  // ── Subscription & Access Control ───────────────────────────────────────────
+  subscription: router({
+    /** Check if session has active access */
+    checkAccess: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const access = await checkAccess(input.sessionToken);
+        const trialUsed = await hasUsedTrial(input.sessionToken);
+        return { ...access, trialUsed };
+      }),
+
+    /** Start a 2-day free trial */
+    startTrial: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input }) => {
+        return startTrial(input.sessionToken);
+      }),
+
+    /** Create a Razorpay order (stub — requires API keys) */
+    createOrder: publicProcedure
       .input(z.object({
         sessionToken: sessionTokenSchema,
-        days: z.number().min(1).max(365).default(30),
+        plan: z.enum(["monthly", "quarterly", "half_yearly", "yearly"]),
       }))
-      .query(async ({ input }) => {
-        return computeDailyReports(input.sessionToken, input.days);
+      .mutation(async ({ input }) => {
+        const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+        const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+
+        if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+          throw new Error("Razorpay not configured. Contact admin.");
+        }
+
+        const amounts: Record<string, number> = {
+          monthly: 999900,      // ₹9,999 in paise
+          quarterly: 2499900,   // ₹24,999 in paise
+          half_yearly: 4499900, // ₹44,999 in paise
+          yearly: 7999900,      // ₹79,999 in paise
+        };
+
+        const amount = amounts[input.plan];
+        const planLabels: Record<string, string> = {
+          monthly: "Monthly",
+          quarterly: "3-Month",
+          half_yearly: "6-Month",
+          yearly: "Yearly",
+        };
+
+        // Create Razorpay order via API
+        const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+        const res = await fetch("https://api.razorpay.com/v1/orders", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${auth}`,
+          },
+          body: JSON.stringify({
+            amount,
+            currency: "INR",
+            receipt: `sub_${input.sessionToken.slice(0, 8)}_${Date.now()}`,
+            notes: {
+              plan: input.plan,
+              sessionToken: input.sessionToken,
+            },
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          console.error("[Razorpay] Order creation failed:", errText);
+          throw new Error("Payment order creation failed");
+        }
+
+        const order = await res.json() as { id: string; amount: number; currency: string };
+        return {
+          orderId: order.id,
+          amount: order.amount,
+          currency: order.currency,
+          keyId: RAZORPAY_KEY_ID,
+          planLabel: planLabels[input.plan],
+        };
+      }),
+
+    /** Verify Razorpay payment and activate subscription */
+    verifyPayment: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        plan: z.enum(["monthly", "quarterly", "half_yearly", "yearly"]),
+        razorpayOrderId: z.string(),
+        razorpayPaymentId: z.string(),
+        razorpaySignature: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+        if (!RAZORPAY_KEY_SECRET) {
+          throw new Error("Razorpay not configured");
+        }
+
+        // Verify HMAC signature
+        const crypto = await import("crypto");
+        const expectedSignature = crypto
+          .createHmac("sha256", RAZORPAY_KEY_SECRET)
+          .update(`${input.razorpayOrderId}|${input.razorpayPaymentId}`)
+          .digest("hex");
+
+        if (expectedSignature !== input.razorpaySignature) {
+          throw new Error("Payment verification failed — invalid signature");
+        }
+
+        const amounts: Record<string, number> = {
+          monthly: 999900,
+          quarterly: 2499900,
+          half_yearly: 4499900,
+          yearly: 7999900,
+        };
+
+        // Activate subscription
+        const result = await activateSubscription({
+          sessionToken: input.sessionToken,
+          plan: input.plan,
+          razorpayOrderId: input.razorpayOrderId,
+          razorpayPaymentId: input.razorpayPaymentId,
+          amountPaid: amounts[input.plan],
+        });
+
+        return result;
       }),
   }),
 });

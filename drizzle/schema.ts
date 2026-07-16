@@ -19,6 +19,22 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// ── Subscriptions ────────────────────────────────────────────────────────────
+export const subscriptions = mysqlTable("subscriptions", {
+  id: int("id").autoincrement().primaryKey(),
+  sessionToken: varchar("sessionToken", { length: 128 }).notNull(),
+  plan: mysqlEnum("plan", ["trial", "monthly", "quarterly", "half_yearly", "yearly"]).notNull(),
+  status: mysqlEnum("status", ["active", "expired", "cancelled"]).default("active").notNull(),
+  razorpayOrderId: varchar("razorpayOrderId", { length: 128 }),
+  razorpayPaymentId: varchar("razorpayPaymentId", { length: 128 }),
+  razorpaySubscriptionId: varchar("razorpaySubscriptionId", { length: 128 }),
+  amountPaid: int("amountPaid").default(0), // in paise
+  startsAt: timestamp("startsAt").defaultNow().notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type Subscription = typeof subscriptions.$inferSelect;
+
 // ── Upstox Credentials ────────────────────────────────────────────────────────
 // sessionToken: browser-generated UUID stored in localStorage — no Manus login required
 export const upstoxCredentials = mysqlTable("upstox_credentials", {
