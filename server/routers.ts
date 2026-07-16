@@ -3456,13 +3456,15 @@ export const appRouter = router({
 
         try {
           const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as { userId: number; mobile: string; role: string };
-          const user = await getAppUserById(decoded.userId);
-          if (!user) return null;
+         const user = await getAppUserById(decoded.userId);
+         if (!user) return null;
+          // Override role to admin if mobile matches ADMIN_MOBILE
+          const effectiveRole = (ENV.adminMobile && (user.mobile === ENV.adminMobile || user.mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""))) ? "admin" : user.role;
           return {
             id: user.id,
             mobile: user.mobile,
             name: user.name,
-            role: user.role,
+            role: effectiveRole,
             sessionToken: user.sessionToken,
           };
         } catch {
