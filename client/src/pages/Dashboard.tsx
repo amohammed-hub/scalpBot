@@ -802,7 +802,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
       {/* ── Subscription Paywall Overlay ─────────────────────────────────────── */}
-      {accessQuery.data && !accessQuery.data.hasAccess && meQuery.data?.role !== "admin" && (
+      {accessQuery.data && !accessQuery.data.hasAccess && meQuery.data?.role !== "admin" && !accessQuery.data?.plan?.includes("yearly") && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="max-w-lg w-full bg-[oklch(0.15_0.02_240)] border border-white/10 rounded-2xl p-8 text-center space-y-6">
             <div className="w-16 h-16 mx-auto bg-teal-500/20 rounded-full flex items-center justify-center">
@@ -829,6 +829,12 @@ export default function Dashboard() {
                 className="w-full py-3 px-6 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-lg border border-white/20 transition-all active:scale-[0.97]"
               >
                 View Pricing Plans
+              </button>
+              <button
+                onClick={() => logoutMutation.mutate()}
+                className="w-full py-2 px-6 text-white/40 hover:text-white/70 text-xs underline transition-colors"
+              >
+                Logout & Re-login
               </button>
             </div>
             <p className="text-white/30 text-xs">

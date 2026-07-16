@@ -3253,6 +3253,17 @@ export const appRouter = router({
             }
           } catch {}
         }
+        // Also check by sessionToken: if this sessionToken belongs to admin user, bypass
+        if (input.sessionToken) {
+          const db = await getDb();
+          if (db) {
+            const { appUsers } = await import("../drizzle/schema");
+            const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+            if (rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile)) {
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false };
+            }
+          }
+        }
         const access = await checkAccess(input.sessionToken);
         const trialUsed = await hasUsedTrial(input.sessionToken);
         return { ...access, trialUsed };

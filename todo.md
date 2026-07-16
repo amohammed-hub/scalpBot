@@ -811,3 +811,7 @@
 - [x] Admin endpoints accept scalpbot_auth cookie (role=admin) — no separate admin login needed
 - [x] All TypeScript errors fixed (removed _verifyAdmin placeholder)
 - [x] All 122 tests passing
+- [x] Fix: Admin user seeing "Subscription Required" - DB role was "user", updated to "admin"
+- [x] Fix: checkAccess now checks admin via JWT role, JWT mobile, DB role, AND sessionToken lookup
+- [x] Fix: Added "Logout & Re-login" button on paywall overlay so user can re-authenticate
+- [x] Fix: verifyOtp auto-promotes to admin on login if mobile matches ADMIN_MOBILE
