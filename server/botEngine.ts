@@ -1468,6 +1468,37 @@ export async function resolveAtmOptionToken(
 
     const chainExpiry: string | undefined = chainData[0]?.expiry ?? undefined;
 
+    // ── SAFETY: Skip same-day expiry for NSE options ──────────────────────────
+    // If the chain expiry is TODAY, try fetching next_week/next_month instead
+    if (chainExpiry) {
+      const expiryDate = new Date(chainExpiry + "T00:00:00+05:30");
+      const todayIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+      const isSameDay = expiryDate.getFullYear() === todayIST.getFullYear() &&
+        expiryDate.getMonth() === todayIST.getMonth() &&
+        expiryDate.getDate() === todayIST.getDate();
+      if (isSameDay) {
+        console.warn(`[BotEngine] NSE: chain expiry ${chainExpiry} is TODAY — skipping, trying next expiry`);
+        // Try next expiry
+        const nextExpiries = isBankNifty ? ["next_month"] : ["next_week", "next_month"];
+        for (const nextExp of nextExpiries) {
+          try {
+            const resp2 = await axios.get(
+              `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${nextExp}`,
+              { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
+            );
+            const nextChain = resp2.data?.data ?? [];
+            if (nextChain.length > 0) {
+              chainData = nextChain;
+              console.log(`[BotEngine] NSE: switched to ${nextExp} expiry (${nextChain[0]?.expiry}) to avoid same-day expiry`);
+              break;
+            }
+          } catch (e2) {
+            console.warn(`[BotEngine] NSE: error fetching ${nextExp}:`, e2 instanceof Error ? e2.message : String(e2));
+          }
+        }
+      }
+    }
+
     // Upstox API returns data[] as flat array: each element = { strike_price, call_options: {obj}, put_options: {obj} }
     // Build sorted list of valid options by distance from underlying price
     const sorted = chainData
@@ -1709,7 +1740,26 @@ export async function resolveAtmMcxOptionToken(
         }
       }
       if (optionCandidates.length > 0) {
-        // Nearest expiry only
+        // ── SAFETY: Skip same-day expiry options ──────────────────────────────
+        // Options expiring today suffer extreme theta decay and are very risky.
+        // Filter out any option expiring within the current trading day (before midnight IST).
+        const nowForExpiry = new Date();
+        // End of today IST = midnight tonight = 18:30 UTC today
+        const todayEndIST = new Date(nowForExpiry);
+        todayEndIST.setUTCHours(18, 30, 0, 0); // midnight IST = 18:30 UTC
+        if (todayEndIST.getTime() < nowForExpiry.getTime()) {
+          todayEndIST.setDate(todayEndIST.getDate() + 1); // already past midnight IST, use tomorrow
+        }
+        // Filter: keep only options expiring AFTER today (at least 1 day remaining)
+        const nonExpiryDayCandidates = optionCandidates.filter(c => (c.expiry ?? 0) > todayEndIST.getTime());
+        if (nonExpiryDayCandidates.length > 0) {
+          optionCandidates = nonExpiryDayCandidates;
+          console.log(`[BotEngine] MCX: filtered out same-day expiry options, ${optionCandidates.length} candidates remaining (next expiry)`);
+        } else {
+          // ALL options expire today — log warning but still use them (better than no trade)
+          console.warn(`[BotEngine] MCX: ALL available options expire today! Using them as last resort.`);
+        }
+        // Nearest expiry (now guaranteed to be at least tomorrow unless all expire today)
         const nearestExpiry = Math.min(...optionCandidates.map(c => c.expiry ?? Infinity));
         const chain = optionCandidates
           .filter(c => c.expiry === nearestExpiry)
@@ -2309,10 +2359,26 @@ async function tick(
 
     // ── Full exit: SL or Target ───────────────────────────────────────────────
     let exitReason: string | null = null;
+    const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
+    // ── TIME-BASED EXIT: Exit if trade is stagnant/losing after max hold time ──
+    // For options: theta decay kills you if you hold too long without movement.
+    // Exit if: (1) trade is older than 20 minutes, AND (2) trade is in loss or flat.
+    // This prevents holding losing options that slowly bleed to zero.
+    const MAX_HOLD_MINUTES = 20;
+    if (!exitReason && trade.isIndexOptions && tradeAgeMs > MAX_HOLD_MINUTES * 60 * 1000) {
+      const currentPnlPerUnit = trade.direction === "BUY"
+        ? effectivePrice - trade.entryPrice
+        : trade.entryPrice - effectivePrice;
+      // Exit if trade is in loss OR barely profitable (< 5% of entry)
+      if (currentPnlPerUnit < trade.entryPrice * 0.05) {
+        exitReason = `Time Exit (${MAX_HOLD_MINUTES}min) — no momentum`;
+        emitActivity(state.sessionToken, "signal", `⏰ Time-based exit: held ${Math.floor(tradeAgeMs / 60000)}min with P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)} — cutting losses`);
+      }
+    }
+
     // SAFETY GUARD: For options trades using delta approximation without a real quote,
     // only skip SL/Target checks for the FIRST 5 minutes after trade open (grace period for token resolution).
     // After 5 minutes, trust the delta approximation and enforce SL/Target — never leave a trade unprotected.
-    const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
     const isOptionsWithBrokenDelta = trade.isIndexOptions
       && !state.optionTradeToken
       && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.01
