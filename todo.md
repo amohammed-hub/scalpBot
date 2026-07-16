@@ -844,3 +844,12 @@
 - [x] Increase momentum threshold in Layer 4: roc3 from 0.0003 (0.03%) to 0.001 (0.1%) — filters noise
 - [x] Add pullback requirement to Layer 3 and 4: price must be within 0.15% of EMA9 or VWAP (don't chase)
 - [x] Add 2-candle confirmation filter: require 2 consecutive candles in signal direction for Trend/Momentum/MACD_BB layers
+
+## Averaging/DCA Strategy (July 16, 2026)
+- [x] Implement averaging logic: when open trade is in loss and candles show clear reversal, add to position at lower price
+- [x] Average entry price recalculation: weighted average of all entries
+- [x] Averaging trigger: reversal candle pattern at support + RSI oversold + volume spike
+- [x] Max averaging levels: limit to 1 additional entry (don't keep averaging into a falling knife)
+- [x] Adjusted SL/Target after averaging: SL based on new average (ATR*0.8), target adjusted (ATR*1.5)
+- [x] Telegram alert on averaging: notify user when bot adds to position
+- [x] Extended time-based exit to 30 min (from 20) when trade has been averaged

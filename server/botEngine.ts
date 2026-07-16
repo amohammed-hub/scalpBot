@@ -90,6 +90,10 @@ export interface OpenTrade {
   signalLayer?: string; // extracted layer name e.g. "Breakout", "MCXEvening"
   carryForward?: boolean; // user chose to hold overnight
   bookedPnlAddedToDaily?: boolean; // true if bookedPnl was already added to dailyPnl in this session
+  // Averaging/DCA fields
+  averageCount?: number;         // 0 = no averaging done, 1 = averaged once (max 1)
+  averagedAt?: number;           // timestamp (ms) of last averaging
+  originalEntryPrice?: number;   // first entry price before any averaging (for analytics)
 }
 
 export interface BotState {
@@ -2348,6 +2352,158 @@ async function tick(
       }
     }
 
+    // ── AVERAGING/DCA: Add to losing position when reversal signal is clear ──────
+    // Logic: If trade is in significant loss AND candles show clear reversal pattern,
+    // buy more at the lower price to bring average entry down. This allows profitable
+    // exits on bounces that wouldn't reach the original entry price.
+    // Example: Entry ₹59, drops to ₹30, average at ₹30 → new avg ₹44.5. Bounce to ₹51 = profit.
+    if ((trade.averageCount ?? 0) === 0 && trade.partialBooked === 0) {
+      const avgTradeAge = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : 0;
+      const lossPct = trade.direction === "BUY"
+        ? (trade.entryPrice - effectivePrice) / trade.entryPrice
+        : (effectivePrice - trade.entryPrice) / trade.entryPrice;
+
+      // Conditions for averaging:
+      // 1. Trade is in loss by 20-50% (significant loss but not catastrophic)
+      // 2. Trade age > 5 min (give original entry time to work)
+      // 3. Not near market close (30 min buffer)
+      // 4. Daily loss limit not close to being hit (< 70% of limit used)
+      // 5. Clear reversal candle pattern detected
+      const isInLoss = lossPct > 0.20 && lossPct < 0.50;
+      const isOldEnough = avgTradeAge > 5 * 60 * 1000; // > 5 minutes
+      const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+      const istMinNow = istNow.getHours() * 60 + istNow.getMinutes();
+      const isMCXInst = state.instrumentToken.startsWith("MCX");
+      const closeMin = isMCXInst ? 23 * 60 + 25 : 15 * 60 + 25; // MCX 23:25, NSE 15:25
+      const notNearClose = istMinNow < closeMin - 30; // at least 30 min before close
+      const dailyLossUsed = Math.abs(state.dailyPnl) / (state.capital * state.dailyLossLimitPct / 100);
+      const hasCapitalHeadroom = dailyLossUsed < 0.70; // less than 70% of daily loss limit used
+
+      if (isInLoss && isOldEnough && notNearClose && hasCapitalHeadroom && state.candles.length >= 5) {
+        // Check for CLEAR reversal signal in candles:
+        // For BUY trades: 2 consecutive green candles + RSI turning up from oversold
+        // For SELL trades: 2 consecutive red candles + RSI turning down from overbought
+        const len = state.candles.length;
+        const c_2 = state.candles[len - 2];
+        const c_1 = state.candles[len - 1]; // most recent candle
+        const closes = state.candles.map(c => c.close);
+        const rsiNow = calcRSI(closes, 14);
+        const rsiPrev = calcRSI(closes.slice(0, -1), 14);
+        const vwapNow = calcVWAP(state.candles);
+
+        // Volume confirmation: current candle volume > 1.5x average (shows conviction)
+        const avgVolRecent = state.candles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
+        const allVolZeroAvg = state.candles.slice(-10).every(c => c.volume === 0);
+        const volConfirmed = allVolZeroAvg || (c_1.volume > avgVolRecent * 1.3);
+
+        let reversalDetected = false;
+        if (trade.direction === "BUY") {
+          // Reversal for BUY: 2 green candles + RSI was < 35 and now turning up + volume
+          const twoGreen = c_2.close > c_2.open && c_1.close > c_1.open;
+          const rsiOversoldTurning = rsiPrev < 35 && rsiNow > rsiPrev;
+          const priceRecovering = c_1.close > c_2.close; // higher close
+          reversalDetected = twoGreen && rsiOversoldTurning && priceRecovering && volConfirmed;
+        } else {
+          // Reversal for SELL: 2 red candles + RSI was > 65 and now turning down + volume
+          const twoRed = c_2.close < c_2.open && c_1.close < c_1.open;
+          const rsiOverboughtTurning = rsiPrev > 65 && rsiNow < rsiPrev;
+          const priceFalling = c_1.close < c_2.close; // lower close
+          reversalDetected = twoRed && rsiOverboughtTurning && priceFalling && volConfirmed;
+        }
+
+        if (reversalDetected) {
+          // Calculate averaging quantity (same as original or limited by remaining capital)
+          const avgPrice = effectivePrice;
+          const maxAvgCapital = state.capital * (state.riskPerTradePct / 100) * 2; // Allow 2x risk for averaging
+          const maxQtyByCapital = Math.floor(maxAvgCapital / avgPrice);
+          const lotSize = state.lotSize || 1;
+          let avgQty = Math.min(trade.quantity, maxQtyByCapital);
+          avgQty = Math.max(lotSize, Math.floor(avgQty / lotSize) * lotSize); // Round to lot size
+
+          // For live mode: place the order first
+          if (trade.mode === "live" && state.accessToken) {
+            const avgOrderDir = trade.direction; // Same direction as original trade
+            const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty);
+            if (!avgOrderId) {
+              // Order failed — don't average, just log
+              console.warn(`[BotEngine] ${state.sessionToken} — AVERAGING order REJECTED by Upstox`);
+              emitActivity(state.sessionToken, "error", `⚠ Averaging order rejected — ${trade.symbolLabel} ${avgOrderDir} ${avgQty} qty`);
+              // Don't try again — set averageCount to prevent retry spam
+              trade.averageCount = 1;
+              return;
+            }
+          }
+
+          // Calculate new weighted average entry price
+          const oldTotal = trade.entryPrice * trade.quantity;
+          const newTotal = avgPrice * avgQty;
+          const combinedQty = trade.quantity + avgQty;
+          const newAvgEntry = (oldTotal + newTotal) / combinedQty;
+
+          // Store original entry for analytics (first time only)
+          if (!trade.originalEntryPrice) {
+            trade.originalEntryPrice = trade.entryPrice;
+          }
+
+          // Update trade with new averaged values
+          const atrNow = calcATR(state.candles, 14);
+          trade.entryPrice = newAvgEntry;
+          trade.quantity = combinedQty;
+          trade.averageCount = 1;
+          trade.averagedAt = Date.now();
+
+          // New SL: tighter — new average - ATR * 0.8 (protect the larger position)
+          const newSlDist = atrNow * 0.8;
+          trade.slPrice = trade.direction === "BUY" ? newAvgEntry - newSlDist : newAvgEntry + newSlDist;
+          trade.currentSl = trade.slPrice;
+
+          // New Target: new average + ATR * 1.5 (realistic recovery target)
+          trade.targetPrice = trade.direction === "BUY" ? newAvgEntry + atrNow * 1.5 : newAvgEntry - atrNow * 1.5;
+
+          // Recalculate partial booking levels based on new average
+          const p1Pct = state.partial1Pct / 100;
+          const p2Pct = state.partial2Pct / 100;
+          trade.partial1RPrice = trade.direction === "BUY"
+            ? newAvgEntry * (1 + p1Pct)
+            : newAvgEntry * (1 - p1Pct);
+          trade.partial2RPrice = trade.direction === "BUY"
+            ? newAvgEntry * (1 + p2Pct)
+            : newAvgEntry * (1 - p2Pct);
+
+          // Persist to DB (fire-and-forget)
+          (async () => {
+            try {
+              const { tradeLog: tl } = await import("../drizzle/schema");
+              const { eq } = await import("drizzle-orm");
+              const { getDb } = await import("./db");
+              const db = await getDb();
+              if (db && trade.dbId) {
+                await db.update(tl).set({
+                  entryPrice: String(newAvgEntry),
+                  quantity: combinedQty,
+                  slPrice: String(trade.slPrice),
+                  targetPrice: String(trade.targetPrice),
+                  partial1RPrice: String(trade.partial1RPrice),
+                  partial2RPrice: String(trade.partial2RPrice),
+                }).where(eq(tl.id, trade.dbId));
+              }
+            } catch (e) { console.error("[BotEngine] Failed to persist averaging state:", e); }
+          })();
+
+          const avgMsg = `📊 <b>AVERAGING DOWN</b>\n` +
+            `📈 <b>${trade.symbolLabel}</b>\n` +
+            `➕ Added ${avgQty} qty @ ₹${avgPrice.toFixed(2)}\n` +
+            `📉 Original entry: ₹${trade.originalEntryPrice?.toFixed(2)} → New avg: ₹${newAvgEntry.toFixed(2)}\n` +
+            `📦 Total qty: ${combinedQty} | New SL: ₹${trade.slPrice.toFixed(2)} | Target: ₹${trade.targetPrice.toFixed(2)}\n` +
+            `🔄 RSI: ${rsiNow.toFixed(0)} (was ${rsiPrev.toFixed(0)}) | Loss was ${(lossPct * 100).toFixed(0)}%`;
+          console.log(`[BotEngine] ${state.sessionToken} — AVERAGING: +${avgQty} @ ₹${avgPrice.toFixed(2)} | New avg: ₹${newAvgEntry.toFixed(2)} | Old: ₹${trade.originalEntryPrice?.toFixed(2)}`);
+          emitActivity(state.sessionToken, "trade_open", `📊 AVERAGING ${trade.symbolLabel} +${avgQty} @ ₹${avgPrice.toFixed(2)} | New avg: ₹${newAvgEntry.toFixed(2)} | SL: ₹${trade.slPrice.toFixed(2)} | Target: ₹${trade.targetPrice.toFixed(2)}`, { price: avgPrice, confidence: 0.7 });
+          sendTelegramAlert(state, avgMsg);
+          return; // Don't check SL/Target this tick — let the new average settle
+        }
+      }
+    }
+
     // ── Full exit: SL or Target ───────────────────────────────────────────────
     let exitReason: string | null = null;
     const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
@@ -2355,7 +2511,8 @@ async function tick(
     // For options: theta decay kills you if you hold too long without movement.
     // Exit if: (1) trade is older than 20 minutes, AND (2) trade is in loss or flat.
     // This prevents holding losing options that slowly bleed to zero.
-    const MAX_HOLD_MINUTES = 20;
+    // If trade was averaged, give more time (30 min) since the new avg entry is lower
+    const MAX_HOLD_MINUTES = (trade.averageCount ?? 0) > 0 ? 30 : 20;
     if (!exitReason && trade.isIndexOptions && tradeAgeMs > MAX_HOLD_MINUTES * 60 * 1000) {
       const currentPnlPerUnit = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
