@@ -104,6 +104,9 @@ export const botSessions = mysqlTable("bot_sessions", {
   // Configurable partial profit booking percentages (persisted for restart)
   partial1Pct: float("partial1Pct").default(30),
   partial2Pct: float("partial2Pct").default(60),
+  // Averaging/DCA settings
+  averagingEnabled: boolean("averagingEnabled").default(true),
+  averagingLossThreshold: float("averagingLossThreshold").default(0.20),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

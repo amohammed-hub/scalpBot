@@ -176,6 +176,18 @@ export interface BotState {
   carryForward?: boolean;
   // Pending option token resolution promise (awaited before first tick)
   _pendingOptionResolve?: Promise<void>;
+  // Averaging settings (configurable from frontend)
+  averagingEnabled?: boolean;       // default true
+  averagingLossThreshold?: number;  // min loss % to trigger averaging (default 0.20 = 20%)
+  // Recent rejected signals (in-memory ring buffer for dashboard display)
+  recentRejectedSignals?: Array<{
+    direction: "BUY" | "SELL";
+    layer: string;
+    confidence: number;
+    reason: string;
+    rejectedAt: number; // unix ms
+    rejectReason: string;
+  }>;
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -192,6 +204,23 @@ async function sendTelegramAlert(state: BotState, message: string): Promise<void
     );
   } catch {
     // Telegram errors are non-critical — don't crash the bot
+  }
+}
+
+// ── Rejected signal ring buffer helper ────────────────────────────────────────
+function pushRejectedSignal(state: BotState, signal: { direction: "BUY" | "SELL"; layer: string; confidence: number; reason: string }, rejectReason: string): void {
+  if (!state.recentRejectedSignals) state.recentRejectedSignals = [];
+  state.recentRejectedSignals.push({
+    direction: signal.direction,
+    layer: signal.layer,
+    confidence: signal.confidence,
+    reason: signal.reason,
+    rejectedAt: Date.now(),
+    rejectReason,
+  });
+  // Keep only last 10
+  if (state.recentRejectedSignals.length > 10) {
+    state.recentRejectedSignals = state.recentRejectedSignals.slice(-10);
   }
 }
 
@@ -2357,7 +2386,7 @@ async function tick(
     // buy more at the lower price to bring average entry down. This allows profitable
     // exits on bounces that wouldn't reach the original entry price.
     // Example: Entry ₹59, drops to ₹30, average at ₹30 → new avg ₹44.5. Bounce to ₹51 = profit.
-    if ((trade.averageCount ?? 0) === 0 && trade.partialBooked === 0) {
+    if ((state.averagingEnabled ?? true) && (trade.averageCount ?? 0) === 0 && trade.partialBooked === 0) {
       const avgTradeAge = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : 0;
       const lossPct = trade.direction === "BUY"
         ? (trade.entryPrice - effectivePrice) / trade.entryPrice
@@ -2722,6 +2751,7 @@ async function tick(
   if (state.enabledLayers && state.enabledLayers.length > 0 && signal.layer !== "None") {
     if (!state.enabledLayers.includes(signal.layer)) {
       emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal from ${signal.layer} skipped (layer disabled)`);
+      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Layer ${signal.layer} disabled`);
       return;
     }
   }
@@ -2729,6 +2759,7 @@ async function tick(
   // ── HourlyClose one-shot guard: only fire once per day ─────────────────────
   if (signal.layer === "HourlyClose" && state.hourlyCloseSignalFired) {
     emitActivity(state.sessionToken, "signal", `⊘ HourlyClose signal skipped (already fired today)`);
+    pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "HourlyClose already fired today");
     return;
   }
 
@@ -2890,6 +2921,7 @@ async function tick(
     const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: exposureCheck.reason ?? "Portfolio exposure cap reached", layer: "None" };
     state.lastSignal = rejectSignal;
     emitActivity(state.sessionToken, "signal", `⛔ Entry blocked — ${exposureCheck.reason}`);
+    pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, exposureCheck.reason ?? "Exposure cap");
     logSignalToJournal({
       sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
       direction: signal.direction, layer: signal.layer, confidence: signal.confidence,

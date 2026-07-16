@@ -301,6 +301,8 @@ export const appRouter = router({
         enabledLayers: z.array(z.string()).optional(),
         partial1Pct: z.number().default(30), // Book 50% at this % profit (e.g., 30 = +30%)
         partial2Pct: z.number().default(60), // Book 25% at this % profit (e.g., 60 = +60%)
+        averagingEnabled: z.boolean().default(true),
+        averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -694,6 +696,8 @@ export const appRouter = router({
             partial1Pct: input.partial1Pct,
             partial2Pct: input.partial2Pct,
             carryForward: existingOpenTrade?.carryForward ?? false,
+            averagingEnabled: input.averagingEnabled,
+            averagingLossThreshold: input.averagingLossThreshold,
           },
           onTradeOpen,
           onTradeClose,
@@ -1012,6 +1016,8 @@ export const appRouter = router({
             partial1Pct: row.partial1Pct ?? 30,
             partial2Pct: row.partial2Pct ?? 60,
             carryForward: existingOpenTrade?.carryForward ?? false,
+            averagingEnabled: row.averagingEnabled ?? true,
+            averagingLossThreshold: row.averagingLossThreshold ?? 0.20,
           },
           onTradeOpen,
           onTradeClose,
@@ -1115,6 +1121,11 @@ export const appRouter = router({
           // Options mode: current option premium price (for live P&L display on Dashboard)
           optionPremiumPrice: state.optionPremiumPrice ?? null,
           isIndexOptions: state.isIndexOptions ?? false,
+          // Averaging settings
+          averagingEnabled: state.averagingEnabled ?? true,
+          averagingLossThreshold: state.averagingLossThreshold ?? 0.20,
+          // Recent rejected signals for dashboard display
+          recentRejectedSignals: state.recentRejectedSignals ?? [],
         };
       }),
 
@@ -2072,6 +2083,8 @@ export const appRouter = router({
         enabledLayers: z.array(z.string()).optional(),
         partial1Pct: z.number().default(30),
         partial2Pct: z.number().default(60),
+        averagingEnabled: z.boolean().default(true),
+        averagingLossThreshold: z.number().default(0.20),
       }))
       .mutation(async ({ input }) => {
         const db = await getDb();
@@ -2319,6 +2332,8 @@ export const appRouter = router({
           consecutiveTickErrors: 0,
           partial1Pct: input.partial1Pct,
           partial2Pct: input.partial2Pct,
+          averagingEnabled: input.averagingEnabled ?? true,
+          averagingLossThreshold: input.averagingLossThreshold ?? 0.20,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;

@@ -4,7 +4,7 @@ import {
   Settings as SettingsIcon, Zap, Activity, Calculator, Key,
   ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle,
   AlertTriangle, ChevronDown, ChevronUp, MousePointer,
-  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2
+  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2, ArrowDownUp
 } from "lucide-react";
 import { MCX_INSTRUMENTS, getMCXByCategory } from "@shared/mcxInstruments";
 import { useState, useEffect } from "react";
@@ -1137,6 +1137,46 @@ export default function Settings() {
         {/* ── EOD Daily Summary ─────────────────────────────────────── */}
         <EodSummarySection sessionToken={sessionToken} />
 
+        {/* ── Averaging/DCA Settings ─────────────────────────────────────── */}
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <ArrowDownUp className="w-4 h-4 text-purple-400" />
+            <h2 className="text-white font-semibold text-sm">Averaging / DCA Strategy</h2>
+          </div>
+          <p className="text-white/50 text-xs mb-4 leading-relaxed">
+            When enabled, the bot will add to a losing position if candles show a clear reversal signal. This brings the average entry price down, allowing profitable exits on bounces that wouldn't reach the original entry.
+          </p>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-white font-medium">Enable Averaging</p>
+                <p className="text-xs text-white/40">Bot will double position size on reversal signals</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" className="sr-only peer"
+                  checked={localStorage.getItem("scalpbot_averaging_enabled") !== "false"}
+                  onChange={(e) => { localStorage.setItem("scalpbot_averaging_enabled", String(e.target.checked)); toast.success(e.target.checked ? "Averaging enabled" : "Averaging disabled"); }}
+                />
+                <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-500"></div>
+              </label>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-white/50">Loss Threshold to Trigger</span>
+                <span className="text-xs font-bold text-purple-400">{localStorage.getItem("scalpbot_averaging_threshold") ?? "20"}%</span>
+              </div>
+              <input type="range" min="10" max="50" step="5"
+                defaultValue={localStorage.getItem("scalpbot_averaging_threshold") ?? "20"}
+                onChange={(e) => { localStorage.setItem("scalpbot_averaging_threshold", e.target.value); }}
+                className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-purple-500"
+              />
+              <div className="flex justify-between text-[10px] text-white/30 mt-1">
+                <span>10% (aggressive)</span>
+                <span>50% (conservative)</span>
+              </div>
+            </div>
+          </div>
+        </div>
         {/* ── Cross-Device Session Sharing ──────────────────────────────── */}
         <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl p-5">
           <div className="flex items-center gap-2 mb-3">

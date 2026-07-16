@@ -853,3 +853,11 @@
 - [x] Adjusted SL/Target after averaging: SL based on new average (ATR*0.8), target adjusted (ATR*1.5)
 - [x] Telegram alert on averaging: notify user when bot adds to position
 - [x] Extended time-based exit to 30 min (from 20) when trade has been averaged
+
+## Dashboard Improvements (July 16, 2026)
+- [x] Averaging Status Indicator: show original entry vs new avg entry when trade has been averaged
+- [x] Signal History/Rejected Signals: show last 5-10 signals that were rejected with reasons
+- [x] Market Session Timer: countdown to market open/close with progress bar
+- [x] Today's Best/Worst Trade: highlight biggest winner and loser at top of dashboard
+- [x] Averaging Toggle in Settings: enable/disable averaging, set loss threshold %
+- [x] Auto-hide Paper-to-Live Readiness: hide once user has completed live trades (not manual)

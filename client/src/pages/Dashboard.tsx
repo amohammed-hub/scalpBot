@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
 import { Pencil } from "lucide-react";
+import { Clock, Timer, Trophy, Ban, ArrowDownUp } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
@@ -607,6 +608,10 @@ export default function Dashboard() {
   const isIndexOptions = liveData?.isIndexOptions ?? false;
   const lastTickAt = liveData?.lastTickAt ?? 0;
 
+  const recentRejectedSignals = (liveData as any)?.recentRejectedSignals ?? [];
+  const averagingEnabled = (liveData as any)?.averagingEnabled ?? true;
+  const averagingLossThreshold = (liveData as any)?.averagingLossThreshold ?? 0.20;
+
   // Staleness: track how many seconds since last tick
   const [secondsSinceLastTick, setSecondsSinceLastTick] = useState(0);
   useEffect(() => {
@@ -1136,6 +1141,76 @@ export default function Dashboard() {
           );
         })()}
 
+        {/* MARKET SESSION TIMER + BEST/WORST TRADE */}
+        {(() => {
+          const now2 = new Date();
+          const istMin2 = ((now2.getUTCHours() * 60 + now2.getUTCMinutes()) + 330) % (24 * 60);
+          const isMCXInstrument = config.instrumentToken.startsWith("MCX");
+          const sessionStart = isMCXInstrument ? 540 : 555;
+          const sessionEnd = isMCXInstrument ? 1410 : 930;
+          const inSessionNow = istMin2 >= sessionStart && istMin2 <= sessionEnd;
+          const elapsed = inSessionNow ? istMin2 - sessionStart : 0;
+          const total = sessionEnd - sessionStart;
+          const remaining = inSessionNow ? sessionEnd - istMin2 : 0;
+          const progressPct = inSessionNow ? Math.min(100, (elapsed / total) * 100) : 0;
+          const remainHrs = Math.floor(remaining / 60);
+          const remainMins = remaining % 60;
+          const closedToday2 = trades.filter((t: any) => t.status === "closed" && new Date(t.enteredAt).getTime() >= todayStart);
+          const bestTrade = closedToday2.length > 0 ? closedToday2.reduce((best: any, t: any) => (t.pnl ?? 0) > (best.pnl ?? 0) ? t : best, closedToday2[0]) : null;
+          const worstTrade = closedToday2.length > 0 ? closedToday2.reduce((worst: any, t: any) => (t.pnl ?? 0) < (worst.pnl ?? 0) ? t : worst, closedToday2[0]) : null;
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Timer className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="text-[11px] uppercase tracking-wide text-white/50">{isMCXInstrument ? "MCX" : "NSE"} Session</span>
+                  {inSessionNow && <span className="ml-auto text-[10px] text-emerald-400 font-medium animate-pulse">LIVE</span>}
+                </div>
+                {inSessionNow ? (
+                  <>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs text-white/60">{remainHrs}h {remainMins}m remaining</span>
+                      <span className="text-[10px] text-white/30">{Math.round(progressPct)}% elapsed</span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                      <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500 transition-all duration-1000" style={{ width: `${progressPct}%` }} />
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-white/30">Market closed</div>
+                )}
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Trophy className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-[11px] uppercase tracking-wide text-white/50">Best Trade</span>
+                </div>
+                {bestTrade && (bestTrade.pnl ?? 0) > 0 ? (
+                  <div>
+                    <div className="text-lg font-bold text-emerald-400">+₹{(bestTrade.pnl ?? 0).toFixed(0)}</div>
+                    <div className="text-[10px] text-white/30 truncate">{bestTrade.symbolLabel ?? bestTrade.symbol ?? "—"}</div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-white/30">No winning trades today</div>
+                )}
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Ban className="w-3.5 h-3.5 text-red-400" />
+                  <span className="text-[11px] uppercase tracking-wide text-white/50">Worst Trade</span>
+                </div>
+                {worstTrade && (worstTrade.pnl ?? 0) < 0 ? (
+                  <div>
+                    <div className="text-lg font-bold text-red-400">₹{(worstTrade.pnl ?? 0).toFixed(0)}</div>
+                    <div className="text-[10px] text-white/30 truncate">{worstTrade.symbolLabel ?? worstTrade.symbol ?? "—"}</div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-white/30">No losing trades today</div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         {/* Stats Row */}
         {/* ═══════════════════════════════════════════════════════════════════════════
             TOP METRICS STRIP — 5 cards: Realized, Unrealized, Win Rate, Avg Win, Profit Factor
@@ -2024,6 +2099,32 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+        {/* ═══ REJECTED SIGNALS FEED ═══ */}
+        {recentRejectedSignals.length > 0 && (
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Ban className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-semibold text-white/70 uppercase tracking-wide">Recent Rejected Signals</span>
+              <span className="text-[10px] text-white/30 ml-auto">{recentRejectedSignals.length} signals</span>
+            </div>
+            <div className="space-y-1.5 max-h-40 overflow-y-auto">
+              {recentRejectedSignals.slice().reverse().map((rs: any, i: number) => (
+                <div key={i} className="flex items-center justify-between bg-white/3 rounded-lg px-3 py-1.5 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className={`font-bold ${rs.direction === "BUY" ? "text-emerald-400" : "text-red-400"}`}>{rs.direction}</span>
+                    <span className="text-white/40">{rs.layer}</span>
+                    <span className="text-white/20">|</span>
+                    <span className="text-white/50">{rs.confidence}%</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-400/80 text-[10px] max-w-[180px] truncate">{rs.rejectReason}</span>
+                    <span className="text-white/20 text-[10px]">{new Date(rs.rejectedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Open Trade Panel */}
         {activeTrade && (
@@ -2138,6 +2239,20 @@ export default function Dashboard() {
                 ));
               })()}
             </div>
+            {/* Averaging Status Indicator */}
+            {(activeTrade as any).averageCount > 0 && (
+              <div className="flex items-center gap-3 bg-purple-500/10 border border-purple-500/30 rounded-xl px-4 py-2.5 mb-3">
+                <ArrowDownUp className="w-4 h-4 text-purple-400 shrink-0" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-purple-400">AVERAGED</span>
+                    <span className="text-[10px] text-white/30">Original: ₹{((activeTrade as any).originalEntryPrice ?? activeTrade.entryPrice).toFixed(2)}</span>
+                    <span className="text-[10px] text-white/30">→ New Avg: ₹{activeTrade.entryPrice.toFixed(2)}</span>
+                  </div>
+                  <div className="text-[10px] text-white/40 mt-0.5">Qty: {activeTrade.quantity} (doubled) | Extended hold: 30 min</div>
+                </div>
+              </div>
+            )}
 
             {/* Progress bar — SL on left, Entry in middle, Target on right */}
             {activeTrade.slPrice && activeTrade.targetPrice && (
@@ -2713,6 +2828,8 @@ export default function Dashboard() {
           )}
 
           {/* Paper-to-Live Readiness */}
+          {/* Auto-hide once user has gone live (has any live closed trades or currently in live mode) */}
+          {!(config.mode === "live" || trades.some((t: any) => t.mode === "live" && t.status === "closed")) && (
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
             <div className="flex items-center gap-2 mb-4">
               <Award className={`w-5 h-5 ${readinessData?.ready ? "text-emerald-400" : "text-amber-400"}`} />
@@ -2749,6 +2866,7 @@ export default function Dashboard() {
               <div className="text-xs text-white/30">Complete at least 20 paper trades to see readiness evaluation.</div>
             )}
           </div>
+          )}
         </div>
 
         {/* ── Layer Scorecard ──────────────────────────────────────────────────── */}
