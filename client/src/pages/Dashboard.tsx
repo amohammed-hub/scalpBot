@@ -455,6 +455,8 @@ export default function Dashboard() {
     onSuccess: () => {
       toast.info("Bot stopped.");
       utils.bot.status.invalidate();
+      utils.bot.liveData.invalidate();
+      utils.multiBots.allStatus.invalidate();
     },
     onError: (e) => toast.error(`Failed to stop bot: ${e.message}`),
   });

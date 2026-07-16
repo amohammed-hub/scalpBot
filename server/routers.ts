@@ -254,10 +254,13 @@ export const appRouter = router({
           .orderBy(desc(botSessions.updatedAt))
           .limit(1);
         const inMem = getBotState(input.sessionToken);
-        if (rows.length === 0) return null;
-        const row = rows[0];
-        return {
-          ...row,
+       if (rows.length === 0) return null;
+       const row = rows[0];
+       return {
+         ...row,
+          // If DB says 'running' but bot is NOT in memory, it means stop was called
+          // but DB update hasn't committed yet — treat as 'stopped' to avoid stale UI
+          status: (row.status === "running" && !inMem) ? "stopped" : (inMem?.status ?? row.status),
           lastPrice: inMem?.lastPrice ?? row.lastPrice ?? 0,
           bidPrice: inMem?.bidPrice ?? row.bidPrice ?? 0,
           askPrice: inMem?.askPrice ?? row.askPrice ?? 0,
