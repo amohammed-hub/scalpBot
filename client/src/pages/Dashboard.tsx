@@ -1364,8 +1364,9 @@ export default function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════════════════
             TWO-COLUMN MIDDLE: Equity Curve (left) + Open Positions (right)
         ═══════════════════════════════════════════════════════════════════════════ */}
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-6">
-          {/* LEFT: P&L Equity Curve */}
+        <div className={`grid grid-cols-1 ${meQuery.data?.role === "admin" ? "lg:grid-cols-5" : ""} gap-4 mb-6`}>
+          {/* LEFT: P&L Equity Curve — Admin only */}
+          {meQuery.data?.role === "admin" && (
           <div className="lg:col-span-3 bg-white/5 border border-white/10 rounded-2xl p-5">
             {(() => {
               const days = pnlRange;
@@ -1443,9 +1444,10 @@ export default function Dashboard() {
               );
             })()}
           </div>
+          )}
 
           {/* RIGHT: Open Positions Panel */}
-          <div className="lg:col-span-2 bg-white/5 border border-white/10 rounded-2xl p-5">
+          <div className={`${meQuery.data?.role === "admin" ? "lg:col-span-2" : ""} bg-white/5 border border-white/10 rounded-2xl p-5`}>
             <div className="flex items-center gap-2 mb-3">
               <div className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
               <span className="font-semibold text-white text-sm">Open Positions</span>
@@ -2858,6 +2860,7 @@ export default function Dashboard() {
         </div>
 
         {/* ── Paper Costs & Readiness ──────────────────────────────────────────── */}
+        {meQuery.data?.role === "admin" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           {/* Paper Costs Config */}
           {config.mode === "paper" && (
@@ -2932,9 +2935,10 @@ export default function Dashboard() {
           </div>
           )}
         </div>
+        )}
 
         {/* ── Layer Scorecard ──────────────────────────────────────────────────── */}
-        {layerStats.length > 0 && (
+        {meQuery.data?.role === "admin" && layerStats.length > 0 && (
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
             <div className="flex items-center gap-2 mb-4">
               <Layers className="w-5 h-5 text-cyan-400" />
