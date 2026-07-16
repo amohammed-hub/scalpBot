@@ -908,3 +908,10 @@
 - [x] Hide Strategy Layer Scorecard from regular users (admin-only)
 - [x] Hide Equity Curve from Dashboard for regular users (admin-only, users see P&L in Analytics page)
 - [x] Open Positions panel remains visible to all users (full width when Equity Curve hidden)
+
+## Dashboard Cleanup — Remove Redundant Widgets (July 17, 2026)
+- [x] Remove Equity Curve from Dashboard entirely (available in P&L Analytics page)
+- [x] Remove Account Balance & Profile Widget from main content area (moved to sidebar)
+- [x] Open Positions panel now takes full width
+- [x] Clean up unused imports (Wallet) and state (pnlRange, accountProfile, accountBalance queries)
+- [x] Fix stale Vite cache error on Login.tsx (dev server restart)
