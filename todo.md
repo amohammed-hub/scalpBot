@@ -871,3 +871,17 @@
 - [x] Full codebase audit: Settings.tsx + all other pages
 - [x] Full codebase audit: schema, shared types, db.ts, components
 - [x] Fix all identified bugs in one pass (13 bugs fixed)
+
+## MCX Late Session Signal Strategy (July 16, 2026)
+- [x] Root cause analysis: MCX Evening window (19:30-21:30) missed the 21:30-23:20 window where CRUDEOIL 7700 PE went from ₹22→₹101
+- [x] New generateMCXLateSessionSignal() function: momentum continuation strategy for 21:30-23:20 IST
+- [x] MCX Late Session scoring: ROC5, ROC10, EMA slope, EMA crossover, VWAP position, ADX/volume (6-point system)
+- [x] Strong momentum override: if ROC10 > 0.5% AND EMA slope confirms, enter with just 3/6 conditions (catches strong directional moves)
+- [x] No pullback requirement: unlike generic signal generator, MCX Late Session doesn't require price to be near EMA9/VWAP
+- [x] Signal branch wired: inMCXLateSession → generateMCXLateSessionSignal() in the if/else chain
+- [x] Telegram alert: "MCX LATE SESSION" notification when window opens
+- [x] Dashboard: MCX Late Session mode indicator badge (indigo color)
+- [x] Dashboard: MCX Late Session banner with strategy description
+- [x] Heartbeat message: shows "🌃 MCXLate Scanning..." during late session window
+- [x] Layer filter fix: time-window strategies (PowerHour, MCXEvening, MCXLateSession, HeroZero) now bypass enabledLayers filter
+- [x] isMCXLateSessionMode exposed in liveData and multiBots.allStatus responses

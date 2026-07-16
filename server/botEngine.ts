@@ -41,7 +41,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -49,6 +49,7 @@ export interface Signal {
   marketRegime?: string;
   isPowerHour?: boolean;
   isMCXEvening?: boolean;
+  isMCXLateSession?: boolean;
   isHeroZero?: boolean;
   // Partial profit booking levels
   partial1RPrice?: number;  // price at which to book 50%
@@ -136,6 +137,7 @@ export interface BotState {
   reEntryCandles: number;
   isPowerHourMode: boolean;
   isMCXEveningMode: boolean;
+  isMCXLateSessionMode: boolean;
   heroZeroMode: boolean; // true when Hero Zero panel is active
   // Telegram alert config
   telegramBotToken: string | null;
@@ -1300,6 +1302,136 @@ export function generateMCXEveningSignal(
   return { direction, confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "MCXEvening", isMCXEvening: true };
 }
 
+
+// ── MCX Late Session Signal (9:30–11:20 PM IST) ─────────────────────────────
+/**
+ * MCX Late Session: 21:30–23:20 IST — after US market open volatility settles.
+ * This window catches MOMENTUM CONTINUATION moves that start during MCX Evening
+ * (19:30–21:30) and continue into the late session. The CRUDEOIL 4.5× move
+ * (₹22→₹101 on 16JUL26) happened in this exact window.
+ *
+ * Key differences from generic signal generator:
+ * 1. NO pullback requirement — strong MCX moves don't pull back, they accelerate
+ * 2. Looser 5m trend confirmation — we trust 1m momentum more in late session
+ * 3. Lower score threshold (3/6 with strong momentum) — MCX late moves are decisive
+ * 4. Higher target multiplier — late session moves tend to be larger
+ * 5. Momentum-first approach — ROC and EMA slope are primary signals
+ */
+export function generateMCXLateSessionSignal(
+  candles1m: Candle[],
+  candles5m: Candle[],
+  slMultiplier = 1.3,
+  tpMultiplier = 3.0,
+): Signal {
+  if (candles1m.length < 20 || candles5m.length < 4) {
+    return { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Insufficient data for MCX Late Session", layer: "None", isMCXLateSession: true };
+  }
+
+  const price = candles1m[candles1m.length - 1].close;
+  const atr = calcATR(candles1m, 14);
+
+  // Context from all accumulated candles
+  const dayHigh = Math.max(...candles1m.map(c => c.high));
+  const dayLow  = Math.min(...candles1m.map(c => c.low));
+  const dayVwap = calcVWAP(candles1m);
+  const dayRange = dayHigh - dayLow;
+
+  // Recent momentum: last 30 candles (last ~30 minutes of action)
+  const recent30 = candles1m.slice(-30);
+  const recentOpen = recent30[0].open;
+  const recentClose = recent30[recent30.length - 1].close;
+  const recentMovePercent = ((recentClose - recentOpen) / recentOpen) * 100;
+
+  // Rate of change: 5-candle and 10-candle ROC (momentum acceleration)
+  const closes1m = candles1m.map(c => c.close);
+  const roc5 = closes1m.length >= 6 ? (price - closes1m[closes1m.length - 6]) / closes1m[closes1m.length - 6] : 0;
+  const roc10 = closes1m.length >= 11 ? (price - closes1m[closes1m.length - 11]) / closes1m[closes1m.length - 11] : 0;
+
+  // EMA slope: is EMA9 accelerating? (compare last 3 EMA9 values)
+  const e9arr = ema(closes1m, 9);
+  const e21arr = ema(closes1m, 21);
+  const e9 = e9arr[e9arr.length - 1];
+  const e21 = e21arr[e21arr.length - 1];
+  const e9Prev = e9arr.length >= 4 ? e9arr[e9arr.length - 4] : e9;
+  const emaSlope = (e9 - e9Prev) / e9Prev; // positive = accelerating up
+
+  // RSI: trending (not just oversold/overbought)
+  const rsi1m = calcRSI(closes1m, 14);
+
+  // 5m MACD for medium-term momentum
+  const closes5m = candles5m.map(c => c.close);
+  const macd5m = calcMACD(closes5m);
+
+  // Volume: late session surge vs day average
+  const avgDayVol = candles1m.reduce((a, c) => a + c.volume, 0) / candles1m.length;
+  const last15Vol = candles1m.slice(-15).reduce((a, c) => a + c.volume, 0) / 15;
+  const allVolumeZero = avgDayVol === 0 && last15Vol === 0;
+  const volSurge = allVolumeZero ? 1.2 : (avgDayVol > 0 ? last15Vol / avgDayVol : 1);
+
+  // ADX: trend strength
+  const adx = calcADX(candles1m, 14);
+
+  // Price position in day range
+  const pricePos = dayRange > 0 ? (price - dayLow) / dayRange : 0.5;
+
+  // ── 6-point scoring: momentum continuation focus ──────────────────────────
+  // Unlike MCX Evening (which looks for US-open setups), Late Session looks for
+  // CONTINUATION of moves that already started. Key: ROC, EMA slope, trend strength.
+  const bullConditions = [
+    roc5 > 0.001,                          // 5-candle momentum positive (>0.1%)
+    roc10 > 0.002,                         // 10-candle momentum positive (>0.2%) — sustained
+    emaSlope > 0.0005,                     // EMA9 accelerating upward
+    e9 > e21,                              // Short-term above long-term
+    price > dayVwap,                       // Above day VWAP
+    adx > 18 || volSurge >= 1.1,          // Trending OR volume surge (looser than Evening)
+  ];
+  const bearConditions = [
+    roc5 < -0.001,                         // 5-candle momentum negative
+    roc10 < -0.002,                        // 10-candle momentum negative — sustained
+    emaSlope < -0.0005,                    // EMA9 accelerating downward
+    e9 < e21,                              // Short-term below long-term
+    price < dayVwap,                       // Below day VWAP
+    adx > 18 || volSurge >= 1.1,          // Trending OR volume surge
+  ];
+
+  const bullScore = bullConditions.filter(Boolean).length;
+  const bearScore = bearConditions.filter(Boolean).length;
+
+  let direction: "BUY" | "SELL" | "HOLD" = "HOLD";
+  let confidence = 0;
+  let reason = "";
+
+  // Lower threshold: 3/6 with strong momentum override (vs 4/6 for MCX Evening)
+  // Strong momentum override: if ROC10 > 0.5% AND EMA slope confirms, enter with just 3 conditions
+  const strongMomentumBull = roc10 > 0.005 && emaSlope > 0.001 && e9 > e21;
+  const strongMomentumBear = roc10 < -0.005 && emaSlope < -0.001 && e9 < e21;
+
+  if ((bullScore >= 4 || (bullScore >= 3 && strongMomentumBull)) && bullScore > bearScore) {
+    // Don't enter at absolute day high (range exhaustion)
+    if (pricePos > 0.95) {
+      return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[MCXLate] At day high — range exhausted (${(pricePos * 100).toFixed(0)}%)`, layer: "None", isMCXLateSession: true };
+    }
+    direction = "BUY";
+    confidence = Math.min(0.93, 0.60 + bullScore * 0.06 + Math.abs(roc10) * 30 + (adx > 25 ? 0.05 : 0));
+    reason = `[MCXLate] Bullish momentum | ROC5:+${(roc5 * 100).toFixed(2)}% ROC10:+${(roc10 * 100).toFixed(2)}% | EMAslope:${(emaSlope * 100).toFixed(3)}% | ADX(${adx.toFixed(0)}) | Vol:${volSurge.toFixed(1)}x | Score:${bullScore}/6 | RSI(${rsi1m.toFixed(0)})`;
+  } else if ((bearScore >= 4 || (bearScore >= 3 && strongMomentumBear)) && bearScore > bullScore) {
+    // Don't enter at absolute day low
+    if (pricePos < 0.05) {
+      return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price + atr * slMultiplier, targetPrice: price - atr * tpMultiplier, atr, reason: `[MCXLate] At day low — range exhausted (${(pricePos * 100).toFixed(0)}%)`, layer: "None", isMCXLateSession: true };
+    }
+    direction = "SELL";
+    confidence = Math.min(0.93, 0.60 + bearScore * 0.06 + Math.abs(roc10) * 30 + (adx > 25 ? 0.05 : 0));
+    reason = `[MCXLate] Bearish momentum | ROC5:${(roc5 * 100).toFixed(2)}% ROC10:${(roc10 * 100).toFixed(2)}% | EMAslope:${(emaSlope * 100).toFixed(3)}% | ADX(${adx.toFixed(0)}) | Vol:${volSurge.toFixed(1)}x | Score:${bearScore}/6 | RSI(${rsi1m.toFixed(0)})`;
+  }
+
+  if (direction === "HOLD") {
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[MCXLate] No momentum setup | Bull:${bullScore} Bear:${bearScore} | ROC10:${(roc10 * 100).toFixed(2)}% | ADX(${adx.toFixed(0)}) | Recent:${recentMovePercent.toFixed(2)}%`, layer: "None", isMCXLateSession: true };
+  }
+
+  const slPrice = direction === "BUY" ? price - atr * slMultiplier : price + atr * slMultiplier;
+  const targetPrice = direction === "BUY" ? price + atr * tpMultiplier : price - atr * tpMultiplier;
+  return { direction, confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "MCXLateSession", isMCXLateSession: true };
+}
 // ── Hero Zero Signal (Expiry-day OTM options) ────────────────────────────────
 /**
  * Hero Zero: buy deep OTM options on weekly expiry day when premium is ₹2–50.
@@ -2111,6 +2243,21 @@ async function tick(
     );
   }
   state.isMCXEveningMode = inMCXEvening;
+  // MCX Late Session: 9:30–11:20 PM IST (momentum continuation after US open settles)
+  const mcxLateStart = 21 * 60 + 30;
+  const mcxLateEnd   = 23 * 60 + 20; // same as stopScanMin for MCX
+  const inMCXLateSession = isMCX && istMin2 >= mcxLateStart && istMin2 < mcxLateEnd;
+  // Send Telegram alert when MCX Late Session window opens (once per session)
+  if (inMCXLateSession && !state.alertsSent.has("mcxLateSession")) {
+    state.alertsSent.add("mcxLateSession");
+    sendTelegramAlert(state,
+      `🌃 <b>MCX LATE SESSION</b> 🌃\n` +
+      `📊 <b>${state.instrumentLabel}</b> | ₹${price.toFixed(2)}\n` +
+      `🔄 Momentum continuation window: 9:30–11:20 PM IST\n` +
+      `📈 Tracking strong directional moves from US session`,
+    );
+  }
+  state.isMCXLateSessionMode = inMCXLateSession;
 
   // ── Resolve effective price for open trade monitoring ───────────────────────
   // For options mode: use current option premium (not underlying spot price) for P&L.
@@ -2710,6 +2857,8 @@ async function tick(
     signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, state.targetMultiplier);
   } else if (inMCXEvening) {
     signal = generateMCXEveningSignal(state.candles, state.candles5m, isWednesdayCrude, slMult, state.targetMultiplier);
+  } else if (inMCXLateSession) {
+    signal = generateMCXLateSessionSignal(state.candles, state.candles5m, slMult, state.targetMultiplier);
   } else if (inHeroZeroWindow && state.candles.length > 0) {
     // Hero Zero: current price IS the option premium (bot is tracking the option instrument)
     const optionPremium = price;
@@ -2737,6 +2886,10 @@ async function tick(
     // Enhanced heartbeat: show Power Hour score breakdown when in Power Hour mode
     const heartbeatMsg = state.isPowerHourMode
       ? `⚡ PowerHour Scanning... ₹${price.toFixed(1)} (${priceVsVwap} VWAP) | RSI(${rsiHb.toFixed(0)}) | ADX(${adxHb.toFixed(0)}) | ${signal.reason ?? "HOLD"}`
+      : state.isMCXEveningMode
+      ? `🌙 MCXEvening Scanning... ₹${price.toFixed(1)} (${priceVsVwap} VWAP) | RSI(${rsiHb.toFixed(0)}) | ADX(${adxHb.toFixed(0)}) | ${signal.reason?.slice(0, 80) ?? "HOLD"}`
+      : state.isMCXLateSessionMode
+      ? `🌃 MCXLate Scanning... ₹${price.toFixed(1)} (${priceVsVwap} VWAP) | RSI(${rsiHb.toFixed(0)}) | ADX(${adxHb.toFixed(0)}) | ${signal.reason?.slice(0, 80) ?? "HOLD"}`
       : `⏱ Scanning... ₹${price.toFixed(1)} (${priceVsVwap} VWAP) | RSI(${rsiHb.toFixed(0)}) | ADX(${adxHb.toFixed(0)}) | Signal: ${signal.direction} | ${signal.reason?.slice(0, 80) ?? ""}`;
     emitActivity(state.sessionToken, "signal", heartbeatMsg);
   }
@@ -2749,7 +2902,10 @@ async function tick(
   if (signal.direction === "HOLD") return; // confidence already checked inside generateSignal (tod multiplier applied there)
 
   // ── Layer filter: skip signals from disabled layers ─────────────────────────
-  if (state.enabledLayers && state.enabledLayers.length > 0 && signal.layer !== "None") {
+  // Time-window strategies (PowerHour, MCXEvening, MCXLateSession, HeroZero) bypass this filter
+  // because they are activated by TIME, not user selection. The filter only applies to generic signal layers.
+  const timeWindowLayers = new Set(["PowerHour", "MCXEvening", "MCXLateSession", "HeroZero"]);
+  if (state.enabledLayers && state.enabledLayers.length > 0 && signal.layer !== "None" && !timeWindowLayers.has(signal.layer)) {
     if (!state.enabledLayers.includes(signal.layer)) {
       emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal from ${signal.layer} skipped (layer disabled)`);
       pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Layer ${signal.layer} disabled`);
@@ -3140,7 +3296,7 @@ export type TradeInsert = {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 export function startBot(
-  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastTickAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode" | "isMCXEveningMode" | "heroZeroMode" | "alertsSent">,
+  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastTickAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode" | "isMCXEveningMode" | "isMCXLateSessionMode" | "heroZeroMode" | "alertsSent">,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
@@ -3162,7 +3318,7 @@ export function startBot(
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
     lastTickAt: 0,
     lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0, isPowerHourMode: false,
-    isMCXEveningMode: false, heroZeroMode: false, alertsSent: new Set<string>(),
+    isMCXEveningMode: false, isMCXLateSessionMode: false, heroZeroMode: false, alertsSent: new Set<string>(),
   };
 
   // Restore optionTradeToken from existing open trade so live quote fetching works after restart

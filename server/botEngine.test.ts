@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generateSignal, generatePowerHourSignal, generateMCXEveningSignal, generateHeroZeroSignal } from "./botEngine";
+import { generateSignal, generatePowerHourSignal, generateMCXEveningSignal, generateMCXLateSessionSignal, generateHeroZeroSignal } from "./botEngine";
 import type { Candle } from "./botEngine";
 
 function makeCandles(count: number, basePrice = 2000, trend: "up" | "down" | "flat" = "flat"): Candle[] {
@@ -46,7 +46,7 @@ describe("generateSignal", () => {
   });
 
   it("layer field is always present and valid", () => {
-    const validLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "PowerHour", "MCXEvening", "HeroZero", "VWAPReversion", "VWAPPullback", "ORB", "InstFootprint", "HourlyClose", "BoomingBulls", "None"];
+    const validLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "PowerHour", "MCXEvening", "MCXLateSession", "HeroZero", "VWAPReversion", "VWAPPullback", "ORB", "InstFootprint", "HourlyClose", "BoomingBulls", "None"];
     const candles = makeCandles(80, 2000, "flat");
     const signal = generateSignal(candles);
     expect(validLayers).toContain(signal.layer);
@@ -271,6 +271,83 @@ describe("generateMCXEveningSignal", () => {
     expect(signal.confidence).toBeLessThanOrEqual(1);
   });
 });
+
+// ── generateMCXLateSessionSignal tests ─────────────────────────────────────────
+describe("generateMCXLateSessionSignal", () => {
+  it("returns HOLD with isMCXLateSession=true when insufficient candles", () => {
+    const signal = generateMCXLateSessionSignal(makeCandles(5), makeCandles(2));
+    expect(signal.direction).toBe("HOLD");
+    expect(signal.isMCXLateSession).toBe(true);
+  });
+
+  it("always sets isMCXLateSession=true", () => {
+    const signal = generateMCXLateSessionSignal(makeCandles(50), makeCandles(10));
+    expect(signal.isMCXLateSession).toBe(true);
+  });
+
+  it("returns valid signal object with all required fields", () => {
+    const candles1m = makeCandles(100, 6650, "up");
+    const candles5m = makeCandles(20, 6650, "up");
+    const signal = generateMCXLateSessionSignal(candles1m, candles5m);
+    expect(signal).toHaveProperty("direction");
+    expect(signal).toHaveProperty("confidence");
+    expect(signal).toHaveProperty("entryPrice");
+    expect(signal).toHaveProperty("slPrice");
+    expect(signal).toHaveProperty("targetPrice");
+    expect(signal).toHaveProperty("atr");
+    expect(signal).toHaveProperty("reason");
+    expect(signal).toHaveProperty("layer");
+    expect(["BUY", "SELL", "HOLD"]).toContain(signal.direction);
+  });
+
+  it("BUY signal has SL below entry and target above entry", () => {
+    const candles1m = makeCandles(120, 6650, "up");
+    const candles5m = makeCandles(24, 6650, "up");
+    const signal = generateMCXLateSessionSignal(candles1m, candles5m);
+    if (signal.direction === "BUY") {
+      expect(signal.slPrice).toBeLessThan(signal.entryPrice);
+      expect(signal.targetPrice).toBeGreaterThan(signal.entryPrice);
+    }
+  });
+
+  it("SELL signal has SL above entry and target below entry", () => {
+    const candles1m = makeCandles(120, 6650, "down");
+    const candles5m = makeCandles(24, 6650, "down");
+    const signal = generateMCXLateSessionSignal(candles1m, candles5m);
+    if (signal.direction === "SELL") {
+      expect(signal.slPrice).toBeGreaterThan(signal.entryPrice);
+      expect(signal.targetPrice).toBeLessThan(signal.entryPrice);
+    }
+  });
+
+  it("layer is MCXLateSession for actionable signals", () => {
+    const candles1m = makeCandles(120, 6650, "up");
+    const candles5m = makeCandles(24, 6650, "up");
+    const signal = generateMCXLateSessionSignal(candles1m, candles5m);
+    if (signal.direction !== "HOLD") {
+      expect(signal.layer).toBe("MCXLateSession");
+    }
+  });
+
+  it("confidence is within [0, 1]", () => {
+    const candles1m = makeCandles(120, 6650, "up");
+    const candles5m = makeCandles(24, 6650, "up");
+    const signal = generateMCXLateSessionSignal(candles1m, candles5m);
+    expect(signal.confidence).toBeGreaterThanOrEqual(0);
+    expect(signal.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it("catches strong downward momentum (simulating CRUDEOIL PE scenario)", () => {
+    // Simulate a strong bearish move: price dropping steadily
+    const candles1m = makeCandles(100, 7700, "down");
+    const candles5m = makeCandles(20, 7700, "down");
+    const signal = generateMCXLateSessionSignal(candles1m, candles5m);
+    // With strong downward momentum, should either generate SELL or HOLD (never BUY)
+    expect(signal.direction).not.toBe("BUY");
+    expect(signal.isMCXLateSession).toBe(true);
+  });
+});
+
 
 // ── generateHeroZeroSignal tests ────────────────────────────────────────────────
 describe("generateHeroZeroSignal", () => {

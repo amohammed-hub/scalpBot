@@ -1119,6 +1119,7 @@ export const appRouter = router({
           openTrade: state.openTrade,
           isPowerHourMode: state.isPowerHourMode,
           isMCXEveningMode: state.isMCXEveningMode,
+          isMCXLateSessionMode: state.isMCXLateSessionMode,
           heroZeroMode: state.heroZeroMode,
           reEntryCandles: state.reEntryCandles,
           // Options mode: current option premium price (for live P&L display on Dashboard)
@@ -1934,6 +1935,7 @@ export const appRouter = router({
             lastSignal: inMem?.lastSignal ?? null,
             isPowerHourMode: inMem?.isPowerHourMode ?? false,
             isMCXEveningMode: inMem?.isMCXEveningMode ?? false,
+            isMCXLateSessionMode: inMem?.isMCXLateSessionMode ?? false,
             heroZeroMode: inMem?.heroZeroMode ?? false,
             // Health indicator fields
             lastTickAt: inMem?.lastTickAt ?? (dbRow?.lastTickAt ? Number(dbRow.lastTickAt) : 0),

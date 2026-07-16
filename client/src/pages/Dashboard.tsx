@@ -609,6 +609,7 @@ export default function Dashboard() {
   const nextScanAt = liveData?.nextScanAt ?? 0;
   const isPowerHourMode = liveData?.isPowerHourMode ?? false;
   const isMCXEveningMode = liveData?.isMCXEveningMode ?? false;
+  const isMCXLateSessionMode = liveData?.isMCXLateSessionMode ?? false;
   const heroZeroMode = liveData?.heroZeroMode ?? false;
   const reEntryCandles = liveData?.reEntryCandles ?? 0;
   const optionPremiumPrice = liveData?.optionPremiumPrice ?? null;
@@ -998,6 +999,12 @@ export default function Dashboard() {
             <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 animate-pulse">
               <Flame className="w-3.5 h-3.5" />
               MCX Evening (US Open)
+            </div>
+          )}
+          {isMCXLateSessionMode && (
+            <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 animate-pulse">
+              <Moon className="w-3.5 h-3.5" />
+              MCX Late Session
             </div>
           )}
           {heroZeroMode && (
@@ -1544,7 +1551,7 @@ export default function Dashboard() {
                 ? { border: "border-purple-500/30", borderActive: "border-purple-500/40", bg: "bg-purple-500/5", badge: "bg-purple-500/20", text: "text-purple-300", glow: "shadow-[0_0_20px_oklch(0.7_0.15_280/0.06)]" }
                 : { border: "border-amber-500/30", borderActive: "border-amber-500/40", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_65/0.06)]" };
             const hasOpenTrade = !!bot.openTrade;
-            const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
+            const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
 
             return (
               <div key={bot.sessionToken} className={`rounded-2xl border p-4 transition-all duration-300 ${
@@ -2000,6 +2007,21 @@ export default function Dashboard() {
             <div className="shrink-0 text-right">
               <div className="text-xs text-amber-400/60">Strategy</div>
               <div className="text-amber-300 font-bold text-sm">MCXEvening</div>
+            </div>
+          </div>
+        )}
+
+        {/* MCX Late Session Banner */}
+        {isMCXLateSessionMode && (
+          <div className="mb-4 flex items-center gap-3 bg-gradient-to-r from-indigo-500/15 to-purple-500/10 border border-indigo-500/30 rounded-2xl px-5 py-3.5">
+            <Moon className="w-5 h-5 text-indigo-400 shrink-0 animate-pulse" />
+            <div className="flex-1 min-w-0">
+              <div className="text-indigo-300 font-semibold text-sm">🌃 MCX Late Session — 9:30 to 11:20 PM IST</div>
+              <div className="text-indigo-400/70 text-xs mt-0.5">Momentum continuation window. Catches strong directional moves that started during US open and continue into late session. Uses ROC, EMA slope &amp; ADX for trend-following entries. No pullback required — rides the wave.</div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-xs text-indigo-400/60">Strategy</div>
+              <div className="text-indigo-300 font-bold text-sm">MCXLate</div>
             </div>
           </div>
         )}
