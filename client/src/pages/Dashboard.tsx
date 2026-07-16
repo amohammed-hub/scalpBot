@@ -6,7 +6,7 @@ import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
-  Download, QrCode, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
+  Download, QrCode, LogOut, User, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
 import { Pencil } from "lucide-react";
@@ -366,7 +366,6 @@ export default function Dashboard() {
   );
 
   // Daily P&L chart data
-  const [pnlRange, setPnlRange] = useState<7 | 30>(7);
   const { data: pnlByDay = [] } = trpc.trades.pnlByDay.useQuery(
     { sessionToken },
     { refetchInterval: 30000, staleTime: 15000 }
@@ -395,16 +394,6 @@ export default function Dashboard() {
     },
     onError: (e) => toast.error(`Stop failed: ${e.message}`),
   });
-
-  // Upstox account profile & balance
-  const { data: accountProfile } = trpc.account.profile.useQuery(
-    { sessionToken },
-    { refetchInterval: 60000, staleTime: 30000, retry: false }
-  );
-  const { data: accountBalance, refetch: refetchBalance } = trpc.account.balance.useQuery(
-    { sessionToken },
-    { refetchInterval: 30000, staleTime: 15000, retry: false }
-  );
 
   // ── Risk Manager Queries ────────────────────────────────────────────────────
   const { data: riskScore } = trpc.riskManager.score.useQuery(
@@ -932,6 +921,31 @@ export default function Dashboard() {
             <div className="text-xs text-white/40">Upstox Trading</div>
           </div>
         </div>
+        {/* Account Profile — top of sidebar */}
+        {meQuery.data && (
+          <div className="flex items-center gap-2 text-xs px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 mb-3">
+            <div className="w-7 h-7 rounded-full bg-teal-500/20 border border-teal-500/30 flex items-center justify-center shrink-0">
+              <span className="text-teal-400 font-bold text-[10px]">
+                {meQuery.data.name?.charAt(0)?.toUpperCase() ?? "U"}
+              </span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-white/80 font-medium truncate text-xs">{meQuery.data.name || "User"}</div>
+              <div className="text-white/40 text-[10px] font-mono">{meQuery.data.mobile}</div>
+            </div>
+            <button
+              onClick={() => {
+                if (confirm("Logout from ScalpBot?")) {
+                  logoutMutation.mutate();
+                }
+              }}
+              className="text-white/30 hover:text-red-400 transition-colors"
+              title="Logout"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
         {[
           { icon: Activity, label: "Dashboard", path: "/dashboard", active: true },
           { icon: Calculator, label: "Risk Calculator", path: "/risk-calculator", active: false },
@@ -972,27 +986,6 @@ export default function Dashboard() {
           </button>
         )}
         <div className="mt-auto px-2 pb-2 space-y-2">
-          {/* User Info */}
-          {meQuery.data && (
-            <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-white/5 border border-white/10 mb-2">
-              <User className="w-3.5 h-3.5 text-teal-400 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="text-white/80 font-medium truncate">{meQuery.data.name || "User"}</div>
-                <div className="text-white/40 text-[10px] font-mono">{meQuery.data.mobile}</div>
-              </div>
-              <button
-                onClick={() => {
-                  if (confirm("Logout from ScalpBot?")) {
-                    logoutMutation.mutate();
-                  }
-                }}
-                className="text-white/30 hover:text-red-400 transition-colors"
-                title="Logout"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${isRunning ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-white/40"}`}>
             <HealthDot
               status={botStatus?.status ?? "stopped"}
@@ -1362,92 +1355,11 @@ export default function Dashboard() {
         })()}
 
         {/* ═══════════════════════════════════════════════════════════════════════════
-            TWO-COLUMN MIDDLE: Equity Curve (left) + Open Positions (right)
+            OPEN POSITIONS PANEL
         ═══════════════════════════════════════════════════════════════════════════ */}
-        <div className={`grid grid-cols-1 ${meQuery.data?.role === "admin" ? "lg:grid-cols-5" : ""} gap-4 mb-6`}>
-          {/* LEFT: P&L Equity Curve — Admin only */}
-          {meQuery.data?.role === "admin" && (
-          <div className="lg:col-span-3 bg-white/5 border border-white/10 rounded-2xl p-5">
-            {(() => {
-              const days = pnlRange;
-              const sorted = [...pnlByDay].sort((a, b) => a.date.localeCompare(b.date));
-              const sliced = sorted.slice(-days);
-              const filled: { date: string; totalPnl: number; trades: number; wins: number; losses: number; cumPnl: number }[] = [];
-              const today2 = new Date();
-              let cumulative = 0;
-              for (let i = days - 1; i >= 0; i--) {
-                const d = new Date(today2);
-                d.setDate(d.getDate() - i);
-                const key = d.toISOString().slice(0, 10);
-                const found = sliced.find(x => x.date === key);
-                cumulative += found ? found.totalPnl : 0;
-                filled.push(found
-                  ? { date: key, totalPnl: found.totalPnl, trades: found.trades, wins: found.wins, losses: found.losses, cumPnl: cumulative }
-                  : { date: key, totalPnl: 0, trades: 0, wins: 0, losses: 0, cumPnl: cumulative });
-              }
-              const tradingDays = filled.filter(d => d.trades > 0).length;
-              const greenDays = filled.filter(d => d.totalPnl > 0).length;
-              return (
-                <>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <BarChart2 className="w-4 h-4 text-teal-400" />
-                      <span className="font-semibold text-white text-sm">Equity Curve</span>
-                      <span className={`text-xs font-bold ml-1 ${cumulative >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {cumulative >= 0 ? '+' : ''}₹{cumulative.toFixed(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-white/30">{tradingDays}d · {greenDays} green</span>
-                      <div className="flex rounded-lg overflow-hidden border border-white/10">
-                        {([7, 30] as const).map(r => (
-                          <button key={r} onClick={() => setPnlRange(r)}
-                            className={`px-2.5 py-0.5 text-[10px] transition-colors ${
-                              pnlRange === r ? 'bg-teal-500/30 text-teal-300' : 'text-white/40 hover:text-white/70'
-                            }`}>{r}D</button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  {filled.every(d => d.trades === 0) ? (
-                    <div className="flex items-center justify-center h-32 text-white/30 text-sm">
-                      No closed trades yet — start the bot to see equity curve
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height={160}>
-                      <BarChart data={filled} margin={{ top: 4, right: 4, left: 4, bottom: 4 }} barSize={pnlRange === 7 ? 24 : 10}>
-                        <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 9 }}
-                          tickFormatter={d => { const parts = d.split('-'); return `${parts[2]}/${parts[1]}`; }}
-                          axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 9 }}
-                          tickFormatter={v => v === 0 ? '0' : `${v >= 0 ? '+' : ''}${(v/1000).toFixed(1)}K`}
-                          axisLine={false} tickLine={false} width={44} />
-                        <Tooltip
-                          contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }}
-                          labelStyle={{ color: 'rgba(255,255,255,0.6)' }}
-                          formatter={(value: number, _name: string, props: { payload?: { trades?: number; wins?: number; losses?: number; cumPnl?: number } }) => [
-                            `${value >= 0 ? '+' : ''}₹${value.toFixed(0)} (${props.payload?.trades ?? 0}T) | Cum: ₹${(props.payload?.cumPnl ?? 0).toFixed(0)}`,
-                            'P&L'
-                          ]}
-                          labelFormatter={d => { const parts = d.split('-'); return `${parts[2]}/${parts[1]}/${parts[0]}`; }}
-                        />
-                        <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" />
-                        <Bar dataKey="totalPnl" radius={[3, 3, 0, 0]}>
-                          {filled.map((entry, idx) => (
-                            <Cell key={idx} fill={entry.totalPnl > 0 ? '#10b981' : entry.totalPnl < 0 ? '#ef4444' : 'rgba(255,255,255,0.1)'} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-          )}
-
-          {/* RIGHT: Open Positions Panel */}
-          <div className={`${meQuery.data?.role === "admin" ? "lg:col-span-2" : ""} bg-white/5 border border-white/10 rounded-2xl p-5`}>
+        <div className="mb-6">
+          {/* Open Positions Panel — full width */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
               <span className="font-semibold text-white text-sm">Open Positions</span>
@@ -1893,112 +1805,6 @@ export default function Dashboard() {
         </div>
 
         {/* Account Balance & Profile Widget */}
-        {(accountProfile || accountBalance) && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-            {/* Profile Card */}
-            {accountProfile && (
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <User className="w-4 h-4 text-teal-400" />
-                  <span className="text-xs text-white/40 uppercase tracking-wider">Account Profile</span>
-                </div>
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-full bg-teal-500/20 border border-teal-500/30 flex items-center justify-center shrink-0">
-                    <span className="text-teal-400 font-bold text-sm">
-                      {accountProfile.user_name?.charAt(0)?.toUpperCase() ?? "U"}
-                    </span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-white font-semibold text-sm truncate">{accountProfile.user_name ?? "—"}</div>
-                    <div className="text-white/40 text-xs truncate">{accountProfile.email ?? "—"}</div>
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {accountProfile.user_id && (
-                        <span className="text-xs bg-white/5 border border-white/10 rounded-md px-2 py-0.5 text-white/50">
-                          UCC: {accountProfile.user_id}
-                        </span>
-                      )}
-                      {accountProfile.broker && (
-                        <span className="text-xs bg-teal-500/10 border border-teal-500/20 rounded-md px-2 py-0.5 text-teal-400">
-                          {accountProfile.broker}
-                        </span>
-                      )}
-                      {accountProfile.user_type && (
-                        <span className="text-xs bg-white/5 border border-white/10 rounded-md px-2 py-0.5 text-white/40">
-                          {accountProfile.user_type}
-                        </span>
-                      )}
-                    </div>
-                    {accountProfile.exchanges && accountProfile.exchanges.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {accountProfile.exchanges.map(ex => (
-                          <span key={ex} className="text-[10px] bg-blue-500/10 border border-blue-500/20 rounded px-1.5 py-0.5 text-blue-400">{ex}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Balance Card */}
-            {accountBalance && (
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Wallet className="w-4 h-4 text-emerald-400" />
-                    <span className="text-xs text-white/40 uppercase tracking-wider">Funds & Margin</span>
-                  </div>
-                  <button
-                    onClick={() => refetchBalance()}
-                    className="p-1 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/60 transition-colors"
-                    title="Refresh balance"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                {accountBalance.equity && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-white/50 text-xs">Available Margin</span>
-                      <span className="text-emerald-400 font-bold text-base">
-                        ₹{(accountBalance.equity.available_margin ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-white/50 text-xs">Used Margin</span>
-                      <span className="text-amber-400 font-semibold text-sm">
-                        ₹{(accountBalance.equity.used_margin ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-white/50 text-xs">Available Cash</span>
-                      <span className="text-white/70 text-sm">
-                        ₹{(accountBalance.equity.available_cash ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                      </span>
-                    </div>
-                    {(accountBalance.equity.available_margin ?? 0) > 0 && (accountBalance.equity.used_margin ?? 0) > 0 && (
-                      <div className="mt-2">
-                        <div className="flex justify-between text-[10px] text-white/30 mb-1">
-                          <span>Used</span>
-                          <span>
-                            {(((accountBalance.equity.used_margin ?? 0) /
-                              ((accountBalance.equity.available_margin ?? 0) + (accountBalance.equity.used_margin ?? 0))) * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-emerald-500 to-amber-500 rounded-full transition-all"
-                            style={{ width: `${Math.min(100, ((accountBalance.equity.used_margin ?? 0) / (((accountBalance.equity.available_margin ?? 0) + (accountBalance.equity.used_margin ?? 0)) || 1)) * 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Power Hour Banner */}
         {isPowerHourMode && (
