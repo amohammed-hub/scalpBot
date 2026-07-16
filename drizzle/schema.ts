@@ -187,3 +187,29 @@ export const signalJournal = mysqlTable("signal_journal", {
 });
 export type SignalJournal = typeof signalJournal.$inferSelect;
 export type InsertSignalJournal = typeof signalJournal.$inferInsert;
+
+// ── App Users (Mobile OTP Auth) ─────────────────────────────────────────────
+export const appUsers = mysqlTable("app_users", {
+  id: int("id").autoincrement().primaryKey(),
+  mobile: varchar("mobile", { length: 15 }).notNull().unique(), // E.164 format: +919876543210
+  name: varchar("name", { length: 128 }),
+  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  isVerified: boolean("isVerified").default(false).notNull(),
+  sessionToken: varchar("sessionToken", { length: 128 }), // links to existing sessionToken-based data
+  lastLoginAt: timestamp("lastLoginAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AppUser = typeof appUsers.$inferSelect;
+export type InsertAppUser = typeof appUsers.$inferInsert;
+
+// ── OTP Codes ───────────────────────────────────────────────────────────────
+export const otpCodes = mysqlTable("otp_codes", {
+  id: int("id").autoincrement().primaryKey(),
+  mobile: varchar("mobile", { length: 15 }).notNull(),
+  code: varchar("code", { length: 6 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  verified: boolean("verified").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type OtpCode = typeof otpCodes.$inferSelect;

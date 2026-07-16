@@ -1,7 +1,7 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { InsertUser, users, subscriptions } from "../drizzle/schema";
+import { InsertUser, users, subscriptions, appUsers, otpCodes } from "../drizzle/schema";
 import { ENV } from './_core/env';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _db: any = null;
@@ -376,4 +376,193 @@ export async function activateSubscription(params: {
   });
 
   return { success: true, expiresAt };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OTP Auth Helpers
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate a 6-digit OTP, store it in DB, and send via Twilio SMS.
+ * OTP expires in 5 minutes. Rate-limited to 1 OTP per mobile per 60 seconds.
+ */
+export async function sendOtp(mobile: string): Promise<{ success: boolean; message: string }> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  // Rate limit: check if OTP was sent in last 60 seconds
+  const recentOtp = await db
+    .select()
+    .from(otpCodes)
+    .where(and(
+      eq(otpCodes.mobile, mobile),
+      gt(otpCodes.createdAt, new Date(Date.now() - 60_000)),
+    ))
+    .limit(1);
+  if (recentOtp.length > 0) {
+    return { success: false, message: "OTP already sent. Please wait 60 seconds." };
+  }
+
+  // Generate 6-digit code
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+  // Store in DB
+  await db.insert(otpCodes).values({ mobile, code, expiresAt });
+
+  // Send via Twilio
+  const { twilioAccountSid, twilioAuthToken, twilioPhoneNumber } = ENV;
+  if (!twilioAccountSid || !twilioAuthToken || !twilioPhoneNumber) {
+    throw new Error("Twilio credentials not configured");
+  }
+
+  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/Messages.json`;
+  const body = new URLSearchParams({
+    To: mobile,
+    From: twilioPhoneNumber,
+    Body: `Your ScalpBot OTP is: ${code}. Valid for 5 minutes. Do not share this code.`,
+  });
+
+  const resp = await fetch(twilioUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    console.error("[OTP] Twilio send failed:", err);
+    throw new Error("Failed to send OTP. Please try again.");
+  }
+
+  return { success: true, message: "OTP sent successfully" };
+}
+
+/**
+ * Verify OTP code for a mobile number.
+ * Returns the app_user record (creates one if first-time).
+ */
+export async function verifyOtp(mobile: string, code: string): Promise<{ success: boolean; user?: typeof appUsers.$inferSelect; message?: string }> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  // Find valid OTP
+  const otpRows = await db
+    .select()
+    .from(otpCodes)
+    .where(and(
+      eq(otpCodes.mobile, mobile),
+      eq(otpCodes.code, code),
+      eq(otpCodes.verified, false),
+      gt(otpCodes.expiresAt, new Date()),
+    ))
+    .orderBy(desc(otpCodes.createdAt))
+    .limit(1);
+
+  if (otpRows.length === 0) {
+    return { success: false, message: "Invalid or expired OTP" };
+  }
+
+  // Mark OTP as verified
+  await db.update(otpCodes).set({ verified: true }).where(eq(otpCodes.id, otpRows[0].id));
+
+  // Find or create user
+  let userRows = await db.select().from(appUsers).where(eq(appUsers.mobile, mobile)).limit(1);
+
+  if (userRows.length === 0) {
+    // Create new user with a session token
+    const sessionToken = crypto.randomUUID();
+    await db.insert(appUsers).values({
+      mobile,
+      isVerified: true,
+      sessionToken,
+    });
+    userRows = await db.select().from(appUsers).where(eq(appUsers.mobile, mobile)).limit(1);
+  } else {
+    // Update last login
+    await db.update(appUsers).set({
+      isVerified: true,
+      lastLoginAt: new Date(),
+    }).where(eq(appUsers.id, userRows[0].id));
+    userRows = await db.select().from(appUsers).where(eq(appUsers.id, userRows[0].id)).limit(1);
+  }
+
+  return { success: true, user: userRows[0] };
+}
+
+/**
+ * Get user by ID
+ */
+export async function getAppUserById(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(appUsers).where(eq(appUsers.id, userId)).limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Get all app users (for admin panel)
+ */
+export async function getAllAppUsers() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(appUsers).orderBy(desc(appUsers.createdAt));
+}
+
+/**
+ * Get all subscriptions (for admin panel)
+ */
+export async function getAllSubscriptions() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(subscriptions).orderBy(desc(subscriptions.createdAt));
+}
+
+/**
+ * Admin: grant subscription to a user
+ */
+export async function adminGrantSubscription(params: {
+  sessionToken: string;
+  plan: "trial" | "monthly" | "quarterly" | "half_yearly" | "yearly";
+  daysOverride?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const now = new Date();
+  const durationDays: Record<string, number> = {
+    trial: 2,
+    monthly: 30,
+    quarterly: 90,
+    half_yearly: 180,
+    yearly: 365,
+  };
+  const days = params.daysOverride ?? durationDays[params.plan] ?? 30;
+  const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+  await db.insert(subscriptions).values({
+    sessionToken: params.sessionToken,
+    plan: params.plan,
+    status: "active",
+    amountPaid: 0,
+    startsAt: now,
+    expiresAt,
+  });
+  return { success: true, expiresAt };
+}
+
+/**
+ * Admin: revoke (cancel) all active subscriptions for a session
+ */
+export async function adminRevokeAccess(sessionToken: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(subscriptions)
+    .set({ status: "cancelled" })
+    .where(and(
+      eq(subscriptions.sessionToken, sessionToken),
+      eq(subscriptions.status, "active"),
+    ));
+  return { success: true };
 }

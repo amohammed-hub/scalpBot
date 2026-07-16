@@ -775,3 +775,25 @@
 - [x] Trial enforcement: block MCX + live trading during trial (server-side) — bot.start + multiBots.startSecondary both enforce
 - [ ] Railway DB: apply subscriptions migration on production (user must run CREATE TABLE IF NOT EXISTS subscriptions... on Railway DB)
 - [x] Push subscription code to GitHub for Railway auto-deploy — pushed commit 2098052
+
+## Mobile OTP Authentication + Admin Panel (Jul 16 2025)
+- [x] Database: app_users table (mobile, name, isVerified, role, sessionToken, createdAt, lastLoginAt)
+- [x] Database: otp_codes table (mobile, code, expiresAt, verified, createdAt)
+- [x] Server: Twilio OTP send endpoint (mobileAuth.sendOtp)
+- [x] Server: Twilio OTP verify endpoint (mobileAuth.verifyOtp) — creates/finds user, returns JWT
+- [x] Server: mobileAuth.me endpoint — returns current user from JWT cookie
+- [x] Server: mobileAuth.logout endpoint — clears JWT cookie
+- [x] Server: mobileAuth.updateName endpoint — set name after first login
+- [x] Frontend: Login page (/login) with mobile number input → OTP input → name flow
+- [ ] Frontend: Protect Dashboard/Settings/HeroZero behind auth (redirect to /login if no user) — next iteration
+- [ ] Frontend: Show user name/mobile in sidebar — next iteration
+- [ ] Migrate subscriptions from sessionToken to userId — next iteration (backward compatible now)
+- [x] Admin panel: /admin route with password gate
+- [x] Admin panel: User list (mobile, name, signup date, last active, subscription status)
+- [x] Admin panel: Subscription management (grant/extend/revoke access)
+- [x] Admin panel: Revenue dashboard (total revenue, active subscribers, MRR)
+- [x] Admin panel: Payment history (all Razorpay payments with order IDs)
+- [ ] Admin panel: User activity (bots running, trade counts) — next iteration
+- [x] Admin panel: Kill access (instantly revoke user)
+- [x] Request Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER) — set
+- [x] Request admin password (ADMIN_PASSWORD) — set

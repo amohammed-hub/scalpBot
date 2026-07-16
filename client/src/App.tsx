@@ -12,11 +12,15 @@ import UpstoxCallback from "./pages/UpstoxCallback";
 import HeroZeroScanner from "./pages/HeroZeroScanner";
 import PnLAnalytics from "./pages/PnLAnalytics";
 import Backtest from "./pages/Backtest";
+import Login from "./pages/Login";
+import Admin from "./pages/Admin";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/login" component={Login} />
+      <Route path="/admin" component={Admin} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/risk-calculator" component={RiskCalculator} />
       <Route path="/settings" component={Settings} />
