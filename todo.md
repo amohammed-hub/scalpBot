@@ -885,3 +885,10 @@
 - [x] Heartbeat message: shows "🌃 MCXLate Scanning..." during late session window
 - [x] Layer filter fix: time-window strategies (PowerHour, MCXEvening, MCXLateSession, HeroZero) now bypass enabledLayers filter
 - [x] isMCXLateSessionMode exposed in liveData and multiBots.allStatus responses
+
+## UX Fixes — Auth Loading Gate & Domain Change
+- [x] Fix Dashboard flash of content before auth redirect (auth loading gate with ScalpBot spinner)
+- [x] Fix Settings flash of content before auth redirect
+- [x] Fix HeroZeroScanner flash of content before auth redirect
+- [x] Fix /upstox-callback direct access — redirect to home instead of showing confusing error
+- [x] Change Railway domain to scalpbot.up.railway.app

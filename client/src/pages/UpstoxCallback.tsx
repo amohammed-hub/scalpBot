@@ -41,8 +41,9 @@ export default function UpstoxCallback() {
       setStatus("error");
     } else {
       // No status param — page was opened directly without going through Upstox
-      setErrorMsg(`This page should only be opened after completing Upstox login.\n\nURL received: ${window.location.href}`);
-      setStatus("error");
+      // Redirect to home page instead of showing confusing error
+      navigate("/");
+      return;
     }
 
     return () => {

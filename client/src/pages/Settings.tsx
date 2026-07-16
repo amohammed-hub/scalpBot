@@ -331,6 +331,20 @@ export default function Settings() {
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
 
+  // Auth loading gate — prevent flash of settings content before redirect
+  if (!meQuery.isFetched || (meQuery.isLoading && !localStorage.getItem("scalpbot_auth_token"))) {
+    return (
+      <div className="min-h-screen bg-[oklch(0.10_0.02_240)] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-teal-500 rounded-xl flex items-center justify-center animate-pulse">
+            <Zap className="w-7 h-7 text-white" />
+          </div>
+          <p className="text-white/50 text-sm">Loading ScalpBot...</p>
+        </div>
+      </div>
+    );
+  }
+
   const [creds, setCreds] = useState<Credentials>(loadCreds);
   const [showSecret, setShowSecret] = useState(false);
   const [showToken, setShowToken] = useState(false);
