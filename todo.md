@@ -772,6 +772,6 @@
 - [x] Home.tsx: Subscribe buttons wired to Razorpay checkout flow
 - [x] client/index.html: Razorpay checkout.js script loaded
 - [ ] Razorpay API keys (RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET) — waiting for user to activate Payment Gateway
-- [ ] Trial enforcement: block MCX + live trading during trial (server-side)
+- [x] Trial enforcement: block MCX + live trading during trial (server-side) — bot.start + multiBots.startSecondary both enforce
 - [ ] Railway DB: apply subscriptions migration on production
 - [ ] Push subscription code to GitHub for Railway auto-deploy

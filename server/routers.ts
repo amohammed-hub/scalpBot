@@ -283,6 +283,20 @@ export const appRouter = router({
           throw new Error('Primary bot is already running. Stop it first before restarting.');
         }
 
+        // ── Subscription Enforcement ────────────────────────────────────────
+        const access = await checkAccess(input.sessionToken);
+        if (!access.hasAccess) {
+          throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
+        }
+        if (access.plan === "trial") {
+          if (input.mode === "live") {
+            throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
+          }
+          if (input.instrumentToken.startsWith("MCX_FO|")) {
+            throw new Error("MCX trading is not available during the free trial. Subscribe to unlock MCX markets.");
+          }
+        }
+
         // Load access token for BOTH paper and live modes.
         // Paper mode uses it for real market data (candles, quotes) but skips actual order placement.
         // This ensures paper trades reflect real prices — not fake mock values.
@@ -1999,6 +2013,20 @@ export const appRouter = router({
         const existingSlotBot = getBotState(slotToken);
         if (existingSlotBot?.status === 'running') {
           throw new Error(`Slot ${input.slot} bot is already running. Stop it first before restarting.`);
+        }
+
+        // ── Subscription Enforcement ────────────────────────────────────────
+        const slotAccess = await checkAccess(input.sessionToken);
+        if (!slotAccess.hasAccess) {
+          throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
+        }
+        if (slotAccess.plan === "trial") {
+          if (input.mode === "live") {
+            throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
+          }
+          if (input.instrumentToken.startsWith("MCX_FO|")) {
+            throw new Error("MCX trading is not available during the free trial. Subscribe to unlock MCX markets.");
+          }
         }
 
         // SAFETY: Reject if any running slot (including primary) is already trading the same instrument.
