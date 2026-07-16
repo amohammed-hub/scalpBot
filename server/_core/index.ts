@@ -262,8 +262,10 @@ async function startServer() {
       }
       const db = await getDb();
       if (!db) { res.json({ ok: true, skipped: 'no-db' }); return; }
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
+      // BUG 20 fix: Use IST midnight (Railway runs UTC)
+      const eodNowMs = Date.now(); const eodIstOff = 5.5 * 60 * 60 * 1000;
+      const eodIstNow = new Date(eodNowMs + eodIstOff); eodIstNow.setUTCHours(0, 0, 0, 0);
+      const todayStart = new Date(eodIstNow.getTime() - eodIstOff);
       // Find all sessions with Telegram enabled
       const activeSessions = await db
         .select()

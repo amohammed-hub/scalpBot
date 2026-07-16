@@ -44,6 +44,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       eq(tradeLog.sessionToken, session.sessionToken),
       eq(tradeLog.status, "open"),
     ))
+    .orderBy(desc(tradeLog.enteredAt))
     .limit(1);
   // Build existingOpenTrade if there is one to restore
   let existingOpenTrade: OpenTrade | undefined = undefined;
@@ -103,11 +104,12 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — no open trade, restarting in scan mode`);
   }
 
-  // Look up access token
+  // Look up access token (BUG 19 fix: slot bots use base token for creds)
+  const baseToken = session.sessionToken.replace(/-slot[12]$/, "");
   const credRows = await db
     .select()
     .from(upstoxCredentials)
-    .where(eq(upstoxCredentials.sessionToken, session.sessionToken))
+    .where(eq(upstoxCredentials.sessionToken, baseToken))
     .limit(1);
   const accessToken = credRows[0]?.accessToken ?? null;
 
@@ -289,9 +291,18 @@ export async function restartRunningBots(): Promise<void> {
             .limit(1);
           const token = credRow[0]?.accessToken;
           if (token && t.instrumentToken) {
-            const quote = await fetchFullQuote(t.instrumentToken, token);
-            if (quote && quote.ltp > 0) {
-              exitPrice = quote.bid > 0 ? Math.max(quote.bid, quote.ltp) : quote.ltp;
+            // BUG 17 fix: For options trades, the instrumentToken might be the underlying index.
+            // Skip fetching if it's an index token (would give index price, not option premium).
+            const isIndexToken = t.instrumentToken.startsWith("NSE_INDEX|") || t.instrumentToken.startsWith("MCX_FO|");
+            const isOptionTrade = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE");
+            if (isIndexToken && isOptionTrade) {
+              // For stale option trades, close at entry price (0 P&L on remaining) since we can't get the real option premium
+              exitPrice = t.entryPrice;
+            } else {
+              const quote = await fetchFullQuote(t.instrumentToken, token);
+              if (quote && quote.ltp > 0) {
+                exitPrice = quote.bid > 0 ? Math.max(quote.bid, quote.ltp) : quote.ltp;
+              }
             }
           }
         } catch (ltpErr) {

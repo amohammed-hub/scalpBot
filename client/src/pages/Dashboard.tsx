@@ -199,6 +199,19 @@ export default function Dashboard() {
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
 
+  // BUG 16 fix: Sync localStorage sessionToken with the authenticated user's sessionToken.
+  // This ensures that after login on a new device, the user gets their existing bot data.
+  useEffect(() => {
+    if (meQuery.data?.sessionToken) {
+      const currentLocal = localStorage.getItem("scalpbot_session");
+      if (currentLocal !== meQuery.data.sessionToken) {
+        localStorage.setItem("scalpbot_session", meQuery.data.sessionToken);
+        // Force page reload to pick up the new sessionToken for all queries
+        window.location.reload();
+      }
+    }
+  }, [meQuery.data?.sessionToken]);
+
   const logoutMutation = trpc.mobileAuth.logout.useMutation({
     onSuccess: () => {
       localStorage.removeItem("scalpbot_auth_token");

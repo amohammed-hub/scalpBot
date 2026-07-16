@@ -815,3 +815,18 @@
 - [x] Fix: checkAccess now checks admin via JWT role, JWT mobile, DB role, AND sessionToken lookup
 - [x] Fix: Added "Logout & Re-login" button on paywall overlay so user can re-authenticate
 - [x] Fix: verifyOtp auto-promotes to admin on login if mobile matches ADMIN_MOBILE
+
+## Deep Codebase Audit — 20 Bugs Fixed (July 16, 2026)
+- [x] BUG 1: clearAllHistory — added admin-only guard
+- [x] BUG 2: closeAllOpen — require admin for global close (no sessionToken)
+- [x] BUG 3: openTrade fallback — removed global query that leaked other users' trades
+- [x] BUG 6/12/18: todayStart timezone — all 5 occurrences fixed to use IST midnight
+- [x] BUG 7: apiSecret exposure — now fully masked
+- [x] BUG 8: Dead Admin.tsx — deleted
+- [x] BUG 11: botRestart open trade ordering — added desc(enteredAt)
+- [x] BUG 13/14: admin.verify and all admin endpoints — now check ADMIN_MOBILE + DB role
+- [x] BUG 15: correctTradeExit — added admin-only guard
+- [x] BUG 16: sessionToken identity mismatch — sync localStorage with authenticated user's token
+- [x] BUG 17: stale trade cleanup — skip index token fetch for options trades
+- [x] BUG 19: botRestart slot bot credential lookup — strip -slot1/-slot2 suffix
+- [x] BUG 20: EOD summary timezone — fixed to IST midnight
