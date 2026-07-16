@@ -1,13 +1,15 @@
-import { useState } from "react";
-import { useLocation } from "wouter";
+import { useState, useMemo } from "react";
+import { useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Loader2, Smartphone, Shield, ArrowRight } from "lucide-react";
+import { Loader2, Smartphone, Shield, ArrowRight, Zap, Crown } from "lucide-react";
 
 export default function Login() {
   const [, navigate] = useLocation();
+  const searchString = useSearch();
+  const intent = useMemo(() => new URLSearchParams(searchString).get("intent"), [searchString]);
   const utils = trpc.useUtils();
   const [step, setStep] = useState<"mobile" | "otp" | "name">("mobile");
   const [mobile, setMobile] = useState("");
@@ -56,7 +58,7 @@ export default function Login() {
         } else {
           toast.success(`Welcome back, ${data.user.name}!`);
           // Small delay to ensure cookie is processed by browser before next request
-          setTimeout(() => navigate("/dashboard"), 100);
+          setTimeout(() => navigate(intent === "subscribe" ? "/#pricing" : "/dashboard"), 100);
         }
       } else {
         toast.error(data.message ?? "Verification failed");
@@ -68,7 +70,7 @@ export default function Login() {
   const updateNameMutation = trpc.mobileAuth.updateName.useMutation({
     onSuccess: () => {
       toast.success(`Welcome, ${name}!`);
-      navigate("/dashboard");
+      navigate(intent === "subscribe" ? "/#pricing" : "/dashboard");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -106,10 +108,20 @@ export default function Login() {
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-4">
             <div className="w-10 h-10 bg-teal-500/20 rounded-lg flex items-center justify-center">
-              <Shield className="w-5 h-5 text-teal-400" />
+              {intent === "trial" ? <Zap className="w-5 h-5 text-teal-400" /> : intent === "subscribe" ? <Crown className="w-5 h-5 text-purple-400" /> : <Shield className="w-5 h-5 text-teal-400" />}
             </div>
             <span className="text-2xl font-bold text-white font-[Syne]">ScalpBot</span>
           </div>
+          {intent === "trial" && (
+            <div className="inline-flex items-center gap-2 bg-teal-500/10 border border-teal-500/30 rounded-full px-3 py-1 text-teal-400 text-xs mb-3">
+              <Zap className="w-3 h-3" /> Sign in to start your 2-day free trial
+            </div>
+          )}
+          {intent === "subscribe" && (
+            <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/30 rounded-full px-3 py-1 text-purple-400 text-xs mb-3">
+              <Crown className="w-3 h-3" /> Sign in to subscribe
+            </div>
+          )}
           <p className="text-white/50 text-sm">
             {step === "mobile" && "Enter your mobile number to get started"}
             {step === "otp" && "Enter the 6-digit OTP sent to your phone"}

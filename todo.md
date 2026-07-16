@@ -892,3 +892,12 @@
 - [x] Fix HeroZeroScanner flash of content before auth redirect
 - [x] Fix /upstox-callback direct access — redirect to home instead of showing confusing error
 - [x] Change Railway domain to scalpbot.up.railway.app
+
+## Landing Page UX — Clear CTAs for New Users
+- [x] Redesign navbar: "Pricing" link + "Sign In" button + "Free Trial" button (replaces confusing "Open Dashboard")
+- [x] Hero CTAs: "Start 2-Day Free Trial" + "View Plans & Pricing" (replaces "Start Bot Trading Free")
+- [x] Trial/Subscribe buttons check login state — redirect to /login?intent=trial or /login?intent=subscribe if not logged in
+- [x] Login page shows intent context badge ("Sign in to start your 2-day free trial" or "Sign in to subscribe")
+- [x] After login with intent=subscribe, redirect to /#pricing instead of dashboard
+- [x] Removed confusing "Get on Phone" QR button from navbar (was misleading for new users)
+- [x] Added "No credit card required. Paper trading on NSE included in trial." reassurance text under hero CTAs

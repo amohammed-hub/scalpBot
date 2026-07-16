@@ -1,15 +1,14 @@
 import { Button } from "@/components/ui/button";
 import { useLocation, Link } from "wouter";
-import { Bot, TrendingUp, Shield, Zap, BarChart2, QrCode, Check, Crown, Loader2 } from "lucide-react";
+import { Bot, TrendingUp, Shield, Zap, BarChart2, Check, Crown, Loader2 } from "lucide-react";
 import { useState, useCallback } from "react";
-import QRModal from "@/components/QRModal";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
 export default function Home() {
   const [, navigate] = useLocation();
-  const [qrOpen, setQrOpen] = useState(false);
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
+  const [showTrialStarting, setShowTrialStarting] = useState(false);
 
   // Get session token for subscription
   const getSessionToken = useCallback(() => {
@@ -64,7 +63,44 @@ export default function Home() {
 
   const verifyPaymentMutation = trpc.subscription.verifyPayment.useMutation();
 
+  // Start trial mutation for the landing page CTA
+  const startTrialMutation = trpc.subscription.startTrial.useMutation({
+    onSuccess: (data) => {
+      if (data.success) {
+        toast.success("2-day free trial activated! Redirecting to dashboard...");
+        setTimeout(() => navigate("/dashboard"), 800);
+      } else {
+        toast.error(data.error || "Could not start trial. You may have already used it.");
+        setShowTrialStarting(false);
+      }
+    },
+    onError: (e) => {
+      toast.error(e.message);
+      setShowTrialStarting(false);
+    },
+  });
+
+  const handleStartTrial = () => {
+    // Check if user is logged in first
+    const authToken = localStorage.getItem("scalpbot_auth_token");
+    if (!authToken) {
+      // Not logged in — send to login with a return intent
+      toast.info("Sign in first to start your free trial");
+      navigate("/login?intent=trial");
+      return;
+    }
+    setShowTrialStarting(true);
+    startTrialMutation.mutate({ sessionToken: getSessionToken() });
+  };
+
   const handleSubscribe = (plan: "monthly" | "quarterly" | "half_yearly" | "yearly") => {
+    // Check if user is logged in first
+    const authToken = localStorage.getItem("scalpbot_auth_token");
+    if (!authToken) {
+      toast.info("Sign in first to subscribe");
+      navigate("/login?intent=subscribe");
+      return;
+    }
     setCheckingOut(plan);
     createOrderMutation.mutate({
       sessionToken: getSessionToken(),
@@ -84,19 +120,21 @@ export default function Home() {
           <span className="text-xs bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded-full border border-teal-500/30">Upstox</span>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setQrOpen(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-teal-500/15 border border-teal-500/30 text-teal-400 hover:bg-teal-500/25 transition-all"
-          >
-            <QrCode className="w-4 h-4" />
-            <span className="hidden sm:inline">Get on Phone</span>
+          <button onClick={() => {
+            const el = document.getElementById("pricing");
+            if (el) el.scrollIntoView({ behavior: "smooth" });
+          }} className="hidden sm:inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm text-white/70 hover:text-white transition-colors">
+            Pricing
           </button>
-          <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={() => navigate("/dashboard")}>
-            Open Dashboard
+          <Button variant="outline" className="border-white/20 text-white hover:bg-white/10" onClick={() => navigate("/login")}>
+            Sign In
+          </Button>
+          <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={handleStartTrial} disabled={showTrialStarting}>
+            {showTrialStarting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+            Free Trial
           </Button>
         </div>
       </nav>
-      <QRModal open={qrOpen} onClose={() => setQrOpen(false)} />
 
       {/* Hero */}
       <div className="max-w-6xl mx-auto px-6 pt-20 pb-16 text-center">
@@ -109,18 +147,22 @@ export default function Home() {
           <span className="text-teal-400">You Just Watch the Profits.</span>
         </h1>
         <p className="text-xl text-white/60 mb-10 max-w-2xl mx-auto">
-          Connect your Upstox account, configure your risk settings, and let the AI-powered scalping bot automatically detect signals and place orders — no login required, no account needed.
+          Connect your Upstox account, configure your risk settings, and let the AI-powered scalping bot automatically detect signals and place orders on NSE and MCX markets.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Button size="lg" className="bg-teal-500 hover:bg-teal-600 text-white px-8 py-6 text-lg" onClick={() => navigate("/dashboard")}>
-            <Bot className="w-5 h-5 mr-2" />
-            Start Bot Trading Free
+          <Button size="lg" className="bg-teal-500 hover:bg-teal-600 text-white px-8 py-6 text-lg" onClick={handleStartTrial} disabled={showTrialStarting}>
+            {showTrialStarting ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Zap className="w-5 h-5 mr-2" />}
+            Start 2-Day Free Trial
           </Button>
-          <Button size="lg" variant="outline" className="border-white/20 text-white hover:bg-white/10 px-8 py-6 text-lg" onClick={() => navigate("/risk-calculator")}>
-            <BarChart2 className="w-5 h-5 mr-2" />
-            Try Risk Calculator
+          <Button size="lg" variant="outline" className="border-white/20 text-white hover:bg-white/10 px-8 py-6 text-lg" onClick={() => {
+            const el = document.getElementById("pricing");
+            if (el) el.scrollIntoView({ behavior: "smooth" });
+          }}>
+            <Crown className="w-5 h-5 mr-2" />
+            View Plans & Pricing
           </Button>
         </div>
+        <p className="text-white/40 text-sm mt-4">No credit card required. Paper trading on NSE included in trial.</p>
       </div>
 
       {/* Features */}
