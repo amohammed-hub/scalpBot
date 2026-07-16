@@ -496,9 +496,12 @@ export async function verifyOtp(mobile: string, code: string): Promise<{ success
     userRows = await db.select().from(appUsers).where(eq(appUsers.mobile, mobile)).limit(1);
   } else {
     // Update last login
+    // Also promote to admin if this is the admin's mobile (handles case where user registered before admin role was set up)
+    const isAdmin = ENV.adminMobile && (mobile === ENV.adminMobile || mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""));
     await db.update(appUsers).set({
       isVerified: true,
       lastLoginAt: new Date(),
+      ...(isAdmin && userRows[0].role !== "admin" ? { role: "admin" as const } : {}),
     }).where(eq(appUsers.id, userRows[0].id));
     userRows = await db.select().from(appUsers).where(eq(appUsers.id, userRows[0].id)).limit(1);
   }

@@ -3243,7 +3243,12 @@ export const appRouter = router({
         if (adminToken) {
           try {
             const decoded = jwt.verify(adminToken, process.env.JWT_SECRET || "fallback-secret") as { userId: number; mobile: string; role: string };
-            if (decoded.role === "admin") {
+            if (decoded.role === "admin" || decoded.mobile === ENV.adminMobile) {
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false };
+            }
+            // Also check DB for role (handles case where JWT was issued before role promotion)
+            const dbUser = await getAppUserById(decoded.userId);
+            if (dbUser?.role === "admin") {
               return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false };
             }
           } catch {}
