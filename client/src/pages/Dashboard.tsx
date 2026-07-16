@@ -2909,8 +2909,8 @@ export default function Dashboard() {
                   <th className="text-right py-2 pr-4">SL</th>
                   <th className="text-right py-2 pr-4">Target</th>
                   <th className="text-right py-2 pr-4">Exit</th>
-                  <th className="text-right py-2 pr-4">Qty</th>
                   <th className="text-right py-2 pr-4">Lots</th>
+                  <th className="text-right py-2 pr-4 text-white/30">Qty</th>
                   <th className="text-right py-2 pr-4">Capital</th>
                   <th className="text-right py-2 pr-4">P&L</th>
                   <th className="text-center py-2 pr-4">Partial</th>
@@ -3027,15 +3027,15 @@ export default function Dashboard() {
                         <td className="py-2.5 pr-4 text-right font-mono text-red-400/70">{(t as any).slPrice ? `₹${(t as any).slPrice.toFixed(2)}` : "—"}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-emerald-400/70">{(t as any).targetPrice ? `₹${(t as any).targetPrice.toFixed(2)}` : "—"}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-white/60">{t.exitPrice ? `₹${t.exitPrice.toFixed(2)}` : "—"}</td>
-                        <td className="py-2.5 pr-4 text-right text-white/60">{t.quantity}</td>
-                        <td className="py-2.5 pr-4 text-right text-white/40 text-xs">
+                        <td className="py-2.5 pr-4 text-right font-semibold text-white/80">
                           {(() => {
                             const instr = INSTRUMENTS.find(i => i.symbol === t.symbol || (t.symbolLabel ?? '').includes(i.label.split(' →')[0]));
                             const ls = instr?.lotSize ?? 1;
                             const lots = ls > 1 ? Math.round(t.quantity / ls) : null;
-                            return lots !== null ? `${lots}L` : '—';
+                            return lots !== null ? `${lots}` : t.quantity;
                           })()}
                         </td>
+                        <td className="py-2.5 pr-4 text-right text-white/30 text-xs">{t.quantity}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-cyan-400/80 text-xs">
                           ₹{(t.entryPrice * t.quantity).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                         </td>
