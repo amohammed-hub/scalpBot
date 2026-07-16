@@ -2729,7 +2729,24 @@ async function tick(
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  const tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.5 : signal.slPrice;
+  let tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.5 : signal.slPrice;
+  // ── CRITICAL: Adjust SL when quantity exceeds what risk formula allows ──────
+  // If the minimum lot size forces quantity above rawQty, the default SL (50% of premium)
+  // would cause actual monetary loss > riskAmount. Fix: tighten SL proportionally.
+  // Example: premium=₹59.40, default SL=₹29.70, qty=100, actual risk=₹2970 but riskAmount=₹1500
+  // Fix: SL = entry - (riskAmount/qty) = 59.40 - 15 = ₹44.40, actual risk = ₹1500 ✓
+  if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
+    const defaultSlDist = tradeEntryPrice - tradeSl; // e.g., 59.40 - 29.70 = 29.70
+    const actualMaxLoss = defaultSlDist * quantity;  // e.g., 29.70 * 100 = 2970
+    if (actualMaxLoss > riskAmount * 1.05) { // 5% tolerance
+      const adjustedSlDist = riskAmount / quantity; // e.g., 1500 / 100 = 15
+      tradeSl = tradeEntryPrice - adjustedSlDist;   // e.g., 59.40 - 15 = 44.40
+      // Ensure SL doesn't go below 10% of entry (minimum breathing room)
+      const minSl = tradeEntryPrice * 0.10;
+      if (tradeSl < minSl) tradeSl = minSl;
+      emitActivity(state.sessionToken, "signal", `⚠ SL tightened: ₹${(tradeEntryPrice - adjustedSlDist).toFixed(2)} → keeps risk within ₹${riskAmount.toFixed(0)} (qty forced to min lot ${lotSize})`);
+    }
+  }
   const tradeTarget = isOptionsMode && optionPremiumForSizing
     ? optionPremiumForSizing * (1 + (state.targetMultiplier * 0.5)) // target = premium * (1 + 0.5*targetMult)
     : signal.targetPrice;

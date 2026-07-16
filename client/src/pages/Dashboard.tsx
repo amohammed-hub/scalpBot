@@ -2909,8 +2909,8 @@ export default function Dashboard() {
                   <th className="text-right py-2 pr-4">SL</th>
                   <th className="text-right py-2 pr-4">Target</th>
                   <th className="text-right py-2 pr-4">Exit</th>
+                  <th className="text-right py-2 pr-4">Qty</th>
                   <th className="text-right py-2 pr-4">Lots</th>
-                  <th className="text-right py-2 pr-4 text-white/30">Qty</th>
                   <th className="text-right py-2 pr-4">Capital</th>
                   <th className="text-right py-2 pr-4">P&L</th>
                   <th className="text-center py-2 pr-4">Partial</th>
@@ -3027,15 +3027,34 @@ export default function Dashboard() {
                         <td className="py-2.5 pr-4 text-right font-mono text-red-400/70">{(t as any).slPrice ? `₹${(t as any).slPrice.toFixed(2)}` : "—"}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-emerald-400/70">{(t as any).targetPrice ? `₹${(t as any).targetPrice.toFixed(2)}` : "—"}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-white/60">{t.exitPrice ? `₹${t.exitPrice.toFixed(2)}` : "—"}</td>
-                        <td className="py-2.5 pr-4 text-right font-semibold text-white/80">
+                        <td className="py-2.5 pr-4 text-right text-white/60">{t.quantity}</td>
+                        <td className="py-2.5 pr-4 text-right text-white/40 text-xs">
                           {(() => {
-                            const instr = INSTRUMENTS.find(i => i.symbol === t.symbol || (t.symbolLabel ?? '').includes(i.label.split(' →')[0]));
+                            // Match instrument by checking if the trade symbol/label contains the instrument name
+                            const instr = INSTRUMENTS.find(i => {
+                              const sym = t.symbol ?? '';
+                              const lbl = t.symbolLabel ?? '';
+                              // Direct symbol match
+                              if (sym === i.symbol) return true;
+                              // Check if trade label contains instrument label prefix (e.g., "Crude Oil")
+                              const instrName = i.label.split(' →')[0];
+                              if (lbl.includes(instrName)) return true;
+                              // Check common patterns: CRUDEOIL in symbol → MCX_CRUDE
+                              if (sym.includes('CRUDEOIL') && i.symbol === 'MCX_CRUDE') return true;
+                              if (sym.includes('GOLD') && i.symbol === 'MCX_GOLD') return true;
+                              if (sym.includes('SILVER') && i.symbol === 'MCX_SILVER') return true;
+                              if (sym.includes('NATGAS') && i.symbol === 'MCX_NATGAS') return true;
+                              if (sym.includes('COPPER') && i.symbol === 'MCX_COPPER') return true;
+                              if (sym.includes('NIFTY') && !sym.includes('BANK') && !sym.includes('FIN') && i.symbol === 'NIFTY') return true;
+                              if (sym.includes('BANKNIFTY') && i.symbol === 'BANKNIFTY') return true;
+                              if (sym.includes('FINNIFTY') && i.symbol === 'FINNIFTY') return true;
+                              return false;
+                            });
                             const ls = instr?.lotSize ?? 1;
                             const lots = ls > 1 ? Math.round(t.quantity / ls) : null;
-                            return lots !== null ? `${lots}` : t.quantity;
+                            return lots !== null ? `${lots}L` : '—';
                           })()}
                         </td>
-                        <td className="py-2.5 pr-4 text-right text-white/30 text-xs">{t.quantity}</td>
                         <td className="py-2.5 pr-4 text-right font-mono text-cyan-400/80 text-xs">
                           ₹{(t.entryPrice * t.quantity).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                         </td>
