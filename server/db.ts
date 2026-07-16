@@ -485,10 +485,13 @@ export async function verifyOtp(mobile: string, code: string): Promise<{ success
   if (userRows.length === 0) {
     // Create new user with a session token
     const sessionToken = crypto.randomUUID();
+    // Auto-assign admin role if this is the admin's mobile number
+    const isAdmin = ENV.adminMobile && (mobile === ENV.adminMobile || mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""));
     await db.insert(appUsers).values({
       mobile,
       isVerified: true,
       sessionToken,
+      role: isAdmin ? "admin" : "user",
     });
     userRows = await db.select().from(appUsers).where(eq(appUsers.mobile, mobile)).limit(1);
   } else {
