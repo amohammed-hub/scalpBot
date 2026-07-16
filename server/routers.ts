@@ -293,7 +293,7 @@ export const appRouter = router({
           if (!db) return false;
           const { appUsers } = await import("../drizzle/schema");
           const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-          return rows.length > 0 && rows[0].role === "admin";
+          return rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile);
         })() : false;
         if (!access.hasAccess && !isAdminSession) {
           throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
@@ -2033,7 +2033,7 @@ export const appRouter = router({
           if (!db) return false;
           const { appUsers } = await import("../drizzle/schema");
           const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-          return rows.length > 0 && rows[0].role === "admin";
+          return rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile);
         })() : false;
         if (!slotAccess.hasAccess && !isSlotAdminSession) {
           throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
