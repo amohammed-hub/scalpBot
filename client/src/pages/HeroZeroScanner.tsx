@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +68,19 @@ type Candidate = {
 
 export default function HeroZeroScanner() {
   const sessionToken = getSessionToken();
+  const [, navigate] = useLocation();
+
+  // ── Mobile Auth Check ──────────────────────────────────────────────────────
+  const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: false,
+  });
+  useEffect(() => {
+    if (meQuery.isFetched && !meQuery.data) {
+      navigate("/login");
+    }
+  }, [meQuery.isFetched, meQuery.data, navigate]);
+
   const [underlying, setUnderlying] = useState<"NIFTY" | "BANKNIFTY" | "FINNIFTY">("NIFTY");
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);

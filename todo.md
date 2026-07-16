@@ -785,9 +785,9 @@
 - [x] Server: mobileAuth.logout endpoint — clears JWT cookie
 - [x] Server: mobileAuth.updateName endpoint — set name after first login
 - [x] Frontend: Login page (/login) with mobile number input → OTP input → name flow
-- [ ] Frontend: Protect Dashboard/Settings/HeroZero behind auth (redirect to /login if no user) — next iteration
-- [ ] Frontend: Show user name/mobile in sidebar — next iteration
-- [ ] Migrate subscriptions from sessionToken to userId — next iteration (backward compatible now)
+- [x] Frontend: Protect Dashboard/Settings/HeroZero behind auth (redirect to /login if no user)
+- [x] Frontend: Show user name/mobile in sidebar + logout button
+- [ ] Migrate subscriptions from sessionToken to userId — deferred (backward compatible via sessionToken link in app_users)
 - [x] Admin panel: /admin route with password gate
 - [x] Admin panel: User list (mobile, name, signup date, last active, subscription status)
 - [x] Admin panel: Subscription management (grant/extend/revoke access)

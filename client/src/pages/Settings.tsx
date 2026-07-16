@@ -318,6 +318,18 @@ function AutoRefreshSection({ sessionToken }: { sessionToken: string }) {
 
 export default function Settings() {
   const [, navigate] = useLocation();
+
+  // ── Mobile Auth Check ──────────────────────────────────────────────────────
+  const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: false,
+  });
+  useEffect(() => {
+    if (meQuery.isFetched && !meQuery.data) {
+      navigate("/login");
+    }
+  }, [meQuery.isFetched, meQuery.data, navigate]);
+
   const [creds, setCreds] = useState<Credentials>(loadCreds);
   const [showSecret, setShowSecret] = useState(false);
   const [showToken, setShowToken] = useState(false);

@@ -185,6 +185,25 @@ export default function Dashboard() {
   const [qrOpen, setQrOpen] = useState(false);
   const sessionToken = getSessionToken();
 
+  // ── Mobile Auth Check ──────────────────────────────────────────────────────
+  const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (meQuery.isFetched && !meQuery.data) {
+      navigate("/login");
+    }
+  }, [meQuery.isFetched, meQuery.data, navigate]);
+
+  const logoutMutation = trpc.mobileAuth.logout.useMutation({
+    onSuccess: () => {
+      localStorage.removeItem("scalpbot_auth_token");
+      navigate("/login");
+    },
+  });
+
   // ── Subscription Access Control ────────────────────────────────────────────
   const accessQuery = trpc.subscription.checkAccess.useQuery(
     { sessionToken },
@@ -902,6 +921,27 @@ export default function Dashboard() {
           Precision Verify
         </button>
         <div className="mt-auto px-2 pb-2 space-y-2">
+          {/* User Info */}
+          {meQuery.data && (
+            <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-white/5 border border-white/10 mb-2">
+              <User className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-white/80 font-medium truncate">{meQuery.data.name || "User"}</div>
+                <div className="text-white/40 text-[10px] font-mono">{meQuery.data.mobile}</div>
+              </div>
+              <button
+                onClick={() => {
+                  if (confirm("Logout from ScalpBot?")) {
+                    logoutMutation.mutate();
+                  }
+                }}
+                className="text-white/30 hover:text-red-400 transition-colors"
+                title="Logout"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${isRunning ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-white/40"}`}>
             <HealthDot
               status={botStatus?.status ?? "stopped"}
