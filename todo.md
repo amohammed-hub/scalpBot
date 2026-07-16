@@ -861,3 +861,13 @@
 - [x] Today's Best/Worst Trade: highlight biggest winner and loser at top of dashboard
 - [x] Averaging Toggle in Settings: enable/disable averaging, set loss threshold %
 - [x] Auto-hide Paper-to-Live Readiness: hide once user has completed live trades (not manual)
+
+## Manual Average Override + Full Codebase Audit (July 16, 2026)
+- [x] Manual Average Override: "Force Average" button next to averaging indicator in open trade panel
+- [x] Backend procedure: bot.forceAverage — manually triggers average-down on current open trade
+- [x] Full codebase audit: botEngine.ts — signal logic, trade lifecycle, averaging, all layers
+- [x] Full codebase audit: routers.ts — all procedures, input validation, error handling
+- [x] Full codebase audit: Dashboard.tsx — UI logic, state management, data display
+- [x] Full codebase audit: Settings.tsx + all other pages
+- [x] Full codebase audit: schema, shared types, db.ts, components
+- [x] Fix all identified bugs in one pass (13 bugs fixed)

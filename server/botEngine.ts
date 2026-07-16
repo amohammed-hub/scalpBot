@@ -2309,7 +2309,7 @@ async function tick(
           `💰 <b>PARTIAL PROFIT BOOKED (50%)</b>\n` +
           `📊 <b>${state.instrumentLabel}</b> | ₹${trade.partial1RPrice.toFixed(2)}\n` +
           `✅ Locked: ₹${bookPnl.toFixed(0)} | SL moved to Breakeven\n` +
-          `🎯 Remaining: ${trade.quantity} qty | Next target: 2R`,
+          `🎯 Remaining: ${trade.quantity - trade.bookedQty} qty | Next target: 2R`,
         );
         // Persist partial booking state to DB so it survives server restarts
         // Fire-and-forget DB persist (non-blocking to avoid slowing the tick)
@@ -2323,17 +2323,17 @@ async function tick(
         })();
       }
     } else if (trade.partialBooked === 1) {
-      // Safety guard: partial2RPrice must be a valid non-zero price above/below entry (same as 1R guard)
-      const partial2Valid = trade.partial2RPrice > 0 &&
-        (trade.direction === "BUY" ? trade.partial2RPrice > trade.entryPrice : trade.partial2RPrice < trade.entryPrice);
-      const hit2R = partial2Valid &&
-        (trade.direction === "BUY" ? effectivePrice >= trade.partial2RPrice : effectivePrice <= trade.partial2RPrice);
-     if (hit2R) {
-       // Book another 25% (half of remaining) at 2R
-       const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
-       const bookPnl = trade.direction === "BUY"
-         ? (trade.partial2RPrice - trade.entryPrice) * bookQty
-         : (trade.entryPrice - trade.partial2RPrice) * bookQty;
+     // Safety guard: partial2RPrice must be a valid non-zero price above/below entry (same as 1R guard)
+     const partial2Valid = trade.partial2RPrice > 0 &&
+       (trade.direction === "BUY" ? trade.partial2RPrice > trade.entryPrice : trade.partial2RPrice < trade.entryPrice);
+     const hit2R = partial2Valid &&
+       (trade.direction === "BUY" ? effectivePrice >= trade.partial2RPrice : effectivePrice <= trade.partial2RPrice);
+    if (hit2R) {
+      // Book another 25% (half of remaining) at 2R
+       const bookQty = Math.max(1, Math.floor((trade.quantity - trade.bookedQty) * 0.5));
+      const bookPnl = trade.direction === "BUY"
+        ? (trade.partial2RPrice - trade.entryPrice) * bookQty
+        : (trade.entryPrice - trade.partial2RPrice) * bookQty;
        if (trade.mode === "live" && state.accessToken) {
           const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
           if (!partialOrderId) {
@@ -2347,7 +2347,7 @@ async function tick(
         trade.bookedPnl += bookPnl;
         trade.partialBooked = 2;
         // Trail SL to 1R level
-        trade.currentSl = trade.direction === "BUY" ? trade.partial1RPrice : trade.partial1RPrice;
+        trade.currentSl = trade.partial1RPrice;
         state.dailyPnl += bookPnl;
         trade.bookedPnlAddedToDaily = true;
         console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 25% @ ₹${trade.partial2RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→1R`);
@@ -2355,7 +2355,7 @@ async function tick(
           `💰 <b>PARTIAL PROFIT BOOKED (25% more)</b>\n` +
           `📊 <b>${state.instrumentLabel}</b> | ₹${trade.partial2RPrice.toFixed(2)}\n` +
           `✅ Locked: ₹${bookPnl.toFixed(0)} | Total locked: ₹${trade.bookedPnl.toFixed(0)}\n` +
-          `🛑 SL moved to 1R | Trailing ${trade.quantity} qty to target`,
+          `🛑 SL moved to 1R | Trailing ${trade.quantity - trade.bookedQty} qty to target`,
         );
         // Persist partial booking state to DB so it survives server restarts
         // Fire-and-forget DB persist (non-blocking to avoid slowing the tick)
@@ -2398,7 +2398,8 @@ async function tick(
       // 3. Not near market close (30 min buffer)
       // 4. Daily loss limit not close to being hit (< 70% of limit used)
       // 5. Clear reversal candle pattern detected
-      const isInLoss = lossPct > 0.20 && lossPct < 0.50;
+      const avgThreshold = state.averagingLossThreshold ?? 0.20;
+      const isInLoss = lossPct > avgThreshold && lossPct < 0.50;
       const isOldEnough = avgTradeAge > 5 * 60 * 1000; // > 5 minutes
       const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
       const istMinNow = istNow.getHours() * 60 + istNow.getMinutes();
@@ -3371,6 +3372,113 @@ export function getAllRunningBotsForSession(sessionToken: string): BotState[] {
     }
   }
   return results;
+}
+
+/**
+ * Force manual average-down on the current open trade.
+ * Called from the dashboard "Force Average" button.
+ * Bypasses the automatic reversal detection — user decides when to average.
+ * Still respects: max 1 average per trade, not already averaged, has open trade.
+ */
+export async function forceAverageDown(sessionToken: string): Promise<{ success: boolean; error?: string; newAvgEntry?: number; addedQty?: number }> {
+  const state = getBotState(sessionToken) ?? getBotStateByPrefix(sessionToken);
+  if (!state) return { success: false, error: "Bot not running" };
+  
+  const trade = state.openTrade;
+  if (!trade) return { success: false, error: "No open trade" };
+  if ((trade.averageCount ?? 0) > 0) return { success: false, error: "Already averaged once" };
+  if (trade.partialBooked > 0) return { success: false, error: "Cannot average after partial booking" };
+  
+  // For options trades: use the option premium price, not the underlying index price
+  const effectivePrice = (trade.isIndexOptions && state.optionPremiumPrice && state.optionPremiumPrice > 0)
+    ? state.optionPremiumPrice
+    : state.lastPrice;
+  if (!effectivePrice || effectivePrice <= 0) return { success: false, error: "No live price available" };
+  
+  // Check if trade is actually in loss (no point averaging if in profit)
+  const lossPct = trade.direction === "BUY"
+    ? (trade.entryPrice - effectivePrice) / trade.entryPrice
+    : (effectivePrice - trade.entryPrice) / trade.entryPrice;
+  if (lossPct <= 0) return { success: false, error: "Trade is in profit — no need to average" };
+  
+  // Calculate averaging quantity
+  const avgPrice = effectivePrice;
+  const maxAvgCapital = state.capital * (state.riskPerTradePct / 100) * 2;
+  const maxQtyByCapital = Math.floor(maxAvgCapital / avgPrice);
+  const lotSize = state.lotSize || 1;
+  let avgQty = Math.min(trade.quantity, maxQtyByCapital);
+  avgQty = Math.max(lotSize, Math.floor(avgQty / lotSize) * lotSize);
+  
+  // For live mode: place the order
+  if (trade.mode === "live" && state.accessToken) {
+    const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction, avgQty);
+    if (!avgOrderId) {
+      trade.averageCount = 1; // Prevent retry spam
+      return { success: false, error: "Upstox order rejected" };
+    }
+  }
+  
+  // Calculate new weighted average entry price
+  const oldTotal = trade.entryPrice * trade.quantity;
+  const newTotal = avgPrice * avgQty;
+  const combinedQty = trade.quantity + avgQty;
+  const newAvgEntry = (oldTotal + newTotal) / combinedQty;
+  
+  // Store original entry
+  if (!trade.originalEntryPrice) {
+    trade.originalEntryPrice = trade.entryPrice;
+  }
+  
+  // Update trade
+  const atrNow = calcATR(state.candles, 14);
+  trade.entryPrice = newAvgEntry;
+  trade.quantity = combinedQty;
+  trade.averageCount = 1;
+  trade.averagedAt = Date.now();
+  
+  // New SL: tighter
+  const newSlDist = atrNow * 0.8;
+  trade.slPrice = trade.direction === "BUY" ? newAvgEntry - newSlDist : newAvgEntry + newSlDist;
+  trade.currentSl = trade.slPrice;
+  
+  // New Target: realistic recovery
+  trade.targetPrice = trade.direction === "BUY" ? newAvgEntry + atrNow * 1.5 : newAvgEntry - atrNow * 1.5;
+  
+  // Recalculate partial booking levels
+  const p1Pct = state.partial1Pct / 100;
+  const p2Pct = state.partial2Pct / 100;
+  trade.partial1RPrice = trade.direction === "BUY" ? newAvgEntry * (1 + p1Pct) : newAvgEntry * (1 - p1Pct);
+  trade.partial2RPrice = trade.direction === "BUY" ? newAvgEntry * (1 + p2Pct) : newAvgEntry * (1 - p2Pct);
+  
+  // Persist to DB
+  try {
+    const { tradeLog: tl } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (db && trade.dbId) {
+      await db.update(tl).set({
+        entryPrice: String(newAvgEntry),
+        quantity: combinedQty,
+        slPrice: String(trade.slPrice),
+        targetPrice: String(trade.targetPrice),
+        partial1RPrice: String(trade.partial1RPrice),
+        partial2RPrice: String(trade.partial2RPrice),
+      }).where(eq(tl.id, trade.dbId));
+    }
+  } catch (e) { console.error("[BotEngine] Failed to persist manual averaging:", e); }
+  
+  // Send Telegram alert
+  const avgMsg = `📊 <b>MANUAL AVERAGE DOWN</b>\n` +
+    `📈 <b>${trade.symbolLabel}</b>\n` +
+    `➕ Added ${avgQty} qty @ ₹${avgPrice.toFixed(2)}\n` +
+    `📉 Original: ₹${trade.originalEntryPrice?.toFixed(2)} → New avg: ₹${newAvgEntry.toFixed(2)}\n` +
+    `📦 Total qty: ${combinedQty} | SL: ₹${trade.slPrice.toFixed(2)} | Target: ₹${trade.targetPrice.toFixed(2)}\n` +
+    `⚡ Manual override — loss was ${(lossPct * 100).toFixed(0)}%`;
+  sendTelegramAlert(state, avgMsg);
+  emitActivity(state.sessionToken, "trade_open", `📊 MANUAL AVG ${trade.symbolLabel} +${avgQty} @ ₹${avgPrice.toFixed(2)} | New avg: ₹${newAvgEntry.toFixed(2)}`, { price: avgPrice, confidence: 1.0 });
+  
+  return { success: true, newAvgEntry, addedQty: avgQty };
 }
 
 // Resolve a specific option token by strike price (for restoring open trades after restart)

@@ -313,19 +313,20 @@ export async function computeLayerAccuracy(
 
   // Match trades to layers via signalReason
   const layerPatterns: Array<{ layer: string; test: (r: string) => boolean }> = [
-    { layer: "Breakout", test: r => r.includes("Breakout") || r.includes("breakout") },
-    { layer: "Supertrend", test: r => r.includes("Supertrend") },
-    { layer: "MACD/BB", test: r => r.includes("MACD") || r.includes("BB") || r.includes("Bollinger") },
-    { layer: "VWAPPullback", test: r => r.includes("VWAPPullback") },
-    { layer: "ORB", test: r => r.includes("ORB") || r.includes("Opening Range") },
-    { layer: "VWAP", test: r => r.includes("VWAP") && !r.includes("Pullback") },
-    { layer: "EMA Cross", test: r => r.includes("EMA") },
-    { layer: "Momentum", test: r => r.includes("Momentum") || r.includes("momentum") },
-    { layer: "Power Hour", test: r => r.includes("Power Hour") || r.includes("POWER") },
-    { layer: "MCX Evening", test: r => r.includes("MCX") },
-    { layer: "Hero Zero", test: r => r.includes("Hero") },
-    { layer: "S/R Pivot", test: r => r.includes("Pivot") || r.includes("S/R") },
-    { layer: "Institutional", test: r => r.includes("Institutional") || r.includes("footprint") },
+    { layer: "Breakout", test: r => r.includes("Breakout") || r.includes("breakout") || r.includes("[Breakout]") },
+    { layer: "Trend", test: r => r.includes("[Trend]") || r.includes("Supertrend") || r.includes("EMA") },
+    { layer: "MACD_BB", test: r => r.includes("MACD") || r.includes("BB") || r.includes("Bollinger") || r.includes("[MACD_BB]") || r.includes("[MACD+BB]") },
+    { layer: "VWAPPullback", test: r => r.includes("VWAPPullback") || r.includes("[VWAPPullback]") },
+    { layer: "VWAPReversion", test: r => r.includes("VWAPReversion") || r.includes("[VWAPReversion]") },
+    { layer: "ORB", test: r => r.includes("ORB") || r.includes("Opening Range") || r.includes("[ORB]") },
+    { layer: "InstFootprint", test: r => r.includes("Institutional") || r.includes("footprint") || r.includes("[InstFootprint]") },
+    { layer: "BoomingBulls", test: r => r.includes("BoomingBulls") || r.includes("[BoomingBulls]") },
+    { layer: "HourlyClose", test: r => r.includes("HourlyClose") || r.includes("[HourlyClose]") },
+    { layer: "PowerHour", test: r => r.includes("Power Hour") || r.includes("POWER") || r.includes("[PowerHour]") },
+    { layer: "MCXEvening", test: r => r.includes("MCX") || r.includes("[MCXEvening]") },
+    { layer: "HeroZero", test: r => r.includes("Hero") || r.includes("[HeroZero]") },
+    { layer: "Momentum", test: r => r.includes("Momentum") || r.includes("momentum") || r.includes("[Momentum]") },
+    { layer: "S/R Pivot", test: r => r.includes("Pivot") || r.includes("S/R") || r.includes("[Pivot]") },
   ];
 
   for (const t of trades) {

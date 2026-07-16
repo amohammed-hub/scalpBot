@@ -295,7 +295,11 @@ export async function executeKillSwitch(
 
       if (trade.mode === "live" && bot.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
-        await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)));
+        const killOrderId = await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)));
+        if (!killOrderId) {
+          console.error(`[KillSwitch] EXIT ORDER FAILED for ${trade.symbolLabel ?? trade.symbol} — position still open on Upstox!`);
+          continue; // Don't close in DB if order failed
+        }
       }
 
       const remainingQty = trade.quantity - (trade.bookedQty ?? 0);

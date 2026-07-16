@@ -5,7 +5,7 @@ import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sen
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, type Candle } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, type Candle } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
 import {
@@ -1127,6 +1127,16 @@ export const appRouter = router({
           // Recent rejected signals for dashboard display
           recentRejectedSignals: state.recentRejectedSignals ?? [],
         };
+      }),
+
+    forceAverage: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+      }))
+      .mutation(async ({ input }) => {
+        const result = await forceAverageDown(input.sessionToken);
+        if (!result.success) throw new Error(result.error ?? "Force average failed");
+        return result;
       }),
 
     manualExit: publicProcedure

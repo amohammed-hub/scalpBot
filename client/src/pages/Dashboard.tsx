@@ -479,6 +479,11 @@ export default function Dashboard() {
     },
     onError: (e) => toast.error(`Exit failed: ${e.message}`),
   });
+  const forceAverageMutation = trpc.bot.forceAverage.useMutation({
+    onSuccess: () => { toast.success("Average down executed!"); },
+    onError: (err: any) => { toast.error(err.message || "Force average failed"); },
+  });
+
   const deleteTradeByIdMutation = trpc.trades.deleteById.useMutation({
     onSuccess: () => {
       toast.success("Trade deleted.");
@@ -725,6 +730,8 @@ export default function Dashboard() {
       enabledLayers: config.enabledLayers,
       partial1Pct: config.partial1Pct,
       partial2Pct: config.partial2Pct,
+      averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
+      averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
     });
   };
 
@@ -2240,7 +2247,7 @@ export default function Dashboard() {
               })()}
             </div>
             {/* Averaging Status Indicator */}
-            {(activeTrade as any).averageCount > 0 && (
+            {(activeTrade as any).averageCount > 0 ? (
               <div className="flex items-center gap-3 bg-purple-500/10 border border-purple-500/30 rounded-xl px-4 py-2.5 mb-3">
                 <ArrowDownUp className="w-4 h-4 text-purple-400 shrink-0" />
                 <div className="flex-1">
@@ -2251,6 +2258,18 @@ export default function Dashboard() {
                   </div>
                   <div className="text-[10px] text-white/40 mt-0.5">Qty: {activeTrade.quantity} (doubled) | Extended hold: 30 min</div>
                 </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 mb-3">
+                <button
+                  onClick={() => forceAverageMutation.mutate({ sessionToken })}
+                  disabled={forceAverageMutation.isPending}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/40 hover:border-purple-400 text-purple-300 rounded-lg transition-all duration-150 active:scale-95 disabled:opacity-50"
+                >
+                  <ArrowDownUp className="w-3.5 h-3.5" />
+                  {forceAverageMutation.isPending ? "Averaging..." : "Force Average"}
+                </button>
+                <span className="text-[10px] text-white/30">Buy more at current price to lower avg entry</span>
               </div>
             )}
 
