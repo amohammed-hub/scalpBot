@@ -901,3 +901,10 @@
 - [x] After login with intent=subscribe, redirect to /#pricing instead of dashboard
 - [x] Removed confusing "Get on Phone" QR button from navbar (was misleading for new users)
 - [x] Added "No credit card required. Paper trading on NSE included in trial." reassurance text under hero CTAs
+
+## Dashboard — Admin-Only Sections
+- [x] Hide Paper Mode Costs from regular users (admin-only)
+- [x] Hide Paper-to-Live Readiness from regular users (admin-only)
+- [x] Hide Strategy Layer Scorecard from regular users (admin-only)
+- [x] Hide Equity Curve from Dashboard for regular users (admin-only, users see P&L in Analytics page)
+- [x] Open Positions panel remains visible to all users (full width when Equity Curve hidden)
