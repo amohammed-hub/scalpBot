@@ -379,19 +379,22 @@ export const appRouter = router({
 
         if (input.mode === "live") {
           // Paper-trade safety gate: require at least 3 closed paper trades before going live
-          const paperTradeRows = await db
-            .select({ count: count() })
-            .from(tradeLog)
-            .where(and(
-              eq(tradeLog.sessionToken, input.sessionToken),
-              eq(tradeLog.mode, "paper"),
-              eq(tradeLog.status, "closed"),
-            ));
-          const paperTradeCount = paperTradeRows[0]?.count ?? 0;
-          if (paperTradeCount < 3) {
-            throw new Error(
-              `Safety gate: Complete at least 3 paper trades before going live. You have ${paperTradeCount} closed paper trade(s). This protects you from going live without verifying the bot works correctly.`
-            );
+          // Admin bypass: admin account can skip this gate
+          if (!isAdminSession) {
+            const paperTradeRows = await db
+              .select({ count: count() })
+              .from(tradeLog)
+              .where(and(
+                eq(tradeLog.sessionToken, input.sessionToken),
+                eq(tradeLog.mode, "paper"),
+                eq(tradeLog.status, "closed"),
+              ));
+            const paperTradeCount = paperTradeRows[0]?.count ?? 0;
+            if (paperTradeCount < 3) {
+              throw new Error(
+                `Safety gate: Complete at least 3 paper trades before going live. You have ${paperTradeCount} closed paper trade(s). This protects you from going live without verifying the bot works correctly.`
+              );
+            }
           }
         }
 
