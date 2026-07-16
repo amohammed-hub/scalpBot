@@ -13,4 +13,5 @@ export const ENV = {
   twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "",
   // Admin
   adminPassword: process.env.ADMIN_PASSWORD ?? "",
+  adminMobile: process.env.ADMIN_MOBILE ?? "",
 };

@@ -390,6 +390,10 @@ export async function sendOtp(mobile: string): Promise<{ success: boolean; messa
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
+  // Admin bypass: if this is the admin's mobile, store a fixed OTP and skip Twilio
+  const { adminMobile } = ENV;
+  const isAdminBypass = adminMobile && (mobile === adminMobile || mobile === "+91" + adminMobile.replace(/^\+91/, ""));
+
   // Rate limit: check if OTP was sent in last 60 seconds
   const recentOtp = await db
     .select()
@@ -403,12 +407,18 @@ export async function sendOtp(mobile: string): Promise<{ success: boolean; messa
     return { success: false, message: "OTP already sent. Please wait 60 seconds." };
   }
 
-  // Generate 6-digit code
-  const code = String(Math.floor(100000 + Math.random() * 900000));
+  // Generate 6-digit code (or use fixed 000000 for admin bypass)
+  const code = isAdminBypass ? "000000" : String(Math.floor(100000 + Math.random() * 900000));
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
   // Store in DB
   await db.insert(otpCodes).values({ mobile, code, expiresAt });
+
+  // Admin bypass: skip Twilio entirely
+  if (isAdminBypass) {
+    console.log(`[OTP] Admin bypass for ${mobile} — code is 000000`);
+    return { success: true, message: "OTP sent successfully (admin bypass)" };
+  }
 
   // Send via Twilio
   const { twilioAccountSid, twilioAuthToken, twilioPhoneNumber } = ENV;

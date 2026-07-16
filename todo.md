@@ -797,3 +797,5 @@
 - [x] Admin panel: Kill access (instantly revoke user)
 - [x] Request Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER) — set
 - [x] Request admin password (ADMIN_PASSWORD) — set
+- [x] Request admin password (ADMIN_PASSWORD) — set
+- [x] Admin OTP bypass: allow admin number to login with fixed code 000000 without Twilio SMS
