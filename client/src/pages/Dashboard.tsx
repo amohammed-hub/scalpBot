@@ -2005,6 +2005,17 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Trading Mode — prominent strip above config */}
+        <div className="flex items-center gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+          <span className="text-xs text-white/50 font-medium">Trading Mode</span>
+          <div className="flex rounded-lg overflow-hidden border border-white/20 h-[36px]">
+            <button onClick={() => setConfig(c => ({ ...c, mode: "paper" }))} disabled={isRunning}
+              className={`px-5 text-sm font-medium transition-colors ${config.mode === "paper" ? "bg-amber-500/30 text-amber-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Paper</button>
+            <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning}
+              className={`px-5 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>
+          </div>
+          <span className="text-xs text-white/30 ml-auto">{config.mode === "paper" ? "Simulated trades, no real money" : "⚠ Real orders via Upstox"}</span>
+        </div>
         {/* Bot Configuration */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6 transition-all">
           <div className="flex items-center justify-between mb-4 cursor-pointer select-none" onClick={() => setConfigCollapsed(!configCollapsed)}>
@@ -2038,8 +2049,8 @@ export default function Dashboard() {
           </div>
           {!configCollapsed && (<>
 
-          {/* Row 1: Instrument + Mode + Capital */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+          {/* Row 1: Instrument + Capital */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
             <div>
               <label className="text-xs text-white/50 mb-1.5 block">Instrument</label>
               <select
@@ -2068,15 +2079,7 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-            <div>
-              <label className="text-xs text-white/50 mb-1.5 block">Trading Mode</label>
-              <div className="flex rounded-lg overflow-hidden border border-white/20 h-[42px]">
-                <button onClick={() => setConfig(c => ({ ...c, mode: "paper" }))} disabled={isRunning}
-                  className={`flex-1 text-sm font-medium transition-colors ${config.mode === "paper" ? "bg-amber-500/30 text-amber-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Paper</button>
-                <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning}
-                  className={`flex-1 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>
-              </div>
-            </div>
+
             <div>
               <label className="text-xs text-white/50 mb-1.5 block">Capital (₹)</label>
               <input type="number" value={config.capital}
@@ -2385,16 +2388,15 @@ export default function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════════════════
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-2">
           <div className="flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full bg-purple-400" />
-            <span className="font-semibold text-white text-sm">Parallel Bots</span>
+            <span className="font-semibold text-white text-sm">Secondary Slots</span>
           </div>
-          <span className="text-xs text-white/30">All 3 slots — Primary + 2 secondary</span>
+          <span className="text-xs text-white/30">Run different instruments in parallel</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-          {((allBots && allBots.length > 0) ? allBots : [
-            { slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0, openTrade: null, instrumentLabel: "", lastSignal: null, lastTickAt: 0, scanIntervalSec: 60, lastError: null, candlesCount: 0, hasRealData: false, optionPremiumPrice: null, sessionToken: sessionToken },
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+          {((allBots && allBots.length > 0) ? allBots.filter((b: any) => b.slot > 0) : [
             { slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0, openTrade: null, instrumentLabel: "", lastSignal: null, lastTickAt: 0, scanIntervalSec: 60, lastError: null, candlesCount: 0, hasRealData: false, optionPremiumPrice: null, sessionToken: `${sessionToken}-slot1` },
             { slot: 2, status: "stopped", dailyPnl: 0, tradesCount: 0, openTrade: null, instrumentLabel: "", lastSignal: null, lastTickAt: 0, scanIntervalSec: 60, lastError: null, candlesCount: 0, hasRealData: false, optionPremiumPrice: null, sessionToken: `${sessionToken}-slot2` },
           ]).map((bot: any) => {
