@@ -1030,3 +1030,12 @@
 - [x] V2 Engine: backtest.compareV2 procedure — runs both V1 and V2 on same candle data
 - [x] V2 Engine: Backtest page — V1 vs V2 comparison mode toggle + side-by-side results UI
 - [x] V2 Engine: bot.start, startSecondary, restart all accept useV2Engine parameter
+- [x] STAGE 1 REPLAY: Fix market hours check to use candle timestamp (not new Date()) for backtesting
+- [x] STAGE 1 REPLAY: Run historical replay on July 14-17 real Nifty 50 1-min candle data (Yahoo Finance)
+- [x] STAGE 1 FIX: Move HourlyClose + ORB to regime-independent section (fires before regime filter)
+- [x] STAGE 1 FIX: RANGING regime — remove FailedBreakout, add range-extreme + anti-chasing filters
+- [x] STAGE 1 FIX: RANGING regime — add balanced Breakout strategy (body>45%, RSI confirm, before 14:00)
+- [x] STAGE 1 FIX: Keep DEAD market filter (Tuesday "do nothing" was correct)
+- [x] STAGE 1 RESULT: V2 wins 3/4 days | Total V2: +₹988 vs V1: -₹392 | Net improvement: +₹1,380
+- [ ] STAGE 2: Paper trade V2 engine Mon-Wed next week (live market, fake money)
+- [ ] STAGE 3: Go live with reduced capital (50%) after Stage 2 approval

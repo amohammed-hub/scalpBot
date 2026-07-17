@@ -824,7 +824,7 @@ export function generateSignal(
   const allVolZero = candles.slice(-10).every(c => c.volume === 0);
   const volRatio = allVolZero ? 1.5 : (avgVol > 0 ? lastVol / avgVol : 1.0);
 
-  const now = new Date();
+  const now = new Date(candles[candles.length - 1].timestamp);
   const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
   const inNSESession = istMin >= 555 && istMin <= 930;
   const inMCXSession = istMin >= 540 && istMin <= 1410;
@@ -1465,7 +1465,7 @@ export function generateSignalV2(
   const allVolZero = candles.slice(-10).every(c => c.volume === 0);
   const volRatio = allVolZero ? 1.5 : (avgVol > 0 ? lastVol / avgVol : 1.0);
 
-  const now = new Date();
+  const now = new Date(candles[candles.length - 1].timestamp);
   const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
   const inNSESession = istMin >= 555 && istMin <= 930;
   const inMCXSession = istMin >= 540 && istMin <= 1410;
@@ -1508,6 +1508,54 @@ export function generateSignalV2(
   let reason = "";
   let layer: Signal["layer"] = "None";
   let sizeReduction: number | undefined;
+
+  // ── LAYER 1.5: High-Confidence Early-Day Patterns (regime-independent) ────
+  // These fire regardless of regime because they are time-gated and high-confidence.
+  // HourlyClose: fires at 10:15 AM when first hour candle has strong directional body
+  // ORB: fires 9:30-14:00 when price breaks the 15-min opening range
+  if (direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {
+    const firstHourCandles = candles.slice(0, Math.min(60, candles.length));
+    const hourOpen = firstHourCandles[0].open;
+    const hourClose = firstHourCandles[firstHourCandles.length - 1].close;
+    const hourHigh = Math.max(...firstHourCandles.map(c => c.high));
+    const hourLow = Math.min(...firstHourCandles.map(c => c.low));
+    const hourRange = hourHigh - hourLow;
+    const hourBody = Math.abs(hourClose - hourOpen);
+    const bodyRatio = hourRange > 0 ? hourBody / hourRange : 0;
+    if (bodyRatio > 0.60 && hourRange > atr * 0.5) {
+      const isBullish = hourClose > hourOpen;
+      direction = isBullish ? "BUY" : "SELL";
+      confidence = Math.min(0.93, 0.70 + bodyRatio * 0.2 + (adx > 25 ? 0.05 : 0));
+      reason = `[V2:HourlyClose] 1H body ${(bodyRatio * 100).toFixed(0)}% | O:${hourOpen.toFixed(0)} C:${hourClose.toFixed(0)} H:${hourHigh.toFixed(0)} L:${hourLow.toFixed(0)} | ADX(${adx.toFixed(0)}) | ${regime.regime}`;
+      layer = "HourlyClose";
+    }
+  }
+  // ORB: Opening Range Breakout — fresh breakout of 15-min range, no chasing
+  if (direction === "HOLD" && istMin >= 570 && istMin <= 840 && candles.length >= 17) {
+    const orbMinRangeWidth = price * 0.002;
+    const orb = calcORBSignal(candles, 15, 2.0);
+    const orbRangeWidth = orb.orbHigh - orb.orbLow;
+    if (orb.direction !== "HOLD" && orbRangeWidth >= orbMinRangeWidth) {
+      const currentCandleIdx = candles.length - 1;
+      const MIN_ENGINE_CANDLES = 20;
+      const effectiveBreakoutStart = orb.breakoutCandleIndex >= 0
+        ? Math.max(orb.breakoutCandleIndex, MIN_ENGINE_CANDLES) : -1;
+      const candlesSinceBreakout = effectiveBreakoutStart >= 0
+        ? currentCandleIdx - effectiveBreakoutStart : 999;
+      const isInitialBreakout = orb.breakoutCandleIndex <= MIN_ENGINE_CANDLES;
+      const freshnessWindow = isInitialBreakout ? 10 : 3;
+      const orbEdge = orb.direction === "BUY" ? orb.orbHigh : orb.orbLow;
+      const distFromEdge = Math.abs(price - orbEdge);
+      const distPct = distFromEdge / orbEdge;
+      // Anti-chasing: must be within 0.15% of breakout edge AND within freshness window
+      if (candlesSinceBreakout <= freshnessWindow && distPct <= 0.0015) {
+        direction = orb.direction;
+        confidence = Math.min(0.92, 0.72 + orb.breakoutPct * 500);
+        reason = `[V2:ORB] ${orb.direction === "BUY" ? "Above" : "Below"} 15-min range | ${(orb.breakoutPct * 100).toFixed(3)}% | ${regime.regime} | fresh(${candlesSinceBreakout})`;
+        layer = "ORB";
+      }
+    }
+  }
 
   // ── LAYER 2: Regime-Filtered Strategies ───────────────────────────────────
   if (regime.regime === "TRENDING") {
@@ -1568,47 +1616,96 @@ export function generateSignalV2(
     }
 
   } else if (regime.regime === "RANGING") {
-    // ── RANGING: VWAP Mean Reversion + Failed Breakout + VWAP Pullback ──────
-
-    // Strategy A: VWAP Deviation Mean Reversion (old Layer 7)
+    // ── RANGING: ONLY mean-reversion at range extremes ──────────────────────
+    // FIX: No FailedBreakout entries (all 6 lost in Stage 1 replay)
+    // FIX: Require price at range extreme (top 30% for SELL, bottom 30% for BUY)
+    // FIX: Anti-chasing: last 5 candles must show price moving TOWARD extreme (retracement)
+    // Strategy A: VWAP Deviation Mean Reversion — only at range extremes
     if (direction === "HOLD" && candles.length >= 20) {
       const vwapDev = calcVWAPDeviation(candles);
       if (vwapDev.signal !== "HOLD") {
-        direction = vwapDev.signal;
-        confidence = Math.min(0.85, 0.62 + Math.abs(vwapDev.zScore) * 0.08);
-        reason = `[V2:VWAPRev] z=${vwapDev.zScore.toFixed(2)} | dev=${vwapDev.deviation.toFixed(1)} | ${regime.label}`;
-        layer = "VWAPReversion";
-      }
-    }
-
-    // Strategy B: Failed Breakout (old Layer 8.5)
-    if (direction === "HOLD" && candles.length >= 35) {
-      const fb = detectFailedBreakout(candles, 30);
-      if (fb.detected && fb.direction !== "HOLD") {
-        const rsiOkFb = fb.direction === "SELL" ? rsi < 60 : rsi > 40;
-        if (rsiOkFb) {
-          direction = fb.direction;
-          confidence = 0.74;
-          reason = `[V2:FailedBreakout] ${fb.reason} | RSI(${rsi.toFixed(0)})`;
-          layer = "FailedBreakout";
+        // Anti-chasing: check if entry is at range extreme
+        const lookback20 = candles.slice(-20);
+        const rangeHigh = Math.max(...lookback20.map(c => c.high));
+        const rangeLow = Math.min(...lookback20.map(c => c.low));
+        const rangeWidth = rangeHigh - rangeLow;
+        const posInRange = rangeWidth > 0 ? (price - rangeLow) / rangeWidth : 0.5;
+        // For SELL: price must be in top 30% of range (posInRange > 0.70)
+        // For BUY: price must be in bottom 30% of range (posInRange < 0.30)
+        const atExtreme = (vwapDev.signal === "SELL" && posInRange > 0.70) ||
+                          (vwapDev.signal === "BUY" && posInRange < 0.30);
+        // Anti-chasing: last 5 candles must show price moved TOWARD the extreme (retracement)
+        // For SELL at top: price should have risen (retraced up) in last 5 candles
+        // For BUY at bottom: price should have fallen (retraced down) in last 5 candles
+        const last5Closes = candles.slice(-5).map(c => c.close);
+        const recentMove = last5Closes[last5Closes.length - 1] - last5Closes[0];
+        const notChasing = (vwapDev.signal === "SELL" && recentMove > 0) ||
+                           (vwapDev.signal === "BUY" && recentMove < 0);
+        if (atExtreme && notChasing) {
+          direction = vwapDev.signal;
+          confidence = Math.min(0.85, 0.62 + Math.abs(vwapDev.zScore) * 0.08);
+          reason = `[V2:VWAPRev] z=${vwapDev.zScore.toFixed(2)} | pos=${(posInRange*100).toFixed(0)}% | ${regime.label} | at-extreme`;
+          layer = "VWAPReversion";
         }
       }
     }
-
-    // Strategy C: VWAP Pullback (old Layer 9)
+    // Strategy B: VWAP Pullback — only at range extremes with anti-chasing
     if (direction === "HOLD" && candles.length >= 10) {
       const pullback = detectVWAPPullback(candles, vwap);
       if (pullback.detected && pullback.direction !== "HOLD") {
         const exhaustion = pullback.direction === "BUY" ? detectUptrendExhaustion(candles) : { exhausted: false, reason: "" };
         if (!exhaustion.exhausted) {
-          direction = pullback.direction;
-          confidence = Math.min(0.91, 0.68 + pullback.strength * 0.15);
-          reason = `[V2:VWAPPullback] Price returned to VWAP | ${pullback.direction} reversal candle`;
-          layer = "VWAPPullback";
+          // Anti-chasing: check range position
+          const lookback20 = candles.slice(-20);
+          const rangeHigh = Math.max(...lookback20.map(c => c.high));
+          const rangeLow = Math.min(...lookback20.map(c => c.low));
+          const rangeWidth = rangeHigh - rangeLow;
+          const posInRange = rangeWidth > 0 ? (price - rangeLow) / rangeWidth : 0.5;
+          const atExtreme = (pullback.direction === "SELL" && posInRange > 0.65) ||
+                            (pullback.direction === "BUY" && posInRange < 0.35);
+          // Anti-chasing: last 5 candles must show retracement (price moved toward entry)
+          const last5Closes = candles.slice(-5).map(c => c.close);
+          const recentMove = last5Closes[last5Closes.length - 1] - last5Closes[0];
+          const notChasing = (pullback.direction === "SELL" && recentMove > 0) ||
+                             (pullback.direction === "BUY" && recentMove < 0);
+          if (atExtreme && notChasing) {
+            direction = pullback.direction;
+            confidence = Math.min(0.91, 0.68 + pullback.strength * 0.15);
+            reason = `[V2:VWAPPullback] VWAP pullback | pos=${(posInRange*100).toFixed(0)}% | ${pullback.direction} | at-extreme`;
+            layer = "VWAPPullback";
+          }
         }
       }
     }
-
+    // Strategy C: Breakout in RANGING (balanced)
+    // Fires when: (1) before 14:00 IST, (2) real breakout of 20-candle range,
+    // (3) strong candle body (>45%), (4) RSI confirms direction
+    if (direction === "HOLD" && candles.length >= 20 && istMin < 840) {
+      const lookback = candles.slice(-20);
+      const highestHigh = Math.max(...lookback.slice(0, -1).map(c => c.high));
+      const lowestLow = Math.min(...lookback.slice(0, -1).map(c => c.low));
+      const lastCandle = candles[candles.length - 1];
+      const breakoutUpPct = (lastCandle.close - highestHigh) / highestHigh;
+      const breakoutDnPct = (lowestLow - lastCandle.close) / lowestLow;
+      const dynamicThreshold = Math.max(0.0004, (atr / price) * 0.6);
+      // Strong candle body requirement (>45% of candle range)
+      const candleRange = lastCandle.high - lastCandle.low;
+      const candleBody = Math.abs(lastCandle.close - lastCandle.open);
+      const bodyStrong = candleRange > 0 ? candleBody / candleRange > 0.45 : false;
+      if (bodyStrong) {
+        if (breakoutUpPct > dynamicThreshold && (volRatio >= 1.2 || allVolZero) && rsi > 52 && rsi < 78) {
+          direction = "BUY";
+          confidence = Math.min(0.88, 0.65 + breakoutUpPct * 250);
+          reason = `[V2:Breakout] Above ${highestHigh.toFixed(1)} | ${(breakoutUpPct*100).toFixed(3)}% | body ${(candleBody/candleRange*100).toFixed(0)}% | RSI(${rsi.toFixed(0)}) | RANGING`;
+          layer = "Breakout";
+        } else if (breakoutDnPct > dynamicThreshold && (volRatio >= 1.2 || allVolZero) && rsi < 48 && rsi > 22) {
+          direction = "SELL";
+          confidence = Math.min(0.88, 0.65 + breakoutDnPct * 250);
+          reason = `[V2:Breakout] Below ${lowestLow.toFixed(1)} | ${(breakoutDnPct*100).toFixed(3)}% | body ${(candleBody/candleRange*100).toFixed(0)}% | RSI(${rsi.toFixed(0)}) | RANGING`;
+          layer = "Breakout";
+        }
+      }
+    }
   } else if (regime.regime === "VOLATILE") {
     // ── VOLATILE: Only Breakout with strong volume confirmation, 50% size ───
     sizeReduction = 0.5; // Half position size in volatile regime
