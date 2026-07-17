@@ -1921,11 +1921,13 @@ export const appRouter = router({
           const inMem = getBotState(tok);
           const dbRow = dbRows[tok];
           const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
-          const isRunning = inMem?.status === "running";
+          // Consistent with bot.status: if DB says running but NOT in memory → treat as stopped
+          const effectiveStatus = inMem?.status ?? ((dbRow?.status === "running" && !inMem) ? "stopped" : (dbRow?.status ?? "stopped"));
+          const isRunning = effectiveStatus === "running";
           return {
             sessionToken: tok,
             slot,
-            status: inMem?.status ?? dbRow?.status ?? "stopped",
+            status: effectiveStatus,
             instrumentSymbol: isRunning ? (inMem?.instrumentSymbol ?? dbRow?.instrumentSymbol ?? "") : "",
             instrumentLabel: isRunning ? (inMem?.instrumentLabel ?? dbRow?.instrumentLabel ?? "") : "",
             lastPrice: inMem?.lastPrice ?? dbRow?.lastPrice ?? 0,

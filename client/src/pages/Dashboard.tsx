@@ -587,7 +587,7 @@ export default function Dashboard() {
   }, [newActivityEvents]);
 
   // ── Derived state ─────────────────────────────────────────────────────────────
-  const isRunning = botStatus?.status === "running";
+  const isRunning = botStatus?.status === "running" || (allBots ?? []).find((b: any) => b.slot === 0)?.status === "running";
   // Use livePricesData (updates every 5s) as primary source, fallback to liveData (3s but only updates on scan tick)
   const primaryLivePrice = livePricesData?.find(lp => lp.slot === 0)?.livePrice;
   const currentPrice = primaryLivePrice ?? liveData?.price ?? botStatus?.lastPrice ?? 0;
@@ -1467,257 +1467,6 @@ export default function Dashboard() {
               );
             })()}
           </div>
-        </div>
-
-        {/* ═══════════════════════════════════════════════════════════════════════════
-            REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
-        ═══════════════════════════════════════════════════════════════════════════ */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-          {(allBots ?? []).map((bot: any) => {
-            const isActive = bot.status === "running";
-            const slotLabel = bot.slot === 0 ? "Primary" : `Slot ${bot.slot}`;
-            const slotClasses = bot.slot === 0
-              ? { border: "border-teal-500/30", borderActive: "border-teal-500/40", bg: "bg-teal-500/5", badge: "bg-teal-500/20", text: "text-teal-300", glow: "shadow-[0_0_20px_oklch(0.78_0.18_195/0.06)]" }
-              : bot.slot === 1
-                ? { border: "border-purple-500/30", borderActive: "border-purple-500/40", bg: "bg-purple-500/5", badge: "bg-purple-500/20", text: "text-purple-300", glow: "shadow-[0_0_20px_oklch(0.7_0.15_280/0.06)]" }
-                : { border: "border-amber-500/30", borderActive: "border-amber-500/40", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_65/0.06)]" };
-            const hasOpenTrade = !!bot.openTrade;
-            const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
-
-            return (
-              <div key={bot.sessionToken} className={`rounded-2xl border p-4 transition-all duration-300 ${
-                isActive && hasOpenTrade
-                  ? `${slotClasses.borderActive} ${slotClasses.bg} ${slotClasses.glow}`
-                  : isActive
-                    ? `${slotClasses.border} bg-white/[0.02]`
-                    : "border-white/10 bg-white/[0.02]"
-              }`}>
-                {/* Header: Slot label + Health + Stop */}
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      isActive ? `${slotClasses.badge} ${slotClasses.text}` : "bg-white/10 text-white/40"
-                    }`}>{slotLabel}</span>
-                    {isActive && (
-                      <HealthDot
-                        status={bot.status}
-                        lastTickAt={(bot as any).lastTickAt ?? 0}
-                        scanIntervalSec={(bot as any).scanIntervalSec ?? 60}
-                        lastError={(bot as any).lastError ?? null}
-                        onRestart={() => restartMutation.mutate({ sessionToken: bot.sessionToken })}
-                      />
-                    )}
-                    {modeTag && <span className="text-[10px] text-amber-300">{modeTag}</span>}
-                  </div>
-                  {bot.slot > 0 && isActive && (
-                    <button
-                      onClick={() => stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
-                      className="text-red-400/60 hover:text-red-400 text-[10px] flex items-center gap-0.5 transition-colors"
-                    >
-                      <Square className="w-2.5 h-2.5" /> Stop
-                    </button>
-                  )}
-                </div>
-
-                {/* Instrument name */}
-                <div className="text-sm font-semibold text-white mb-2 truncate">
-                  {bot.instrumentLabel || (isActive ? "Starting…" : "Inactive")}
-                </div>
-
-                {/* Live Price + Trades */}
-                {isActive && (
-                  <div className="flex items-center justify-between text-xs mb-2">
-                    {(() => {
-                      const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
-                      const displayPrice = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                      const isLive = !!(lpEntry && lpEntry.livePrice > 0 && (Date.now() - lpEntry.updatedAt) < 15000);
-                      return (
-                        <span className="font-mono text-white/70">
-                          {isLive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse" />}
-                          ₹{displayPrice > 0 ? displayPrice.toFixed(2) : "—"}
-                        </span>
-                      );
-                    })()}
-                    <span className="text-white/40">{bot.tradesCount ?? 0} trades</span>
-                  </div>
-                )}
-
-                {/* Open trade mini-card OR scanning state */}
-                {isActive && hasOpenTrade ? (
-                  <div className={`rounded-lg border p-2 mb-2 ${
-                    bot.openTrade.direction === "BUY" ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"
-                  }`}>
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className={bot.openTrade.direction === "BUY" ? "text-emerald-400 font-bold" : "text-red-400 font-bold"}>
-                        {bot.openTrade.direction} @ ₹{bot.openTrade.entryPrice?.toFixed(2)}
-                      </span>
-                      {bot.openTrade.slPrice && <span className="text-red-400/60">SL ₹{bot.openTrade.slPrice.toFixed(1)}</span>}
-                    </div>
-                    {/* Unrealized P&L for this slot */}
-                    {(() => {
-                      const ot = bot.openTrade;
-                      const isOpts = ot.isIndexOptions;
-                      const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
-                      let liveP = 0;
-                      if (isOpts) {
-                        liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
-                        if (liveP === 0 && ot.entryUnderlyingPrice && (lpEntry?.livePrice ?? bot.lastPrice) > 0) {
-                          const curU = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                          const move = curU - ot.entryUnderlyingPrice;
-                          const isCall = (ot.symbol ?? "").includes("CE") || (ot.symbolLabel ?? "").includes(" CE");
-                          liveP = Math.max(0.05, ot.entryPrice + (isCall ? move * 0.5 : -move * 0.5));
-                        }
-                      } else {
-                        liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                      }
-                      if (liveP === 0) return null;
-                      const dir = ot.direction === "BUY" ? 1 : -1;
-                      const unrealised = (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0));
-                      return (
-                        <div className={`text-xs font-bold mt-1 ${unrealised >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                          Unrealized: {unrealised >= 0 ? "+" : ""}₹{unrealised.toFixed(0)}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                ) : isActive ? (
-                  <div className="flex items-center gap-2 text-xs text-white/30 mb-2 py-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-white/20 animate-pulse" />
-                    <span>Scanning for signals...</span>
-                    {bot.lastSignal && <span className="text-white/20 ml-auto">{bot.lastSignal.direction} · {bot.lastSignal.confidence}%</span>}
-                  </div>
-                ) : null}
-
-                {/* Realized Daily P&L — clearly labeled */}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[10px] text-white/30 uppercase tracking-wide">Realized Today</div>
-                    <div className={`text-base font-bold tabular-nums ${
-                      (bot.dailyPnl ?? 0) > 0 ? "text-emerald-400" : (bot.dailyPnl ?? 0) < 0 ? "text-red-400" : "text-white/40"
-                    }`}>
-                      {(bot.dailyPnl ?? 0) >= 0 ? "+" : ""}₹{(bot.dailyPnl ?? 0).toFixed(0)}
-                    </div>
-                  </div>
-                  {(bot.dailyPnl ?? 0) !== 0 && (
-                    <button
-                      onClick={() => {
-                        if (!confirm(`Reset P&L counter for ${slotLabel}?`)) return;
-                        resetPnlMutation.mutate({ sessionToken });
-                      }}
-                      className="text-orange-400/50 hover:text-orange-400 transition-colors p-1 rounded hover:bg-orange-500/10"
-                      title="Fix P&L counter"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Candle readiness */}
-                {isActive && (() => {
-                  const count = (bot as any).candlesCount ?? 0;
-                  const hasReal = (bot as any).hasRealData ?? false;
-                  const ready = count >= 20;
-                  return (
-                    <div className="mt-2 flex items-center gap-2">
-                      <div className="flex-1 bg-white/10 rounded-full h-1 overflow-hidden">
-                        <div className={`h-full rounded-full transition-all duration-500 ${ready ? "bg-emerald-400" : "bg-amber-400"}`}
-                          style={{ width: `${Math.min(100, (count / 20) * 100)}%` }} />
-                      </div>
-                      <span className={`text-[10px] ${ready ? "text-emerald-400" : "text-amber-400"}`}>
-                        {ready ? "✓" : `${count}/20`}
-                      </span>
-                      <span className={`text-[10px] px-1 py-0.5 rounded ${hasReal ? "text-emerald-300" : "text-orange-300"}`}>
-                        {hasReal ? "Live" : "Mock"}
-                      </span>
-                    </div>
-                  );
-                })()}
-
-                {/* Quick Start for inactive secondary slots */}
-                {bot.slot > 0 && !isActive && (
-                  <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
-                    <div className="text-[10px] text-white/40 font-medium">Quick Start</div>
-                    <div className="flex gap-1 mb-2">
-                      <button onClick={() => setShowScanner(null)}
-                        className={`flex-1 text-[10px] py-1 rounded-l-lg border transition-colors ${
-                          showScanner !== bot.slot ? "bg-purple-500/30 text-purple-200 border-purple-500/50" : "bg-white/5 text-white/40 border-white/10"
-                        }`}>Pick</button>
-                      <button onClick={() => { setShowScanner(bot.slot); setScanEnabled(true); refetchScan(); }}
-                        className={`flex-1 text-[10px] py-1 rounded-r-lg border transition-colors ${
-                          showScanner === bot.slot ? "bg-cyan-500/30 text-cyan-200 border-cyan-500/50" : "bg-white/5 text-white/40 border-white/10"
-                        }`}>⚡ Scan</button>
-                    </div>
-                    {showScanner !== bot.slot ? (
-                      <>
-                        <div className="flex gap-2">
-                          <select value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
-                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
-                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none">
-                            <option value="NIFTY">NIFTY</option>
-                            <option value="BANKNIFTY">BANKNIFTY</option>
-                            <option value="FINNIFTY">FINNIFTY</option>
-                            <option value="MCX_CRUDE">Crude Oil</option>
-                            <option value="MCX_GOLD">Gold</option>
-                            <option value="MCX_SILVER">Silver</option>
-                          </select>
-                          <input type="number" value={slotQS[bot.slot]?.capital ?? 50000}
-                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
-                            min={10000} step={10000}
-                            className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none" />
-                        </div>
-                        <button onClick={() => handleQuickStart(bot.slot)} disabled={startSecondaryMutation.isPending}
-                          className="w-full text-[10px] py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50">
-                          {startSecondaryMutation.isPending ? "⏳" : `▶ Start (Paper)`}
-                        </button>
-                      </>
-                    ) : (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] text-white/40">
-                            {scanLoading ? "Scanning…" : scanData ? `${scanData.results.length} found` : "Tap Scan"}
-                          </span>
-                          <button onClick={() => { setScanEnabled(true); refetchScan(); }} disabled={scanLoading}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 disabled:opacity-50">
-                            {scanLoading ? "⏳" : "↺"}
-                          </button>
-                        </div>
-                        {scanData && scanData.results.length > 0 && (
-                          <div className="space-y-1 max-h-32 overflow-y-auto">
-                            {scanData.results.slice(0, 5).map((r: any, idx: number) => (
-                              <div key={r.token}
-                                className={`flex items-center gap-1.5 p-1.5 rounded-lg border cursor-pointer transition-colors text-[10px] ${
-                                  r.isActionable ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : "bg-white/3 border-white/10 opacity-60"
-                                }`}
-                                onClick={() => {
-                                  if (!r.isActionable) return;
-                                  const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
-                                  startSecondaryMutation.mutate({
-                                    sessionToken, slot: bot.slot as 1 | 2,
-                                    instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
-                                    mode: "paper", capital: slotQS[bot.slot]?.capital ?? 50000,
-                                    riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,
-                                    stopLossMultiplier: 1.5, targetMultiplier: 2.5, minConfidence: 60, scanIntervalSec: 30,
-                                    lotSize: r.lotSize, isIndexOptions: true, underlyingToken: r.token,
-                                    telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
-                                    partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
-                                    trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct, enabledLayers: config.enabledLayers,
-                                  });
-                                }}>
-                                <span className="text-white/50 w-3">{idx + 1}</span>
-                                <span className="text-white truncate flex-1">{r.label.replace(/ → (?:ATM|OTM) Options.*/, "")}</span>
-                                <span className={r.direction === "BUY" ? "text-green-400 font-bold" : r.direction === "SELL" ? "text-red-400 font-bold" : "text-white/40"}>{r.direction}</span>
-                                {r.isActionable && <span className="text-green-300">▶</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
         </div>
 
         {/* ── Risk & Portfolio Command Center ─────────────────────────────────── */}
@@ -2632,6 +2381,264 @@ export default function Dashboard() {
           </>)}
         </div>
 
+
+        {/* ═══════════════════════════════════════════════════════════════════════════
+            REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
+        ═══════════════════════════════════════════════════════════════════════════ */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-purple-400" />
+            <span className="font-semibold text-white text-sm">Parallel Bots</span>
+          </div>
+          <span className="text-xs text-white/30">All 3 slots — Primary + 2 secondary</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+          {(allBots ?? []).map((bot: any) => {
+            const isActive = bot.status === "running";
+            const slotLabel = bot.slot === 0 ? "Primary" : `Slot ${bot.slot}`;
+            const slotClasses = bot.slot === 0
+              ? { border: "border-teal-500/30", borderActive: "border-teal-500/40", bg: "bg-teal-500/5", badge: "bg-teal-500/20", text: "text-teal-300", glow: "shadow-[0_0_20px_oklch(0.78_0.18_195/0.06)]" }
+              : bot.slot === 1
+                ? { border: "border-purple-500/30", borderActive: "border-purple-500/40", bg: "bg-purple-500/5", badge: "bg-purple-500/20", text: "text-purple-300", glow: "shadow-[0_0_20px_oklch(0.7_0.15_280/0.06)]" }
+                : { border: "border-amber-500/30", borderActive: "border-amber-500/40", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_65/0.06)]" };
+            const hasOpenTrade = !!bot.openTrade;
+            const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
+
+            return (
+              <div key={bot.sessionToken} className={`rounded-2xl border p-4 transition-all duration-300 ${
+                isActive && hasOpenTrade
+                  ? `${slotClasses.borderActive} ${slotClasses.bg} ${slotClasses.glow}`
+                  : isActive
+                    ? `${slotClasses.border} bg-white/[0.02]`
+                    : "border-white/10 bg-white/[0.02]"
+              }`}>
+                {/* Header: Slot label + Health + Stop */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      isActive ? `${slotClasses.badge} ${slotClasses.text}` : "bg-white/10 text-white/40"
+                    }`}>{slotLabel}</span>
+                    {isActive && (
+                      <HealthDot
+                        status={bot.status}
+                        lastTickAt={(bot as any).lastTickAt ?? 0}
+                        scanIntervalSec={(bot as any).scanIntervalSec ?? 60}
+                        lastError={(bot as any).lastError ?? null}
+                        onRestart={() => restartMutation.mutate({ sessionToken: bot.sessionToken })}
+                      />
+                    )}
+                    {modeTag && <span className="text-[10px] text-amber-300">{modeTag}</span>}
+                  </div>
+                  {bot.slot > 0 && isActive && (
+                    <button
+                      onClick={() => stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
+                      className="text-red-400/60 hover:text-red-400 text-[10px] flex items-center gap-0.5 transition-colors"
+                    >
+                      <Square className="w-2.5 h-2.5" /> Stop
+                    </button>
+                  )}
+                </div>
+
+                {/* Instrument name */}
+                <div className="text-sm font-semibold text-white mb-2 truncate">
+                  {bot.instrumentLabel || (isActive ? "Starting…" : "Inactive")}
+                </div>
+
+                {/* Live Price + Trades */}
+                {isActive && (
+                  <div className="flex items-center justify-between text-xs mb-2">
+                    {(() => {
+                      const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
+                      const displayPrice = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+                      const isLive = !!(lpEntry && lpEntry.livePrice > 0 && (Date.now() - lpEntry.updatedAt) < 15000);
+                      return (
+                        <span className="font-mono text-white/70">
+                          {isLive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse" />}
+                          ₹{displayPrice > 0 ? displayPrice.toFixed(2) : "—"}
+                        </span>
+                      );
+                    })()}
+                    <span className="text-white/40">{bot.tradesCount ?? 0} trades</span>
+                  </div>
+                )}
+
+                {/* Open trade mini-card OR scanning state */}
+                {isActive && hasOpenTrade ? (
+                  <div className={`rounded-lg border p-2 mb-2 ${
+                    bot.openTrade.direction === "BUY" ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"
+                  }`}>
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className={bot.openTrade.direction === "BUY" ? "text-emerald-400 font-bold" : "text-red-400 font-bold"}>
+                        {bot.openTrade.direction} @ ₹{bot.openTrade.entryPrice?.toFixed(2)}
+                      </span>
+                      {bot.openTrade.slPrice && <span className="text-red-400/60">SL ₹{bot.openTrade.slPrice.toFixed(1)}</span>}
+                    </div>
+                    {/* Unrealized P&L for this slot */}
+                    {(() => {
+                      const ot = bot.openTrade;
+                      const isOpts = ot.isIndexOptions;
+                      const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
+                      let liveP = 0;
+                      if (isOpts) {
+                        liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
+                        if (liveP === 0 && ot.entryUnderlyingPrice && (lpEntry?.livePrice ?? bot.lastPrice) > 0) {
+                          const curU = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+                          const move = curU - ot.entryUnderlyingPrice;
+                          const isCall = (ot.symbol ?? "").includes("CE") || (ot.symbolLabel ?? "").includes(" CE");
+                          liveP = Math.max(0.05, ot.entryPrice + (isCall ? move * 0.5 : -move * 0.5));
+                        }
+                      } else {
+                        liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+                      }
+                      if (liveP === 0) return null;
+                      const dir = ot.direction === "BUY" ? 1 : -1;
+                      const unrealised = (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0));
+                      return (
+                        <div className={`text-xs font-bold mt-1 ${unrealised >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          Unrealized: {unrealised >= 0 ? "+" : ""}₹{unrealised.toFixed(0)}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                ) : isActive ? (
+                  <div className="flex items-center gap-2 text-xs text-white/30 mb-2 py-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-white/20 animate-pulse" />
+                    <span>Scanning for signals...</span>
+                    {bot.lastSignal && <span className="text-white/20 ml-auto">{bot.lastSignal.direction} · {bot.lastSignal.confidence}%</span>}
+                  </div>
+                ) : null}
+
+                {/* Realized Daily P&L — clearly labeled */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-white/30 uppercase tracking-wide">Realized Today</div>
+                    <div className={`text-base font-bold tabular-nums ${
+                      (bot.dailyPnl ?? 0) > 0 ? "text-emerald-400" : (bot.dailyPnl ?? 0) < 0 ? "text-red-400" : "text-white/40"
+                    }`}>
+                      {(bot.dailyPnl ?? 0) >= 0 ? "+" : ""}₹{(bot.dailyPnl ?? 0).toFixed(0)}
+                    </div>
+                  </div>
+                  {(bot.dailyPnl ?? 0) !== 0 && (
+                    <button
+                      onClick={() => {
+                        if (!confirm(`Reset P&L counter for ${slotLabel}?`)) return;
+                        resetPnlMutation.mutate({ sessionToken });
+                      }}
+                      className="text-orange-400/50 hover:text-orange-400 transition-colors p-1 rounded hover:bg-orange-500/10"
+                      title="Fix P&L counter"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Candle readiness */}
+                {isActive && (() => {
+                  const count = (bot as any).candlesCount ?? 0;
+                  const hasReal = (bot as any).hasRealData ?? false;
+                  const ready = count >= 20;
+                  return (
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="flex-1 bg-white/10 rounded-full h-1 overflow-hidden">
+                        <div className={`h-full rounded-full transition-all duration-500 ${ready ? "bg-emerald-400" : "bg-amber-400"}`}
+                          style={{ width: `${Math.min(100, (count / 20) * 100)}%` }} />
+                      </div>
+                      <span className={`text-[10px] ${ready ? "text-emerald-400" : "text-amber-400"}`}>
+                        {ready ? "✓" : `${count}/20`}
+                      </span>
+                      <span className={`text-[10px] px-1 py-0.5 rounded ${hasReal ? "text-emerald-300" : "text-orange-300"}`}>
+                        {hasReal ? "Live" : "Mock"}
+                      </span>
+                    </div>
+                  );
+                })()}
+
+                {/* Quick Start for inactive secondary slots */}
+                {bot.slot > 0 && !isActive && (
+                  <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                    <div className="text-[10px] text-white/40 font-medium">Quick Start</div>
+                    <div className="flex gap-1 mb-2">
+                      <button onClick={() => setShowScanner(null)}
+                        className={`flex-1 text-[10px] py-1 rounded-l-lg border transition-colors ${
+                          showScanner !== bot.slot ? "bg-purple-500/30 text-purple-200 border-purple-500/50" : "bg-white/5 text-white/40 border-white/10"
+                        }`}>Pick</button>
+                      <button onClick={() => { setShowScanner(bot.slot); setScanEnabled(true); refetchScan(); }}
+                        className={`flex-1 text-[10px] py-1 rounded-r-lg border transition-colors ${
+                          showScanner === bot.slot ? "bg-cyan-500/30 text-cyan-200 border-cyan-500/50" : "bg-white/5 text-white/40 border-white/10"
+                        }`}>⚡ Scan</button>
+                    </div>
+                    {showScanner !== bot.slot ? (
+                      <>
+                        <div className="flex gap-2">
+                          <select value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
+                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
+                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none">
+                            <option value="NIFTY">NIFTY</option>
+                            <option value="BANKNIFTY">BANKNIFTY</option>
+                            <option value="FINNIFTY">FINNIFTY</option>
+                            <option value="MCX_CRUDE">Crude Oil</option>
+                            <option value="MCX_GOLD">Gold</option>
+                            <option value="MCX_SILVER">Silver</option>
+                          </select>
+                          <input type="number" value={slotQS[bot.slot]?.capital ?? 50000}
+                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
+                            min={10000} step={10000}
+                            className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none" />
+                        </div>
+                        <button onClick={() => handleQuickStart(bot.slot)} disabled={startSecondaryMutation.isPending}
+                          className="w-full text-[10px] py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50">
+                          {startSecondaryMutation.isPending ? "⏳" : `▶ Start (Paper)`}
+                        </button>
+                      </>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-white/40">
+                            {scanLoading ? "Scanning…" : scanData ? `${scanData.results.length} found` : "Tap Scan"}
+                          </span>
+                          <button onClick={() => { setScanEnabled(true); refetchScan(); }} disabled={scanLoading}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 disabled:opacity-50">
+                            {scanLoading ? "⏳" : "↺"}
+                          </button>
+                        </div>
+                        {scanData && scanData.results.length > 0 && (
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {scanData.results.slice(0, 5).map((r: any, idx: number) => (
+                              <div key={r.token}
+                                className={`flex items-center gap-1.5 p-1.5 rounded-lg border cursor-pointer transition-colors text-[10px] ${
+                                  r.isActionable ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : "bg-white/3 border-white/10 opacity-60"
+                                }`}
+                                onClick={() => {
+                                  if (!r.isActionable) return;
+                                  const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
+                                  startSecondaryMutation.mutate({
+                                    sessionToken, slot: bot.slot as 1 | 2,
+                                    instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
+                                    mode: "paper", capital: slotQS[bot.slot]?.capital ?? 50000,
+                                    riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,
+                                    stopLossMultiplier: 1.5, targetMultiplier: 2.5, minConfidence: 60, scanIntervalSec: 30,
+                                    lotSize: r.lotSize, isIndexOptions: true, underlyingToken: r.token,
+                                    telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+                                    partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
+                                    trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct, enabledLayers: config.enabledLayers,
+                                  });
+                                }}>
+                                <span className="text-white/50 w-3">{idx + 1}</span>
+                                <span className="text-white truncate flex-1">{r.label.replace(/ → (?:ATM|OTM) Options.*/, "")}</span>
+                                <span className={r.direction === "BUY" ? "text-green-400 font-bold" : r.direction === "SELL" ? "text-red-400 font-bold" : "text-white/40"}>{r.direction}</span>
+                                {r.isActionable && <span className="text-green-300">▶</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
         {/* ── Strategy Presets ──────────────────────────────────────────────────── */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
           <div className="flex items-center gap-2 mb-4">
