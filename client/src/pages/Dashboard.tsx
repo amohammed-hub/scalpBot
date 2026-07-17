@@ -279,11 +279,11 @@ export default function Dashboard() {
 
   // Per-slot Quick Start state for the Parallel Bots panel
   const [slotQS, setSlotQS] = useState<Record<number, { symbol: string; capital: number }>>(
-    { 1: { symbol: "NIFTY", capital: 50000 }, 2: { symbol: "CRUDEOIL", capital: 50000 } }
+    { 0: { symbol: "NIFTY", capital: 50000 }, 1: { symbol: "BANKNIFTY", capital: 50000 }, 2: { symbol: "CRUDEOIL", capital: 50000 } }
   );
   const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
     onSuccess: (_, vars) => {
-      toast.success(`🤖 Slot ${vars.slot} bot started in Paper mode!`);
+      toast.success(`🤖 Bot ${(vars.slot ?? 0) + 1} started in Paper mode!`);
       utils.multiBots.allStatus.invalidate();
     },
     onError: (e) => toast.error(`Start failed: ${e.message}`),
@@ -318,21 +318,51 @@ export default function Dashboard() {
     const resolvedLabel = mcxInstr ? mcxInstr.label : nseInstr ? nseInstr.label : qs.symbol;
     const resolvedLotSize = mcxInstr ? (mcxInstr.lotSize ?? 1) : nseInstr ? nseInstr.lotSize : 25;
     const isIdxOpt = !!(mcxInstr || nseInstr); // always true for all supported instruments
-    startSecondaryMutation.mutate({
-      sessionToken, slot: slot as 1 | 2,
-      instrumentToken: resolvedToken,
-      instrumentSymbol: qs.symbol, instrumentLabel: resolvedLabel,
-      mode: "paper", capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
-      dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
-      minConfidence: 60, scanIntervalSec: 30,
-      lotSize: resolvedLotSize,
-      isIndexOptions: isIdxOpt,
-      underlyingToken: resolvedToken,
-      telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
-      enabledLayers: config.enabledLayers,
-      partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
-      trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
-    });
+    if (slot === 0) {
+      // Bot 1 uses bot.start (primary procedure)
+      startMutation.mutate({
+        sessionToken,
+        instrumentToken: resolvedToken,
+        instrumentSymbol: qs.symbol,
+        instrumentLabel: resolvedLabel,
+        mode: "paper",
+        capital: qs.capital,
+        riskPerTradePct: 1.5,
+        maxTradesPerDay: 5,
+        dailyLossLimitPct: 3,
+        stopLossMultiplier: 1.5,
+        targetMultiplier: 2.5,
+        minConfidence: 60,
+        scanIntervalSec: 30,
+        lotSize: resolvedLotSize,
+        isIndexOptions: isIdxOpt,
+        underlyingToken: resolvedToken,
+        enabledLayers: config.enabledLayers,
+        partial1Pct: config.partial1Pct,
+        partial2Pct: config.partial2Pct,
+        trailingSlEnabled: config.trailingSlEnabled,
+        trailingSlPct: config.trailingSlPct,
+        averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
+        averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+      });
+    } else {
+      // Bot 2/3 uses multiBots.startSecondary
+      startSecondaryMutation.mutate({
+        sessionToken, slot: slot as 1 | 2,
+        instrumentToken: resolvedToken,
+        instrumentSymbol: qs.symbol, instrumentLabel: resolvedLabel,
+        mode: "paper", capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
+        dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
+        minConfidence: 60, scanIntervalSec: 30,
+        lotSize: resolvedLotSize,
+        isIndexOptions: isIdxOpt,
+        underlyingToken: resolvedToken,
+        telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+        enabledLayers: config.enabledLayers,
+        partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
+        trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
+      });
+    }
   };
 
   // Smart Scanner state
@@ -398,7 +428,7 @@ export default function Dashboard() {
   );
   const stopSecondaryMutation = trpc.multiBots.stopSecondary.useMutation({
     onSuccess: (_, vars) => {
-      toast.info(`Slot ${vars.slot} bot stopped.`);
+      toast.info(`Bot ${vars.slot + 1} stopped.`);
       utils.multiBots.allStatus.invalidate();
     },
     onError: (e) => toast.error(`Stop failed: ${e.message}`),
@@ -1473,7 +1503,7 @@ export default function Dashboard() {
                 if (liveP > 0) {
                   const dir = ot.direction === "BUY" ? 1 : -1;
                   positions.push({
-                    symbol: ot.symbolLabel ?? bot.instrumentLabel ?? `Slot ${bot.slot}`,
+                    symbol: ot.symbolLabel ?? bot.instrumentLabel ?? `Bot ${bot.slot + 1}`,
                     direction: ot.direction,
                     entry: ot.entryPrice,
                     current: liveP,
@@ -1548,7 +1578,7 @@ export default function Dashboard() {
             { sessionToken: `${sessionToken}-slot2`, slot: 2, status: "stopped", dailyPnl: 0, tradesCount: 0 },
           ]).map((bot: any) => {
             const isActive = bot.status === "running";
-            const slotLabel = bot.slot === 0 ? "Primary" : `Slot ${bot.slot}`;
+            const slotLabel = `Bot ${bot.slot + 1}`;
             const slotClasses = bot.slot === 0
               ? { border: "border-teal-500/30", borderActive: "border-teal-500/40", bg: "bg-teal-500/5", badge: "bg-teal-500/20", text: "text-teal-300", glow: "shadow-[0_0_20px_oklch(0.78_0.18_195/0.06)]" }
               : bot.slot === 1
@@ -1585,9 +1615,9 @@ export default function Dashboard() {
                     )}
                     {modeTag && <span className="text-[10px] text-amber-300">{modeTag}</span>}
                   </div>
-                  {bot.slot > 0 && isActive && (
+                  {isActive && (
                     <button
-                      onClick={() => stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
+                      onClick={() => bot.slot === 0 ? stopMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
                       className="text-red-400/60 hover:text-red-400 text-[10px] flex items-center gap-0.5 transition-colors"
                     >
                       <Square className="w-2.5 h-2.5" /> Stop
@@ -1710,7 +1740,7 @@ export default function Dashboard() {
                 })()}
 
                 {/* Quick Start for inactive secondary slots */}
-                {bot.slot > 0 && !isActive && (
+                {!isActive && (
                   <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
                     <div className="text-[10px] text-white/40 font-medium">Quick Start</div>
                     <div className="flex gap-1 mb-2">
@@ -1741,9 +1771,9 @@ export default function Dashboard() {
                             min={10000} step={10000}
                             className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none" />
                         </div>
-                        <button onClick={() => handleQuickStart(bot.slot)} disabled={startSecondaryMutation.isPending}
+                        <button onClick={() => handleQuickStart(bot.slot)} disabled={bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending}
                           className="w-full text-[10px] py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50">
-                          {startSecondaryMutation.isPending ? "⏳" : `▶ Start (Paper)`}
+                          {(bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending) ? "⏳" : `▶ Start (Paper)`}
                         </button>
                       </>
                     ) : (
@@ -1767,17 +1797,33 @@ export default function Dashboard() {
                                 onClick={() => {
                                   if (!r.isActionable) return;
                                   const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
-                                  startSecondaryMutation.mutate({
-                                    sessionToken, slot: bot.slot as 1 | 2,
-                                    instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
-                                    mode: "paper", capital: slotQS[bot.slot]?.capital ?? 50000,
-                                    riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,
-                                    stopLossMultiplier: 1.5, targetMultiplier: 2.5, minConfidence: 60, scanIntervalSec: 30,
-                                    lotSize: r.lotSize, isIndexOptions: true, underlyingToken: r.token,
-                                    telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
-                                    partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
-                                    trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct, enabledLayers: config.enabledLayers,
-                                  });
+                                  if (bot.slot === 0) {
+                                    startMutation.mutate({
+                                      sessionToken,
+                                      instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
+                                      mode: "paper", capital: slotQS[bot.slot]?.capital ?? 50000,
+                                      riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,
+                                      stopLossMultiplier: 1.5, targetMultiplier: 2.5, minConfidence: 60, scanIntervalSec: 30,
+                                      lotSize: r.lotSize, isIndexOptions: true, underlyingToken: r.token,
+                                      enabledLayers: config.enabledLayers,
+                                      partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
+                                      trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
+                                      averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
+                                      averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+                                    });
+                                  } else {
+                                    startSecondaryMutation.mutate({
+                                      sessionToken, slot: bot.slot as 1 | 2,
+                                      instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
+                                      mode: "paper", capital: slotQS[bot.slot]?.capital ?? 50000,
+                                      riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,
+                                      stopLossMultiplier: 1.5, targetMultiplier: 2.5, minConfidence: 60, scanIntervalSec: 30,
+                                      lotSize: r.lotSize, isIndexOptions: true, underlyingToken: r.token,
+                                      telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+                                      partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
+                                      trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct, enabledLayers: config.enabledLayers,
+                                    });
+                                  }
                                 }}>
                                 <span className="text-white/50 w-3">{idx + 1}</span>
                                 <span className="text-white truncate flex-1">{r.label.replace(/ → (?:ATM|OTM) Options.*/, "")}</span>
@@ -2353,27 +2399,7 @@ export default function Dashboard() {
               {isRunning && <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">Running</span>}
               <ChevronDown className={`w-4 h-4 text-white/40 transition-transform duration-200 ${configCollapsed ? "-rotate-90" : ""}`} />
             </div>
-            <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-              {!isRunning ? (
-                <button
-                  onClick={handleStart}
-                  disabled={startMutation.isPending}
-                  className="flex items-center gap-2 bg-teal-500 hover:bg-teal-600 text-white px-5 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
-                >
-                  <Play className="w-4 h-4" />
-                  {startMutation.isPending ? "Starting..." : "Start Bot"}
-                </button>
-              ) : (
-                <button
-                  onClick={handleStop}
-                  disabled={stopMutation.isPending}
-                  className="flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-5 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
-                >
-                  <Square className="w-4 h-4" />
-                  {stopMutation.isPending ? "Stopping..." : "Stop Bot"}
-                </button>
-              )}
-            </div>
+            {/* Start/Stop moved to slot cards in Command Center */}
           </div>
           {!configCollapsed && (<>
 
