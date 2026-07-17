@@ -1038,7 +1038,11 @@ export function generateSignal(
   // Require at least 2 consecutive candles in the signal direction before entry.
   // This prevents entering on a single spike candle (falling knife / dead cat bounce).
   // Only applies to Trend, Momentum, MACD_BB layers (not Breakout/Pattern which have their own confirmation).
-  if (direction !== "HOLD" && (layer === "Trend" || layer === "Momentum" || layer === "MACD_BB")) {
+  // EXCEPTION: When ADX > 30 (strong trend), the trend itself is confirmation — skip this filter.
+  // This was causing BankNifty to miss strong trend entries because 1-min candles often have
+  // micro-bounces even in a strong directional move (e.g. RSI 23, ADX 35, but last 2 candles green).
+  const strongTrend = adx > 30;
+  if (direction !== "HOLD" && !strongTrend && (layer === "Trend" || layer === "Momentum" || layer === "MACD_BB")) {
     const len = candles.length;
     if (len >= 3) {
       const c_2 = candles[len - 2]; // second-to-last candle

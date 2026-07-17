@@ -924,3 +924,9 @@
 - [x] Extend self-healing migration to create app_users table if missing
 - [x] Extend self-healing migration to create otp_codes table if missing
 - [x] Push to GitHub for Railway auto-deploy
+
+## BankNifty Signal Filters Too Restrictive (July 17, 2026)
+- [ ] Make pullback proximity filter proportional to instrument price (0.15% too tight for BankNifty at ₹57k)
+- [ ] Make S/R proximity filter proportional to ATR instead of fixed 0.02% (too tight for BankNifty)
+- [ ] Verify Nifty/FinNifty still trade normally with updated filters
+- [ ] Push fix to GitHub for Railway auto-deploy
