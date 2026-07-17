@@ -283,8 +283,13 @@ export default function Dashboard() {
   );
   const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
     onSuccess: (_, vars) => {
-      toast.success(`🤖 Bot ${(vars.slot ?? 0) + 1} started in Paper mode!`);
-      utils.multiBots.allStatus.invalidate();
+      toast.success(`🤖 Bot ${(vars.slot ?? 0) + 1} started in ${config.mode.toUpperCase()} mode!`);
+      // Optimistic: immediately update the slot to "running"
+      utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
+        if (!old) return old;
+        return old.map((b: any) => b.slot === vars.slot ? { ...b, status: "running" } : b);
+      });
+      setTimeout(() => { utils.multiBots.allStatus.invalidate(); utils.multiBots.livePrices.invalidate(); }, 500);
     },
     onError: (e) => toast.error(`Start failed: ${e.message}`),
   });
@@ -325,7 +330,7 @@ export default function Dashboard() {
         instrumentToken: resolvedToken,
         instrumentSymbol: qs.symbol,
         instrumentLabel: resolvedLabel,
-        mode: "paper",
+        mode: config.mode,
         capital: qs.capital,
         riskPerTradePct: 1.5,
         maxTradesPerDay: 5,
@@ -351,7 +356,7 @@ export default function Dashboard() {
         sessionToken, slot: slot as 1 | 2,
         instrumentToken: resolvedToken,
         instrumentSymbol: qs.symbol, instrumentLabel: resolvedLabel,
-        mode: "paper", capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
+        mode: config.mode, capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
         dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
         minConfidence: 60, scanIntervalSec: 30,
         lotSize: resolvedLotSize,
@@ -429,7 +434,12 @@ export default function Dashboard() {
   const stopSecondaryMutation = trpc.multiBots.stopSecondary.useMutation({
     onSuccess: (_, vars) => {
       toast.info(`Bot ${vars.slot + 1} stopped.`);
-      utils.multiBots.allStatus.invalidate();
+      // Optimistic: immediately update the slot to "stopped"
+      utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
+        if (!old) return old;
+        return old.map((b: any) => b.slot === vars.slot ? { ...b, status: "stopped" } : b);
+      });
+      setTimeout(() => { utils.multiBots.allStatus.invalidate(); }, 500);
     },
     onError: (e) => toast.error(`Stop failed: ${e.message}`),
   });
@@ -473,10 +483,20 @@ export default function Dashboard() {
   const startMutation = trpc.bot.start.useMutation({
     onSuccess: () => {
       toast.success(`Bot started in ${config.mode.toUpperCase()} mode — scanning every ${config.scanIntervalSec}s`);
-      utils.bot.status.invalidate();
-      utils.bot.liveData.invalidate();
-      utils.multiBots.allStatus.invalidate();
-      utils.multiBots.livePrices.invalidate();
+      // Optimistic: immediately set bot.status cache to "running" so UI updates instantly
+      utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "running" } : { status: "running" });
+      // Optimistic: immediately update allBots slot 0 to "running"
+      utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
+        if (!old) return old;
+        return old.map((b: any) => b.slot === 0 ? { ...b, status: "running" } : b);
+      });
+      // Then invalidate to get fresh data from server (confirms the optimistic update)
+      setTimeout(() => {
+        utils.bot.status.invalidate();
+        utils.bot.liveData.invalidate();
+        utils.multiBots.allStatus.invalidate();
+        utils.multiBots.livePrices.invalidate();
+      }, 500);
     },
     onError: (e) => toast.error(`Failed to start bot: ${e.message}`),
   });
@@ -484,9 +504,18 @@ export default function Dashboard() {
   const stopMutation = trpc.bot.stop.useMutation({
     onSuccess: () => {
       toast.info("Bot stopped.");
-      utils.bot.status.invalidate();
-      utils.bot.liveData.invalidate();
-      utils.multiBots.allStatus.invalidate();
+      // Optimistic: immediately set bot.status cache to "stopped"
+      utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "stopped" } : { status: "stopped" });
+      // Optimistic: immediately update allBots slot 0 to "stopped"
+      utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
+        if (!old) return old;
+        return old.map((b: any) => b.slot === 0 ? { ...b, status: "stopped" } : b);
+      });
+      setTimeout(() => {
+        utils.bot.status.invalidate();
+        utils.bot.liveData.invalidate();
+        utils.multiBots.allStatus.invalidate();
+      }, 500);
     },
     onError: (e) => toast.error(`Failed to stop bot: ${e.message}`),
   });
@@ -1773,7 +1802,7 @@ export default function Dashboard() {
                         </div>
                         <button onClick={() => handleQuickStart(bot.slot)} disabled={bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending}
                           className="w-full text-[10px] py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50">
-                          {(bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending) ? "⏳" : `▶ Start (Paper)`}
+                          {(bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending) ? "⏳" : `▶ Start (${config.mode === "live" ? "Live" : "Paper"})`}
                         </button>
                       </>
                     ) : (
@@ -1801,7 +1830,7 @@ export default function Dashboard() {
                                     startMutation.mutate({
                                       sessionToken,
                                       instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
-                                      mode: "paper", capital: slotQS[bot.slot]?.capital ?? 50000,
+                                      mode: config.mode, capital: slotQS[bot.slot]?.capital ?? 50000,
                                       riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,
                                       stopLossMultiplier: 1.5, targetMultiplier: 2.5, minConfidence: 60, scanIntervalSec: 30,
                                       lotSize: r.lotSize, isIndexOptions: true, underlyingToken: r.token,
@@ -1815,7 +1844,7 @@ export default function Dashboard() {
                                     startSecondaryMutation.mutate({
                                       sessionToken, slot: bot.slot as 1 | 2,
                                       instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
-                                      mode: "paper", capital: slotQS[bot.slot]?.capital ?? 50000,
+                                      mode: config.mode, capital: slotQS[bot.slot]?.capital ?? 50000,
                                       riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,
                                       stopLossMultiplier: 1.5, targetMultiplier: 2.5, minConfidence: 60, scanIntervalSec: 30,
                                       lotSize: r.lotSize, isIndexOptions: true, underlyingToken: r.token,

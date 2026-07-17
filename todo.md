@@ -974,3 +974,7 @@
 - [x] Bot 1 Quick Start calls bot.start, Bot 2/3 calls multiBots.startSecondary
 - [x] Bot 1 Stop button calls bot.stop, Bot 2/3 calls multiBots.stopSecondary
 - [x] Backend audit: confirmed all 3 slots use identical logic (no special privileges for "Primary")
+## CRITICAL BUG — Bot starts but UI doesn't update (July 17 PM)
+- [ ] BUG 8: Toast shows "Bot started in LIVE mode" but header shows "Bot Stopped", slot cards show "Inactive", button shows "Start (Paper)"
+- [ ] Root cause: frontend state not updating after successful API response
+- [ ] Fix: ensure invalidate/refetch triggers update header + slot cards + button state
