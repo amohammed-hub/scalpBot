@@ -154,6 +154,99 @@ async function initDb() {
           console.log("[Database] Migration complete: signal_journal.exitReason widened");
         }
       } catch { /* non-fatal */ }
+      // Check eodSummaryCronTaskUid column on bot_sessions (migration 0010)
+      try {
+        await pool.execute("SELECT `eodSummaryCronTaskUid` FROM `bot_sessions` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding eodSummaryCronTaskUid to bot_sessions");
+          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `eodSummaryCronTaskUid` varchar(128)");
+          console.log("[Database] Migration complete: eodSummaryCronTaskUid column added");
+        }
+      }
+      // Check averagingEnabled column on bot_sessions (migration 0019)
+      try {
+        await pool.execute("SELECT `averagingEnabled` FROM `bot_sessions` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding averagingEnabled to bot_sessions");
+          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `averagingEnabled` boolean DEFAULT true");
+          console.log("[Database] Migration complete: averagingEnabled column added");
+        }
+      }
+      // Check averagingLossThreshold column on bot_sessions (migration 0019)
+      try {
+        await pool.execute("SELECT `averagingLossThreshold` FROM `bot_sessions` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding averagingLossThreshold to bot_sessions");
+          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `averagingLossThreshold` float DEFAULT 0.2");
+          console.log("[Database] Migration complete: averagingLossThreshold column added");
+        }
+      }
+      // Check subscriptions table (migration 0017)
+      try {
+        await pool.execute("SELECT 1 FROM `subscriptions` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating subscriptions table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS subscriptions (
+            id int AUTO_INCREMENT NOT NULL,
+            sessionToken varchar(128) NOT NULL,
+            plan enum('trial','monthly','quarterly','half_yearly','yearly') NOT NULL,
+            status enum('active','expired','cancelled') NOT NULL DEFAULT 'active',
+            razorpayOrderId varchar(128),
+            razorpayPaymentId varchar(128),
+            razorpaySubscriptionId varchar(128),
+            amountPaid int DEFAULT 0,
+            startsAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expiresAt timestamp NOT NULL,
+            createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(id)
+          )`);
+          console.log("[Database] Migration complete: subscriptions table created");
+        }
+      }
+      // Check app_users table (migration 0018)
+      try {
+        await pool.execute("SELECT 1 FROM `app_users` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating app_users table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS app_users (
+            id int AUTO_INCREMENT NOT NULL,
+            mobile varchar(15) NOT NULL,
+            name varchar(128),
+            role enum('user','admin') NOT NULL DEFAULT 'user',
+            isVerified boolean NOT NULL DEFAULT false,
+            sessionToken varchar(128),
+            lastLoginAt timestamp NULL,
+            createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY(id),
+            UNIQUE KEY app_users_mobile_unique (mobile)
+          )`);
+          console.log("[Database] Migration complete: app_users table created");
+        }
+      }
+      // Check otp_codes table (migration 0018)
+      try {
+        await pool.execute("SELECT 1 FROM `otp_codes` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating otp_codes table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS otp_codes (
+            id int AUTO_INCREMENT NOT NULL,
+            mobile varchar(15) NOT NULL,
+            code varchar(6) NOT NULL,
+            expiresAt timestamp NOT NULL,
+            verified boolean NOT NULL DEFAULT false,
+            createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(id)
+          )`);
+          console.log("[Database] Migration complete: otp_codes table created");
+        }
+      }
     }
     return db;
   } catch (error: unknown) {
