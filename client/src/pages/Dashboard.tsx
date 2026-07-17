@@ -1541,7 +1541,7 @@ export default function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════════════════
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-6">
           {((allBots && allBots.length > 0) ? allBots : [
             { sessionToken, slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0 },
             { sessionToken: `${sessionToken}-slot1`, slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0 },
@@ -1558,7 +1558,7 @@ export default function Dashboard() {
             const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
 
             return (
-              <div key={bot.sessionToken} className={`rounded-2xl border p-4 transition-all duration-300 ${
+              <div key={bot.sessionToken} className={`rounded-xl sm:rounded-2xl border p-2 sm:p-4 transition-all duration-300 ${
                 isActive && hasOpenTrade
                   ? `${slotClasses.borderActive} ${slotClasses.bg} ${slotClasses.glow}`
                   : isActive

@@ -961,3 +961,9 @@
   - [ ] Tab 3 Configuration: Presets, Risk sliders, Strategy selection, Global settings, Readiness scorecard
   - [ ] Tab 4 Activity Log: Filter bar, Terminal-style color-coded log (last 200 entries)
   - [ ] Mobile layout: Bottom nav, floating kill switch, stacked cards
+## Bug Fixes — Defensive Error Handling (July 17 PM)
+- [x] BUG 4: Bot stops immediately after start — added try-catch to tick function (catches + logs any uncaught error, re-throws for auto-restart counter)
+- [x] BUG 5: Shadow mode section wrapped in try-catch (crash in shadow mode no longer kills the tick)
+- [x] BUG 6: generateSignal() now guards against empty candles array (returns HOLD immediately)
+- [x] BUG 7: Slot cards not visible on mobile — changed grid from grid-cols-1 to grid-cols-3 (always shows all 3 slots side by side)
+- [x] BUG 7b: Slot cards compact on mobile — reduced padding (p-2 on mobile, p-4 on desktop)

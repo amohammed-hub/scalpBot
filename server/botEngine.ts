@@ -793,6 +793,10 @@ export function generateSignal(
   prevDayClose = 0,
   skipOrbFreshnessGate = false, // Shadow mode: skip P0 ORB freshness gate to simulate old logic
 ): Signal {
+  // Defensive: if candles is empty or undefined, return HOLD immediately
+  if (!candles || candles.length === 0) {
+    return { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No candle data available", layer: "None" };
+  }
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
   const atr = calcATR(candles, 14);
@@ -3203,6 +3207,7 @@ async function tick(
   // When shadowMode=true: OLD logic (no P0, no P1) executes trades.
   // NEW logic (P0+P1) only LOGS decisions for comparison.
   if (state.shadowMode && !inPowerHour && !inMCXEvening && !inMCXLateSession && !inHeroZeroWindow) {
+    try {
     const newSignal = signal; // current signal already has P0 ORB freshness gate
     // Generate OLD signal: same params but skip ORB freshness gate
     const oldSignal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, true);
@@ -3262,8 +3267,12 @@ async function tick(
       }
     }
 
-    // In shadow mode: USE THE OLD SIGNAL for actual trading (old logic trades, new logic logs)
     signal = oldSignal;
+    } catch (shadowErr: unknown) {
+      // Shadow mode crash should NOT kill the tick — just log and continue with current signal
+      console.error(`[BotEngine] Shadow mode error (${state.sessionToken.slice(0, 8)}):`, shadowErr);
+      emitActivity(state.sessionToken, "error", `Shadow mode error: ${shadowErr instanceof Error ? shadowErr.message : String(shadowErr)}`);
+    }
   }
 
   // ── Heartbeat: emit periodic activity so user knows bot is alive ──────────
@@ -3729,6 +3738,15 @@ async function tick(
       `📝 ${signal.reason}`,
     );
   }
+  } catch (tickErr: unknown) {
+    // Defensive: log any uncaught error in tick to prevent silent crashes
+    const errMsg = tickErr instanceof Error ? tickErr.message : String(tickErr);
+    const errStack = tickErr instanceof Error ? tickErr.stack : "";
+    console.error(`[BotEngine] UNCAUGHT tick error (${state.sessionToken.slice(0, 8)}): ${errMsg}\n${errStack}`);
+    state.lastError = `Tick crash: ${errMsg}`;
+    emitActivity(state.sessionToken, "error", `🔴 Tick crash: ${errMsg}`);
+    // Re-throw so the setInterval .catch() handler counts it toward the 3-error auto-restart
+    throw tickErr;
   } finally {
     state.tickInProgress = false;
   }
