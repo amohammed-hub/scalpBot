@@ -436,6 +436,8 @@ export default function Dashboard() {
       toast.success(`Bot started in ${config.mode.toUpperCase()} mode — scanning every ${config.scanIntervalSec}s`);
       utils.bot.status.invalidate();
       utils.bot.liveData.invalidate();
+      utils.multiBots.allStatus.invalidate();
+      utils.multiBots.livePrices.invalidate();
     },
     onError: (e) => toast.error(`Failed to start bot: ${e.message}`),
   });
@@ -1473,7 +1475,11 @@ export default function Dashboard() {
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-          {(allBots ?? []).map((bot: any) => {
+          {((allBots && allBots.length > 0) ? allBots : [
+            { sessionToken, slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0 },
+            { sessionToken: `${sessionToken}-slot1`, slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0 },
+            { sessionToken: `${sessionToken}-slot2`, slot: 2, status: "stopped", dailyPnl: 0, tradesCount: 0 },
+          ]).map((bot: any) => {
             const isActive = bot.status === "running";
             const slotLabel = bot.slot === 0 ? "Primary" : `Slot ${bot.slot}`;
             const slotClasses = bot.slot === 0
@@ -1498,7 +1504,10 @@ export default function Dashboard() {
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                       isActive ? `${slotClasses.badge} ${slotClasses.text}` : "bg-white/10 text-white/40"
                     }`}>{slotLabel}</span>
-                    {isActive && (
+                    {isActive && bot.pendingRestore && (
+                      <span className="text-[10px] text-amber-300 animate-pulse" title="Server restarted — bot is being restored automatically">⟳ reconnecting</span>
+                    )}
+                    {isActive && !bot.pendingRestore && (
                       <HealthDot
                         status={bot.status}
                         lastTickAt={(bot as any).lastTickAt ?? 0}

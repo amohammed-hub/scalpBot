@@ -264,11 +264,16 @@ export const appRouter = router({
         // If bot is in memory but no DB row exists, return synthetic status from memory
         if (!row && !inMem) return null;
         const baseRow = row ?? {} as Partial<typeof botSessions.$inferSelect>;
+        // DB is the source of truth for running state. If DB says 'running' but the bot
+        // is not in this process's memory (e.g. server restarted / redeployed on Railway),
+        // still report 'running' — the watchdog restores the in-memory bot within 60s.
+        // bot.stop always writes status='stopped' to DB first, so a stopped bot never
+        // shows as running.
         return {
           ...baseRow,
-          // If DB says 'running' but bot is NOT in memory, it means stop was called
-          // but DB update hasn't committed yet — treat as 'stopped' to avoid stale UI
-          status: inMem?.status ?? ((row?.status === "running" && !inMem) ? "stopped" : (row?.status ?? "stopped")),
+          status: inMem?.status ?? row?.status ?? "stopped",
+          // Flag so the UI can show a subtle "reconnecting" hint if desired
+          pendingRestore: (row?.status === "running" && !inMem) || undefined,
           lastPrice: inMem?.lastPrice ?? row?.lastPrice ?? 0,
           bidPrice: inMem?.bidPrice ?? row?.bidPrice ?? 0,
           askPrice: inMem?.askPrice ?? row?.askPrice ?? 0,
@@ -1934,13 +1939,17 @@ export const appRouter = router({
           const inMem = getBotState(tok);
           const dbRow = dbRows[tok];
           const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
-          // Consistent with bot.status: if DB says running but NOT in memory → treat as stopped
-          const effectiveStatus = inMem?.status ?? ((dbRow?.status === "running" && !inMem) ? "stopped" : (dbRow?.status ?? "stopped"));
+          // Consistent with bot.status: DB is the source of truth for running state.
+          // If DB says 'running' but the bot is not in this process's memory (server
+          // restart / redeploy), still report 'running' — the watchdog restores it within 60s.
+          const effectiveStatus = inMem?.status ?? dbRow?.status ?? "stopped";
           const isRunning = effectiveStatus === "running";
+          const pendingRestore = (dbRow?.status === "running" && !inMem) || undefined;
           return {
             sessionToken: tok,
             slot,
             status: effectiveStatus,
+            pendingRestore,
             instrumentSymbol: isRunning ? (inMem?.instrumentSymbol ?? dbRow?.instrumentSymbol ?? "") : "",
             instrumentLabel: isRunning ? (inMem?.instrumentLabel ?? dbRow?.instrumentLabel ?? "") : "",
             lastPrice: inMem?.lastPrice ?? dbRow?.lastPrice ?? 0,
