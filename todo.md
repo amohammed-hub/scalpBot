@@ -950,6 +950,14 @@
 - [x] Shadow mode toggle in bot settings/dashboard
 
 ## Bug Fixes — UI/Frontend Issues (July 17)
-- [ ] BUG 1 (P0): Start Bot button not working for Primary Bot and Slot 2 — click starts but reverts to "Start Bot"
-- [ ] BUG 2 (P1): Auth redirect — logged-in users see login page on bookmark/link click
-- [ ] BUG 3 (P2): Dashboard layout reorganization — clean grouping, shadow mode logs visible, mobile-friendly
+- [x] BUG 1 (P0): Start Bot button not working for Primary Bot and Slot 2 — added JWT cookie admin bypass to bot.start + startSecondary
+- [x] BUG 2 (P1): Auth redirect — Login page now checks mobileAuth.me and redirects to /dashboard if already authenticated
+- [ ] BUG 3 (P2): Dashboard 4-tab reorganization
+  - [ ] Tab routing: /dashboard, /dashboard/trades, /dashboard/config, /dashboard/log (URL persists on refresh)
+  - [ ] Sticky top bar: Plan banner (Trial/3mo/6mo/12mo) + Morning Reminder
+  - [x] Sticky sub-bar: Bot status, Token status, Session timer, Mode toggle, Kill Switch
+  - [ ] Tab 1 Command Center: P&L card, Market Context, Slot cards with instrument dropdown, Open Positions, Real Price Chart
+  - [ ] Tab 2 Trade Log: Filter bar, Performance summary, Layer scorecard, Shadow mode comparison, Trade table, Actions
+  - [ ] Tab 3 Configuration: Presets, Risk sliders, Strategy selection, Global settings, Readiness scorecard
+  - [ ] Tab 4 Activity Log: Filter bar, Terminal-style color-coded log (last 200 entries)
+  - [ ] Mobile layout: Bottom nav, floating kill switch, stacked cards

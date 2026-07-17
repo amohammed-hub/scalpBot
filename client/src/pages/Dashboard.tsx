@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { AdminPanel } from "@/components/AdminPanel";
 import { useLocation, Link } from "wouter";
 import QRModal from "@/components/QRModal";
+import CandlestickChart from "@/components/CandlestickChart";
 import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
@@ -184,7 +185,13 @@ function HealthDot({
 
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
+  // ── Tab State (URL-based) ─────────────────────────────────────────────────
+  type DashTab = "command" | "trades" | "config" | "log";
+  const activeTab: DashTab = location.startsWith("/dashboard/trades") ? "trades"
+    : location.startsWith("/dashboard/config") ? "config"
+    : location.startsWith("/dashboard/log") ? "log"
+    : "command";
   const [qrOpen, setQrOpen] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const sessionToken = getSessionToken();
@@ -1071,7 +1078,65 @@ export default function Dashboard() {
             </Badge>
           </div>
         </div>
+        {/* ── Sticky Sub-Bar: Status + Kill Switch ────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-3 mb-3 px-3 py-2 bg-white/[0.03] border border-white/10 rounded-xl text-xs">
+          {/* Bot Status */}
+          <div className="flex items-center gap-1.5">
+            <span className={`w-2 h-2 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
+            <span className={isRunning ? "text-emerald-400 font-medium" : "text-white/40"}>Bot {isRunning ? "Live" : "Stopped"}</span>
+          </div>
+          <div className="w-px h-4 bg-white/10" />
+          {/* Token Status */}
+          <div className="flex items-center gap-1.5">
+            {tokenStatus === "valid" ? (
+              <><ShieldCheck className="w-3 h-3 text-emerald-400" /><span className="text-emerald-400">Token OK</span></>
+            ) : (
+              <><ShieldOff className="w-3 h-3 text-red-400" /><span className="text-red-400">Token {tokenStatus === "short" ? "Short" : "Missing"}</span></>
+            )}
+          </div>
+          <div className="w-px h-4 bg-white/10" />
+          {/* Trading Mode */}
+          <div className="flex items-center gap-1.5">
+            <span className={config.mode === "paper" ? "text-amber-400" : "text-red-400"}>
+              {config.mode === "paper" ? "📝 Paper" : "⚡ Live"}
+            </span>
+          </div>
+          <div className="flex-1" />
+          {/* Kill Switch */}
+          {isRunning && (
+            <button
+              onClick={() => { if (confirm("KILL ALL BOTS? This will stop all running bots immediately.")) { stopMutation.mutate({ sessionToken }); (allBots ?? []).filter((b: any) => b.isRunning && b.slot > 0).forEach((b: any) => stopSecondaryMutation.mutate({ sessionToken, slot: b.slot })); } }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-400 rounded-lg font-bold text-xs transition-all hover:scale-105 active:scale-95"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              KILL ALL
+            </button>
+          )}
+        </div>
+        {/* ── Tab Navigation ──────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-1 mb-4 p-1 bg-white/5 rounded-xl border border-white/10 sticky top-0 z-20">
+          {([
+            { id: "command" as const, label: "Command Center", icon: "🎯", path: "/dashboard" },
+            { id: "trades" as const, label: "Trade Log", icon: "📊", path: "/dashboard/trades" },
+            { id: "config" as const, label: "Configuration", icon: "⚙️", path: "/dashboard/config" },
+            { id: "log" as const, label: "Activity Log", icon: "📜", path: "/dashboard/log" },
+          ]).map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => navigate(tab.path)}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                activeTab === tab.id
+                  ? "bg-teal-500/20 text-teal-400 border border-teal-500/30 shadow-sm"
+                  : "text-white/50 hover:text-white/80 hover:bg-white/5"
+              }`}
+            >
+              <span>{tab.icon}</span>
+              <span className="hidden sm:inline">{tab.label}</span>
+            </button>
+          ))}
+        </div>
 
+        {activeTab === "command" && (<>
         {/* Token warning */}
         {tokenStatus !== "valid" && config.mode === "live" && !showReminder && (
           <div className="mb-4 flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
@@ -1953,20 +2018,19 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Price Chart */}
+          {/* Price Chart — Real Candlestick */}
           <div className="lg:col-span-3 bg-white/5 border border-white/10 rounded-2xl p-5">
-            <div className="text-xs text-white/40 uppercase tracking-wider mb-3">Price Feed — {config.instrumentSymbol}</div>
-            {priceHistory.length < 2 ? (
-              <div className="flex items-center justify-center h-32 text-white/30 text-sm">Start bot to see live price chart</div>
+            <div className="text-xs text-white/40 uppercase tracking-wider mb-3">Live Price — {config.instrumentSymbol} (1m candles)</div>
+            {(liveData?.candles?.length ?? 0) < 2 ? (
+              <div className="flex items-center justify-center h-[200px] text-white/30 text-sm">Start bot to see live candlestick chart</div>
             ) : (
-              <ResponsiveContainer width="100%" height={140}>
-                <LineChart data={priceHistory}>
-                  <XAxis dataKey="time" tick={{ fill: "#ffffff30", fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                  <YAxis domain={["auto", "auto"]} tick={{ fill: "#ffffff30", fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `₹${v}`} width={70} />
-                  <Tooltip contentStyle={{ background: "#1a1f2e", border: "1px solid #ffffff20", borderRadius: 8, color: "#fff", fontSize: 12 }} formatter={(v: number) => [`₹${v.toFixed(2)}`, "Price"]} />
-                  <Line type="monotone" dataKey="price" stroke="#14b8a6" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
+              <CandlestickChart
+                candles={liveData?.candles ?? []}
+                height={200}
+                entryPrice={activeTrade?.entryPrice}
+                slPrice={activeTrade?.currentSl ?? activeTrade?.slPrice}
+                targetPrice={activeTrade?.targetPrice}
+              />
             )}
           </div>
         </div>
@@ -2267,6 +2331,8 @@ export default function Dashboard() {
           </div>
         )}
 
+        </>)}
+        {activeTab === "config" && (<>
         {/* Trading Mode */}
         <div className="flex items-center gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
           <span className="text-xs text-white/50 font-medium">Trading Mode</span>
@@ -2758,6 +2824,9 @@ export default function Dashboard() {
         </div>
         )}
 
+        </>)}
+        {activeTab === "trades" && (<>
+
         {/* ── Layer Scorecard ──────────────────────────────────────────────────── */}
         {meQuery.data?.role === "admin" && layerStats.length > 0 && (
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
@@ -2804,7 +2873,6 @@ export default function Dashboard() {
             </div>
           </div>
         )}
-
         {/* Trade Log */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
           <div className="flex items-center justify-between mb-4">
@@ -3134,6 +3202,8 @@ export default function Dashboard() {
           </div>
         </div>
 
+        </>)}
+        {activeTab === "log" && (<>
         {/* Bot Activity Log */}
         <div className="mt-6 rounded-xl border border-white/10 bg-[oklch(0.14_0.02_240)] overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
@@ -3186,6 +3256,7 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+        </>)}
       </main>
       )}
 

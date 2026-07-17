@@ -20,6 +20,9 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
       <Route path="/dashboard" component={Dashboard} />
+      <Route path="/dashboard/trades" component={Dashboard} />
+      <Route path="/dashboard/config" component={Dashboard} />
+      <Route path="/dashboard/log" component={Dashboard} />
       <Route path="/risk-calculator" component={RiskCalculator} />
       <Route path="/settings" component={Settings} />
       <Route path="/upstox-callback" component={UpstoxCallback} />
