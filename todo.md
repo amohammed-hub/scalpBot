@@ -967,3 +967,10 @@
 - [x] BUG 6: generateSignal() now guards against empty candles array (returns HOLD immediately)
 - [x] BUG 7: Slot cards not visible on mobile — changed grid from grid-cols-1 to grid-cols-3 (always shows all 3 slots side by side)
 - [x] BUG 7b: Slot cards compact on mobile — reduced padding (p-2 on mobile, p-4 on desktop)
+## Slot Card Unification (July 17 PM)
+- [x] RENAME: "Primary" → "Bot 1", "Slot 1" → "Bot 2", "Slot 2" → "Bot 3"
+- [x] ALL SLOT CARDS IDENTICAL: Bot 1 now has Quick Start controls (instrument dropdown, Pick/Scan, Start/Stop, Capital)
+- [x] REMOVED: Start Bot / Stop Bot button from Configuration tab (starting/stopping is ONLY in slot cards)
+- [x] Bot 1 Quick Start calls bot.start, Bot 2/3 calls multiBots.startSecondary
+- [x] Bot 1 Stop button calls bot.stop, Bot 2/3 calls multiBots.stopSecondary
+- [x] Backend audit: confirmed all 3 slots use identical logic (no special privileges for "Primary")
