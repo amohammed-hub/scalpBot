@@ -300,15 +300,62 @@ export default function Dashboard() {
     console.log(`[QuickStart] slot=${slot}, symbol=${qs?.symbol}, capital=${qs?.capital}`);
     toast.info(`Starting Bot ${slot + 1}...`);
     const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
-    // Resolve token: NSE index instruments use NSE_INDEX| prefix (ATM options mode)
-    // MCX instruments use MCX_FO| prefix. Never use NSE_FO| for index instruments.
+    const resolved = resolveInstrument(qs.symbol);
+    if (slot === 0) {
+      console.log(`[QuickStart] Calling bot.start for slot 0, token=${resolved.token}, mode=${config.mode}`);
+      startMutation.mutate({
+        sessionToken,
+        instrumentToken: resolved.token,
+        instrumentSymbol: qs.symbol,
+        instrumentLabel: resolved.label,
+        mode: config.mode,
+        capital: qs.capital,
+        riskPerTradePct: 1.5,
+        maxTradesPerDay: 5,
+        dailyLossLimitPct: 3,
+        stopLossMultiplier: 1.5,
+        targetMultiplier: 2.5,
+        minConfidence: 60,
+        scanIntervalSec: 30,
+        lotSize: resolved.lotSize,
+        isIndexOptions: true,
+        underlyingToken: resolved.token,
+        enabledLayers: config.enabledLayers,
+        partial1Pct: config.partial1Pct,
+        partial2Pct: config.partial2Pct,
+        trailingSlEnabled: config.trailingSlEnabled,
+        trailingSlPct: config.trailingSlPct,
+        averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
+        averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+      });
+    } else {
+      console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
+      startSecondaryMutation.mutate({
+        sessionToken, slot: slot as 1 | 2,
+        instrumentToken: resolved.token,
+        instrumentSymbol: qs.symbol, instrumentLabel: resolved.label,
+        mode: config.mode, capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
+        dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
+        minConfidence: 60, scanIntervalSec: 30,
+        lotSize: resolved.lotSize,
+        isIndexOptions: true,
+        underlyingToken: resolved.token,
+        telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+        enabledLayers: config.enabledLayers,
+        partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
+        trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
+      });
+    }
+  };
+
+  // ── Resolve instrument symbol to token/label/lotSize ──────────────────────────
+  const resolveInstrument = (symbol: string) => {
     const NSE_INDEX_MAP: Record<string, { token: string; label: string; lotSize: number }> = {
       // NSE lot sizes revised Jan 2026: NIFTY 65, BANKNIFTY 30, FINNIFTY 60
       NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → OTM Options (Auto)",   lotSize: 65 },
       BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → OTM Options (Auto)",  lotSize: 30 },
       FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → OTM Options (Auto)",   lotSize: 60 },
     };
-    // Map dropdown values (MCX_CRUDE, MCX_GOLD, etc.) to actual MCX instrument symbols (CRUDEOIL, GOLD, etc.)
     const MCX_SYMBOL_MAP: Record<string, string> = {
       MCX_CRUDE: "CRUDEOIL",
       MCX_GOLD: "GOLD",
@@ -320,59 +367,82 @@ export default function Dashboard() {
       MCX_LEAD: "LEAD",
       MCX_NICKEL: "NICKEL",
     };
-    const mcxSymbol = MCX_SYMBOL_MAP[qs.symbol] ?? qs.symbol;
+    const mcxSymbol = MCX_SYMBOL_MAP[symbol] ?? symbol;
     const mcxInstr = MCX_INSTRUMENTS.find(i => i.symbol === mcxSymbol);
-    const nseInstr = NSE_INDEX_MAP[qs.symbol];
-    const resolvedToken = mcxInstr ? mcxInstr.instrumentToken : nseInstr ? nseInstr.token : `NSE_INDEX|Nifty 50`;
-    const resolvedLabel = mcxInstr ? mcxInstr.label : nseInstr ? nseInstr.label : qs.symbol;
-    const resolvedLotSize = mcxInstr ? (mcxInstr.lotSize ?? 1) : nseInstr ? nseInstr.lotSize : 25;
-    const isIdxOpt = !!(mcxInstr || nseInstr); // always true for all supported instruments
-    if (slot === 0) {
-      // Bot 1 uses bot.start (primary procedure)
-      console.log(`[QuickStart] Calling bot.start for slot 0, token=${resolvedToken}, mode=${config.mode}`);
-      startMutation.mutate({
-        sessionToken,
-        instrumentToken: resolvedToken,
-        instrumentSymbol: qs.symbol,
-        instrumentLabel: resolvedLabel,
-        mode: config.mode,
-        capital: qs.capital,
-        riskPerTradePct: 1.5,
-        maxTradesPerDay: 5,
-        dailyLossLimitPct: 3,
-        stopLossMultiplier: 1.5,
-        targetMultiplier: 2.5,
-        minConfidence: 60,
-        scanIntervalSec: 30,
-        lotSize: resolvedLotSize,
-        isIndexOptions: isIdxOpt,
-        underlyingToken: resolvedToken,
-        enabledLayers: config.enabledLayers,
-        partial1Pct: config.partial1Pct,
-        partial2Pct: config.partial2Pct,
-        trailingSlEnabled: config.trailingSlEnabled,
-        trailingSlPct: config.trailingSlPct,
-        averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
-        averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
-      });
-    } else {
-      // Bot 2/3 uses multiBots.startSecondary
-      console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolvedToken}, mode=${config.mode}`);
-      startSecondaryMutation.mutate({
-        sessionToken, slot: slot as 1 | 2,
-        instrumentToken: resolvedToken,
-        instrumentSymbol: qs.symbol, instrumentLabel: resolvedLabel,
-        mode: config.mode, capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
-        dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
-        minConfidence: 60, scanIntervalSec: 30,
-        lotSize: resolvedLotSize,
-        isIndexOptions: isIdxOpt,
-        underlyingToken: resolvedToken,
-        telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
-        enabledLayers: config.enabledLayers,
-        partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
-        trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
-      });
+    const nseInstr = NSE_INDEX_MAP[symbol];
+    return {
+      token: mcxInstr ? mcxInstr.instrumentToken : nseInstr ? nseInstr.token : `NSE_INDEX|Nifty 50`,
+      label: mcxInstr ? mcxInstr.label : nseInstr ? nseInstr.label : symbol,
+      lotSize: mcxInstr ? (mcxInstr.lotSize ?? 1) : nseInstr ? nseInstr.lotSize : 25,
+    };
+  };
+
+  // ── Instrument Switch (stop → change → restart) ──────────────────────────────
+  const [switchingSlot, setSwitchingSlot] = useState<number | null>(null);
+  const handleInstrumentSwitch = async (slot: number, newSymbol: string, newCapital: number) => {
+    setSwitchingSlot(slot);
+    toast.info(`Switching Bot ${slot + 1} to ${newSymbol}...`);
+    try {
+      // Step 1: Stop the bot
+      if (slot === 0) {
+        await stopMutation.mutateAsync({ sessionToken });
+      } else {
+        await stopSecondaryMutation.mutateAsync({ sessionToken, slot: slot as 1 | 2 });
+      }
+      // Step 2: Wait briefly for cleanup
+      await new Promise(r => setTimeout(r, 1500));
+      // Step 3: Update slotQS and restart with new instrument
+      setSlotQS(s => ({ ...s, [slot]: { symbol: newSymbol, capital: newCapital } }));
+      const resolved = resolveInstrument(newSymbol);
+      const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
+      if (slot === 0) {
+        startMutation.mutate({
+          sessionToken,
+          instrumentToken: resolved.token,
+          instrumentSymbol: newSymbol,
+          instrumentLabel: resolved.label,
+          mode: config.mode,
+          capital: newCapital,
+          riskPerTradePct: 1.5,
+          maxTradesPerDay: 5,
+          dailyLossLimitPct: 3,
+          stopLossMultiplier: 1.5,
+          targetMultiplier: 2.5,
+          minConfidence: 60,
+          scanIntervalSec: 30,
+          lotSize: resolved.lotSize,
+          isIndexOptions: true,
+          underlyingToken: resolved.token,
+          enabledLayers: config.enabledLayers,
+          partial1Pct: config.partial1Pct,
+          partial2Pct: config.partial2Pct,
+          trailingSlEnabled: config.trailingSlEnabled,
+          trailingSlPct: config.trailingSlPct,
+          averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
+          averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+        });
+      } else {
+        startSecondaryMutation.mutate({
+          sessionToken, slot: slot as 1 | 2,
+          instrumentToken: resolved.token,
+          instrumentSymbol: newSymbol, instrumentLabel: resolved.label,
+          mode: config.mode, capital: newCapital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
+          dailyLossLimitPct: 3, stopLossMultiplier: 1.5, targetMultiplier: 2.5,
+          minConfidence: 60, scanIntervalSec: 30,
+          lotSize: resolved.lotSize,
+          isIndexOptions: true,
+          underlyingToken: resolved.token,
+          telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
+          enabledLayers: config.enabledLayers,
+          partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
+          trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
+        });
+      }
+      toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
+    } catch (e: any) {
+      toast.error(`Switch failed: ${e.message}`);
+    } finally {
+      setSwitchingSlot(null);
     }
   };
 
@@ -1678,11 +1748,75 @@ export default function Dashboard() {
 
                 {/* Instrument name */}
                 {isActive ? (
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm font-semibold text-white truncate max-w-[65%]">
-                      {bot.instrumentLabel || "Starting…"}
-                    </div>
-                    <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded">₹{((bot as any).capital ?? config.capital)?.toLocaleString()}</span>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <select
+                      value={(() => {
+                        // Reverse-map current instrument to dropdown value
+                        const sym = (bot as any).instrumentSymbol ?? "";
+                        if (["NIFTY", "BANKNIFTY", "FINNIFTY"].includes(sym)) return sym;
+                        if (sym.startsWith("MCX_")) return sym;
+                        // Try matching by label
+                        const lbl = (bot.instrumentLabel ?? "").toLowerCase();
+                        if (lbl.includes("crude")) return "MCX_CRUDE";
+                        if (lbl.includes("gold")) return "MCX_GOLD";
+                        if (lbl.includes("silver")) return "MCX_SILVER";
+                        if (lbl.includes("natural") || lbl.includes("natgas")) return "MCX_NATGAS";
+                        if (lbl.includes("copper")) return "MCX_COPPER";
+                        if (lbl.includes("banknifty") || lbl.includes("bank")) return "BANKNIFTY";
+                        if (lbl.includes("finnifty") || lbl.includes("fin")) return "FINNIFTY";
+                        if (lbl.includes("nifty")) return "NIFTY";
+                        return "NIFTY";
+                      })()}
+                      onChange={e => {
+                        const newSym = e.target.value;
+                        const cap = (bot as any).capital ?? config.capital ?? 50000;
+                        handleInstrumentSwitch(bot.slot, newSym, cap);
+                      }}
+                      disabled={switchingSlot === bot.slot || !!bot.openTrade}
+                      title={bot.openTrade ? "Close open trade before switching instrument" : "Switch instrument (will stop & restart bot)"}
+                      className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-1.5 py-1 text-white text-[11px] font-semibold focus:outline-none focus:border-white/30 disabled:opacity-50 cursor-pointer appearance-none truncate"
+                    >
+                      <option value="NIFTY">Nifty 50</option>
+                      <option value="BANKNIFTY">BankNifty</option>
+                      <option value="FINNIFTY">FinNifty</option>
+                      <option value="MCX_CRUDE">Crude Oil</option>
+                      <option value="MCX_GOLD">Gold</option>
+                      <option value="MCX_SILVER">Silver</option>
+                      <option value="MCX_NATGAS">Natural Gas</option>
+                      <option value="MCX_COPPER">Copper</option>
+                    </select>
+                    <input
+                      key={`cap-${bot.slot}-${(bot as any).capital ?? config.capital ?? 50000}`}
+                      type="number"
+                      defaultValue={(bot as any).capital ?? config.capital ?? 50000}
+                      onBlur={e => {
+                        const newCap = Number(e.target.value);
+                        const currentCap = (bot as any).capital ?? config.capital ?? 50000;
+                        if (newCap >= 10000 && newCap !== currentCap) {
+                          const sym = (() => {
+                            const s = (bot as any).instrumentSymbol ?? "";
+                            if (["NIFTY", "BANKNIFTY", "FINNIFTY"].includes(s) || s.startsWith("MCX_")) return s;
+                            const lbl = (bot.instrumentLabel ?? "").toLowerCase();
+                            if (lbl.includes("crude")) return "MCX_CRUDE";
+                            if (lbl.includes("gold")) return "MCX_GOLD";
+                            if (lbl.includes("silver")) return "MCX_SILVER";
+                            if (lbl.includes("natural")) return "MCX_NATGAS";
+                            if (lbl.includes("copper")) return "MCX_COPPER";
+                            if (lbl.includes("banknifty")) return "BANKNIFTY";
+                            if (lbl.includes("finnifty")) return "FINNIFTY";
+                            return "NIFTY";
+                          })();
+                          handleInstrumentSwitch(bot.slot, sym, newCap);
+                        }
+                      }}
+                      disabled={switchingSlot === bot.slot || !!bot.openTrade}
+                      min={10000}
+                      step={10000}
+                      className="w-[70px] bg-white/5 border border-white/10 rounded-lg px-1.5 py-1 text-white text-[10px] font-mono focus:outline-none focus:border-white/30 disabled:opacity-50"
+                    />
+                    {switchingSlot === bot.slot && (
+                      <span className="text-[10px] text-amber-300 animate-pulse">⟳</span>
+                    )}
                   </div>
                 ) : (
                   <div className="text-sm font-semibold text-white/40 mb-2">Inactive</div>
@@ -1809,6 +1943,8 @@ export default function Dashboard() {
                             <option value="MCX_CRUDE">Crude Oil</option>
                             <option value="MCX_GOLD">Gold</option>
                             <option value="MCX_SILVER">Silver</option>
+                            <option value="MCX_NATGAS">Natural Gas</option>
+                            <option value="MCX_COPPER">Copper</option>
                           </select>
                           <input type="number" value={slotQS[bot.slot]?.capital ?? 50000}
                             onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}

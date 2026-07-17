@@ -1004,3 +1004,4 @@
 - [x] FIX 4B: Remove "Bot Configuration & Risk Settings" (Instrument+Capital+Start/Stop) from Configuration tab — keep only risk params, strategies, presets, paper costs, shadow mode
 - [x] FIX 1: Bot cards P&L — show live unrealized P&L when in trade ("IN TRADE: BUY CE ₹545 → Current ₹560 = +₹1,500"), "No open position" when idle
 - [x] FIX 2: Live Price Chart — fix TradingView symbols for MCX (CRUDEOIL1!, GOLD1!, SILVER1!) or use Upstox candle data
+- [x] FIX 4A REDO: Add EDITABLE instrument dropdown + capital field to EACH of the 3 bot cards in Command Center. When changed on a running bot, auto stop-switch-restart. Instruments: NIFTY, BANKNIFTY, FINNIFTY, Crude Oil, Gold, Silver, Natural Gas, Copper

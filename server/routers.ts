@@ -2012,6 +2012,7 @@ export const appRouter = router({
             pendingRestore,
             instrumentSymbol: isRunning ? (inMem?.instrumentSymbol ?? dbRow?.instrumentSymbol ?? "") : "",
             instrumentLabel: isRunning ? (inMem?.instrumentLabel ?? dbRow?.instrumentLabel ?? "") : "",
+            capital: inMem?.capital ?? 0,
             lastPrice: inMem?.lastPrice ?? dbRow?.lastPrice ?? 0,
             dailyPnl: inMem?.dailyPnl ?? dbRow?.dailyPnl ?? 0,
             tradesCount: inMem?.tradesCount ?? todayTradeCounts[tok] ?? 0,
