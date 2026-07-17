@@ -290,7 +290,54 @@ export function isCooldownActive(sessionToken: string): { active: boolean; remai
   return { active: true, remainingMs: remaining };
 }
 
-// ── Kill Switch ──────────────────────────────────────────────────────────────
+// ── Same-Direction Loss Streak Guard ───────────────────────────────────────
+// After 2 consecutive losing trades in the SAME direction within 90 minutes,
+// block that direction for 30 minutes. The market is telling us the read is wrong
+// (e.g. repeatedly buying CE dips on a fading rally). Opposite-direction signals
+// remain allowed — that's often exactly the flip that's needed.
+interface DirectionLossStreak {
+  direction: "BUY" | "SELL";
+  losses: number[]; // timestamps of consecutive same-direction losses
+  blockedUntil: number;
+}
+const directionStreaks = new Map<string, DirectionLossStreak>();
+
+export function recordDirectionalLoss(sessionToken: string, direction: "BUY" | "SELL"): void {
+  const now = Date.now();
+  const WINDOW_MS = 90 * 60 * 1000;
+  const BLOCK_MS = 30 * 60 * 1000;
+  const cur = directionStreaks.get(sessionToken);
+  if (!cur || cur.direction !== direction) {
+    directionStreaks.set(sessionToken, { direction, losses: [now], blockedUntil: 0 });
+    return;
+  }
+  cur.losses = cur.losses.filter(t => now - t < WINDOW_MS);
+  cur.losses.push(now);
+  if (cur.losses.length >= 2) {
+    cur.blockedUntil = now + BLOCK_MS;
+  }
+}
+
+export function recordDirectionalWin(sessionToken: string, direction: "BUY" | "SELL"): void {
+  const cur = directionStreaks.get(sessionToken);
+  if (cur && cur.direction === direction) {
+    directionStreaks.delete(sessionToken); // a win resets the streak
+  }
+}
+
+export function isDirectionBlocked(sessionToken: string, direction: "BUY" | "SELL"): { blocked: boolean; remainingMin: number } {
+  const cur = directionStreaks.get(sessionToken);
+  if (!cur || cur.direction !== direction) return { blocked: false, remainingMin: 0 };
+  const remaining = cur.blockedUntil - Date.now();
+  if (remaining <= 0) return { blocked: false, remainingMin: 0 };
+  return { blocked: true, remainingMin: Math.ceil(remaining / 60000) };
+}
+
+export function resetDirectionStreak(sessionToken: string): void {
+  directionStreaks.delete(sessionToken);
+}
+
+// ── Kill Switch ──────────────────────────────────────────────────────────
 export async function executeKillSwitch(
   allBots: BotState[],
   stopBotFn: (sessionToken: string) => void,

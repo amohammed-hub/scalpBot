@@ -5,7 +5,7 @@ import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sen
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, type Candle } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
@@ -1164,6 +1164,9 @@ export const appRouter = router({
           averagingLossThreshold: state.averagingLossThreshold ?? 0.20,
           // Recent rejected signals for dashboard display
           recentRejectedSignals: state.recentRejectedSignals ?? [],
+          // Shadow mode status
+          shadowMode: state.shadowMode ?? false,
+          shadowLogCount: state.shadowLog?.length ?? 0,
         };
       }),
 
@@ -1176,6 +1179,36 @@ export const appRouter = router({
         if (!result.success) throw new Error(result.error ?? "Force average failed");
         return result;
       }),
+
+    // ── Shadow Mode endpoints ─────────────────────────────────────────────────
+    toggleShadow: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        enabled: z.boolean(),
+      }))
+      .mutation(({ input }) => {
+        const result = toggleShadowMode(input.sessionToken, input.enabled);
+        if (!result.success) throw new Error(result.error ?? "Toggle shadow mode failed");
+        return { success: true, enabled: input.enabled };
+      }),
+
+    getShadowSummary: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+      }))
+      .query(({ input }) => {
+        const summary = getShadowSummary(input.sessionToken);
+        return summary;
+      }),
+
+    clearShadowLog: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+      }))
+      .mutation(({ input }) => {
+        return clearShadowLog(input.sessionToken);
+      }),
+
 
     manualExit: publicProcedure
       .input(z.object({

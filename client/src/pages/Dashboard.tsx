@@ -246,7 +246,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
-      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "InstFootprint", "HourlyClose", "BoomingBulls"],
+      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls"],
       partial1Pct: 30,
       partial2Pct: 60,
     };
@@ -2596,14 +2596,14 @@ export default function Dashboard() {
                 <button
                   onClick={() => !isRunning && setConfig(c => ({
                     ...c,
-                    enabledLayers: c.enabledLayers.length === 11
+                    enabledLayers: c.enabledLayers.length === 12
                       ? ["HourlyClose", "BoomingBulls"]
-                      : ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "InstFootprint", "HourlyClose", "BoomingBulls"],
+                      : ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls"],
                   }))}
                   disabled={isRunning}
                   className="text-[10px] text-teal-400 hover:text-teal-300 disabled:opacity-50"
                 >
-                  {config.enabledLayers.length === 11 ? "Only New Strategies" : "Enable All"}
+                  {config.enabledLayers.length === 12 ? "Only New Strategies" : "Enable All"}
                 </button>
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
@@ -2616,6 +2616,7 @@ export default function Dashboard() {
                   { id: "ORB", label: "ORB", on: "bg-lime-500/20 border-lime-500/40 text-lime-400", dot: "bg-lime-400" },
                   { id: "VWAPReversion", label: "VWAP Rev", on: "bg-cyan-500/20 border-cyan-500/40 text-cyan-400", dot: "bg-cyan-400" },
                   { id: "VWAPPullback", label: "VWAP Pull", on: "bg-sky-500/20 border-sky-500/40 text-sky-400", dot: "bg-sky-400" },
+                  { id: "FailedBreakout", label: "Failed BO", on: "bg-orange-500/20 border-orange-500/40 text-orange-400", dot: "bg-orange-400" },
                   { id: "InstFootprint", label: "Institutional", on: "bg-rose-500/20 border-rose-500/40 text-rose-400", dot: "bg-rose-400" },
                 ].map(layer => {
                   const isEnabled = config.enabledLayers.includes(layer.id);

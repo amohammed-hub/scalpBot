@@ -939,3 +939,12 @@
 - [x] Fix: Auto-clear portfolio halt in checkPortfolioDrawdown when aggregate P&L recovers above limit
 - [x] Verified: 130/131 tests pass (1 pre-existing failure unrelated)
 - [x] Push fix to GitHub for Railway auto-deploy
+
+## Signal Engine Audit — P0 (ORB Freshness Gate) + P1 (Direction-Aware Cooldown)
+- [x] P0: ORB freshness gate — only fire within 3 candles of actual breakout, reject if price >0.15% from edge
+- [x] P1: Direction-aware cooldown — 3min hard block + 5min confidence gate after same-direction SL
+- [x] Replay July 17 FinNifty: 09:48 entry PREVENTED, 09:44 entry ALLOWED, signal count 23 (from 341)
+- [x] Shadow mode: old logic executes trades, new logic (P0+P1) logs only
+- [x] Shadow mode log format: timestamp | signal | old_decision | new_decision | difference
+- [ ] EOD summary: how many trades differed, which was right
+- [x] Shadow mode toggle in bot settings/dashboard

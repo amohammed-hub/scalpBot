@@ -288,6 +288,81 @@ function AveragingControls() {
   );
 }
 
+function ShadowModeControls({ sessionToken }: { sessionToken: string }) {
+  const [enabled, setEnabled] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const toggleMutation = trpc.bot.toggleShadow.useMutation({
+    onSuccess: (data) => {
+      setEnabled(data.enabled);
+      toast.success(data.enabled ? "Shadow mode ON — new logic (P0+P1) will log only" : "Shadow mode OFF — normal trading resumed");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const { data: summary, refetch: refetchSummary } = trpc.bot.getShadowSummary.useQuery(
+    { sessionToken },
+    { enabled: enabled, refetchInterval: enabled ? 30000 : false }
+  );
+  const clearMutation = trpc.bot.clearShadowLog.useMutation({
+    onSuccess: () => { refetchSummary(); toast.success("Shadow log cleared"); },
+  });
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-white font-medium">Shadow Mode (P0+P1 Test)</p>
+          <p className="text-xs text-white/40">New logic logs only, old logic trades. Compare at EOD.</p>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" className="sr-only peer"
+            checked={enabled}
+            onChange={(e) => toggleMutation.mutate({ sessionToken, enabled: e.target.checked })}
+          />
+          <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+        </label>
+      </div>
+      {enabled && summary && (
+        <div className="mt-3 bg-black/30 rounded-lg p-3 space-y-2">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div>
+              <p className="text-lg font-bold text-green-400">{summary.agreements}</p>
+              <p className="text-[10px] text-white/40">Agree</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold text-red-400">{summary.disagreements}</p>
+              <p className="text-[10px] text-white/40">Disagree</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold text-amber-400">{summary.newBlockedOldAllowed}</p>
+              <p className="text-[10px] text-white/40">P0/P1 Saved</p>
+            </div>
+          </div>
+          <p className="text-[10px] text-white/30 text-center">{summary.totalSignals} total signals | {summary.date}</p>
+          <div className="flex gap-2">
+            <button onClick={() => setShowLog(!showLog)} className="flex-1 text-xs bg-white/5 hover:bg-white/10 text-white/70 py-1 rounded transition-colors">
+              {showLog ? "Hide Log" : "Show Log"}
+            </button>
+            <button onClick={() => clearMutation.mutate({ sessionToken })} className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-400 px-3 py-1 rounded transition-colors">
+              Clear
+            </button>
+          </div>
+          {showLog && summary.entries.length > 0 && (
+            <div className="max-h-48 overflow-y-auto space-y-1 mt-2">
+              {summary.entries.slice(-20).reverse().map((entry, i) => (
+                <div key={i} className={`text-[10px] p-1.5 rounded ${entry.difference === "SAME" ? "bg-green-500/10 text-green-300" : "bg-red-500/10 text-red-300"}`}>
+                  <span className="text-white/50">{new Date(entry.timestamp).toLocaleTimeString("en-IN", { hour12: false })}</span>
+                  {" "}{entry.signal} | Old: {entry.oldDecision} | New: {entry.newDecision}
+                  {entry.difference !== "SAME" && <span className="text-amber-400"> [{entry.difference}]</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function AutoRefreshSection({ sessionToken }: { sessionToken: string }) {
   const { data: status, refetch } = trpc.autoRefresh.status.useQuery({ sessionToken });
   const enableMutation = trpc.autoRefresh.enable.useMutation({
@@ -1200,6 +1275,20 @@ export default function Settings() {
           </p>
           <div className="space-y-4">
             <AveragingControls />
+          </div>
+        </div>
+        {/* ── Shadow Mode (Signal Audit) ────────────────────────────────── */}
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-amber-500/20 rounded-2xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Eye className="w-4 h-4 text-amber-400" />
+            <h2 className="text-white font-semibold text-sm">Shadow Mode — Signal Audit</h2>
+            <span className="ml-auto text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">BETA</span>
+          </div>
+          <p className="text-white/50 text-xs mb-4 leading-relaxed">
+            Runs new signal logic (P0 ORB Freshness Gate + P1 Direction-Aware Cooldown) in parallel without executing trades. Old logic continues to trade normally. After 1 full trading day, compare results to validate improvements before going live.
+          </p>
+          <div className="space-y-4">
+            <ShadowModeControls sessionToken={sessionToken} />
           </div>
         </div>
         {/* ── Cross-Device Session Sharing ──────────────────────────────── */}

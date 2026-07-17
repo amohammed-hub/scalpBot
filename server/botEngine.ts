@@ -22,6 +22,7 @@ import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetric
 import {
   getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
   recordTradeClose, isCooldownActive, applyPaperCosts, getPaperCostConfig, resetDailyState,
+  recordDirectionalLoss, recordDirectionalWin, isDirectionBlocked, resetDirectionStreak,
 } from "./riskManager";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -136,6 +137,10 @@ export interface BotState {
   lastSlHitAt: number | null;
   lastSlDirection: "BUY" | "SELL" | null;
   reEntryCandles: number;
+  // P1: Direction-aware cooldown — after SL, track direction to penalize same-direction re-entry
+  lastSlExitDirection: "BUY" | "SELL" | null;
+  lastSlExitAt: number | null;
+  consecutiveSameDirectionSLs: number;
   isPowerHourMode: boolean;
   isMCXEveningMode: boolean;
   isMCXLateSessionMode: boolean;
@@ -191,6 +196,30 @@ export interface BotState {
     rejectedAt: number; // unix ms
     rejectReason: string;
   }>;
+  // Shadow mode: new logic (P0+P1) logs only, old logic executes trades
+  shadowMode?: boolean;
+  shadowLog?: ShadowLogEntry[];
+}
+
+// Shadow mode log entry
+export interface ShadowLogEntry {
+  timestamp: number; // unix ms
+  signal: string; // e.g. "BUY 83% [ORB]"
+  oldDecision: string; // what old logic did: "ENTER" | "HOLD" | "BLOCKED_BY_COOLDOWN"
+  newDecision: string; // what new logic would do: "ENTER" | "HOLD" | "BLOCKED_BY_P0" | "BLOCKED_BY_P1"
+  difference: string; // "SAME" | description of difference
+  price: number;
+}
+
+// Shadow mode EOD summary
+export interface ShadowSummary {
+  date: string;
+  totalSignals: number;
+  agreements: number;
+  disagreements: number;
+  newBlockedOldAllowed: number; // new logic would have blocked, old allowed (potential saves)
+  newAllowedOldBlocked: number; // new logic would have allowed, old blocked (potential misses)
+  entries: ShadowLogEntry[];
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
@@ -495,8 +524,8 @@ export function calcORBSignal(
   candles: Candle[],
   orbMinutes = 15,
   volThreshold = 1.5,
-): { direction: "BUY" | "SELL" | "HOLD"; orbHigh: number; orbLow: number; breakoutPct: number } {
-  if (candles.length < orbMinutes + 2) return { direction: "HOLD", orbHigh: 0, orbLow: 0, breakoutPct: 0 };
+): { direction: "BUY" | "SELL" | "HOLD"; orbHigh: number; orbLow: number; breakoutPct: number; breakoutCandleIndex: number } {
+  if (candles.length < orbMinutes + 2) return { direction: "HOLD", orbHigh: 0, orbLow: 0, breakoutPct: 0, breakoutCandleIndex: -1 };
   const orbCandles = candles.slice(0, orbMinutes);
   const orbHigh = Math.max(...orbCandles.map(c => c.high));
   const orbLow  = Math.min(...orbCandles.map(c => c.low));
@@ -506,13 +535,27 @@ export function calcORBSignal(
   // Index instruments have volume=0 — bypass volume check
   const isIndex = avgVol === 0 && lastVol === 0;
   const volRatio = isIndex ? volThreshold : (avgVol > 0 ? lastVol / avgVol : 1);
+
+  // Find the MOST RECENT breakout candle — last time price crossed FROM below to above (BUY)
+  // or FROM above to below (SELL). This captures re-tests, not just the first cross.
+  let breakoutCandleIndex = -1;
   if (price > orbHigh && volRatio >= volThreshold) {
-    return { direction: "BUY",  orbHigh, orbLow, breakoutPct: (price - orbHigh) / orbHigh };
+    // Find the LAST candle that was below/at orbHigh — the next candle is the breakout
+    for (let i = candles.length - 2; i >= orbMinutes; i--) {
+      if (candles[i].close <= orbHigh) { breakoutCandleIndex = i + 1; break; }
+    }
+    if (breakoutCandleIndex === -1) breakoutCandleIndex = orbMinutes; // never dipped back
+    return { direction: "BUY",  orbHigh, orbLow, breakoutPct: (price - orbHigh) / orbHigh, breakoutCandleIndex };
   }
   if (price < orbLow && volRatio >= volThreshold) {
-    return { direction: "SELL", orbHigh, orbLow, breakoutPct: (orbLow - price) / orbLow };
+    // Find the LAST candle that was above/at orbLow — the next candle is the breakout
+    for (let i = candles.length - 2; i >= orbMinutes; i--) {
+      if (candles[i].close >= orbLow) { breakoutCandleIndex = i + 1; break; }
+    }
+    if (breakoutCandleIndex === -1) breakoutCandleIndex = orbMinutes; // never recovered
+    return { direction: "SELL", orbHigh, orbLow, breakoutPct: (orbLow - price) / orbLow, breakoutCandleIndex };
   }
-  return { direction: "HOLD", orbHigh, orbLow, breakoutPct: 0 };
+  return { direction: "HOLD", orbHigh, orbLow, breakoutPct: 0, breakoutCandleIndex: -1 };
 }
 
 /**
@@ -646,6 +689,98 @@ function getTimeOfDayMultiplier(istMin: number): { multiplier: number; label: st
   return { multiplier: 1.0, label: "Normal", skip: false };
 }
 
+/**
+ * Failed Breakout / Range-Top Rejection Detection (bearish) and mirror (bullish)
+ * Classic trend-change setup: price breaks above the recent N-candle high,
+ * fails to hold, and closes back below the breakout level within a few candles.
+ * This traps breakout buyers and typically leads to a sharp reversal.
+ * Critically, this fires even when price is still ABOVE VWAP — catching the
+ * turn early on rally-then-fade days where VWAP-gated SELL layers stay silent.
+ */
+export function detectFailedBreakout(
+  candles: Candle[],
+  lookback = 30,
+): { detected: boolean; direction: "BUY" | "SELL" | "HOLD"; level: number; reason: string } {
+  if (candles.length < lookback + 5) return { detected: false, direction: "HOLD", level: 0, reason: "" };
+  const recent = candles.slice(-5);            // last 5 candles = breakout + failure window
+  const prior  = candles.slice(-(lookback + 5), -5); // range before the breakout attempt
+  const priorHigh = Math.max(...prior.map(c => c.high));
+  const priorLow  = Math.min(...prior.map(c => c.low));
+  const last = recent[recent.length - 1];
+
+  // Bearish failed breakout: some candle in the window poked above priorHigh,
+  // but the last candle closed back below priorHigh AND is a red candle.
+  const pokedAbove = recent.slice(0, -1).some(c => c.high > priorHigh * 1.0003);
+  const failedDown = last.close < priorHigh * 0.9995 && last.close < last.open;
+  if (pokedAbove && failedDown) {
+    return { detected: true, direction: "SELL", level: priorHigh, reason: `Failed breakout above ${priorHigh.toFixed(1)} — rejection, trapped buyers` };
+  }
+  // Bullish failed breakdown (mirror): poked below priorLow, closed back above.
+  const pokedBelow = recent.slice(0, -1).some(c => c.low < priorLow * 0.9997);
+  const failedUp = last.close > priorLow * 1.0005 && last.close > last.open;
+  if (pokedBelow && failedUp) {
+    return { detected: true, direction: "BUY", level: priorLow, reason: `Failed breakdown below ${priorLow.toFixed(1)} — rejection, trapped sellers` };
+  }
+  return { detected: false, direction: "HOLD", level: 0, reason: "" };
+}
+
+/**
+ * Uptrend Exhaustion Detection — filters buy-the-dip signals on fading rallies.
+ * Returns true when the rally is showing exhaustion:
+ *  - The most recent swing high is LOWER than the previous swing high (lower high), OR
+ *  - Price has retraced more than 50% of the last visible up-leg, OR
+ *  - RSI has fallen more than 15 points from its recent peak (momentum bleed).
+ * Used to veto VWAP-pullback / dip-buy entries after a range-top rejection.
+ */
+export function detectUptrendExhaustion(candles: Candle[]): { exhausted: boolean; reason: string } {
+  if (candles.length < 30) return { exhausted: false, reason: "" };
+  const closes = candles.map(c => c.close);
+  const highs = candles.map(c => c.high);
+  const n = candles.length;
+
+  // Find swing highs: local maxima with 3 candles on each side
+  const swings: { idx: number; high: number }[] = [];
+  for (let i = 3; i < n - 3; i++) {
+    const h = highs[i];
+    if (h >= Math.max(...highs.slice(i - 3, i)) && h >= Math.max(...highs.slice(i + 1, i + 4))) {
+      swings.push({ idx: i, high: h });
+    }
+  }
+  if (swings.length >= 2) {
+    const lastSwing = swings[swings.length - 1];
+    const prevSwing = swings[swings.length - 2];
+    // Lower high within the last ~25 candles = rally rolling over
+    if (lastSwing.high < prevSwing.high * 0.9995 && n - lastSwing.idx <= 25) {
+      return { exhausted: true, reason: `Lower high ${lastSwing.high.toFixed(1)} < ${prevSwing.high.toFixed(1)}` };
+    }
+  }
+
+  // Retracement depth: from the day-window high, how much of the up-leg is given back?
+  const windowHigh = Math.max(...highs.slice(-40));
+  const windowLowBeforeHigh = Math.min(...closes.slice(-40, -5));
+  const price = closes[n - 1];
+  const upLeg = windowHigh - windowLowBeforeHigh;
+  if (upLeg > 0) {
+    const retraced = (windowHigh - price) / upLeg;
+    if (retraced > 0.5) {
+      return { exhausted: true, reason: `Retraced ${(retraced * 100).toFixed(0)}% of up-leg from ${windowHigh.toFixed(1)}` };
+    }
+  }
+
+  // RSI momentum bleed: RSI peak in last 30 candles vs now
+  let rsiPeak = 0;
+  for (let i = Math.max(15, n - 30); i <= n; i++) {
+    const r = calcRSI(closes.slice(0, i), 14);
+    if (r > rsiPeak) rsiPeak = r;
+  }
+  const rsiNow = calcRSI(closes, 14);
+  if (rsiPeak >= 60 && rsiPeak - rsiNow > 15) {
+    return { exhausted: true, reason: `RSI bled ${rsiPeak.toFixed(0)}→${rsiNow.toFixed(0)}` };
+  }
+
+  return { exhausted: false, reason: "" };
+}
+
 // ── Main signal generator (5-layer) ──────────────────────────────────────────
 export function generateSignal(
   candles: Candle[],
@@ -656,6 +791,7 @@ export function generateSignal(
   prevDayHigh = 0,
   prevDayLow = 0,
   prevDayClose = 0,
+  skipOrbFreshnessGate = false, // Shadow mode: skip P0 ORB freshness gate to simulate old logic
 ): Signal {
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
@@ -725,12 +861,18 @@ export function generateSignal(
   const breakoutUpPct = (lastCandle.close - highestHigh) / highestHigh;
   const breakoutDnPct = (lowestLow - lastCandle.close) / lowestLow;
 
-  // Strict 5m alignment: BUY only when 5m is bullish or neutral-with-bullish-lean; SELL only when 5m is bearish or neutral-with-bearish-lean
-  // For breakout layer we require strict alignment (bullish for BUY, bearish for SELL)
-  const allow5mBuy  = candles5m.length < 5 || trend5m === "bullish" || trend5m === "neutral";
-  const allow5mSell = candles5m.length < 5 || trend5m === "bearish" || trend5m === "neutral";
-  const strict5mBuy  = candles5m.length < 5 || trend5m === "bullish";
-  const strict5mSell = candles5m.length < 5 || trend5m === "bearish";
+  // ── FIX #1: Soft bias instead of hard gate ──────────────────────────────────
+  // BEFORE: allow5mBuy/Sell was a boolean that BLOCKED signals entirely when 5m trend disagreed.
+  // AFTER: All signals are ALLOWED through, but counter-trend signals receive a confidence penalty.
+  // This ensures strong counter-trend signals (e.g., gap-up fade) can still fire with reduced confidence.
+  const against5mPenalty = 0.15; // 15% confidence reduction for counter-trend trades
+  const allow5mBuy  = true; // Never hard-block — penalty applied post-generation
+  const allow5mSell = true; // Never hard-block — penalty applied post-generation
+  const strict5mBuy  = true; // Never hard-block — penalty applied post-generation
+  const strict5mSell = true; // Never hard-block — penalty applied post-generation
+  // Calculate per-direction penalty based on 5m trend disagreement
+  const buyPenalty  = (candles5m.length >= 5 && trend5m === "bearish") ? against5mPenalty : 0;
+  const sellPenalty = (candles5m.length >= 5 && trend5m === "bullish") ? against5mPenalty : 0;
 
   if (breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi > 45 && rsi < 80 && strict5mBuy) {
     direction = "BUY";
@@ -857,14 +999,66 @@ export function generateSignal(
     const orbMinRangeWidth = price * 0.002; // 0.2% minimum range width
     const orb = calcORBSignal(candles, 15, 2.0);
     const orbRangeWidth = orb.orbHigh - orb.orbLow;
-    if (orb.direction !== "HOLD" && orbRangeWidth >= orbMinRangeWidth) {
-      const regime = classifyMarketRegime(candles);
-      // ORB works best in trending and weak-trend regimes, not in ranging/high-vol
-      if (regime.regime !== "ranging" && regime.regime !== "high_vol") {
-        direction = orb.direction;
-        confidence = Math.min(0.92, 0.72 + orb.breakoutPct * 500);
-        reason = `[ORB] ${orb.direction === "BUY" ? "Above" : "Below"} 15-min range | ${(orb.breakoutPct * 100).toFixed(3)}% | ${regime.label} | 5m:${trend5m}`;
-        layer = "ORB";
+   if (orb.direction !== "HOLD" && orbRangeWidth >= orbMinRangeWidth) {
+      // ── ORB Freshness Gate ──────────────────────────────────────────────────
+      // Shadow mode bypass: when skipOrbFreshnessGate=true, skip freshness check (old behavior)
+      if (skipOrbFreshnessGate) {
+        const regime = classifyMarketRegime(candles);
+        if (regime.regime !== "ranging" && regime.regime !== "high_vol") {
+          direction = orb.direction;
+          confidence = Math.min(0.92, 0.72 + orb.breakoutPct * 500);
+          reason = `[ORB] ${orb.direction === "BUY" ? "Above" : "Below"} 15-min range | ${(orb.breakoutPct * 100).toFixed(3)}% | ${regime.label} | 5m:${trend5m} | LEGACY(no freshness gate)`;
+          layer = "ORB";
+        }
+      } else {
+      // Rule 1: Only fire within 3 candles of the ACTUAL breakout candle
+      // Rule 2: After 3 candles, require price within 0.1% of breakout level
+      // Rule 3: If price has already moved 40+ pts from ORB edge, it's CHASING — reject
+      const currentCandleIdx = candles.length - 1;
+      // The engine needs ~20 candles minimum to generate signals, so breakouts
+      // before candle 20 should not count as "stale" — the engine couldn't have acted earlier.
+      const MIN_ENGINE_CANDLES = 20;
+      const effectiveBreakoutStart = orb.breakoutCandleIndex >= 0
+        ? Math.max(orb.breakoutCandleIndex, MIN_ENGINE_CANDLES)
+        : -1;
+      const candlesSinceBreakout = effectiveBreakoutStart >= 0
+        ? currentCandleIdx - effectiveBreakoutStart
+        : 999; // no breakout found = stale
+
+      const orbEdge = orb.direction === "BUY" ? orb.orbHigh : orb.orbLow;
+      const distFromEdge = Math.abs(price - orbEdge);
+      const distPct = distFromEdge / orbEdge; // distance as percentage
+
+      // Determine freshness window: initial breakout gets 10 candles (engine couldn't act earlier),
+      // re-tests (price dipped back and crossed again) get strict 3-candle window
+      const isInitialBreakout = orb.breakoutCandleIndex <= MIN_ENGINE_CANDLES;
+      const freshnessWindow = isInitialBreakout ? 10 : 3;
+
+      let orbFresh = false;
+      let orbRejectReason = "";
+
+      if (candlesSinceBreakout <= freshnessWindow) {
+        // Within freshness window — fresh, but still reject if chasing
+        if (distPct <= 0.0015) {
+          orbFresh = true;
+        } else {
+          orbRejectReason = `chasing(${distFromEdge.toFixed(1)}pts / ${(distPct*100).toFixed(3)}% from ORB edge, even within 3-candle window)`;
+        }
+      } else {
+        // After freshness window — ORB is STALE, do not fire regardless of proximity
+        orbRejectReason = `stale(${candlesSinceBreakout} candles since breakout, window=${freshnessWindow})`;
+      }
+
+      if (orbFresh) {
+        const regime = classifyMarketRegime(candles);
+        // ORB works best in trending and weak-trend regimes, not in ranging/high-vol
+        if (regime.regime !== "ranging" && regime.regime !== "high_vol") {
+          direction = orb.direction;
+          confidence = Math.min(0.92, 0.72 + orb.breakoutPct * 500);
+          reason = `[ORB] ${orb.direction === "BUY" ? "Above" : "Below"} 15-min range | ${(orb.breakoutPct * 100).toFixed(3)}% | ${regime.label} | 5m:${trend5m} | fresh(${candlesSinceBreakout})`;
+          layer = "ORB";
+        }
+      }
       }
     }
   }
@@ -900,18 +1094,46 @@ export function generateSignal(
     }
   }
 
+  // ── Layer 8.5: Failed Breakout / Range Rejection (trend-change detector) ─────
+  // Fires when price breaks a recent extreme, fails, and closes back inside the range.
+  // Deliberately NOT gated on price-vs-VWAP: on rally-then-fade days VWAP stays below
+  // price all afternoon, which previously made SELL signals impossible (all-CE bias).
+  if (direction === "HOLD" && candles.length >= 35) {
+    const fb = detectFailedBreakout(candles, 30);
+    if (fb.detected && fb.direction !== "HOLD") {
+      if ((fb.direction === "BUY" && allow5mBuy) || (fb.direction === "SELL" && allow5mSell)) {
+        // Confirmation: RSI must have turned in the signal direction (avoid catching one-candle noise)
+        const rsiOkFb = fb.direction === "SELL" ? rsi < 60 : rsi > 40;
+        if (rsiOkFb) {
+          direction = fb.direction;
+          confidence = 0.74;
+          reason = `[FailedBreakout] ${fb.reason} | RSI(${rsi.toFixed(0)}) | 5m:${trend5m}`;
+          layer = "FailedBreakout";
+        }
+      }
+    }
+  }
+
   // ── Layer 9: VWAP Pullback (Highest win-rate Indian scalping setup) ──────────
   // Source: tradejini.com — VWAP Pullback Scalping Strategy
   // Price was trending above/below VWAP, pulls back to VWAP, forms reversal candle
   // This is the #1 setup used by professional Indian options scalpers
+  // EXHAUSTION VETO: skip BUY pullbacks when the rally shows exhaustion (lower highs,
+  // deep retracement, or RSI bleed) — prevents buying every dip of a failing rally.
   if (direction === "HOLD" && candles.length >= 10) {
     const pullback = detectVWAPPullback(candles, vwap);
     if (pullback.detected && pullback.direction !== "HOLD") {
       if ((pullback.direction === "BUY" && allow5mBuy) || (pullback.direction === "SELL" && allow5mSell)) {
-        direction = pullback.direction;
-        confidence = Math.min(0.91, 0.68 + pullback.strength * 0.15);
-        reason = `[VWAPPullback] Price returned to VWAP | ${pullback.direction} reversal candle | 5m:${trend5m}`;
-        layer = "VWAPPullback";
+        const exhaustion = pullback.direction === "BUY" ? detectUptrendExhaustion(candles) : { exhausted: false, reason: "" };
+        if (exhaustion.exhausted) {
+          // Rally is rolling over — do not buy this dip; log via reason passthrough
+          reason = `[VWAPPullback] BUY vetoed — uptrend exhaustion: ${exhaustion.reason}`;
+        } else {
+          direction = pullback.direction;
+          confidence = Math.min(0.91, 0.68 + pullback.strength * 0.15);
+          reason = `[VWAPPullback] Price returned to VWAP | ${pullback.direction} reversal candle | 5m:${trend5m}`;
+          layer = "VWAPPullback";
+        }
       }
     }
   }
@@ -1058,8 +1280,20 @@ export function generateSignal(
           reason: `2-candle confirmation failed — waiting for consecutive ${direction === "BUY" ? "bullish" : "bearish"} candles | ${reason}`,
           layer: "None",
         };
-      }
     }
+    }
+  }
+
+  // ── Apply 5m trend soft bias penalty (Fix #1) ──────────────────────────────
+  // Reduce confidence for counter-trend signals instead of blocking them entirely.
+  // A strong signal (0.75) against 5m trend becomes 0.60 — still above minConf (0.55).
+  // A weak signal (0.58) against 5m trend becomes 0.43 — filtered out by minConf.
+  if (direction === "BUY" && buyPenalty > 0) {
+    reason += ` | 5m-penalty:-${(buyPenalty * 100).toFixed(0)}%`;
+    confidence -= buyPenalty;
+  } else if (direction === "SELL" && sellPenalty > 0) {
+    reason += ` | 5m-penalty:-${(sellPenalty * 100).toFixed(0)}%`;
+    confidence -= sellPenalty;
   }
 
   if (direction === "HOLD" || confidence < minConf) {
@@ -2211,6 +2445,7 @@ async function tick(
           state.dailyPnl += pnl;
         }
         state.openTrade = null;
+        if (pnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
         await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
         emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
         console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
@@ -2245,6 +2480,7 @@ async function tick(
     state.status = "running"; // un-pause if paused from previous day limits
     state.lastError = null;
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
+    resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
     emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
   }
   state.lastTradingDay = todayStr;
@@ -2427,6 +2663,7 @@ async function tick(
     state.openTrade = null;
     recordTradeClose(state.sessionToken, state.scanIntervalSec);
     const sqTotalPnl = pnl + trade.bookedPnl;
+    if (sqTotalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
     await onTradeClose(trade.dbId, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
     emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${sqTotalPnl >= 0 ? "+" : ""}₹${sqTotalPnl.toFixed(0)}`, { price: effectivePrice, pnl: sqTotalPnl });
@@ -2473,6 +2710,7 @@ async function tick(
         }
         state.openTrade = null;
         recordTradeClose(state.sessionToken, state.scanIntervalSec);
+        if (pnl + trade.bookedPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
         await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
         console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
         return;
@@ -2831,6 +3069,14 @@ async function tick(
         state.lastSlHitAt = Date.now();
         state.lastSlDirection = trade.direction;
         state.reEntryCandles = 0;
+        // P1: Direction-aware cooldown tracking
+        if (state.lastSlExitDirection === trade.direction) {
+          state.consecutiveSameDirectionSLs += 1;
+        } else {
+          state.consecutiveSameDirectionSLs = 1;
+        }
+        state.lastSlExitDirection = trade.direction;
+        state.lastSlExitAt = Date.now();
       }
       // If bookedPnl was already added to dailyPnl during partial booking in THIS session,
       // only add remainPnl. Otherwise (restart case), add totalPnl (includes bookedPnl).
@@ -2841,6 +3087,7 @@ async function tick(
       }
       state.openTrade = null;
       recordTradeClose(state.sessionToken, state.scanIntervalSec);
+      if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
       await onTradeClose(trade.dbId, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
       console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
       emitActivity(state.sessionToken, "trade_close", `${exitReason} ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)} | Day: ₹${state.dailyPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
@@ -2952,6 +3199,73 @@ async function tick(
     signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
   }
 
+  // ── Shadow Mode: compare old logic vs new logic ───────────────────────────
+  // When shadowMode=true: OLD logic (no P0, no P1) executes trades.
+  // NEW logic (P0+P1) only LOGS decisions for comparison.
+  if (state.shadowMode && !inPowerHour && !inMCXEvening && !inMCXLateSession && !inHeroZeroWindow) {
+    const newSignal = signal; // current signal already has P0 ORB freshness gate
+    // Generate OLD signal: same params but skip ORB freshness gate
+    const oldSignal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, true);
+
+    // Determine what NEW logic would decide (including P1 cooldown simulation)
+    let newDecision = newSignal.direction === "HOLD" ? "HOLD" : "ENTER";
+    if (newSignal.direction !== "HOLD" && state.lastSlExitAt && state.lastSlExitDirection) {
+      const elapsedSinceSl = Date.now() - state.lastSlExitAt;
+      const matchesSL = newSignal.direction === state.lastSlExitDirection;
+      if (matchesSL) {
+        if (state.consecutiveSameDirectionSLs >= 2 && elapsedSinceSl < 600_000) {
+          newDecision = "BLOCKED_BY_P1(consecutive_SLs)";
+        } else if (elapsedSinceSl < 180_000) {
+          newDecision = "BLOCKED_BY_P1(3min_cooldown)";
+        } else if (elapsedSinceSl < 300_000 && newSignal.confidence < 0.75) {
+          newDecision = "BLOCKED_BY_P1(conf<75%)";
+        }
+      }
+    }
+    // Check if P0 blocked the new signal (new=HOLD but old=non-HOLD means P0 blocked it)
+    if (newSignal.direction === "HOLD" && oldSignal.direction !== "HOLD") {
+      newDecision = "BLOCKED_BY_P0(ORB_stale)";
+    }
+
+    // OLD decision: no P1 cooldown, no P0 gate — just whether signal fires
+    const oldDecision = oldSignal.direction === "HOLD" ? "HOLD" : "ENTER";
+
+    // Only log when at least one side has a non-HOLD signal (skip pure HOLD/HOLD)
+    if (oldDecision !== "HOLD" || newDecision !== "HOLD") {
+      const signalDesc = oldSignal.direction !== "HOLD"
+        ? `${oldSignal.direction} ${(oldSignal.confidence * 100).toFixed(0)}% [${oldSignal.layer}]`
+        : newSignal.direction !== "HOLD"
+        ? `${newSignal.direction} ${(newSignal.confidence * 100).toFixed(0)}% [${newSignal.layer}]`
+        : "HOLD";
+      const difference = oldDecision === newDecision ? "SAME" :
+        newDecision.startsWith("BLOCKED") ? `NEW_BLOCKED: ${newDecision}` :
+        oldDecision === "HOLD" && newDecision === "ENTER" ? "NEW_ALLOWED_OLD_BLOCKED" :
+        `OLD=${oldDecision} vs NEW=${newDecision}`;
+
+      if (!state.shadowLog) state.shadowLog = [];
+      state.shadowLog.push({
+        timestamp: Date.now(),
+        signal: signalDesc,
+        oldDecision,
+        newDecision,
+        difference,
+        price,
+      });
+      // Ring buffer: keep last 200 entries
+      if (state.shadowLog.length > 200) {
+        state.shadowLog = state.shadowLog.slice(-200);
+      }
+
+      // Emit activity log for disagreements only
+      if (difference !== "SAME") {
+        emitActivity(state.sessionToken, "signal", `👁 SHADOW: ${signalDesc} | Old: ${oldDecision} | New: ${newDecision} | ${difference}`);
+      }
+    }
+
+    // In shadow mode: USE THE OLD SIGNAL for actual trading (old logic trades, new logic logs)
+    signal = oldSignal;
+  }
+
   // ── Heartbeat: emit periodic activity so user knows bot is alive ──────────
   state.tickCount = (state.tickCount ?? 0) + 1;
   const heartbeatIntervalMs = 5 * 60 * 1000; // 5 minutes
@@ -2980,6 +3294,44 @@ async function tick(
   }
   if (signal.direction === "HOLD") return; // confidence already checked inside generateSignal (tod multiplier applied there)
 
+  // ── P1: Direction-Aware Cooldown ─────────────────────────────────────────────
+  // After SL, penalize same-direction signals:
+  // - Within 3 minutes: BLOCK same direction entirely (market proved you wrong)
+  // - 3-5 minutes: require 75% confidence for same direction (higher bar)
+  // - After 2+ consecutive same-direction SLs: BLOCK that direction for 10 minutes
+  if (state.lastSlExitAt && state.lastSlExitDirection) {
+    const elapsedSinceSl = Date.now() - state.lastSlExitAt;
+    const signalMatchesSLDirection = signal.direction === state.lastSlExitDirection;
+
+    if (signalMatchesSLDirection) {
+      // 2+ consecutive SLs in same direction → block for 10 minutes
+      if (state.consecutiveSameDirectionSLs >= 2 && elapsedSinceSl < 600_000) {
+        const remainMin = Math.ceil((600_000 - elapsedSinceSl) / 60000);
+        emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked — ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs (${remainMin}min cooldown remaining)`);
+        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Direction cooldown: ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs`);
+        return;
+      }
+      // Within 3 minutes of SL → block same direction
+      if (elapsedSinceSl < 180_000) {
+        const remainSec = Math.ceil((180_000 - elapsedSinceSl) / 1000);
+        emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked — same direction as recent SL (${remainSec}s cooldown)`);
+        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Same-direction cooldown (${remainSec}s remaining)`);
+        return;
+      }
+      // 3-5 minutes: require higher confidence (75%)
+      if (elapsedSinceSl < 300_000 && signal.confidence < 0.75) {
+        emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} needs ≥75% conf after SL (got ${(signal.confidence*100).toFixed(0)}%)`);
+        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Post-SL confidence gate: needs 75%, got ${(signal.confidence*100).toFixed(0)}%`);
+        return;
+      }
+    } else {
+      // Opposite direction signal after SL — this is GOOD (market flipped), clear the cooldown
+      state.lastSlExitDirection = null;
+      state.lastSlExitAt = null;
+      state.consecutiveSameDirectionSLs = 0;
+    }
+  }
+
   // ── Layer filter: skip signals from disabled layers ─────────────────────────
   // Time-window strategies (PowerHour, MCXEvening, MCXLateSession, HeroZero) bypass this filter
   // because they are activated by TIME, not user selection. The filter only applies to generic signal layers.
@@ -2993,6 +3345,17 @@ async function tick(
   }
 
   // ── HourlyClose one-shot guard: only fire once per day ─────────────────────
+  // ── Same-direction loss-streak guard: block direction after 2 consecutive losses ─
+  // If the last 2 trades in this direction were losses within 90 min, the read is
+  // wrong (e.g. buying CE dips on a fading rally). Block that direction for 30 min;
+  // opposite-direction signals stay allowed — that's the flip the market is signaling.
+  const dirBlock = isDirectionBlocked(state.sessionToken, signal.direction as "BUY" | "SELL");
+  if (dirBlock.blocked) {
+    emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal blocked — 2 consecutive ${signal.direction} losses, direction cooldown ${dirBlock.remainingMin}min (opposite direction still allowed)`);
+    pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Direction blocked after consecutive losses (${dirBlock.remainingMin}min left)`);
+    return;
+  }
+
   if (signal.layer === "HourlyClose" && state.hourlyCloseSignalFired) {
     emitActivity(state.sessionToken, "signal", `⊘ HourlyClose signal skipped (already fired today)`);
     pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "HourlyClose already fired today");
@@ -3386,7 +3749,7 @@ export type TradeInsert = {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 export function startBot(
-  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastTickAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "isPowerHourMode" | "isMCXEveningMode" | "isMCXLateSessionMode" | "heroZeroMode" | "alertsSent">,
+  config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastTickAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "lastSlExitDirection" | "lastSlExitAt" | "consecutiveSameDirectionSLs" | "isPowerHourMode" | "isMCXEveningMode" | "isMCXLateSessionMode" | "heroZeroMode" | "alertsSent">,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
@@ -3407,7 +3770,9 @@ export function startBot(
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
     lastTickAt: 0,
-    lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0, isPowerHourMode: false,
+    lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0,
+    lastSlExitDirection: null, lastSlExitAt: null, consecutiveSameDirectionSLs: 0,
+    isPowerHourMode: false,
     isMCXEveningMode: false, isMCXLateSessionMode: false, heroZeroMode: false, alertsSent: new Set<string>(),
   };
 
@@ -3776,4 +4141,55 @@ export async function resolveSpecificOptionToken(
     console.log(`[resolveSpecificOptionToken] Failed for ${underlyingToken} ${strike} ${optionType}:`, (e as Error).message);
     return null;
   }
+}
+
+// ── Shadow Mode API helpers ──────────────────────────────────────────────────
+
+/** Toggle shadow mode on/off for a specific bot slot */
+export function toggleShadowMode(sessionToken: string, enabled: boolean): { success: boolean; error?: string } {
+  const state = getBotState(sessionToken) ?? getBotStateByPrefix(sessionToken);
+  if (!state) return { success: false, error: "Bot not running" };
+  state.shadowMode = enabled;
+  if (enabled && !state.shadowLog) {
+    state.shadowLog = [];
+  }
+  emitActivity(state.sessionToken, "signal", `👁 Shadow mode ${enabled ? "ENABLED" : "DISABLED"} — ${enabled ? "old logic trades, new logic (P0+P1) logs only" : "normal mode resumed"}`);
+  return { success: true };
+}
+
+/** Get shadow mode summary for a bot session */
+export function getShadowSummary(sessionToken: string): ShadowSummary | null {
+  const state = getBotState(sessionToken) ?? getBotStateByPrefix(sessionToken);
+  if (!state || !state.shadowLog || state.shadowLog.length === 0) return null;
+
+  const entries = state.shadowLog;
+  const totalSignals = entries.length;
+  const agreements = entries.filter(e => e.difference === "SAME").length;
+  const disagreements = totalSignals - agreements;
+  const newBlockedOldAllowed = entries.filter(e => e.difference.startsWith("NEW_BLOCKED")).length;
+  const newAllowedOldBlocked = entries.filter(e => e.difference === "NEW_ALLOWED_OLD_BLOCKED").length;
+
+  // Use IST date for the summary
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(now.getTime() + istOffset);
+  const date = istDate.toISOString().split("T")[0];
+
+  return {
+    date,
+    totalSignals,
+    agreements,
+    disagreements,
+    newBlockedOldAllowed,
+    newAllowedOldBlocked,
+    entries,
+  };
+}
+
+/** Clear shadow log for a bot session */
+export function clearShadowLog(sessionToken: string): { success: boolean } {
+  const state = getBotState(sessionToken) ?? getBotStateByPrefix(sessionToken);
+  if (!state) return { success: false };
+  state.shadowLog = [];
+  return { success: true };
 }
