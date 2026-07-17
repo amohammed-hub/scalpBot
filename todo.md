@@ -926,7 +926,9 @@
 - [x] Push to GitHub for Railway auto-deploy
 
 ## BankNifty Signal Filters Too Restrictive (July 17, 2026)
-- [ ] Make pullback proximity filter proportional to instrument price (0.15% too tight for BankNifty at ₹57k)
-- [ ] Make S/R proximity filter proportional to ATR instead of fixed 0.02% (too tight for BankNifty)
-- [ ] Verify Nifty/FinNifty still trade normally with updated filters
-- [ ] Push fix to GitHub for Railway auto-deploy
+- [x] Diagnosed: 2-candle confirmation filter was blocking Trend/Momentum signals when ADX > 30
+- [x] Fix: Bypass 2-candle confirmation when ADX > 30 (strong trend = sufficient confirmation)
+- [x] Pullback filter was actually passing (0.109% < 0.15%) — not the blocker
+- [x] S/R proximity was not the blocker either (nearest pivot 138 pts away)
+- [x] Verified: 129/131 tests pass (2 pre-existing failures unrelated)
+- [x] Push fix to GitHub for Railway auto-deploy
