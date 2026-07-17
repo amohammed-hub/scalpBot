@@ -13,6 +13,14 @@ export default function Login() {
   const utils = trpc.useUtils();
 
   // ── Auth check: redirect to dashboard if already logged in ──────────────
+  useEffect(() => {
+    // Immediate redirect if localStorage token exists (no network round-trip)
+    const token = localStorage.getItem("scalpbot_auth_token");
+    if (token) {
+      navigate(intent === "subscribe" ? "/#pricing" : "/dashboard");
+    }
+  }, [navigate, intent]);
+
   const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
     staleTime: 5_000,
     retry: 1,

@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { useLocation, Link } from "wouter";
 import { Bot, TrendingUp, Shield, Zap, BarChart2, Check, Crown, Loader2 } from "lucide-react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
@@ -9,6 +9,14 @@ export default function Home() {
   const [, navigate] = useLocation();
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
   const [showTrialStarting, setShowTrialStarting] = useState(false);
+
+  // ── Auto-redirect logged-in users to dashboard ──────────────────────────
+  useEffect(() => {
+    const token = localStorage.getItem("scalpbot_auth_token");
+    if (token) {
+      navigate("/dashboard");
+    }
+  }, [navigate]);
 
   // Get session token for subscription
   const getSessionToken = useCallback(() => {

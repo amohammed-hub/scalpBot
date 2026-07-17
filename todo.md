@@ -952,7 +952,7 @@
 ## Bug Fixes — UI/Frontend Issues (July 17)
 - [x] BUG 1 (P0): Start Bot button not working for Primary Bot and Slot 2 — added JWT cookie admin bypass to bot.start + startSecondary
 - [x] BUG 2 (P1): Auth redirect — Login page now checks mobileAuth.me and redirects to /dashboard if already authenticated
-- [ ] BUG 3 (P2): Dashboard 4-tab reorganization
+- [x] BUG 3 (P2): Dashboard 4-tab reorganization
   - [ ] Tab routing: /dashboard, /dashboard/trades, /dashboard/config, /dashboard/log (URL persists on refresh)
   - [ ] Sticky top bar: Plan banner (Trial/3mo/6mo/12mo) + Morning Reminder
   - [x] Sticky sub-bar: Bot status, Token status, Session timer, Mode toggle, Kill Switch
