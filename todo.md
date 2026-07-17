@@ -915,3 +915,12 @@
 - [x] Open Positions panel now takes full width
 - [x] Clean up unused imports (Wallet) and state (pnlRange, accountProfile, accountBalance queries)
 - [x] Fix stale Vite cache error on Login.tsx (dev server restart)
+
+## Railway DB Self-Healing Migration Fix (July 17, 2026)
+- [x] Extend self-healing migration to add averagingEnabled column (boolean DEFAULT true) to bot_sessions
+- [x] Extend self-healing migration to add averagingLossThreshold column (float DEFAULT 0.2) to bot_sessions
+- [x] Extend self-healing migration to add eodSummaryCronTaskUid column (varchar 128) to bot_sessions
+- [x] Extend self-healing migration to create subscriptions table if missing
+- [x] Extend self-healing migration to create app_users table if missing
+- [x] Extend self-healing migration to create otp_codes table if missing
+- [x] Push to GitHub for Railway auto-deploy
