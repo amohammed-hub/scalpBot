@@ -1314,7 +1314,7 @@ export default function Dashboard() {
           const isMCXInstrument = config.instrumentToken.startsWith("MCX");
           const sessionStart = isMCXInstrument ? 540 : 555;
           const sessionEnd = isMCXInstrument ? 1410 : 930;
-          const dayOfWeek = new Date(now2.getTime() + 330 * 60000).getDay(); // IST day: 0=Sun, 6=Sat
+          const dayOfWeek = new Date(now2.getTime() + 330 * 60000).getUTCDay(); // IST day: 0=Sun, 6=Sat (must use getUTCDay since we already added IST offset)
           const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
           const inSessionNow = !isWeekend && istMin2 >= sessionStart && istMin2 <= sessionEnd;
           const elapsed = inSessionNow ? istMin2 - sessionStart : 0;

@@ -987,4 +987,7 @@
 - [x] FIX C2: Increase invalidation delay from 500ms to 2000ms (gives server time to fully register bot in memory)
 - [x] FIX C3: Process-level unhandled rejection/exception handlers (prevents Node.js crash from killing all bots)
 - [x] FIX C4: Comprehensive debug logging in startBot, tick, and allStatus (breadcrumbs to find exact crash point)
-- [ ] PENDING: Deploy to Railway and check logs to confirm if bot actually starts on server side
+- [x] PENDING: Deploy to Railway and check logs to confirm if bot actually starts on server side
+- [x] ROOT CAUSE FOUND: Bots NOT crashing — PAUSED by daily loss limit on first tick (restoredDailyPnl from earlier losses exceeded limit)
+- [x] FIX D1: Daily loss limit — skip pause on first tick after manual start (user explicitly chose to start); only pause on tick 2+ when NEW losses push past limit
+- [x] FIX D2: MCX "Weekend — Market closed" on Friday — getDay() double-applied IST offset; fixed to getUTCDay()

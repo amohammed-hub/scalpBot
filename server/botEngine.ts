@@ -2369,9 +2369,20 @@ async function tick(
 
   const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100;
   if (state.dailyPnl <= maxDailyLoss) {
-    state.status = "paused";
-    state.lastError = `Daily loss limit hit (₹${state.dailyPnl.toFixed(0)})`;
-    return;
+    // On the first tick after a manual start, LOG the issue but DON'T pause.
+    // The user explicitly chose to start the bot — they know about today's losses.
+    // Only pause on subsequent ticks (tickCount > 1) when NEW losses push past the limit.
+    const tc = state.tickCount ?? 0;
+    if (tc <= 1) {
+      console.warn(`[tick] DAILY LOSS LIMIT WARNING — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} | capital=₹${state.capital} | limitPct=${state.dailyLossLimitPct}% | tickCount=${tc} — SKIPPING pause (first tick after manual start)`);
+      emitActivity(state.sessionToken, "error", `⚠ Daily loss limit already reached (₹${state.dailyPnl.toFixed(0)} / ₹${maxDailyLoss.toFixed(0)}) — bot will continue but won't open new trades`);
+    } else {
+      console.warn(`[tick] DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — PAUSING`);
+      state.status = "paused";
+      state.lastError = `Daily loss limit hit (₹${state.dailyPnl.toFixed(0)})`;
+      emitActivity(state.sessionToken, "bot_stop", `🛑 Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds -₹${Math.abs(maxDailyLoss).toFixed(0)} limit`);
+      return;
+    }
   }
 
   // ── Options mode: determine which token to use for candle/signal vs which to trade ──
