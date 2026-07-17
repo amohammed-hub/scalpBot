@@ -2357,13 +2357,14 @@ async function tick(
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   onTick?: (state: BotState) => Promise<void>,
 ) {
-  if (state.status !== "running") return;
+  if (state.status !== "running") { console.log(`[tick] SKIP — status=${state.status} (${state.sessionToken.slice(0,8)})`); return; }
   // Prevent overlapping ticks: if previous tick is still running (slow network, API timeout), skip
   if (state.tickInProgress) {
     console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — tick skipped (previous still running)`);
     return;
   }
   state.tickInProgress = true;
+  console.log(`[tick] START — ${state.sessionToken.slice(0,8)} | status=${state.status} | candles=${state.candles.length} | openTrade=${!!state.openTrade}`);
   try {
 
   const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100;
@@ -2463,6 +2464,8 @@ async function tick(
   state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
   // Update lastTickAt so Dashboard can detect staleness
   state.lastTickAt = Date.now();
+
+  console.log(`[tick] CANDLES OK — ${state.sessionToken.slice(0,8)} | price=${price} | candles1m=${state.candles.length} | 5m=${state.candles5m.length}`);
 
   // Persist live price to DB on every tick — fires regardless of open trade state
   // This is the primary mechanism for keeping the Dashboard current price updated
@@ -3183,6 +3186,7 @@ async function tick(
   const inHeroZeroWindow = isExpiryDay && istMin2 >= heroZeroWindowStart && istMin2 < heroZeroWindowEnd;
   state.heroZeroMode = inHeroZeroWindow;
 
+  console.log(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
   if (inPowerHour) {
     signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, state.targetMultiplier);
   } else if (inMCXEvening) {
@@ -3202,6 +3206,8 @@ async function tick(
   } else {
     signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
   }
+
+  console.log(`[tick] SIGNAL OK — ${state.sessionToken.slice(0,8)} | dir=${signal.direction} | conf=${signal.confidence.toFixed(2)} | layer=${signal.layer}`);
 
   // ── Shadow Mode: compare old logic vs new logic ───────────────────────────
   // When shadowMode=true: OLD logic (no P0, no P1) executes trades.
@@ -3948,10 +3954,12 @@ export function startBot(
   }, intervalMs);
   state.intervalHandle = handle;
   bots.set(config.sessionToken, state);
-  emitActivity(config.sessionToken, "bot_start", `Bot started — ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s`);
+  console.log(`[startBot] ✓ Bot added to Map — token=${config.sessionToken.slice(0,8)}, mapSize=${bots.size}, status=${state.status}`);
+  emitActivity(config.sessionToken, "bot_start", `Bot started — ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s | MapSize: ${bots.size}`);
   tick(state, onTradeOpen, onTradeClose, onTick).catch(err => {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[BotEngine] Initial tick error (${config.sessionToken}):`, msg);
+    const stack = err instanceof Error ? err.stack : "";
+    console.error(`[BotEngine] ⚠ INITIAL TICK ERROR (${config.sessionToken}):\n  MSG: ${msg}\n  STACK: ${stack}`);
     state.lastError = `Tick error: ${msg}`;
     emitActivity(config.sessionToken, "error", `⚠ Initial tick error: ${msg}`);
   });

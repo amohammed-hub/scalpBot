@@ -980,4 +980,11 @@
 - [x] Fix: Added optimistic setData() to all 4 mutations (start/stop × primary/secondary)
 ## BUG A & B — Header + Bot 1/3 won't start (July 17 PM)
 - [x] BUG A: Header shows "Bot Stopped" when Bot 2 is running — FIXED: isRunning now uses .some() to check ALL slots
-- [ ] BUG B: Bot 1 and Bot 3 refuse to start — Quick Start button doesn't fire API or API rejects
+- [x] BUG B: Bot 1 and Bot 3 refuse to start — debug logging added, likely old Railway deploy missing slot 0 Quick Start
+## BUG C — Bot starts then immediately shows Stopped (July 17 PM)
+- [ ] BUG C: Bot 1 and Bot 3 start (success toast fires) but immediately show "Stopped" in UI
+- [x] FIX C1: Race condition — cancel in-flight allStatus queries before optimistic update (prevents stale "stopped" response overwriting)
+- [x] FIX C2: Increase invalidation delay from 500ms to 2000ms (gives server time to fully register bot in memory)
+- [x] FIX C3: Process-level unhandled rejection/exception handlers (prevents Node.js crash from killing all bots)
+- [x] FIX C4: Comprehensive debug logging in startBot, tick, and allStatus (breadcrumbs to find exact crash point)
+- [ ] PENDING: Deploy to Railway and check logs to confirm if bot actually starts on server side

@@ -284,12 +284,14 @@ export default function Dashboard() {
   const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
     onSuccess: (_, vars) => {
       toast.success(`🤖 Bot ${(vars.slot ?? 0) + 1} started in ${config.mode.toUpperCase()} mode!`);
+      // Cancel in-flight queries to prevent stale "stopped" responses from overwriting optimistic update
+      utils.multiBots.allStatus.cancel();
       // Optimistic: immediately update the slot to "running"
       utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
         if (!old) return old;
         return old.map((b: any) => b.slot === vars.slot ? { ...b, status: "running" } : b);
       });
-      setTimeout(() => { utils.multiBots.allStatus.invalidate(); utils.multiBots.livePrices.invalidate(); }, 500);
+      setTimeout(() => { utils.multiBots.allStatus.invalidate(); utils.multiBots.livePrices.invalidate(); }, 2000);
     },
     onError: (e) => toast.error(`Start failed: ${e.message}`),
   });
@@ -487,6 +489,9 @@ export default function Dashboard() {
   const startMutation = trpc.bot.start.useMutation({
     onSuccess: () => {
       toast.success(`Bot started in ${config.mode.toUpperCase()} mode — scanning every ${config.scanIntervalSec}s`);
+      // Cancel in-flight queries to prevent stale "stopped" responses from overwriting optimistic update
+      utils.bot.status.cancel();
+      utils.multiBots.allStatus.cancel();
       // Optimistic: immediately set bot.status cache to "running" so UI updates instantly
       utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "running" } : { status: "running" });
       // Optimistic: immediately update allBots slot 0 to "running"
@@ -494,13 +499,14 @@ export default function Dashboard() {
         if (!old) return old;
         return old.map((b: any) => b.slot === 0 ? { ...b, status: "running" } : b);
       });
-      // Then invalidate to get fresh data from server (confirms the optimistic update)
+      // Then invalidate to get fresh data from server (confirms the optimistic update).
+      // Use longer delay (2s) to ensure server has fully processed the start and the bot is in memory.
       setTimeout(() => {
         utils.bot.status.invalidate();
         utils.bot.liveData.invalidate();
         utils.multiBots.allStatus.invalidate();
         utils.multiBots.livePrices.invalidate();
-      }, 500);
+      }, 2000);
     },
     onError: (e) => toast.error(`Failed to start bot: ${e.message}`),
   });
@@ -525,8 +531,8 @@ export default function Dashboard() {
   });
 
   const restartMutation = trpc.bot.restart.useMutation({
-    onSuccess: (data) => {
-      toast.success(`Bot restarted — ${data.instrumentLabel ?? "Bot"}`);
+    onSuccess: (data: any) => {
+      toast.success(`Bot restarted — ${data?.instrumentLabel ?? "Bot"}`);
       utils.bot.status.invalidate();
       utils.multiBots.allStatus.invalidate();
     },

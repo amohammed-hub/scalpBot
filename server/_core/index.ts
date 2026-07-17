@@ -1,3 +1,14 @@
+// ── PROCESS-LEVEL CRASH PREVENTION ──────────────────────────────────────────
+// Catch unhandled promise rejections and uncaught exceptions to prevent
+// the Node.js process from crashing (which kills all running bots).
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[PROCESS] ⚠ Unhandled Promise Rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[PROCESS] ⚠ Uncaught Exception:", err.message, err.stack);
+  // Do NOT exit — keep the process alive so bots continue running
+});
+
 import "dotenv/config";
 import express from "express";
 import cookieParser from "cookie-parser";

@@ -1071,7 +1071,8 @@ export const appRouter = router({
             }).where(eq(botSessions.sessionToken, tickState.sessionToken));
           },
         );
-        return { success: true, instrumentLabel: row.instrumentLabel };
+        console.log(`[bot.start] ✓ SUCCESS — sessionToken=${input.sessionToken.slice(0,8)}, sessionId=${sessionId}, mapHasBot=${!!getBotState(input.sessionToken)}`);
+        return { success: true, sessionId };
       }),
 
     liveData: publicProcedure
@@ -1998,6 +1999,10 @@ export const appRouter = router({
           // If DB says 'running' but the bot is not in this process's memory (server
           // restart / redeploy), still report 'running' — the watchdog restores it within 60s.
           const effectiveStatus = inMem?.status ?? dbRow?.status ?? "stopped";
+          // DEBUG: log status resolution for each slot (remove after fixing crash)
+          if (effectiveStatus !== "stopped" || dbRow?.status === "running" || inMem) {
+            console.log(`[allStatus] slot${slot} (${tok.slice(0,8)}): inMem=${inMem?.status ?? "NONE"} | db=${dbRow?.status ?? "NO_ROW"} → ${effectiveStatus}`);
+          }
           const isRunning = effectiveStatus === "running";
           const pendingRestore = (dbRow?.status === "running" && !inMem) || undefined;
           return {
