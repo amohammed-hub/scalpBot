@@ -322,6 +322,7 @@ export const appRouter = router({
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
       }))
       .mutation(async ({ input, ctx }) => {
+        console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
 

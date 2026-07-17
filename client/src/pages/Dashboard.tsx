@@ -295,6 +295,8 @@ export default function Dashboard() {
   });
   const handleQuickStart = (slot: number) => {
     const qs = slotQS[slot];
+    console.log(`[QuickStart] slot=${slot}, symbol=${qs?.symbol}, capital=${qs?.capital}`);
+    toast.info(`Starting Bot ${slot + 1}...`);
     const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
     // Resolve token: NSE index instruments use NSE_INDEX| prefix (ATM options mode)
     // MCX instruments use MCX_FO| prefix. Never use NSE_FO| for index instruments.
@@ -325,6 +327,7 @@ export default function Dashboard() {
     const isIdxOpt = !!(mcxInstr || nseInstr); // always true for all supported instruments
     if (slot === 0) {
       // Bot 1 uses bot.start (primary procedure)
+      console.log(`[QuickStart] Calling bot.start for slot 0, token=${resolvedToken}, mode=${config.mode}`);
       startMutation.mutate({
         sessionToken,
         instrumentToken: resolvedToken,
@@ -352,6 +355,7 @@ export default function Dashboard() {
       });
     } else {
       // Bot 2/3 uses multiBots.startSecondary
+      console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolvedToken}, mode=${config.mode}`);
       startSecondaryMutation.mutate({
         sessionToken, slot: slot as 1 | 2,
         instrumentToken: resolvedToken,
@@ -657,7 +661,7 @@ export default function Dashboard() {
   }, [newActivityEvents]);
 
   // ── Derived state ─────────────────────────────────────────────────────────────
-  const isRunning = botStatus?.status === "running" || (allBots ?? []).find((b: any) => b.slot === 0)?.status === "running";
+  const isRunning = botStatus?.status === "running" || (allBots ?? []).some((b: any) => b.status === "running");
   // Use livePricesData (updates every 5s) as primary source, fallback to liveData (3s but only updates on scan tick)
   const primaryLivePrice = livePricesData?.find(lp => lp.slot === 0)?.livePrice;
   const currentPrice = primaryLivePrice ?? liveData?.price ?? botStatus?.lastPrice ?? 0;

@@ -978,3 +978,6 @@
 - [x] BUG 8: Toast shows "Bot started in LIVE mode" but header shows "Bot Stopped", slot cards show "Inactive", button shows "Start (Paper)"
 - [x] Root cause: tRPC invalidate() has staleTime delay; optimistic setData() needed
 - [x] Fix: Added optimistic setData() to all 4 mutations (start/stop × primary/secondary)
+## BUG A & B — Header + Bot 1/3 won't start (July 17 PM)
+- [x] BUG A: Header shows "Bot Stopped" when Bot 2 is running — FIXED: isRunning now uses .some() to check ALL slots
+- [ ] BUG B: Bot 1 and Bot 3 refuse to start — Quick Start button doesn't fire API or API rejects
