@@ -3209,14 +3209,45 @@ export const appRouter = router({
     killSwitch: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .mutation(async ({ input }) => {
-        const allBots = getAllRunningBotsForSession(input.sessionToken);
+        console.log("[KILL SWITCH] ⚠️ ACTIVATED — stopping ALL bots, closing ALL positions");
         const db = await getDb();
-       const onTradeCloseKill = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
-         if (!db) return;
-         await db.update(tradeLog).set({ status: "closed", exitPrice, pnl, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
+        const onTradeCloseKill = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
+          if (!db) return;
+          await db.update(tradeLog).set({ status: "closed", exitPrice, pnl, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
           updateJournalOnTradeClose(dbId, exitPrice, pnl, exitReason, 0);
-       };
-        const result = await executeKillSwitch(allBots, stopBot, onTradeCloseKill);
+        };
+
+        // Get ALL bots for this session (running AND paused — kill everything)
+        const { getAllBotsForSession } = await import("./botEngine");
+        const allBots = getAllBotsForSession(input.sessionToken);
+        console.log(`[KILL SWITCH] Found ${allBots.length} bot(s) to kill`);
+
+        // Attempt 1
+        let result = await executeKillSwitch(allBots, stopBot, onTradeCloseKill);
+        
+        // Retry: check if any bots are still running/have open trades
+        const remainingBots = getAllBotsForSession(input.sessionToken);
+        const stillRunning = remainingBots.filter(b => b.status === "running" || b.openTrade);
+        
+        if (stillRunning.length > 0) {
+          console.log(`[KILL SWITCH] RETRY — ${stillRunning.length} bot(s) still active after first attempt`);
+          await new Promise(r => setTimeout(r, 1500)); // Wait 1.5s before retry
+          const retryResult = await executeKillSwitch(stillRunning, stopBot, onTradeCloseKill);
+          result.closedTrades += retryResult.closedTrades;
+          result.stoppedBots += retryResult.stoppedBots;
+        }
+
+        // Final check — force stop any stragglers
+        const finalCheck = getAllBotsForSession(input.sessionToken);
+        const failures: string[] = [];
+        for (const bot of finalCheck) {
+          if (bot.status === "running" || bot.openTrade) {
+            console.error(`[KILL SWITCH] FORCE STOP — bot ${bot.sessionToken.slice(0, 8)} still alive`);
+            try { stopBot(bot.sessionToken); result.stoppedBots++; } catch {}
+            if (bot.openTrade) failures.push(bot.openTrade.symbolLabel ?? bot.openTrade.symbol ?? bot.sessionToken.slice(0, 8));
+          }
+        }
+
         // Mark all sessions stopped in DB
         if (db) {
           const { inArray } = await import("drizzle-orm");
@@ -3225,7 +3256,9 @@ export const appRouter = router({
             await db.update(botSessions).set({ status: "stopped", stoppedAt: new Date(), lastError: "Kill Switch activated" }).where(inArray(botSessions.sessionToken, tokens));
           }
         }
-        return result;
+
+        console.log(`[KILL SWITCH] COMPLETE — ${result.stoppedBots} bots stopped, ${result.closedTrades} trades closed, ${failures.length} failures`);
+        return { ...result, failures };
       }),
 
     /** Cooldown check for a session */

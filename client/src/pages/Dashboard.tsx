@@ -669,16 +669,25 @@ export default function Dashboard() {
     onError: (e) => toast.error("Failed to clear: " + e.message),
   });
 
-  // Kill Switch
+  // Kill Switch — ONE button to rule them all
   const killSwitchMutation = trpc.riskManager.killSwitch.useMutation({
-    onSuccess: (data) => {
-      toast.error(`🚨 KILL SWITCH ACTIVATED — ${data.closedTrades} trades closed, ${data.stoppedBots} bots stopped.`);
+    onSuccess: (data: any) => {
+      const failures = data.failures ?? [];
+      if (failures.length > 0) {
+        toast.error(`🚨 KILL SWITCH — ${data.stoppedBots} bots stopped, ${data.closedTrades} trades closed. ⚠️ FAILED to close: ${failures.join(", ")}`, { duration: 10000 });
+      } else {
+        toast.success(`✅ All bots stopped. ${data.closedTrades} position${data.closedTrades !== 1 ? "s" : ""} closed.`, { duration: 8000 });
+      }
       utils.bot.status.invalidate();
       utils.multiBots.allStatus.invalidate();
       utils.trades.list.invalidate();
       utils.trades.todayStats.invalidate();
     },
-    onError: (e) => toast.error(`Kill switch failed: ${e.message}`),
+    onError: (e) => {
+      toast.error(`❌ Kill switch error: ${e.message}. Retrying...`, { duration: 5000 });
+      // Auto-retry once on failure
+      setTimeout(() => killSwitchMutation.mutate({ sessionToken }), 2000);
+    },
   });
 
   // Carry Forward
@@ -1241,16 +1250,18 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex-1" />
-          {/* Kill Switch */}
-          {isRunning && (
-            <button
-              onClick={() => { if (confirm("KILL ALL BOTS? This will stop all running bots immediately.")) { stopMutation.mutate({ sessionToken }); (allBots ?? []).filter((b: any) => b.isRunning && b.slot > 0).forEach((b: any) => stopSecondaryMutation.mutate({ sessionToken, slot: b.slot })); } }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-400 rounded-lg font-bold text-xs transition-all hover:scale-105 active:scale-95"
-            >
-              <Zap className="w-3.5 h-3.5" />
-              KILL ALL
-            </button>
-          )}
+          {/* KILL SWITCH — always visible, big red button */}
+          <button
+            onClick={() => { if (confirm("⚠️ KILL SWITCH\n\nThis will:\n• STOP all running bots\n• CLOSE all open positions at market\n• Cancel pending orders\n\nContinue?")) killSwitchMutation.mutate({ sessionToken }); }}
+            disabled={killSwitchMutation.isPending}
+            className="flex items-center gap-1.5 px-4 py-2 bg-red-600/30 hover:bg-red-600/50 border-2 border-red-500/60 text-red-300 rounded-lg font-black text-xs transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-900/20"
+          >
+            {killSwitchMutation.isPending ? (
+              <><RefreshCw className="w-4 h-4 animate-spin" /> KILLING...</>
+            ) : (
+              <><Zap className="w-4 h-4" /> KILL SWITCH</>
+            )}
+          </button>
         </div>
         {/* ── Tab Navigation ──────────────────────────────────────────────────── */}
         <div className="flex items-center gap-1 mb-4 p-1 bg-white/5 rounded-xl border border-white/10 sticky top-0 z-20">
@@ -2079,22 +2090,12 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Kill Switch + Readiness */}
+          {/* Readiness */}
           <div className="rounded-2xl p-4 border bg-white/5 border-white/10 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-white/50 text-xs">Emergency Controls</span>
-                <Power className="w-4 h-4 text-red-400" />
-              </div>
-              <button
-                onClick={() => { if (confirm("⚠️ This will CLOSE ALL open trades and STOP ALL bots. Continue?")) killSwitchMutation.mutate({ sessionToken }); }}
-                disabled={killSwitchMutation.isPending}
-                className="w-full py-2 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/30 text-sm font-bold transition-colors disabled:opacity-50 mb-2"
-              >
-                {killSwitchMutation.isPending ? "⏳ Killing..." : "🚨 KILL SWITCH"}
-              </button>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-white/50 text-xs">System Readiness</span>
+              <Award className="w-4 h-4 text-emerald-400" />
             </div>
-            {/* Readiness badge */}
             <div className={`flex items-center gap-2 px-2 py-1.5 rounded-lg ${
               readinessData?.ready ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-amber-500/10 border border-amber-500/20"
             }`}>

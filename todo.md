@@ -1011,3 +1011,8 @@
 - [x] Admin Manual Access Grant: Frontend - Active Grants table (User|Plan|Granted On|Expires|Status|Actions)
 - [x] Admin Manual Access Grant: Access check middleware - grant gives full platform access, auto-expires after duration
 - [x] Fix Telegram Test Connection button bug (trim whitespace, better error handling, increased timeout)
+- [x] KILL SWITCH: Backend - create robust killSwitch procedure (stop all bots + close all positions + cancel all orders, with retry)
+- [x] KILL SWITCH: Frontend - remove old KILL ALL button from top, remove bottom KILL SWITCH
+- [x] KILL SWITCH: Frontend - add single big red KILL SWITCH button at top-right, always visible
+- [x] KILL SWITCH: Show confirmation "All bots stopped. X positions closed." after success
+- [x] KILL SWITCH: If any bot fails to stop, show which one failed and auto-retry

@@ -4236,3 +4236,17 @@ export function clearShadowLog(sessionToken: string): { success: boolean } {
   state.shadowLog = [];
   return { success: true };
 }
+
+/**
+ * Get ALL bots for a session (running, paused, or any status) — used by Kill Switch.
+ * Unlike getAllRunningBotsForSession which only returns running bots.
+ */
+export function getAllBotsForSession(sessionToken: string): BotState[] {
+  const results: BotState[] = [];
+  for (const [key, state] of Array.from(bots.entries())) {
+    if (key === sessionToken || key.startsWith(sessionToken + '-slot')) {
+      results.push(state);
+    }
+  }
+  return results;
+}
