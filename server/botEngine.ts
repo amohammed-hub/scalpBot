@@ -3131,9 +3131,13 @@ async function tick(
     return;
   }
   if (state.tradesCount >= state.maxTradesPerDay) {
-    state.status = "paused";
-    state.lastError = `Max trades per day reached (${state.maxTradesPerDay})`;
-    return;
+    const tc2 = state.tickCount ?? 0;
+    if (tc2 > 1) {
+      state.status = "paused";
+      state.lastError = `Max trades per day reached (${state.maxTradesPerDay})`;
+      return;
+    }
+    console.warn(`[tick] MAX TRADES WARNING — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} | tickCount=${tc2} — SKIPPING pause (first tick)`);
   }
 
   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
@@ -3148,10 +3152,15 @@ async function tick(
   const portfolioBots = getAllRunningBotsForSession(baseToken);
   const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct);
   if (ddCheck.halted) {
-    state.status = "paused";
-    state.lastError = ddCheck.reason ?? "Portfolio daily drawdown limit hit";
-    emitActivity(state.sessionToken, "error", `🛑 ${ddCheck.reason}`);
-    return;
+    const tc3 = state.tickCount ?? 0;
+    if (tc3 > 1) {
+      state.status = "paused";
+      state.lastError = ddCheck.reason ?? "Portfolio daily drawdown limit hit";
+      emitActivity(state.sessionToken, "error", `🛑 ${ddCheck.reason}`);
+      return;
+    }
+    console.warn(`[tick] PORTFOLIO DRAWDOWN WARNING — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} | tickCount=${tc3} — SKIPPING pause (first tick)`);
+    emitActivity(state.sessionToken, "error", `⚠ ${ddCheck.reason} — bot will continue but won't open new trades`);
   }
   // 3. CooldownPeriod: mandatory 2-candle wait after any trade close
   const cooldown = isCooldownActive(state.sessionToken);
