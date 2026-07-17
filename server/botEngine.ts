@@ -180,6 +180,8 @@ export interface BotState {
   // Heartbeat: track tick count for periodic activity logging
   tickCount?: number;
   lastHeartbeatAt?: number; // Unix timestamp ms
+  // Daily loss limit: acknowledged on first tick so bot doesn't pause from PREVIOUS losses
+  dailyLossAcknowledged?: boolean;
   // Carry-forward: if true, skip auto square-off at market close and keep trade open overnight
   carryForward?: boolean;
   // Pending option token resolution promise (awaited before first tick)
@@ -2369,18 +2371,17 @@ async function tick(
 
   const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100;
   if (state.dailyPnl <= maxDailyLoss) {
-    // On the first tick after a manual start, LOG the issue but DON'T pause.
-    // The user explicitly chose to start the bot — they know about today's losses.
-    // Only pause on subsequent ticks (tickCount > 1) when NEW losses push past the limit.
-    const tc = state.tickCount ?? 0;
-    if (tc <= 1) {
-      console.warn(`[tick] DAILY LOSS LIMIT WARNING — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} | capital=₹${state.capital} | limitPct=${state.dailyLossLimitPct}% | tickCount=${tc} — SKIPPING pause (first tick after manual start)`);
-      emitActivity(state.sessionToken, "error", `⚠ Daily loss limit already reached (₹${state.dailyPnl.toFixed(0)} / ₹${maxDailyLoss.toFixed(0)}) — bot will continue but won't open new trades`);
-    } else {
-      console.warn(`[tick] DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — PAUSING`);
+    if ((state.tickCount ?? 0) <= 1) {
+      // User manually started despite existing losses — warn but don't block
+      console.warn(`[tick] ⚠ Daily loss limit already reached — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — Bot will only pause on NEW losses`);
+      emitActivity(state.sessionToken, "error", `⚠ Daily loss limit already reached (₹${state.dailyPnl.toFixed(0)}). Bot will only pause on NEW losses.`);
+      state.dailyLossAcknowledged = true;
+    } else if (!state.dailyLossAcknowledged) {
+      // New losses pushed past limit — pause
+      console.warn(`[tick] 🛑 DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — PAUSING`);
       state.status = "paused";
-      state.lastError = `Daily loss limit hit (₹${state.dailyPnl.toFixed(0)})`;
-      emitActivity(state.sessionToken, "bot_stop", `🛑 Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds -₹${Math.abs(maxDailyLoss).toFixed(0)} limit`);
+      state.lastError = `Daily loss limit reached (₹${state.dailyPnl.toFixed(0)})`;
+      emitActivity(state.sessionToken, "bot_stop", `🛑 Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit`);
       return;
     }
   }
@@ -3131,13 +3132,13 @@ async function tick(
     return;
   }
   if (state.tradesCount >= state.maxTradesPerDay) {
-    const tc2 = state.tickCount ?? 0;
-    if (tc2 > 1) {
+    if ((state.tickCount ?? 0) > 1) {
       state.status = "paused";
       state.lastError = `Max trades per day reached (${state.maxTradesPerDay})`;
       return;
     }
-    console.warn(`[tick] MAX TRADES WARNING — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} | tickCount=${tc2} — SKIPPING pause (first tick)`);
+    console.warn(`[tick] ⚠ Max trades already reached — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} — Bot will not open new trades`);
+    emitActivity(state.sessionToken, "error", `⚠ Max trades per day already reached (${state.tradesCount}/${state.maxTradesPerDay}). Bot will not open new trades.`);
   }
 
   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
@@ -3152,14 +3153,13 @@ async function tick(
   const portfolioBots = getAllRunningBotsForSession(baseToken);
   const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct);
   if (ddCheck.halted) {
-    const tc3 = state.tickCount ?? 0;
-    if (tc3 > 1) {
+    if ((state.tickCount ?? 0) > 1) {
       state.status = "paused";
       state.lastError = ddCheck.reason ?? "Portfolio daily drawdown limit hit";
       emitActivity(state.sessionToken, "error", `🛑 ${ddCheck.reason}`);
       return;
     }
-    console.warn(`[tick] PORTFOLIO DRAWDOWN WARNING — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} | tickCount=${tc3} — SKIPPING pause (first tick)`);
+    console.warn(`[tick] ⚠ Portfolio drawdown already hit — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} — Bot will not open new trades`);
     emitActivity(state.sessionToken, "error", `⚠ ${ddCheck.reason} — bot will continue but won't open new trades`);
   }
   // 3. CooldownPeriod: mandatory 2-candle wait after any trade close

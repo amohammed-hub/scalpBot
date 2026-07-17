@@ -982,7 +982,7 @@
 - [x] BUG A: Header shows "Bot Stopped" when Bot 2 is running — FIXED: isRunning now uses .some() to check ALL slots
 - [x] BUG B: Bot 1 and Bot 3 refuse to start — debug logging added, likely old Railway deploy missing slot 0 Quick Start
 ## BUG C — Bot starts then immediately shows Stopped (July 17 PM)
-- [ ] BUG C: Bot 1 and Bot 3 start (success toast fires) but immediately show "Stopped" in UI
+- [x] BUG C: Bot 1 and Bot 3 start (success toast fires) but immediately show "Stopped" in UI — ROOT CAUSE: multiple pause triggers firing on first tick
 - [x] FIX C1: Race condition — cancel in-flight allStatus queries before optimistic update (prevents stale "stopped" response overwriting)
 - [x] FIX C2: Increase invalidation delay from 500ms to 2000ms (gives server time to fully register bot in memory)
 - [x] FIX C3: Process-level unhandled rejection/exception handlers (prevents Node.js crash from killing all bots)
@@ -991,3 +991,5 @@
 - [x] ROOT CAUSE FOUND: Bots NOT crashing — PAUSED by daily loss limit on first tick (restoredDailyPnl from earlier losses exceeded limit)
 - [x] FIX D1: Daily loss limit — skip pause on first tick after manual start (user explicitly chose to start); only pause on tick 2+ when NEW losses push past limit
 - [x] FIX D2: MCX "Weekend — Market closed" on Friday — getDay() double-applied IST offset; fixed to getUTCDay()
+- [x] FIX D3: Max trades per day — skip pause on first tick after manual start (same grace period logic)
+- [x] FIX D4: Portfolio drawdown halt — skip pause on first tick after manual start (same grace period logic)
