@@ -22,6 +22,13 @@ function toISTDateKey(d: Date): string {
   const istMs = d.getTime() + 330 * 60000;
   return new Date(istMs).toISOString().slice(0, 10);
 }
+// Convert an IST date string (YYYY-MM-DD) to UTC Date at IST midnight (00:00 IST = previous day 18:30 UTC)
+function istDateToUTC(dateStr: string, endOfDay = false): Date {
+  const base = new Date(dateStr + "T00:00:00Z");
+  const utc = new Date(base.getTime() - 330 * 60000);
+  if (endOfDay) return new Date(utc.getTime() + 86400000 - 1);
+  return utc;
+}
 // IST hour (0-23) from a Date
 function toISTHour(d: Date): number {
   return Math.floor(((d.getUTCHours() * 60 + d.getUTCMinutes()) + 330) % 1440 / 60);
@@ -114,8 +121,8 @@ export async function computePrecisionMetrics(
 
   // Build date filters
   const dateFilters = [];
-  if (fromDate) dateFilters.push(gte(tradeLog.enteredAt, new Date(fromDate)));
-  if (toDate) dateFilters.push(lte(tradeLog.enteredAt, new Date(toDate + "T23:59:59")));
+  if (fromDate) dateFilters.push(gte(tradeLog.enteredAt, istDateToUTC(fromDate)));
+  if (toDate) dateFilters.push(lte(tradeLog.enteredAt, istDateToUTC(toDate, true)));
 
   // Fetch all closed trades for this session (including slots)
   const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
@@ -133,8 +140,8 @@ export async function computePrecisionMetrics(
 
   // Fetch signal journal
   const signalFilters = [];
-  if (fromDate) signalFilters.push(gte(signalJournal.signalAt, new Date(fromDate)));
-  if (toDate) signalFilters.push(lte(signalJournal.signalAt, new Date(toDate + "T23:59:59")));
+  if (fromDate) signalFilters.push(gte(signalJournal.signalAt, istDateToUTC(fromDate)));
+  if (toDate) signalFilters.push(lte(signalJournal.signalAt, istDateToUTC(toDate, true)));
 
   const signals: SignalRow[] = await db
     .select()
@@ -186,7 +193,7 @@ export async function computePrecisionMetrics(
     const ddAmt = peak - runningEquity;
     if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownAmount = ddAmt; }
 
-    const dateKey = toISTDateKey(t.enteredAt);
+    const dateKey = toISTDateKey(t.exitedAt ?? t.enteredAt);
     const existing = equityByDate.get(dateKey) ?? { equity: capital, trades: 0 };
     equityByDate.set(dateKey, { equity: runningEquity, trades: existing.trades + 1 });
   }
@@ -201,7 +208,7 @@ export async function computePrecisionMetrics(
   const dailyReturns: number[] = [];
   const tradesByDay = new Map<string, number>();
   for (const t of trades) {
-    const dateKey = toISTDateKey(t.enteredAt);
+    const dateKey = toISTDateKey(t.exitedAt ?? t.enteredAt);
     tradesByDay.set(dateKey, (tradesByDay.get(dateKey) ?? 0) + (t.pnl ?? 0));
   }
   for (const pnl of Array.from(tradesByDay.values())) {
@@ -299,8 +306,8 @@ export async function computeLayerAccuracy(
 
   // Fetch signals grouped by layer
   const signalFilters = [];
-  if (fromDate) signalFilters.push(gte(signalJournal.signalAt, new Date(fromDate)));
-  if (toDate) signalFilters.push(lte(signalJournal.signalAt, new Date(toDate + "T23:59:59")));
+  if (fromDate) signalFilters.push(gte(signalJournal.signalAt, istDateToUTC(fromDate)));
+  if (toDate) signalFilters.push(lte(signalJournal.signalAt, istDateToUTC(toDate, true)));
 
   const signals: SignalRow[] = await db
     .select()
@@ -309,8 +316,8 @@ export async function computeLayerAccuracy(
 
   // Fetch closed trades
   const dateFilters = [];
-  if (fromDate) dateFilters.push(gte(tradeLog.enteredAt, new Date(fromDate)));
-  if (toDate) dateFilters.push(lte(tradeLog.enteredAt, new Date(toDate + "T23:59:59")));
+  if (fromDate) dateFilters.push(gte(tradeLog.enteredAt, istDateToUTC(fromDate)));
+  if (toDate) dateFilters.push(lte(tradeLog.enteredAt, istDateToUTC(toDate, true)));
 
   const trades: TradeRow[] = await db
     .select()
@@ -325,30 +332,12 @@ export async function computeLayerAccuracy(
     byLayer.get(layer)!.signals.push(s);
   }
 
-  // Match trades to layers via signalReason
-  const layerPatterns: Array<{ layer: string; test: (r: string) => boolean }> = [
-    { layer: "Breakout", test: r => r.includes("Breakout") || r.includes("breakout") || r.includes("[Breakout]") },
-    { layer: "Trend", test: r => r.includes("[Trend]") || r.includes("Supertrend") || r.includes("EMA") },
-    { layer: "MACD_BB", test: r => r.includes("MACD") || r.includes("BB") || r.includes("Bollinger") || r.includes("[MACD_BB]") || r.includes("[MACD+BB]") },
-    { layer: "VWAPPullback", test: r => r.includes("VWAPPullback") || r.includes("[VWAPPullback]") },
-    { layer: "VWAPReversion", test: r => r.includes("VWAPReversion") || r.includes("[VWAPReversion]") },
-    { layer: "ORB", test: r => r.includes("ORB") || r.includes("Opening Range") || r.includes("[ORB]") },
-    { layer: "InstFootprint", test: r => r.includes("Institutional") || r.includes("footprint") || r.includes("[InstFootprint]") },
-    { layer: "BoomingBulls", test: r => r.includes("BoomingBulls") || r.includes("[BoomingBulls]") },
-    { layer: "HourlyClose", test: r => r.includes("HourlyClose") || r.includes("[HourlyClose]") },
-    { layer: "PowerHour", test: r => r.includes("Power Hour") || r.includes("POWER") || r.includes("[PowerHour]") },
-    { layer: "MCXEvening", test: r => r.includes("MCX") || r.includes("[MCXEvening]") },
-    { layer: "HeroZero", test: r => r.includes("Hero") || r.includes("[HeroZero]") },
-    { layer: "Momentum", test: r => r.includes("Momentum") || r.includes("momentum") || r.includes("[Momentum]") },
-    { layer: "S/R Pivot", test: r => r.includes("Pivot") || r.includes("S/R") || r.includes("[Pivot]") },
-  ];
-
+  // Match trades to layers by extracting [LayerName] tag from signalReason
   for (const t of trades) {
     const reason = t.signalReason ?? "";
-    let matched = "Other";
-    for (const p of layerPatterns) {
-      if (p.test(reason)) { matched = p.layer; break; }
-    }
+    // Extract layer from [LayerName] tag at the start of signalReason (e.g. "[Breakout] ..." → "Breakout")
+    const tagMatch = reason.match(/^(?:\[Re-entry\]\s*)?\[([^\]]+)\]/);
+    const matched = tagMatch ? tagMatch[1] : "Other";
     if (!byLayer.has(matched)) byLayer.set(matched, { signals: [], trades: [] });
     byLayer.get(matched)!.trades.push(t);
   }

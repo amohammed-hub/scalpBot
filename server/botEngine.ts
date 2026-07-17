@@ -2150,10 +2150,16 @@ async function tick(
           ? (state.optionPremiumPrice && state.optionPremiumPrice > 0 ? state.optionPremiumPrice : trade.entryPrice)
           : (state.lastPrice > 0 ? state.lastPrice : trade.entryPrice);
         const noDataRemQty = trade.quantity - (trade.bookedQty ?? 0);
-        let pnl = (trade.direction === "BUY" ? (exitPx - trade.entryPrice) * noDataRemQty : (trade.entryPrice - exitPx) * noDataRemQty) + (trade.bookedPnl ?? 0);
-        // For paper mode: P&L is 0 since we exit at entry (no live data to determine actual exit)
-        // This is better than leaving trades open overnight
-        state.dailyPnl += pnl;
+        const remainderPnl = trade.direction === "BUY" ? (exitPx - trade.entryPrice) * noDataRemQty : (trade.entryPrice - exitPx) * noDataRemQty;
+        // Only add bookedPnl if it wasn't already added to dailyPnl during this session
+        const bookedPnlToAdd = trade.bookedPnlAddedToDaily ? 0 : (trade.bookedPnl ?? 0);
+        let pnl = remainderPnl + bookedPnlToAdd;
+        // Add only the remainder P&L to dailyPnl if bookedPnl was already counted
+        if (trade.bookedPnlAddedToDaily) {
+          state.dailyPnl += remainderPnl;
+        } else {
+          state.dailyPnl += pnl;
+        }
         state.openTrade = null;
         await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
         emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
@@ -2839,12 +2845,13 @@ async function tick(
     return;
   }
 
-  // Re-entry cooldown logic
+  // Re-entry cooldown logic — time-based (120s = 2 candles worth regardless of scan interval)
   let isReEntry = false;
   if (state.lastSlHitAt && state.lastSlDirection) {
-    state.reEntryCandles += 1;
-    if (state.reEntryCandles < 2) {
-      state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Re-entry cooldown (${state.reEntryCandles}/2 candles after SL)`, layer: "None" };
+    const elapsedSinceSlMs = Date.now() - state.lastSlHitAt;
+    if (elapsedSinceSlMs < 120_000) {
+      const remainingSec = Math.ceil((120_000 - elapsedSinceSlMs) / 1000);
+      state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Re-entry cooldown (${remainingSec}s remaining after SL)`, layer: "None" };
       return;
     }
     isReEntry = true;
@@ -3636,12 +3643,12 @@ export async function forceAverageDown(sessionToken: string): Promise<{ success:
     const db = await getDb();
     if (db && trade.dbId) {
       await db.update(tl).set({
-        entryPrice: String(newAvgEntry),
+        entryPrice: newAvgEntry,
         quantity: combinedQty,
-        slPrice: String(trade.slPrice),
-        targetPrice: String(trade.targetPrice),
-        partial1RPrice: String(trade.partial1RPrice),
-        partial2RPrice: String(trade.partial2RPrice),
+        slPrice: trade.slPrice,
+        targetPrice: trade.targetPrice,
+        partial1RPrice: trade.partial1RPrice,
+        partial2RPrice: trade.partial2RPrice,
       }).where(eq(tl.id, trade.dbId));
     }
   } catch (e) { console.error("[BotEngine] Failed to persist manual averaging:", e); }

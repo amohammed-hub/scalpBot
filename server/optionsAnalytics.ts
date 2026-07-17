@@ -43,7 +43,7 @@ export interface OptionsAnalytics {
 }
 
 // Cache per underlying (avoid hammering the API)
-const analyticsCache = new Map<string, OptionsAnalytics>();
+const analyticsCache = new Map<string, OptionsAnalytics & { _expiry?: string }>();
 const CACHE_TTL_MS = 120_000; // 2 min
 
 /** Fetch full option chain with Greeks from Upstox and compute analytics */

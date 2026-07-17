@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 describe("Twilio Credentials Validation", () => {
-  it("should connect to Twilio API with provided credentials", async () => {
+  it("should have valid Twilio env vars configured", () => {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     const phoneNumber = process.env.TWILIO_PHONE_NUMBER;
@@ -11,8 +11,19 @@ describe("Twilio Credentials Validation", () => {
     expect(authToken).toBeDefined();
     expect(phoneNumber).toBeDefined();
     expect(accountSid!.startsWith("AC")).toBe(true);
+    // Validate phone number format (E.164)
+    expect(phoneNumber!.startsWith("+")).toBe(true);
+  });
 
-    // Validate by fetching account info from Twilio API
+  it("should connect to Twilio API with provided credentials", async () => {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!accountSid || !authToken) {
+      // Skip if env vars not available (CI/local dev without credentials)
+      console.warn("Skipping Twilio API test — credentials not available");
+      return;
+    }
+
     const response = await fetch(
       `https://api.twilio.com/2010-04-01/Accounts/${accountSid}.json`,
       {
