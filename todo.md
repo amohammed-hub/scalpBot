@@ -975,6 +975,6 @@
 - [x] Bot 1 Stop button calls bot.stop, Bot 2/3 calls multiBots.stopSecondary
 - [x] Backend audit: confirmed all 3 slots use identical logic (no special privileges for "Primary")
 ## CRITICAL BUG — Bot starts but UI doesn't update (July 17 PM)
-- [ ] BUG 8: Toast shows "Bot started in LIVE mode" but header shows "Bot Stopped", slot cards show "Inactive", button shows "Start (Paper)"
-- [ ] Root cause: frontend state not updating after successful API response
-- [ ] Fix: ensure invalidate/refetch triggers update header + slot cards + button state
+- [x] BUG 8: Toast shows "Bot started in LIVE mode" but header shows "Bot Stopped", slot cards show "Inactive", button shows "Start (Paper)"
+- [x] Root cause: tRPC invalidate() has staleTime delay; optimistic setData() needed
+- [x] Fix: Added optimistic setData() to all 4 mutations (start/stop × primary/secondary)
