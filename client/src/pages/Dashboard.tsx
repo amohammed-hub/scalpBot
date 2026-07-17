@@ -2393,7 +2393,11 @@ export default function Dashboard() {
           <span className="text-xs text-white/30">All 3 slots — Primary + 2 secondary</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-          {(allBots ?? []).map((bot: any) => {
+          {((allBots && allBots.length > 0) ? allBots : [
+            { slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0, openTrade: null, instrumentLabel: "", lastSignal: null, lastTickAt: 0, scanIntervalSec: 60, lastError: null, candlesCount: 0, hasRealData: false, optionPremiumPrice: null, sessionToken: sessionToken },
+            { slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0, openTrade: null, instrumentLabel: "", lastSignal: null, lastTickAt: 0, scanIntervalSec: 60, lastError: null, candlesCount: 0, hasRealData: false, optionPremiumPrice: null, sessionToken: `${sessionToken}-slot1` },
+            { slot: 2, status: "stopped", dailyPnl: 0, tradesCount: 0, openTrade: null, instrumentLabel: "", lastSignal: null, lastTickAt: 0, scanIntervalSec: 60, lastError: null, candlesCount: 0, hasRealData: false, optionPremiumPrice: null, sessionToken: `${sessionToken}-slot2` },
+          ]).map((bot: any) => {
             const isActive = bot.status === "running";
             const slotLabel = bot.slot === 0 ? "Primary" : `Slot ${bot.slot}`;
             const slotClasses = bot.slot === 0
