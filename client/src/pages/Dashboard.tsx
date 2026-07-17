@@ -327,6 +327,7 @@ export default function Dashboard() {
         trailingSlPct: config.trailingSlPct,
         averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
         averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+        useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
       });
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
@@ -344,6 +345,7 @@ export default function Dashboard() {
         enabledLayers: config.enabledLayers,
         partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
         trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
+        useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
       });
     }
   };
@@ -420,6 +422,7 @@ export default function Dashboard() {
           trailingSlPct: config.trailingSlPct,
           averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
           averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+          useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
         });
       } else {
         startSecondaryMutation.mutate({
@@ -436,6 +439,7 @@ export default function Dashboard() {
           enabledLayers: config.enabledLayers,
           partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
           trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
+          useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
         });
       }
       toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);

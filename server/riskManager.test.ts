@@ -89,8 +89,8 @@ describe("Risk Manager — Market Risk Score", () => {
   });
 
   it("getCachedRiskScore returns the last computed score", async () => {
-    await computeMarketRiskScore([], [], null);
-    const cached = getCachedRiskScore();
+    await computeMarketRiskScore([], [], "default", null);
+    const cached = getCachedRiskScore("default");
     expect(cached).toBeDefined();
     expect(cached.updatedAt).toBeGreaterThan(0);
   });

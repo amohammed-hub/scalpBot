@@ -148,6 +148,13 @@
       "when": 1784312736493,
       "tag": "0020_mighty_stick",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1784324384358,
+      "tag": "0021_common_riptide",
+      "breakpoints": true
     }
   ]
 }

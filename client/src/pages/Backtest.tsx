@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, Play, BarChart2, TrendingUp, TrendingDown,
-  CheckCircle, XCircle, Minus, AlertTriangle, Info
+  CheckCircle, XCircle, Minus, AlertTriangle, Info, GitCompare, Zap
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -61,22 +61,35 @@ export default function Backtest() {
   const [minConfidence, setMinConfidence] = useState(60);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [tab, setTab] = useState<"equity" | "trades" | "distribution">("equity");
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareResult, setCompareResult] = useState<any>(null);
 
   const runMutation = trpc.backtest.run.useMutation({
     onSuccess: (data) => {
       setResult(data);
+      setCompareResult(null);
       toast.success(`Backtest complete — ${data.totalTrades} trades on ${data.candleCount} candles`);
     },
     onError: (e) => toast.error(`Backtest failed: ${e.message}`),
   });
 
+  const compareMutation = trpc.backtest.compareV2.useMutation({
+    onSuccess: (data: any) => {
+      setCompareResult(data);
+      setResult(null);
+      toast.success(`V1 vs V2 comparison complete — V1: ${data.v1.totalTrades} trades, V2: ${data.v2.totalTrades} trades`);
+    },
+    onError: (e: any) => toast.error(`Comparison failed: ${e.message}`),
+  });
+
   const handleRun = () => {
     if (fromDate >= toDate) { toast.error("From date must be before To date"); return; }
-    runMutation.mutate({
-      sessionToken, instrumentToken, fromDate, toDate,
-      capital, riskPct, slMultiplier, tpMultiplier,
-      minConfidence: minConfidence / 100,
-    });
+    const params = { sessionToken, instrumentToken, fromDate, toDate, capital, riskPct, slMultiplier, tpMultiplier, minConfidence: minConfidence / 100 };
+    if (compareMode) {
+      compareMutation.mutate(params);
+    } else {
+      runMutation.mutate(params);
+    }
   };
 
   const equityCurveData = useMemo(() => {
@@ -210,11 +223,24 @@ export default function Backtest() {
               </div>
             </label>
 
-            <button onClick={handleRun} disabled={runMutation.isPending}
-              className="w-full flex items-center justify-center gap-2 bg-teal-500 hover:bg-teal-400 disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold rounded-xl py-3 transition-colors active:scale-[0.98]">
-              {runMutation.isPending
+            {/* V1 vs V2 Compare Toggle */}
+            <label className="flex items-center gap-3 mb-4 cursor-pointer">
+              <div className={`relative w-10 h-5 rounded-full transition-colors ${compareMode ? 'bg-purple-500' : 'bg-white/10'}`}
+                onClick={() => setCompareMode(!compareMode)}>
+                <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${compareMode ? 'translate-x-5' : ''}`} />
+              </div>
+              <span className="text-sm text-white/70 flex items-center gap-1.5">
+                <GitCompare className="w-3.5 h-3.5" /> V1 vs V2 Comparison
+              </span>
+            </label>
+
+            <button onClick={handleRun} disabled={runMutation.isPending || compareMutation.isPending}
+              className={`w-full flex items-center justify-center gap-2 ${compareMode ? 'bg-purple-500 hover:bg-purple-400' : 'bg-teal-500 hover:bg-teal-400'} disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold rounded-xl py-3 transition-colors active:scale-[0.98]`}>
+              {(runMutation.isPending || compareMutation.isPending)
                 ? <><span className="animate-spin border-2 border-black/30 border-t-black rounded-full w-4 h-4" /> Running…</>
-                : <><Play className="w-4 h-4" /> Run Backtest</>
+                : compareMode
+                  ? <><GitCompare className="w-4 h-4" /> Compare V1 vs V2</>
+                  : <><Play className="w-4 h-4" /> Run Backtest</>
               }
             </button>
           </div>
@@ -232,6 +258,82 @@ export default function Backtest() {
 
         {/* Results Panel */}
         <div className="space-y-4">
+          {/* V1 vs V2 Comparison Results */}
+          {compareResult && (
+            <div className="space-y-4">
+              {/* Improvement Summary */}
+              <div className="bg-white/5 border border-purple-500/30 rounded-2xl p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <GitCompare className="w-5 h-5 text-purple-400" />
+                  <span className="font-bold text-white">V1 vs V2 Comparison</span>
+                  <span className="text-xs text-white/30 ml-auto">{compareResult.candleCount} candles | {compareResult.fromDate} → {compareResult.toDate}</span>
+                </div>
+                
+                {/* Improvement badges */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                  <div className={`rounded-xl p-3 text-center ${compareResult.improvement.pnlDiff >= 0 ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
+                    <div className="text-xs text-white/50 mb-1">P&L Diff</div>
+                    <div className={`font-bold ${compareResult.improvement.pnlDiff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {compareResult.improvement.pnlDiff >= 0 ? '+' : ''}₹{compareResult.improvement.pnlDiff.toLocaleString()}
+                    </div>
+                  </div>
+                  <div className={`rounded-xl p-3 text-center ${compareResult.improvement.winRateDiff >= 0 ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
+                    <div className="text-xs text-white/50 mb-1">Win Rate</div>
+                    <div className={`font-bold ${compareResult.improvement.winRateDiff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {compareResult.improvement.winRateDiff >= 0 ? '+' : ''}{compareResult.improvement.winRateDiff}%
+                    </div>
+                  </div>
+                  <div className={`rounded-xl p-3 text-center ${compareResult.improvement.tradeReduction >= 0 ? 'bg-green-500/10 border border-green-500/20' : 'bg-yellow-500/10 border border-yellow-500/20'}`}>
+                    <div className="text-xs text-white/50 mb-1">Fewer Trades</div>
+                    <div className={`font-bold ${compareResult.improvement.tradeReduction >= 0 ? 'text-green-400' : 'text-yellow-400'}`}>
+                      {compareResult.improvement.tradeReduction >= 0 ? '-' : '+'}{Math.abs(compareResult.improvement.tradeReduction)}
+                    </div>
+                  </div>
+                  <div className={`rounded-xl p-3 text-center ${compareResult.improvement.drawdownReduction >= 0 ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
+                    <div className="text-xs text-white/50 mb-1">Drawdown</div>
+                    <div className={`font-bold ${compareResult.improvement.drawdownReduction >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {compareResult.improvement.drawdownReduction >= 0 ? '-' : '+'}₹{Math.abs(compareResult.improvement.drawdownReduction).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Side by side stats */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* V1 */}
+                  <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                    <div className="text-xs text-white/40 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-orange-400" /> V1 (Current)
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between"><span className="text-white/50">Trades</span><span className="text-white">{compareResult.v1.totalTrades}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Win Rate</span><span className="text-white">{compareResult.v1.winRate}%</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Total P&L</span><span className={compareResult.v1.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}>₹{compareResult.v1.totalPnl.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Avg Win</span><span className="text-green-400">₹{compareResult.v1.avgWin.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Avg Loss</span><span className="text-red-400">₹{compareResult.v1.avgLoss.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Profit Factor</span><span className="text-white">{compareResult.v1.profitFactor}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Max DD</span><span className="text-red-400">₹{compareResult.v1.maxDrawdown.toLocaleString()}</span></div>
+                    </div>
+                  </div>
+                  {/* V2 */}
+                  <div className="bg-purple-500/5 rounded-xl p-4 border border-purple-500/20">
+                    <div className="text-xs text-purple-300 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                      <Zap className="w-3 h-3" /> V2 (Regime-Based)
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between"><span className="text-white/50">Trades</span><span className="text-white">{compareResult.v2.totalTrades}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Win Rate</span><span className="text-white">{compareResult.v2.winRate}%</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Total P&L</span><span className={compareResult.v2.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}>₹{compareResult.v2.totalPnl.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Avg Win</span><span className="text-green-400">₹{compareResult.v2.avgWin.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Avg Loss</span><span className="text-red-400">₹{compareResult.v2.avgLoss.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Profit Factor</span><span className="text-white">{compareResult.v2.profitFactor}</span></div>
+                      <div className="flex justify-between"><span className="text-white/50">Max DD</span><span className="text-red-400">₹{compareResult.v2.maxDrawdown.toLocaleString()}</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {!result && !runMutation.isPending && (
             <div className="bg-white/5 border border-white/10 rounded-2xl flex flex-col items-center justify-center py-24 text-center gap-4">
               <BarChart2 className="w-12 h-12 text-white/20" />

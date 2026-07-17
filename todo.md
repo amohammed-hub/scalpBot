@@ -1016,3 +1016,17 @@
 - [x] KILL SWITCH: Frontend - add single big red KILL SWITCH button at top-right, always visible
 - [x] KILL SWITCH: Show confirmation "All bots stopped. X positions closed." after success
 - [x] KILL SWITCH: If any bot fails to stop, show which one failed and auto-retry
+- [x] STRATEGY OVERHAUL: Layer 1 - Regime Detection (TRENDING/RANGING/VOLATILE/DEAD) using ADX + VWAP + ATR
+- [x] STRATEGY OVERHAUL: Layer 2 - Filter strategies by regime (only matching strategies fire)
+- [x] STRATEGY OVERHAUL: Disable noisy layers (ORB, MACD/BB, Institutional, 1-Hour Candle Close) — V2 filters by regime
+- [x] STRATEGY OVERHAUL: Quality filters (15m trend agree, key level proximity, 1:2 R:R, no first 15min, loss streak gate)
+- [x] STRATEGY OVERHAUL: Backtest last 5 trading days - old vs new engine comparison (V1 vs V2 compare UI built)
+- [ ] STRATEGY OVERHAUL: Deploy only after replay proves improvement on 4/5 days
+- [x] V2 Engine: generateSignalV2() function in botEngine.ts — 2-layer regime-based signal system
+- [x] V2 Engine: classifyMarketRegime() — TRENDING/RANGING/VOLATILE/DEAD detection
+- [x] V2 Engine: useV2Engine field added to BotState + bot_sessions DB table (migration 0021)
+- [x] V2 Engine: Wired into tick function (reads state.useV2Engine to choose V1 or V2)
+- [x] V2 Engine: Toggle in Settings page (V2EngineToggle component with localStorage)
+- [x] V2 Engine: backtest.compareV2 procedure — runs both V1 and V2 on same candle data
+- [x] V2 Engine: Backtest page — V1 vs V2 comparison mode toggle + side-by-side results UI
+- [x] V2 Engine: bot.start, startSecondary, restart all accept useV2Engine parameter

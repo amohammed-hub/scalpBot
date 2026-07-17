@@ -5,7 +5,7 @@ import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sen
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
@@ -320,6 +320,7 @@ export const appRouter = router({
         partial2Pct: z.number().default(60), // Book 25% at this % profit (e.g., 60 = +60%)
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
+        useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
       }))
       .mutation(async ({ input, ctx }) => {
         console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
@@ -581,6 +582,9 @@ export const appRouter = router({
               enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
               partial1Pct: input.partial1Pct,
               partial2Pct: input.partial2Pct,
+              averagingEnabled: input.averagingEnabled,
+              averagingLossThreshold: input.averagingLossThreshold,
+              useV2Engine: input.useV2Engine,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -732,6 +736,7 @@ export const appRouter = router({
             carryForward: existingOpenTrade?.carryForward ?? false,
             averagingEnabled: input.averagingEnabled,
             averagingLossThreshold: input.averagingLossThreshold,
+            useV2Engine: input.useV2Engine,
           },
           onTradeOpen,
           onTradeClose,
@@ -1056,6 +1061,7 @@ export const appRouter = router({
             carryForward: existingOpenTrade?.carryForward ?? false,
             averagingEnabled: row.averagingEnabled ?? true,
             averagingLossThreshold: row.averagingLossThreshold ?? 0.20,
+            useV2Engine: (row as any).useV2Engine ?? false,
           },
           onTradeOpen,
           onTradeClose,
@@ -2185,6 +2191,7 @@ export const appRouter = router({
         partial2Pct: z.number().default(60),
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20),
+        useV2Engine: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
         const db = await getDb();
@@ -2444,6 +2451,7 @@ export const appRouter = router({
           partial2Pct: input.partial2Pct,
           averagingEnabled: input.averagingEnabled ?? true,
           averagingLossThreshold: input.averagingLossThreshold ?? 0.20,
+          useV2Engine: input.useV2Engine,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;
@@ -2909,6 +2917,135 @@ export const appRouter = router({
           candleCount: candles.length,
           fromDate: input.fromDate,
           toDate: input.toDate,
+        };
+      }),
+    compareV2: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        instrumentToken: z.string(),
+        fromDate: z.string(),
+        toDate: z.string(),
+        capital: z.number().default(100000),
+        riskPct: z.number().default(1.0),
+        slMultiplier: z.number().default(1.5),
+        tpMultiplier: z.number().default(3.0),
+        minConfidence: z.number().default(0.6),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const rows = await db
+          .select({ accessToken: upstoxCredentials.accessToken })
+          .from(upstoxCredentials)
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .limit(1);
+        const accessToken = rows[0]?.accessToken ?? "";
+        if (!accessToken) throw new Error("No Upstox access token — save credentials in Settings first.");
+
+        // Fetch historical 1m candles
+        const encoded = encodeURIComponent(input.instrumentToken);
+        const url = `https://api.upstox.com/v2/historical-candle/${encoded}/1minute/${input.toDate}/${input.fromDate}`;
+        const resp = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!resp.ok) throw new Error(`Upstox API error: ${resp.status} ${resp.statusText}`);
+        const json = await resp.json() as { data?: { candles?: number[][] } };
+        const rawCandles: number[][] = json.data?.candles ?? [];
+        if (rawCandles.length < 60) throw new Error("Not enough candle data for comparison.");
+
+        const candles: Candle[] = rawCandles
+          .map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }))
+          .sort((a, b) => a.timestamp - b.timestamp);
+
+        // Helper: simulate trades for a signal generator
+        function simulateTrades(signalFn: (window: Candle[]) => { direction: "BUY" | "SELL" | "HOLD"; slPrice: number; targetPrice: number; confidence: number; layer?: string; regimeV2?: string }) {
+          const WINDOW = 60;
+          const trades: Array<{
+            entryTime: number; exitTime: number;
+            direction: "BUY" | "SELL"; entryPrice: number;
+            slPrice: number; targetPrice: number; exitPrice: number;
+            pnl: number; result: "WIN" | "LOSS" | "BE";
+            confidence: number; layer: string; regime?: string;
+          }> = [];
+          let i = WINDOW;
+          while (i < candles.length) {
+            const window = candles.slice(i - WINDOW, i);
+            const sig = signalFn(window);
+            if (sig.direction !== "HOLD") {
+              const entryCandle = candles[i];
+              if (!entryCandle) { i++; continue; }
+              const entryPrice = entryCandle.open;
+              const qty = Math.max(1, Math.floor((input.capital * input.riskPct / 100) / Math.abs(entryPrice - sig.slPrice)));
+              let exitPrice = entryPrice;
+              let exitTime = entryCandle.timestamp;
+              let result: "WIN" | "LOSS" | "BE" = "BE";
+              for (let j = i + 1; j < Math.min(i + 120, candles.length); j++) {
+                const c = candles[j];
+                if (sig.direction === "BUY") {
+                  if (c.low <= sig.slPrice) { exitPrice = sig.slPrice; exitTime = c.timestamp; result = "LOSS"; break; }
+                  if (c.high >= sig.targetPrice) { exitPrice = sig.targetPrice; exitTime = c.timestamp; result = "WIN"; break; }
+                } else {
+                  if (c.high >= sig.slPrice) { exitPrice = sig.slPrice; exitTime = c.timestamp; result = "LOSS"; break; }
+                  if (c.low <= sig.targetPrice) { exitPrice = sig.targetPrice; exitTime = c.timestamp; result = "WIN"; break; }
+                }
+                exitPrice = c.close; exitTime = c.timestamp;
+              }
+              const pnl = sig.direction === "BUY"
+                ? (exitPrice - entryPrice) * qty
+                : (entryPrice - exitPrice) * qty;
+              trades.push({
+                entryTime: entryCandle.timestamp, exitTime,
+                direction: sig.direction, entryPrice, slPrice: sig.slPrice, targetPrice: sig.targetPrice,
+                exitPrice, pnl: Math.round(pnl * 100) / 100, result,
+                confidence: Math.round(sig.confidence * 100), layer: sig.layer ?? "Signal",
+                regime: sig.regimeV2,
+              });
+              const exitIdx = candles.findIndex(c => c.timestamp >= exitTime);
+              i = exitIdx > i ? exitIdx + 1 : i + 1;
+            } else {
+              i++;
+            }
+          }
+          const wins = trades.filter(t => t.result === "WIN").length;
+          const losses = trades.filter(t => t.result === "LOSS").length;
+          const totalPnl = trades.reduce((a, t) => a + t.pnl, 0);
+          const winRate = trades.length > 0 ? Math.round((wins / trades.length) * 100) : 0;
+          const avgWin = wins > 0 ? trades.filter(t => t.result === "WIN").reduce((a, t) => a + t.pnl, 0) / wins : 0;
+          const avgLoss = losses > 0 ? trades.filter(t => t.result === "LOSS").reduce((a, t) => a + t.pnl, 0) / losses : 0;
+          const profitFactor = avgLoss !== 0 ? Math.abs(avgWin * wins / (avgLoss * losses)) : wins > 0 ? 999 : 0;
+          let maxDrawdown = 0, peak = input.capital, equity = input.capital;
+          for (const t of trades) {
+            equity += t.pnl;
+            if (equity > peak) peak = equity;
+            const dd = peak - equity;
+            if (dd > maxDrawdown) maxDrawdown = dd;
+          }
+          return {
+            totalTrades: trades.length, wins, losses, winRate,
+            totalPnl: Math.round(totalPnl), avgWin: Math.round(avgWin),
+            avgLoss: Math.round(avgLoss), profitFactor: Math.round(profitFactor * 100) / 100,
+            maxDrawdown: Math.round(maxDrawdown),
+            trades: trades.slice(0, 100),
+          };
+        }
+
+        // Run V1
+        const v1 = simulateTrades((window) => generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence));
+        // Run V2
+        const v2 = simulateTrades((window) => generateSignalV2(window, input.slMultiplier, input.tpMultiplier, input.minConfidence));
+
+        return {
+          candleCount: candles.length,
+          fromDate: input.fromDate,
+          toDate: input.toDate,
+          v1, v2,
+          improvement: {
+            pnlDiff: v2.totalPnl - v1.totalPnl,
+            winRateDiff: v2.winRate - v1.winRate,
+            tradeReduction: v1.totalTrades - v2.totalTrades,
+            drawdownReduction: v1.maxDrawdown - v2.maxDrawdown,
+          },
         };
       }),
   }),

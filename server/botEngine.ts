@@ -56,6 +56,9 @@ export interface Signal {
   // Partial profit booking levels
   partial1RPrice?: number;  // price at which to book 50%
   partial2RPrice?: number;  // price at which to book next 25%
+  // V2 regime-based additions
+  sizeReduction?: number;   // 0.5 for VOLATILE regime (reduce position size by 50%)
+  regimeV2?: string;        // TRENDING | RANGING | VOLATILE | DEAD
 }
 
 export interface OpenTrade {
@@ -201,6 +204,8 @@ export interface BotState {
   // Shadow mode: new logic (P0+P1) logs only, old logic executes trades
   shadowMode?: boolean;
   shadowLog?: ShadowLogEntry[];
+  // V2 engine: when true, use generateSignalV2 (regime-based) instead of V1
+  useV2Engine?: boolean;
 }
 
 // Shadow mode log entry
@@ -1323,6 +1328,404 @@ export function generateSignal(
     reason: `${reason} | ${tod.label}`,
     layer,
     marketRegime: regime.label,
+  };
+}
+// ── V2 Regime Detection ─────────────────────────────────────────────────────
+export type RegimeV2 = "TRENDING" | "RANGING" | "VOLATILE" | "DEAD";
+
+export function detectRegimeV2(candles: Candle[]): { regime: RegimeV2; label: string; adx: number; atrRatio: number } {
+  if (candles.length < 30) return { regime: "DEAD", label: "Insufficient data", adx: 0, atrRatio: 0 };
+  const closes = candles.map(c => c.close);
+  const price = closes[closes.length - 1];
+  const adx = calcADX(candles, 14);
+  const vwap = calcVWAP(candles);
+  const atr = calcATR(candles, 14);
+  // Average ATR: compute ATR at multiple points and average
+  const atrSamples: number[] = [];
+  for (let i = Math.max(30, candles.length - 50); i < candles.length; i += 5) {
+    const slice = candles.slice(Math.max(0, i - 14), i + 1);
+    if (slice.length >= 3) atrSamples.push(calcATR(slice, Math.min(14, slice.length - 1)));
+  }
+  const avgAtr = atrSamples.length > 0 ? atrSamples.reduce((a, b) => a + b, 0) / atrSamples.length : atr;
+  const atrRatio = avgAtr > 0 ? atr / avgAtr : 1;
+  // Volume analysis
+  const avgVol = candles.slice(-20).reduce((a, c) => a + c.volume, 0) / 20;
+  const recentVol = candles.slice(-5).reduce((a, c) => a + c.volume, 0) / 5;
+  const volRatio = avgVol > 0 ? recentVol / avgVol : 1;
+  const allVolZero = candles.slice(-20).every(c => c.volume === 0);
+
+  // VOLATILE: ATR > 1.5x average (explosive moves)
+  if (atrRatio > 1.5) return { regime: "VOLATILE", label: `Volatile — ATR ${atrRatio.toFixed(1)}x avg`, adx, atrRatio };
+  // DEAD: ADX < 15 with low ATR, or very low volume
+  if (atrRatio < 0.5 && !allVolZero && volRatio < 0.6) return { regime: "DEAD", label: `Dead — ATR ${atrRatio.toFixed(1)}x, vol ${volRatio.toFixed(1)}x`, adx, atrRatio };
+  if (adx < 15 && atrRatio < 0.6) return { regime: "DEAD", label: `Dead — ADX(${adx.toFixed(0)}), ATR ${atrRatio.toFixed(1)}x`, adx, atrRatio };
+  // TRENDING: ADX > 25
+  const vwapDist = Math.abs(price - vwap) / vwap;
+  if (adx > 25 && vwapDist > 0.001) return { regime: "TRENDING", label: `Trending — ADX(${adx.toFixed(0)}) ${price > vwap ? "above" : "below"} VWAP`, adx, atrRatio };
+  // Weak trend (ADX 20-25): still TRENDING but lower confidence
+  if (adx >= 20 && adx <= 25) return { regime: "TRENDING", label: `Weak trend — ADX(${adx.toFixed(0)})`, adx, atrRatio };
+  // RANGING: ADX < 20
+  return { regime: "RANGING", label: `Ranging — ADX(${adx.toFixed(0)})`, adx, atrRatio };
+}
+
+// Build 15m candles from 1m candles
+function build15mCandles(candles1m: Candle[]): Candle[] {
+  const result: Candle[] = [];
+  for (let i = 0; i + 14 < candles1m.length; i += 15) {
+    const slice = candles1m.slice(i, i + 15);
+    result.push({
+      open: slice[0].open, high: Math.max(...slice.map(c => c.high)),
+      low: Math.min(...slice.map(c => c.low)), close: slice[slice.length - 1].close,
+      volume: slice.reduce((a, c) => a + c.volume, 0), timestamp: slice[0].timestamp,
+    });
+  }
+  return result;
+}
+
+// Get 15m trend direction
+function get15mTrend(candles1m: Candle[]): "bullish" | "bearish" | "neutral" {
+  const candles15m = build15mCandles(candles1m);
+  if (candles15m.length < 3) return "neutral";
+  const closes = candles15m.map(c => c.close);
+  const e9 = ema(closes, Math.min(9, closes.length));
+  const e21 = ema(closes, Math.min(21, closes.length));
+  const lastE9 = e9[e9.length - 1];
+  const lastE21 = e21[e21.length - 1];
+  const price = closes[closes.length - 1];
+  const vwap15m = calcVWAP(candles15m);
+  if (lastE9 > lastE21 && price > vwap15m) return "bullish";
+  if (lastE9 < lastE21 && price < vwap15m) return "bearish";
+  return "neutral";
+}
+
+// Check if price is near a key level (PDH/PDL/VWAP/round number/pivots)
+function isNearKeyLevelV2(price: number, vwap: number, prevDayHigh: number, prevDayLow: number, prevDayClose: number, threshold = 0.003): boolean {
+  const levels: number[] = [vwap];
+  if (prevDayHigh > 0) levels.push(prevDayHigh);
+  if (prevDayLow > 0) levels.push(prevDayLow);
+  if (prevDayClose > 0) levels.push(prevDayClose);
+  // Round numbers
+  const round100 = Math.round(price / 100) * 100;
+  const round50 = Math.round(price / 50) * 50;
+  levels.push(round100, round50);
+  // Pivot points
+  if (prevDayHigh > 0 && prevDayLow > 0 && prevDayClose > 0) {
+    const pp = (prevDayHigh + prevDayLow + prevDayClose) / 3;
+    levels.push(pp, 2 * pp - prevDayLow, 2 * pp - prevDayHigh);
+  }
+  return levels.some(level => Math.abs(price - level) / price < threshold);
+}
+
+/**
+ * generateSignalV2 — 2-Layer Regime-Based Signal Engine
+ *
+ * Layer 1: Detect market regime (TRENDING / RANGING / VOLATILE / DEAD)
+ * Layer 2: Only run strategies that match the current regime
+ *
+ * TRENDING → Trend (EMA/VWAP) + Momentum + Supertrend
+ * RANGING  → VWAP Mean Reversion + Failed Breakout + VWAP Pullback
+ * VOLATILE → Breakout (with volume confirmation), 50% position size
+ * DEAD     → No trades (return HOLD)
+ *
+ * Additional quality filters applied AFTER signal generation:
+ * 1. 15m trend must agree with direction
+ * 2. Price within 0.3% of a key level (support/resistance/VWAP/round)
+ * 3. R:R must be >= 1:2 (target distance / SL distance)
+ * 4. No entry in first 15 min (9:15–9:30 AM)
+ * 5. After 2 consecutive SLs same direction, require 75% confidence
+ */
+export function generateSignalV2(
+  candles: Candle[],
+  slMultiplier = 1.5,
+  tpMultiplier = 3.0,
+  minConf = 0.55,
+  candles5m: Candle[] = [],
+  prevDayHigh = 0,
+  prevDayLow = 0,
+  prevDayClose = 0,
+  consecutiveSameDirectionSLs = 0,
+  lastSlExitDirection: "BUY" | "SELL" | null = null,
+): Signal {
+  // ── Early returns ──────────────────────────────────────────────────────────
+  if (!candles || candles.length === 0) {
+    return { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No candle data", layer: "None" };
+  }
+  const closes = candles.map(c => c.close);
+  const price = closes[closes.length - 1];
+  const atr = calcATR(candles, 14);
+  const vwap = calcVWAP(candles);
+  const rsi = calcRSI(closes, 14);
+  const adx = calcADX(candles, 14);
+  const e9arr = ema(closes, 9);
+  const e21arr = ema(closes, 21);
+  const e9 = e9arr[e9arr.length - 1];
+  const e21 = e21arr[e21arr.length - 1];
+  const avgVol = candles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
+  const lastVol = candles[candles.length - 1].volume;
+  const allVolZero = candles.slice(-10).every(c => c.volume === 0);
+  const volRatio = allVolZero ? 1.5 : (avgVol > 0 ? lastVol / avgVol : 1.0);
+
+  const now = new Date();
+  const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
+  const inNSESession = istMin >= 555 && istMin <= 930;
+  const inMCXSession = istMin >= 540 && istMin <= 1410;
+  if (!inNSESession && !inMCXSession) {
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: "Market closed", layer: "None" };
+  }
+  if (candles.length < 20) {
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `Collecting data (${candles.length}/20)`, layer: "None" };
+  }
+
+  // ── Quality Filter 4: No entry in first 15 min (9:15–9:30 AM) ─────────────
+  if (istMin < 570) {
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: "Skipping first 15 min (opening volatility)", layer: "None" };
+  }
+
+  // ── LAYER 1: Regime Detection ─────────────────────────────────────────────
+  const regime = detectRegimeV2(candles);
+
+  // DEAD regime → no trades
+  if (regime.regime === "DEAD") {
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[DEAD] ${regime.label} — no trades`, layer: "None", regimeV2: "DEAD" };
+  }
+
+  // Time-of-day multiplier
+  const tod = getTimeOfDayMultiplier(istMin);
+
+  // Multi-timeframe: 5m and 15m trends
+  const trend5m = get5mTrend(candles5m);
+  const trend15m = get15mTrend(candles);
+
+  // S/R levels from previous day
+  let srLevels: number[] = [];
+  if (prevDayHigh > 0 && prevDayLow > 0 && prevDayClose > 0) {
+    const pivots = calcPivotPoints(prevDayHigh, prevDayLow, prevDayClose);
+    srLevels = [pivots.pp, pivots.r1, pivots.r2, pivots.s1, pivots.s2];
+  }
+
+  let direction: "BUY" | "SELL" | "HOLD" = "HOLD";
+  let confidence = 0;
+  let reason = "";
+  let layer: Signal["layer"] = "None";
+  let sizeReduction: number | undefined;
+
+  // ── LAYER 2: Regime-Filtered Strategies ───────────────────────────────────
+  if (regime.regime === "TRENDING") {
+    // ── TRENDING: Trend + Momentum + Supertrend ─────────────────────────────
+
+    // Strategy A: EMA/VWAP Trend (same as old Layer 3)
+    if (direction === "HOLD" && candles.length >= 21 && adx > 20) {
+      const emaDiffPct = Math.abs(e9 - e21) / e21;
+      const distFromEma9 = Math.abs(price - e9) / e9;
+      const distFromVwap = Math.abs(price - vwap) / vwap;
+      const nearPullback = distFromEma9 < 0.0015 || distFromVwap < 0.0015;
+      if (e9 > e21 && price > vwap && (rsi > 55 || rsi < 40) && nearPullback) {
+        direction = "BUY";
+        confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 20) * 0.005);
+        reason = `[V2:Trend] EMA9>${e21.toFixed(1)} | VWAP | RSI(${rsi.toFixed(0)}) | ADX(${adx.toFixed(0)}) | pullback`;
+        layer = "Trend";
+      } else if (e9 < e21 && price < vwap && (rsi < 45 || rsi > 60) && nearPullback) {
+        direction = "SELL";
+        confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 20) * 0.005);
+        reason = `[V2:Trend] EMA9<${e21.toFixed(1)} | VWAP | RSI(${rsi.toFixed(0)}) | ADX(${adx.toFixed(0)}) | pullback`;
+        layer = "Trend";
+      }
+    }
+
+    // Strategy B: Momentum (same as old Layer 4)
+    if (direction === "HOLD" && candles.length >= 5) {
+      const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
+      const distFromEma9_m = Math.abs(price - e9) / e9;
+      const distFromVwap_m = Math.abs(price - vwap) / vwap;
+      const nearPullback_m = distFromEma9_m < 0.0015 || distFromVwap_m < 0.0015;
+      if (rsi > 55 && roc3 > 0.001 && price > vwap && nearPullback_m) {
+        direction = "BUY";
+        confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 55) * 0.005);
+        reason = `[V2:Momentum] RSI(${rsi.toFixed(0)}) | +${(roc3 * 100).toFixed(2)}% in 3c | Above VWAP | pullback`;
+        layer = "Momentum";
+      } else if (rsi < 45 && roc3 < -0.001 && price < vwap && nearPullback_m) {
+        direction = "SELL";
+        confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (45 - rsi) * 0.005);
+        reason = `[V2:Momentum] RSI(${rsi.toFixed(0)}) | ${(roc3 * 100).toFixed(2)}% in 3c | Below VWAP | pullback`;
+        layer = "Momentum";
+      }
+    }
+
+    // Strategy C: Supertrend on Heiken Ashi (same as old Layer 10)
+    if (direction === "HOLD" && candles.length >= 15) {
+      const haCandles = toHeikenAshi(candles);
+      const st = calcSupertrend(haCandles, 10, 3.0);
+      if (st.flipped && st.direction !== ("HOLD" as any)) {
+        const stDir = st.direction as "BUY" | "SELL";
+        const rsiOk = stDir === "BUY" ? rsi > 45 && rsi < 80 : rsi < 55 && rsi > 20;
+        if (rsiOk) {
+          direction = stDir;
+          confidence = Math.min(0.92, 0.72 + (stDir === "BUY" ? Math.max(0, rsi - 50) : Math.max(0, 50 - rsi)) * 0.003);
+          reason = `[V2:Supertrend] HA-Supertrend(10,3) flipped ${stDir} | band:${st.band.toFixed(1)} | RSI(${rsi.toFixed(0)})`;
+          layer = "Trend";
+        }
+      }
+    }
+
+  } else if (regime.regime === "RANGING") {
+    // ── RANGING: VWAP Mean Reversion + Failed Breakout + VWAP Pullback ──────
+
+    // Strategy A: VWAP Deviation Mean Reversion (old Layer 7)
+    if (direction === "HOLD" && candles.length >= 20) {
+      const vwapDev = calcVWAPDeviation(candles);
+      if (vwapDev.signal !== "HOLD") {
+        direction = vwapDev.signal;
+        confidence = Math.min(0.85, 0.62 + Math.abs(vwapDev.zScore) * 0.08);
+        reason = `[V2:VWAPRev] z=${vwapDev.zScore.toFixed(2)} | dev=${vwapDev.deviation.toFixed(1)} | ${regime.label}`;
+        layer = "VWAPReversion";
+      }
+    }
+
+    // Strategy B: Failed Breakout (old Layer 8.5)
+    if (direction === "HOLD" && candles.length >= 35) {
+      const fb = detectFailedBreakout(candles, 30);
+      if (fb.detected && fb.direction !== "HOLD") {
+        const rsiOkFb = fb.direction === "SELL" ? rsi < 60 : rsi > 40;
+        if (rsiOkFb) {
+          direction = fb.direction;
+          confidence = 0.74;
+          reason = `[V2:FailedBreakout] ${fb.reason} | RSI(${rsi.toFixed(0)})`;
+          layer = "FailedBreakout";
+        }
+      }
+    }
+
+    // Strategy C: VWAP Pullback (old Layer 9)
+    if (direction === "HOLD" && candles.length >= 10) {
+      const pullback = detectVWAPPullback(candles, vwap);
+      if (pullback.detected && pullback.direction !== "HOLD") {
+        const exhaustion = pullback.direction === "BUY" ? detectUptrendExhaustion(candles) : { exhausted: false, reason: "" };
+        if (!exhaustion.exhausted) {
+          direction = pullback.direction;
+          confidence = Math.min(0.91, 0.68 + pullback.strength * 0.15);
+          reason = `[V2:VWAPPullback] Price returned to VWAP | ${pullback.direction} reversal candle`;
+          layer = "VWAPPullback";
+        }
+      }
+    }
+
+  } else if (regime.regime === "VOLATILE") {
+    // ── VOLATILE: Only Breakout with strong volume confirmation, 50% size ───
+    sizeReduction = 0.5; // Half position size in volatile regime
+
+    if (direction === "HOLD" && candles.length >= 20) {
+      const lookback = candles.slice(-20);
+      const highestHigh = Math.max(...lookback.slice(0, -1).map(c => c.high));
+      const lowestLow = Math.min(...lookback.slice(0, -1).map(c => c.low));
+      const lastCandle = candles[candles.length - 1];
+      const breakoutUpPct = (lastCandle.close - highestHigh) / highestHigh;
+      const breakoutDnPct = (lowestLow - lastCandle.close) / lowestLow;
+      const dynamicThreshold = Math.max(0.0005, (atr / price) * 0.7); // Higher threshold for volatile
+
+      // Require STRONG volume confirmation (2x avg) in volatile regime
+      if (breakoutUpPct > dynamicThreshold && volRatio >= 2.0 && rsi > 50 && rsi < 80) {
+        direction = "BUY";
+        confidence = Math.min(0.90, 0.65 + breakoutUpPct * 150 + (volRatio - 2.0) * 0.05);
+        reason = `[V2:Breakout] Above ${highestHigh.toFixed(1)} | Vol ${volRatio.toFixed(1)}x | RSI(${rsi.toFixed(0)}) | VOLATILE(50% size)`;
+        layer = "Breakout";
+      } else if (breakoutDnPct > dynamicThreshold && volRatio >= 2.0 && rsi < 50 && rsi > 20) {
+        direction = "SELL";
+        confidence = Math.min(0.90, 0.65 + breakoutDnPct * 150 + (volRatio - 2.0) * 0.05);
+        reason = `[V2:Breakout] Below ${lowestLow.toFixed(1)} | Vol ${volRatio.toFixed(1)}x | RSI(${rsi.toFixed(0)}) | VOLATILE(50% size)`;
+        layer = "Breakout";
+      }
+    }
+  }
+
+  // ── If no signal generated, return HOLD ───────────────────────────────────
+  if (direction === "HOLD") {
+    return {
+      direction: "HOLD", confidence: 0, entryPrice: price,
+      slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
+      reason: reason || `[V2] No signal | Regime:${regime.regime} | ADX(${adx.toFixed(0)}) | RSI(${rsi.toFixed(0)}) | EMA9(${e9.toFixed(1)}) vs EMA21(${e21.toFixed(1)})`,
+      layer: "None", regimeV2: regime.regime,
+    };
+  }
+
+  // ── QUALITY FILTERS (applied after signal generation) ─────────────────────
+
+  // Filter 1: 15m trend must agree with direction
+  if (trend15m !== "neutral") {
+    if ((direction === "BUY" && trend15m === "bearish") || (direction === "SELL" && trend15m === "bullish")) {
+      // Penalize counter-15m signals by 20% confidence
+      confidence -= 0.20;
+      reason += ` | 15m-against(${trend15m}):-20%`;
+      if (confidence < minConf) {
+        return {
+          direction: "HOLD", confidence, entryPrice: price,
+          slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
+          reason: `[V2] Rejected: 15m trend(${trend15m}) against ${direction} | conf ${(confidence * 100).toFixed(0)}% < ${(minConf * 100).toFixed(0)}%`,
+          layer: "None", regimeV2: regime.regime,
+        };
+      }
+    }
+  }
+
+  // Filter 2: Price should be near a key level (entry at support/resistance = better R:R)
+  const nearKey = isNearKeyLevelV2(price, vwap, prevDayHigh, prevDayLow, prevDayClose, 0.003);
+  if (!nearKey) {
+    // Not near key level — reduce confidence by 10% (soft filter, not hard block)
+    confidence -= 0.10;
+    reason += ` | not-near-key-level:-10%`;
+    if (confidence < minConf) {
+      return {
+        direction: "HOLD", confidence, entryPrice: price,
+        slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
+        reason: `[V2] Rejected: not near key level | conf ${(confidence * 100).toFixed(0)}% < ${(minConf * 100).toFixed(0)}%`,
+        layer: "None", regimeV2: regime.regime,
+      };
+    }
+  }
+
+  // Filter 3: R:R must be >= 1:2
+  const slPrice = direction === "BUY" ? price - atr * slMultiplier : price + atr * slMultiplier;
+  const targetPrice = direction === "BUY" ? price + atr * tpMultiplier : price - atr * tpMultiplier;
+  const slDistance = Math.abs(price - slPrice);
+  const tpDistance = Math.abs(targetPrice - price);
+  const rrRatio = slDistance > 0 ? tpDistance / slDistance : 0;
+  if (rrRatio < 2.0) {
+    return {
+      direction: "HOLD", confidence, entryPrice: price, slPrice, targetPrice, atr,
+      reason: `[V2] Rejected: R:R ${rrRatio.toFixed(1)}:1 < 2:1 minimum | ${reason}`,
+      layer: "None", regimeV2: regime.regime,
+    };
+  }
+
+  // Filter 5: After 2 consecutive SLs same direction, require 75% confidence
+  if (consecutiveSameDirectionSLs >= 2 && lastSlExitDirection === direction) {
+    if (confidence < 0.75) {
+      return {
+        direction: "HOLD", confidence, entryPrice: price, slPrice, targetPrice, atr,
+        reason: `[V2] Rejected: ${consecutiveSameDirectionSLs} consecutive ${direction} SLs, need 75% conf (have ${(confidence * 100).toFixed(0)}%)`,
+        layer: "None", regimeV2: regime.regime,
+      };
+    }
+  }
+
+  // ── Apply time-of-day multiplier ──────────────────────────────────────────
+  const adjustedConfidence = Math.min(0.98, confidence * tod.multiplier);
+
+  // ── Final confidence check ────────────────────────────────────────────────
+  if (adjustedConfidence < minConf) {
+    return {
+      direction: "HOLD", confidence: adjustedConfidence, entryPrice: price, slPrice, targetPrice, atr,
+      reason: `[V2] Confidence ${(adjustedConfidence * 100).toFixed(0)}% below threshold ${(minConf * 100).toFixed(0)}% | ${reason}`,
+      layer: "None", regimeV2: regime.regime,
+    };
+  }
+
+  return {
+    direction, confidence: adjustedConfidence, entryPrice: price, slPrice, targetPrice, atr,
+    reason: `${reason} | Regime:${regime.regime} | 15m:${trend15m} | 5m:${trend5m} | R:R=${rrRatio.toFixed(1)} | ${tod.label}`,
+    layer,
+    marketRegime: regime.label,
+    regimeV2: regime.regime,
+    sizeReduction,
   };
 }
 
@@ -3221,7 +3624,15 @@ async function tick(
     const strikeDistance = Math.abs(underlyingApprox - price);
     signal = generateHeroZeroSignal(optionPremium, state.candles, optionType, strikeDistance, slMult);
   } else {
-    signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
+    if (state.useV2Engine) {
+      signal = generateSignalV2(
+        state.candles, slMult, state.targetMultiplier, state.minConfidence / 100,
+        state.candles5m, prevDayHigh, prevDayLow, prevDayClose,
+        state.consecutiveSameDirectionSLs, state.lastSlExitDirection,
+      );
+    } else {
+      signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
+    }
   }
 
   console.log(`[tick] SIGNAL OK — ${state.sessionToken.slice(0,8)} | dir=${signal.direction} | conf=${signal.confidence.toFixed(2)} | layer=${signal.layer}`);
@@ -3555,6 +3966,15 @@ async function tick(
   }
 
   // ── v3 Risk Gate: Portfolio exposure cap (80% of combined capital) ──────────
+  // ── V2 Regime Size Reduction: halve position in VOLATILE regime ─────────────
+  if (signal.sizeReduction && signal.sizeReduction > 0 && signal.sizeReduction < 1) {
+    const reducedQty = Math.max(lotSize, Math.floor((quantity * signal.sizeReduction) / lotSize) * lotSize);
+    if (reducedQty < quantity) {
+      console.log(`[tick] SIZE REDUCTION — ${state.sessionToken.slice(0,8)} | regime=${signal.regimeV2} | qty ${quantity} → ${reducedQty} (${(signal.sizeReduction * 100).toFixed(0)}% reduction)`);
+      quantity = reducedQty;
+    }
+  }
+
   const entryPriceForExposure = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
   const newTradeExposure = entryPriceForExposure * quantity;
   const exposureCheck = canOpenNewTrade(getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, "")), newTradeExposure);

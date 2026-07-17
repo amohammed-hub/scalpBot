@@ -1,0 +1,1 @@
+ALTER TABLE `bot_sessions` ADD `useV2Engine` boolean DEFAULT false;

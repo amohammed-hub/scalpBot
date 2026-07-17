@@ -288,6 +288,26 @@ function AveragingControls() {
   );
 }
 
+function V2EngineToggle() {
+  const [enabled, setEnabled] = useState(() => localStorage.getItem("scalpbot_v2_engine") === "true");
+
+  return (
+    <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border border-emerald-500/20">
+      <div>
+        <p className="text-sm text-white font-medium">V2 Strategy Engine</p>
+        <p className="text-xs text-white/40">Regime-based filtering: only fires strategies suited to current market condition (TRENDING/RANGING/VOLATILE/DEAD)</p>
+      </div>
+      <label className="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" className="sr-only peer"
+          checked={enabled}
+          onChange={(e) => { const v = e.target.checked; setEnabled(v); localStorage.setItem("scalpbot_v2_engine", String(v)); toast.success(v ? "V2 Engine ON — regime-based filtering active on next bot start" : "V2 Engine OFF — classic signal engine on next bot start"); }}
+        />
+        <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+      </label>
+    </div>
+  );
+}
+
 function ShadowModeControls({ sessionToken }: { sessionToken: string }) {
   const [enabled, setEnabled] = useState(false);
   const [showLog, setShowLog] = useState(false);
@@ -1278,6 +1298,20 @@ export default function Settings() {
           </div>
         </div>
         {/* ── Shadow Mode (Signal Audit) ────────────────────────────────── */}
+        {/* ── V2 Strategy Engine ───────────────────────────────────────── */}
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-emerald-500/20 rounded-2xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="w-4 h-4 text-emerald-400" />
+            <h2 className="text-white font-semibold text-sm">V2 Strategy Engine — Regime-Based</h2>
+            <span className="ml-auto text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">NEW</span>
+          </div>
+          <p className="text-white/50 text-xs mb-4 leading-relaxed">
+            2-layer decision system: Layer 1 detects market regime (TRENDING / RANGING / VOLATILE / DEAD), Layer 2 only fires strategies suited to that regime. Disables noisy layers (Breakout, Booming Bulls, MACD) and adds quality filters (15m trend alignment, R:R minimum, loss streak cooldown). Takes effect on next bot start.
+          </p>
+          <div className="space-y-4">
+            <V2EngineToggle />
+          </div>
+        </div>
         <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-amber-500/20 rounded-2xl p-5">
           <div className="flex items-center gap-2 mb-3">
             <Eye className="w-4 h-4 text-amber-400" />
