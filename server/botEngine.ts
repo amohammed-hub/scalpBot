@@ -2188,7 +2188,7 @@ async function tick(
     state.lastTradeOpenedAt = undefined; // Clear cooldown from previous day
     state.status = "running"; // un-pause if paused from previous day limits
     state.lastError = null;
-    resetDailyState(); // Clear StoplossGuard, portfolio halt, cooldowns
+    resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
     emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
   }
   state.lastTradingDay = todayStr;
@@ -2288,7 +2288,9 @@ async function tick(
           state.optionPremiumPrice = entryPremium;
         } else {
         const underlyingMove = price - entryUnderlying;
-        const delta = 0.5;
+        // BUG-15 fix: Dynamic delta based on moneyness (OTM ~0.3, ATM ~0.5, ITM ~0.7)
+        const movePct = entryUnderlying > 0 ? Math.abs(underlyingMove) / entryUnderlying : 0;
+        const delta = movePct < 0.005 ? 0.5 : movePct < 0.015 ? 0.4 : 0.3; // decays as option moves OTM
         const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE")
           || (state.openTrade.symbolLabel ?? "").includes(" CE");
         const driftedPremium = Math.max(0.05, entryPremium + (isCallOption ? underlyingMove * delta : -underlyingMove * delta));
@@ -2313,7 +2315,9 @@ async function tick(
           : entryPremium;
       } else {
       const underlyingMove = price - entryUnderlying;
-      const delta = 0.5; // ATM delta approximation
+      // BUG-15 fix: Dynamic delta based on moneyness (OTM ~0.3, ATM ~0.5, ITM ~0.7)
+      const movePct = entryUnderlying > 0 ? Math.abs(underlyingMove) / entryUnderlying : 0;
+      const delta = movePct < 0.005 ? 0.5 : movePct < 0.015 ? 0.4 : 0.3; // decays as option moves OTM
       // For CE: underlying up = premium up. For PE: underlying up = premium down.
       const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE")
         || (state.openTrade.symbolLabel ?? "").includes(" CE");
@@ -2356,7 +2360,7 @@ async function tick(
     let pnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * sqRemaining : (trade.entryPrice - effectivePrice) * sqRemaining;
     // v3: paper-mode brokerage + slippage simulation
     if (trade.mode === "paper") {
-      const pc = getPaperCostConfig();
+      const pc = getPaperCostConfig(state.sessionToken);
       pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, sqRemaining, pc.brokerage, pc.slippagePct);
     }
     if (trade.bookedPnlAddedToDaily) {
@@ -2403,7 +2407,7 @@ async function tick(
         }
         // v3: paper-mode brokerage + slippage simulation
         if (trade.mode === "paper") {
-          const pc = getPaperCostConfig();
+          const pc = getPaperCostConfig(state.sessionToken);
           pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, heroRemQty, pc.brokerage, pc.slippagePct);
         }
         if (trade.bookedPnlAddedToDaily) {
@@ -2461,12 +2465,18 @@ async function tick(
         // Persist partial booking state to DB so it survives server restarts
         // Fire-and-forget DB persist (non-blocking to avoid slowing the tick)
         (async () => {
-          try {
-            const { tradeLog: tl0 } = await import("../drizzle/schema"); const { eq: eq0 } = await import("drizzle-orm"); const { getDb: getDb0 } = await import("./db"); const db0 = await getDb0();
-            if (db0 && trade.dbId) {
-              await db0.update(tl0).set({ partialBooked: 1, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq0(tl0.id, trade.dbId!));
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const { tradeLog: tl0 } = await import("../drizzle/schema"); const { eq: eq0 } = await import("drizzle-orm"); const { getDb: getDb0 } = await import("./db"); const db0 = await getDb0();
+              if (db0 && trade.dbId) {
+                await db0.update(tl0).set({ partialBooked: 1, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq0(tl0.id, trade.dbId!));
+              }
+              break; // success
+            } catch (e) {
+              if (attempt === 1) console.error("[BotEngine] Failed to persist partial booking 1R (2 attempts):", e);
+              else await new Promise(r => setTimeout(r, 500)); // wait 500ms before retry
             }
-          } catch (e) { console.error("[BotEngine] Failed to persist partial booking 1R:", e); }
+          }
         })();
       }
     } else if (trade.partialBooked === 1) {
@@ -2507,12 +2517,18 @@ async function tick(
         // Persist partial booking state to DB so it survives server restarts
         // Fire-and-forget DB persist (non-blocking to avoid slowing the tick)
         (async () => {
-          try {
-            const { tradeLog: tl1 } = await import("../drizzle/schema"); const { eq: eq1 } = await import("drizzle-orm"); const { getDb: getDb1 } = await import("./db"); const db1 = await getDb1();
-            if (db1 && trade.dbId) {
-              await db1.update(tl1).set({ partialBooked: 2, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq1(tl1.id, trade.dbId!));
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const { tradeLog: tl1 } = await import("../drizzle/schema"); const { eq: eq1 } = await import("drizzle-orm"); const { getDb: getDb1 } = await import("./db"); const db1 = await getDb1();
+              if (db1 && trade.dbId) {
+                await db1.update(tl1).set({ partialBooked: 2, bookedQty: trade.bookedQty, bookedPnl: trade.bookedPnl }).where(eq1(tl1.id, trade.dbId!));
+              }
+              break; // success
+            } catch (e) {
+              if (attempt === 1) console.error("[BotEngine] Failed to persist partial booking 2R (2 attempts):", e);
+              else await new Promise(r => setTimeout(r, 500)); // wait 500ms before retry
             }
-          } catch (e) { console.error("[BotEngine] Failed to persist partial booking 2R:", e); }
+          }
         })();
       }
     }
@@ -2548,12 +2564,12 @@ async function tick(
       const avgThreshold = state.averagingLossThreshold ?? 0.20;
       const isInLoss = lossPct > avgThreshold && lossPct < 0.50;
       const isOldEnough = avgTradeAge > 5 * 60 * 1000; // > 5 minutes
-      const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-      const istMinNow = istNow.getHours() * 60 + istNow.getMinutes();
+      const nowUtc = new Date();
+      const istMinNow = ((nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes()) + 330) % 1440;
       const isMCXInst = state.instrumentToken.startsWith("MCX");
       const closeMin = isMCXInst ? 23 * 60 + 25 : 15 * 60 + 25; // MCX 23:25, NSE 15:25
       const notNearClose = istMinNow < closeMin - 30; // at least 30 min before close
-      const dailyLossUsed = Math.abs(state.dailyPnl) / (state.capital * state.dailyLossLimitPct / 100);
+      const dailyLossUsed = Math.abs(Math.min(0, state.dailyPnl)) / (state.capital * state.dailyLossLimitPct / 100);
       const hasCapitalHeadroom = dailyLossUsed < 0.70; // less than 70% of daily loss limit used
 
       if (isInLoss && isOldEnough && notNearClose && hasCapitalHeadroom && state.candles.length >= 5) {
@@ -2649,22 +2665,28 @@ async function tick(
 
           // Persist to DB (fire-and-forget)
           (async () => {
-            try {
-              const { tradeLog: tl } = await import("../drizzle/schema");
-              const { eq } = await import("drizzle-orm");
-              const { getDb } = await import("./db");
-              const db = await getDb();
-              if (db && trade.dbId) {
-                await db.update(tl).set({
-                  entryPrice: String(newAvgEntry),
-                  quantity: combinedQty,
-                  slPrice: String(trade.slPrice),
-                  targetPrice: String(trade.targetPrice),
-                  partial1RPrice: String(trade.partial1RPrice),
-                  partial2RPrice: String(trade.partial2RPrice),
-                }).where(eq(tl.id, trade.dbId));
+            for (let attempt = 0; attempt < 2; attempt++) {
+              try {
+                const { tradeLog: tl } = await import("../drizzle/schema");
+                const { eq } = await import("drizzle-orm");
+                const { getDb } = await import("./db");
+                const db = await getDb();
+                if (db && trade.dbId) {
+                  await db.update(tl).set({
+                    entryPrice: newAvgEntry,
+                    quantity: combinedQty,
+                    slPrice: trade.slPrice,
+                    targetPrice: trade.targetPrice,
+                    partial1RPrice: trade.partial1RPrice,
+                    partial2RPrice: trade.partial2RPrice,
+                  }).where(eq(tl.id, trade.dbId));
+                }
+                break; // success
+              } catch (e) {
+                if (attempt === 1) console.error("[BotEngine] Failed to persist averaging state (2 attempts):", e);
+                else await new Promise(r => setTimeout(r, 500));
               }
-            } catch (e) { console.error("[BotEngine] Failed to persist averaging state:", e); }
+            }
           })();
 
           const avgMsg = `📊 <b>AVERAGING DOWN</b>\n` +
@@ -2728,7 +2750,7 @@ async function tick(
       let remainPnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * remainingQty : (trade.entryPrice - effectivePrice) * remainingQty;
       // v3: paper-mode brokerage + slippage simulation
       if (trade.mode === "paper") {
-        const pc = getPaperCostConfig();
+        const pc = getPaperCostConfig(state.sessionToken);
         remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, effectivePrice, remainingQty, pc.brokerage, pc.slippagePct);
       }
       const totalPnl  = remainPnl + trade.bookedPnl;
@@ -2795,7 +2817,7 @@ async function tick(
 
   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
   // 1. StoplossGuard: pause after 3 consecutive SLs in last 20 trades (checked globally)
-  const slGuard = getStoplossGuardState();
+  const slGuard = getStoplossGuardState(state.sessionToken);
   if (slGuard.isPaused) {
     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: slGuard.reason ?? "StoplossGuard active", layer: "None" };
     return;

@@ -82,8 +82,20 @@ export function getActivity(
 
 /**
  * Clear activity log for a session (e.g. on bot stop).
+ * Only clears events for the specific slot, not all slots' logs.
  */
-export function clearActivity(sessionToken: string): void {
+export function clearActivity(sessionToken: string, clearAll = false): void {
   const rootToken = sessionToken.replace(/-slot[12]$/, "");
-  logs.delete(rootToken);
+  if (clearAll) {
+    logs.delete(rootToken);
+    return;
+  }
+  // Only clear events for the specific slot
+  const slot = sessionToken.endsWith("-slot2") ? 2 : sessionToken.endsWith("-slot1") ? 1 : 0;
+  const buf = logs.get(rootToken);
+  if (buf) {
+    const filtered = buf.filter(e => e.slot !== slot);
+    if (filtered.length === 0) logs.delete(rootToken);
+    else logs.set(rootToken, filtered);
+  }
 }

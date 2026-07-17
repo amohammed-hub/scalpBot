@@ -21,13 +21,25 @@ const MIN_TRADES_FOR_DISABLE = 5;
 const DISABLE_WIN_RATE = 30; // %
 const REENABLE_AFTER_MS = 24 * 60 * 60 * 1000;
 
-// Manual disable overrides (layer → disabled)
-const manualOverrides = new Map<string, boolean>();
-const autoDisabled = new Map<string, { at: number; reason: string }>();
+// Per-session state: sessionToken → (layer → state)
+const manualOverridesBySession = new Map<string, Map<string, boolean>>();
+const autoDisabledBySession = new Map<string, Map<string, { at: number; reason: string }>>();
+
+function getManualOverrides(sessionToken: string): Map<string, boolean> {
+  if (!manualOverridesBySession.has(sessionToken)) manualOverridesBySession.set(sessionToken, new Map());
+  return manualOverridesBySession.get(sessionToken)!;
+}
+function getAutoDisabled(sessionToken: string): Map<string, { at: number; reason: string }> {
+  if (!autoDisabledBySession.has(sessionToken)) autoDisabledBySession.set(sessionToken, new Map());
+  return autoDisabledBySession.get(sessionToken)!;
+}
 
 export function computeLayerStats(
   closedTrades: Array<{ signalReason: string | null; pnl: number | null; exitedAt: Date | null }>,
+  sessionToken: string = "default",
 ): LayerStats[] {
+  const manualOverrides = getManualOverrides(sessionToken);
+  const autoDisabled = getAutoDisabled(sessionToken);
   // Reverse if newest-first (router passes desc order) — we need oldest-first for correct slice(-20)
   const first = closedTrades[0]?.exitedAt;
   const last = closedTrades[closedTrades.length - 1]?.exitedAt;
@@ -103,7 +115,9 @@ export function computeLayerStats(
 }
 
 /** Check if a signal layer is currently disabled (called before entry) */
-export function isLayerDisabled(layer: string): { disabled: boolean; reason: string | null } {
+export function isLayerDisabled(layer: string, sessionToken: string = "default"): { disabled: boolean; reason: string | null } {
+  const manualOverrides = getManualOverrides(sessionToken);
+  const autoDisabled = getAutoDisabled(sessionToken);
   if (manualOverrides.get(layer)) return { disabled: true, reason: "Manually disabled" };
   const auto = autoDisabled.get(layer);
   if (auto) {
@@ -116,12 +130,16 @@ export function isLayerDisabled(layer: string): { disabled: boolean; reason: str
   return { disabled: false, reason: null };
 }
 
-export function setLayerOverride(layer: string, disabled: boolean): void {
+export function setLayerOverride(layer: string, disabled: boolean, sessionToken: string = "default"): void {
+  const manualOverrides = getManualOverrides(sessionToken);
+  const autoDisabled = getAutoDisabled(sessionToken);
   if (disabled) manualOverrides.set(layer, true);
   else { manualOverrides.delete(layer); autoDisabled.delete(layer); }
 }
 
-export function resetAllLayerOverrides(): void {
+export function resetAllLayerOverrides(sessionToken: string = "default"): void {
+  const manualOverrides = getManualOverrides(sessionToken);
+  const autoDisabled = getAutoDisabled(sessionToken);
   manualOverrides.clear();
   autoDisabled.clear();
 }

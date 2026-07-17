@@ -246,30 +246,38 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
         const db = await getDb();
-        if (!db) return null;
-        const rows = await db
-          .select()
-          .from(botSessions)
-          .where(eq(botSessions.sessionToken, input.sessionToken))
-          .orderBy(desc(botSessions.updatedAt))
-          .limit(1);
         const inMem = getBotState(input.sessionToken);
-       if (rows.length === 0) return null;
-       const row = rows[0];
-       return {
-         ...row,
+        let row: typeof botSessions.$inferSelect | null = null;
+        if (db) {
+          try {
+            const rows = await db
+              .select()
+              .from(botSessions)
+              .where(eq(botSessions.sessionToken, input.sessionToken))
+              .orderBy(desc(botSessions.updatedAt))
+              .limit(1);
+            if (rows.length > 0) row = rows[0];
+          } catch (err) {
+            console.error(`[bot.status] DB query failed:`, err);
+          }
+        }
+        // If bot is in memory but no DB row exists, return synthetic status from memory
+        if (!row && !inMem) return null;
+        const baseRow = row ?? {} as Partial<typeof botSessions.$inferSelect>;
+        return {
+          ...baseRow,
           // If DB says 'running' but bot is NOT in memory, it means stop was called
           // but DB update hasn't committed yet — treat as 'stopped' to avoid stale UI
-          status: (row.status === "running" && !inMem) ? "stopped" : (inMem?.status ?? row.status),
-          lastPrice: inMem?.lastPrice ?? row.lastPrice ?? 0,
-          bidPrice: inMem?.bidPrice ?? row.bidPrice ?? 0,
-          askPrice: inMem?.askPrice ?? row.askPrice ?? 0,
+          status: inMem?.status ?? ((row?.status === "running" && !inMem) ? "stopped" : (row?.status ?? "stopped")),
+          lastPrice: inMem?.lastPrice ?? row?.lastPrice ?? 0,
+          bidPrice: inMem?.bidPrice ?? row?.bidPrice ?? 0,
+          askPrice: inMem?.askPrice ?? row?.askPrice ?? 0,
           lastSignal: inMem?.lastSignal ?? null,
-          nextScanAt: inMem?.nextScanAt ?? row.nextScanAt ?? 0,
+          nextScanAt: inMem?.nextScanAt ?? row?.nextScanAt ?? 0,
           openTrade: inMem?.openTrade ?? null,
           // Health indicator fields
-          lastTickAt: inMem?.lastTickAt ?? (row.lastTickAt ? Number(row.lastTickAt) : 0),
-          lastError: inMem?.lastError ?? row.lastError ?? null,
+          lastTickAt: inMem?.lastTickAt ?? (row?.lastTickAt ? Number(row.lastTickAt) : 0),
+          lastError: inMem?.lastError ?? row?.lastError ?? null,
           // Carry-forward state
           carryForward: inMem?.carryForward ?? false,
         };
@@ -659,7 +667,7 @@ export const appRouter = router({
               .where(and(eq(tradeLog.sessionToken, input.sessionToken), eq(tradeLog.status, "closed")))
               .orderBy(desc(tradeLog.exitedAt))
               .limit(20);
-            updateStoplossGuard(recentRows.reverse());
+            updateStoplossGuard(recentRows.reverse(), input.sessionToken);
           } catch { /* non-fatal */ }
         };
 
@@ -982,7 +990,7 @@ export const appRouter = router({
               .where(and(eq(tradeLog.sessionToken, input.sessionToken), eq(tradeLog.status, "closed")))
               .orderBy(desc(tradeLog.exitedAt))
               .limit(20);
-            updateStoplossGuard(recentRows.reverse());
+            updateStoplossGuard(recentRows.reverse(), input.sessionToken);
           } catch { /* non-fatal */ }
         };
         startBot(
@@ -1910,10 +1918,15 @@ export const appRouter = router({
         const todayTradeCounts: Record<string, number> = {};
         if (db) {
           for (const tok of slotTokens) {
-            const rows = await db.select().from(botSessions).where(eq(botSessions.sessionToken, tok)).limit(1);
-            if (rows.length > 0) dbRows[tok] = rows[0];
-            const countRows = await db.select({ count: count() }).from(tradeLog).where(and(eq(tradeLog.sessionToken, tok), gte(tradeLog.enteredAt, todayStart)));
-            todayTradeCounts[tok] = countRows[0]?.count ?? 0;
+            try {
+              const rows = await db.select().from(botSessions).where(eq(botSessions.sessionToken, tok)).limit(1);
+              if (rows.length > 0) dbRows[tok] = rows[0];
+              const countRows = await db.select({ count: count() }).from(tradeLog).where(and(eq(tradeLog.sessionToken, tok), gte(tradeLog.enteredAt, todayStart)));
+              todayTradeCounts[tok] = countRows[0]?.count ?? 0;
+            } catch (dbErr) {
+              console.error(`[allStatus] DB query failed for ${tok}:`, dbErr);
+              // Continue with other slots — don't crash entire query
+            }
           }
         }
         // Merge in-memory state with DB fallback — always return all 3 slots
@@ -2325,7 +2338,7 @@ export const appRouter = router({
               .where(and(eq(tradeLog.sessionToken, slotToken), eq(tradeLog.status, "closed")))
               .orderBy(desc(tradeLog.exitedAt))
               .limit(20);
-            updateStoplossGuard(recentRows.reverse());
+            updateStoplossGuard(recentRows.reverse(), input.sessionToken);
           } catch { /* non-fatal */ }
         };
 
@@ -3048,11 +3061,11 @@ export const appRouter = router({
             .limit(20);
           recentTrades = rows;
         }
-        return computeMarketRiskScore(candles, recentTrades);
+        return computeMarketRiskScore(candles, recentTrades, "default");
       }),
 
     /** Cached risk score (no re-compute, fast) */
-    cachedScore: publicProcedure.query(() => getCachedRiskScore()),
+    cachedScore: publicProcedure.query(() => getCachedRiskScore("default")),
 
     /** StoplossGuard state */
     stoplossGuard: publicProcedure
@@ -3070,7 +3083,7 @@ export const appRouter = router({
             .limit(20);
           recentTrades = rows;
         }
-        return updateStoplossGuard(recentTrades);
+        return updateStoplossGuard(recentTrades, "default");
       }),
 
     /** Portfolio-level status (exposure, drawdown, halt) */
@@ -3182,16 +3195,16 @@ export const appRouter = router({
           .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed")))
           .orderBy(desc(tradeLog.exitedAt))
           .limit(200);
-        return computeLayerStats(trades);
+        return computeLayerStats(trades, input.sessionToken);
       }),
 
     /** Manually enable/disable a layer */
     setOverride: publicProcedure
-      .input(z.object({ layer: z.string(), disabled: z.boolean() }))
-      .mutation(({ input }) => { setLayerOverride(input.layer, input.disabled); return { success: true }; }),
+      .input(z.object({ layer: z.string(), disabled: z.boolean(), sessionToken: sessionTokenSchema.optional() }))
+      .mutation(({ input }) => { setLayerOverride(input.layer, input.disabled, input.sessionToken ?? "default"); return { success: true }; }),
 
     /** Reset all layer overrides */
-    resetAll: publicProcedure.mutation(() => { resetAllLayerOverrides(); return { success: true }; }),
+    resetAll: publicProcedure.input(z.object({ sessionToken: sessionTokenSchema.optional() }).optional()).mutation(({ input }) => { resetAllLayerOverrides(input?.sessionToken ?? "default"); return { success: true }; }),
   }),
 
   // ── Strategy Presets ─────────────────────────────────────────────────────────
@@ -3290,12 +3303,12 @@ export const appRouter = router({
   // ── Paper Costs Config ───────────────────────────────────────────────────────
   paperCosts: router({
     /** Get current paper cost settings */
-    get: publicProcedure.query(() => getPaperCostConfig()),
+    get: publicProcedure.query(() => getPaperCostConfig("default")),
 
     /** Update paper cost settings */
     update: publicProcedure
       .input(z.object({ brokerage: z.number().min(0).max(200).default(20), slippagePct: z.number().min(0).max(1).default(0.05) }))
-      .mutation(({ input }) => setPaperCostConfig(input.brokerage, input.slippagePct)),
+      .mutation(({ input }) => setPaperCostConfig(input.brokerage, input.slippagePct, "default")),
   }),
 
   // ── Precision Verification ──────────────────────────────────────────────────

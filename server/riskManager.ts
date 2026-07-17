@@ -49,14 +49,17 @@ export interface CooldownState {
 }
 
 // ── Module state ─────────────────────────────────────────────────────────────
-let cachedRiskScore: MarketRiskScore = {
-  score: 0, safe: true, regime: "unknown", vixLevel: 0, consecutiveSLs: 0,
-  reasons: [], updatedAt: 0,
-};
+const cachedRiskScoreBySession = new Map<string, MarketRiskScore>();
+const defaultRiskScore: MarketRiskScore = { score: 0, safe: true, regime: "unknown", vixLevel: 0, consecutiveSLs: 0, reasons: [], updatedAt: 0 };
 
-let stoplossGuard: StoplossGuardState = {
-  isPaused: false, pausedUntil: 0, consecutiveSLs: 0, reason: null,
-};
+// BUG-4 fix: Per-session stoploss guard instead of global
+const stoplossGuardBySession = new Map<string, StoplossGuardState>();
+const defaultSlGuard: StoplossGuardState = { isPaused: false, pausedUntil: 0, consecutiveSLs: 0, reason: null };
+
+function getSlGuard(sessionToken: string): StoplossGuardState {
+  if (!stoplossGuardBySession.has(sessionToken)) stoplossGuardBySession.set(sessionToken, { ...defaultSlGuard });
+  return stoplossGuardBySession.get(sessionToken)!;
+}
 
 let portfolioHalted = false;
 let portfolioHaltReason: string | null = null;
@@ -64,19 +67,30 @@ let portfolioHaltReason: string | null = null;
 // Per-session cooldown tracking
 const cooldowns = new Map<string, CooldownState>();
 
+// BUG-12 fix: Periodic cleanup of stale cooldown entries (older than 1 hour)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, cd] of Array.from(cooldowns.entries())) {
+    if (now - cd.lastTradeCloseAt > 3600_000) cooldowns.delete(key);
+  }
+}, 600_000); // every 10 minutes
+
 // ── India VIX fetch (public Upstox API, no auth needed) ─────────────────────
 let lastVixFetch = 0;
 let cachedVix = 0;
 const VIX_CACHE_MS = 60_000; // cache 60s
 
-export async function fetchIndiaVix(): Promise<number> {
+export async function fetchIndiaVix(accessToken?: string | null): Promise<number> {
   if (Date.now() - lastVixFetch < VIX_CACHE_MS && cachedVix > 0) return cachedVix;
   try {
     const { default: axios } = await import("axios");
     // India VIX instrument key on Upstox
+    const headers: Record<string, string> = { Accept: "application/json" };
+    // BUG-13 fix: Include auth header when available to avoid rate limiting
+    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
     const resp = await axios.get(
       "https://api.upstox.com/v2/market-quote/quotes?instrument_key=NSE_INDEX%7CIndia%20VIX",
-      { headers: { Accept: "application/json" }, timeout: 6000 },
+      { headers, timeout: 6000 },
     );
     const data = resp.data?.data;
     const key = data ? Object.keys(data)[0] : null;
@@ -93,12 +107,14 @@ export async function fetchIndiaVix(): Promise<number> {
 export async function computeMarketRiskScore(
   candles: Candle[],
   recentTrades: Array<{ exitReason: string | null; pnl: number | null }>,
+  sessionToken: string = "default",
+  accessToken?: string | null,
 ): Promise<MarketRiskScore> {
   const reasons: string[] = [];
   let score = 0;
 
   // 1. India VIX
-  const vix = await fetchIndiaVix();
+  const vix = await fetchIndiaVix(accessToken);
   if (vix > 30) { score += 40; reasons.push(`India VIX extremely high (${vix.toFixed(1)})`); }
   else if (vix > 25) { score += 25; reasons.push(`India VIX high (${vix.toFixed(1)})`); }
   else if (vix > 20) { score += 10; reasons.push(`India VIX elevated (${vix.toFixed(1)})`); }
@@ -124,12 +140,13 @@ export async function computeMarketRiskScore(
   const safe = score < 60;
   if (!safe && reasons.length === 0) reasons.push("Combined risk factors exceed threshold");
 
-  cachedRiskScore = { score, safe, regime, vixLevel: vix, consecutiveSLs, reasons, updatedAt: Date.now() };
-  return cachedRiskScore;
+  const result = { score, safe, regime, vixLevel: vix, consecutiveSLs, reasons, updatedAt: Date.now() };
+  cachedRiskScoreBySession.set(sessionToken, result);
+  return result;
 }
 
-export function getCachedRiskScore(): MarketRiskScore {
-  return cachedRiskScore;
+export function getCachedRiskScore(sessionToken: string = "default"): MarketRiskScore {
+  return cachedRiskScoreBySession.get(sessionToken) ?? defaultRiskScore;
 }
 
 // ── StoplossGuard ────────────────────────────────────────────────────────────
@@ -138,7 +155,9 @@ const SL_GUARD_PAUSE_MS = 30 * 60 * 1000; // 30 minutes
 
 export function updateStoplossGuard(
   recentTrades: Array<{ exitReason: string | null; pnl: number | null }>,
+  sessionToken: string = "default",
 ): StoplossGuardState {
+  let stoplossGuard = getSlGuard(sessionToken);
   // Count consecutive SLs from end of last 20 trades
   const last20 = recentTrades.slice(-20);
   let consecutiveSLs = 0;
@@ -154,19 +173,24 @@ export function updateStoplossGuard(
       consecutiveSLs,
       reason: `StoplossGuard: ${consecutiveSLs} consecutive SLs — paused 30 min`,
     };
+    stoplossGuardBySession.set(sessionToken, stoplossGuard);
   } else if (stoplossGuard.isPaused && Date.now() > stoplossGuard.pausedUntil) {
     // Cooldown expired
     stoplossGuard = { isPaused: false, pausedUntil: 0, consecutiveSLs: 0, reason: null };
+    stoplossGuardBySession.set(sessionToken, stoplossGuard);
   }
 
   stoplossGuard.consecutiveSLs = consecutiveSLs;
   return stoplossGuard;
 }
 
-export function getStoplossGuardState(): StoplossGuardState {
+export function getStoplossGuardState(sessionToken: string = "default"): StoplossGuardState {
+  const stoplossGuard = getSlGuard(sessionToken);
   // Auto-expire
   if (stoplossGuard.isPaused && Date.now() > stoplossGuard.pausedUntil) {
-    stoplossGuard = { isPaused: false, pausedUntil: 0, consecutiveSLs: 0, reason: null };
+    const reset = { isPaused: false, pausedUntil: 0, consecutiveSLs: 0, reason: null };
+    stoplossGuardBySession.set(sessionToken, reset);
+    return reset;
   }
   return stoplossGuard;
 }
@@ -328,16 +352,18 @@ export async function executeKillSwitch(
 }
 
 // ── Slippage & Brokerage for Paper Mode ──────────────────────────────────────
-const paperCostConfig = { brokerage: 20, slippagePct: 0.05 };
+// BUG-11 fix: Per-session paper cost config
+const paperCostBySession = new Map<string, { brokerage: number; slippagePct: number }>();
+const defaultPaperCost = { brokerage: 20, slippagePct: 0.05 };
 
-export function getPaperCostConfig(): { brokerage: number; slippagePct: number } {
-  return paperCostConfig;
+export function getPaperCostConfig(sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
+  return paperCostBySession.get(sessionToken) ?? defaultPaperCost;
 }
 
-export function setPaperCostConfig(brokerage: number, slippagePct: number): { brokerage: number; slippagePct: number } {
-  paperCostConfig.brokerage = brokerage;
-  paperCostConfig.slippagePct = slippagePct;
-  return paperCostConfig;
+export function setPaperCostConfig(brokerage: number, slippagePct: number, sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
+  const config = { brokerage, slippagePct };
+  paperCostBySession.set(sessionToken, config);
+  return config;
 }
 
 export function applyPaperCosts(
@@ -357,9 +383,14 @@ export function applyPaperCosts(
 }
 
 // ── Daily reset (call at market open) ────────────────────────────────────────
-export function resetDailyState(): void {
+export function resetDailyState(sessionToken?: string): void {
   portfolioHalted = false;
   portfolioHaltReason = null;
-  stoplossGuard = { isPaused: false, pausedUntil: 0, consecutiveSLs: 0, reason: null };
-  cooldowns.clear();
+  if (sessionToken) {
+    stoplossGuardBySession.set(sessionToken, { ...defaultSlGuard });
+    cooldowns.delete(sessionToken);
+  } else {
+    stoplossGuardBySession.clear();
+    cooldowns.clear();
+  }
 }

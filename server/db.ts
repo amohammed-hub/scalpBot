@@ -505,28 +505,31 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
     if (newToken && oldToken && newToken !== oldToken) {
       console.log(`[verifyOtp] Token migration: ${oldToken.slice(0, 8)}... → ${newToken.slice(0, 8)}... for mobile ${mobile}`);
       try {
-        // Migrate upstox_credentials (primary + slots)
-        await db.update(upstoxCredentials).set({ sessionToken: newToken }).where(eq(upstoxCredentials.sessionToken, oldToken));
-        await db.update(upstoxCredentials).set({ sessionToken: newToken + "-slot1" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot1"));
-        await db.update(upstoxCredentials).set({ sessionToken: newToken + "-slot2" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot2"));
-        // Migrate bot_sessions (primary + slots)
-        await db.update(botSessions).set({ sessionToken: newToken }).where(eq(botSessions.sessionToken, oldToken));
-        await db.update(botSessions).set({ sessionToken: newToken + "-slot1" }).where(eq(botSessions.sessionToken, oldToken + "-slot1"));
-        await db.update(botSessions).set({ sessionToken: newToken + "-slot2" }).where(eq(botSessions.sessionToken, oldToken + "-slot2"));
-        // Migrate trade_log (primary + slots)
-        await db.update(tradeLog).set({ sessionToken: newToken }).where(eq(tradeLog.sessionToken, oldToken));
-        await db.update(tradeLog).set({ sessionToken: newToken + "-slot1" }).where(eq(tradeLog.sessionToken, oldToken + "-slot1"));
-        await db.update(tradeLog).set({ sessionToken: newToken + "-slot2" }).where(eq(tradeLog.sessionToken, oldToken + "-slot2"));
-        // Migrate signal_journal (primary + slots)
-        await db.update(signalJournal).set({ sessionToken: newToken }).where(eq(signalJournal.sessionToken, oldToken));
-        await db.update(signalJournal).set({ sessionToken: newToken + "-slot1" }).where(eq(signalJournal.sessionToken, oldToken + "-slot1"));
-        await db.update(signalJournal).set({ sessionToken: newToken + "-slot2" }).where(eq(signalJournal.sessionToken, oldToken + "-slot2"));
-        // Migrate subscriptions
-        await db.update(subscriptions).set({ sessionToken: newToken }).where(eq(subscriptions.sessionToken, oldToken));
+        // BUG-2 fix: Wrap all migration queries in a transaction to prevent partial data splits
+        await db.transaction(async (tx: any) => {
+          // Migrate upstox_credentials (primary + slots)
+          await tx.update(upstoxCredentials).set({ sessionToken: newToken }).where(eq(upstoxCredentials.sessionToken, oldToken));
+          await tx.update(upstoxCredentials).set({ sessionToken: newToken + "-slot1" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot1"));
+          await tx.update(upstoxCredentials).set({ sessionToken: newToken + "-slot2" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot2"));
+          // Migrate bot_sessions (primary + slots)
+          await tx.update(botSessions).set({ sessionToken: newToken }).where(eq(botSessions.sessionToken, oldToken));
+          await tx.update(botSessions).set({ sessionToken: newToken + "-slot1" }).where(eq(botSessions.sessionToken, oldToken + "-slot1"));
+          await tx.update(botSessions).set({ sessionToken: newToken + "-slot2" }).where(eq(botSessions.sessionToken, oldToken + "-slot2"));
+          // Migrate trade_log (primary + slots)
+          await tx.update(tradeLog).set({ sessionToken: newToken }).where(eq(tradeLog.sessionToken, oldToken));
+          await tx.update(tradeLog).set({ sessionToken: newToken + "-slot1" }).where(eq(tradeLog.sessionToken, oldToken + "-slot1"));
+          await tx.update(tradeLog).set({ sessionToken: newToken + "-slot2" }).where(eq(tradeLog.sessionToken, oldToken + "-slot2"));
+          // Migrate signal_journal (primary + slots)
+          await tx.update(signalJournal).set({ sessionToken: newToken }).where(eq(signalJournal.sessionToken, oldToken));
+          await tx.update(signalJournal).set({ sessionToken: newToken + "-slot1" }).where(eq(signalJournal.sessionToken, oldToken + "-slot1"));
+          await tx.update(signalJournal).set({ sessionToken: newToken + "-slot2" }).where(eq(signalJournal.sessionToken, oldToken + "-slot2"));
+          // Migrate subscriptions
+          await tx.update(subscriptions).set({ sessionToken: newToken }).where(eq(subscriptions.sessionToken, oldToken));
+        });
         console.log(`[verifyOtp] Token migration complete for mobile ${mobile}`);
       } catch (migrationErr) {
-        console.error(`[verifyOtp] Token migration FAILED for mobile ${mobile}:`, migrationErr);
-        // Continue with login even if migration fails — user can still access account
+        console.error(`[verifyOtp] Token migration FAILED (rolled back) for mobile ${mobile}:`, migrationErr);
+        // Transaction rolled back — old token still valid, user can still access account
       }
     }
     // Update user record

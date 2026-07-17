@@ -81,6 +81,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       partialBooked: (t.partialBooked ?? 0) as 0 | 1 | 2,
       bookedQty: t.bookedQty ?? 0,
       bookedPnl: t.bookedPnl ?? 0,
+      bookedPnlAddedToDaily: (t.bookedPnl ?? 0) > 0, // BUG-1 fix: if bookedPnl was persisted, dailyPnl already includes it
       isIndexOptions: !!(session.isIndexOptions),
       entryUnderlyingPrice: session.isIndexOptions
         ? ((t as any).entryUnderlyingPrice ?? undefined)
