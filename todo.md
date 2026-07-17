@@ -993,3 +993,8 @@
 - [x] FIX D2: MCX "Weekend — Market closed" on Friday — getDay() double-applied IST offset; fixed to getUTCDay()
 - [x] FIX D3: Max trades per day — skip pause on first tick after manual start (same grace period logic)
 - [x] FIX D4: Portfolio drawdown halt — skip pause on first tick after manual start (same grace period logic)
+## BUG E — Bot 1 (slot0) oscillates between running/paused (July 17 PM)
+- [x] ROOT CAUSE: Portfolio drawdown check uses GLOBAL `portfolioHalted` flag — Bot 3's loss sets it true, Bot 1's next tick (tickCount>1) gets paused
+- [x] FIX E1: Portfolio drawdown check — NEVER pause bot, just block new trade entries with HOLD signal (bot keeps monitoring prices/managing open trades)
+- [x] FIX E2: Max trades per day check — NEVER pause bot, just block new trade entries with HOLD signal
+- [x] Both checks now also skip entirely if bot has an open trade (must continue managing SL/TP/trailing)

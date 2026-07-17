@@ -3131,14 +3131,13 @@ async function tick(
   if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < 120_000) {
     return;
   }
-  if (state.tradesCount >= state.maxTradesPerDay) {
-    if ((state.tickCount ?? 0) > 1) {
-      state.status = "paused";
-      state.lastError = `Max trades per day reached (${state.maxTradesPerDay})`;
-      return;
+  if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade) {
+    // Don't pause — just block new trade entries. Bot continues monitoring open trades & prices.
+    if ((state.tickCount ?? 0) % 20 === 1) {
+      console.warn(`[tick] ⚠ Max trades reached — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} — blocking new entries only`);
     }
-    console.warn(`[tick] ⚠ Max trades already reached — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} — Bot will not open new trades`);
-    emitActivity(state.sessionToken, "error", `⚠ Max trades per day already reached (${state.tradesCount}/${state.maxTradesPerDay}). Bot will not open new trades.`);
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Max trades reached (${state.tradesCount}/${state.maxTradesPerDay})`, layer: "None" };
+    return;
   }
 
   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
@@ -3152,15 +3151,13 @@ async function tick(
   const baseToken = state.sessionToken.replace(/-slot\d+$/, "");
   const portfolioBots = getAllRunningBotsForSession(baseToken);
   const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct);
-  if (ddCheck.halted) {
-    if ((state.tickCount ?? 0) > 1) {
-      state.status = "paused";
-      state.lastError = ddCheck.reason ?? "Portfolio daily drawdown limit hit";
-      emitActivity(state.sessionToken, "error", `🛑 ${ddCheck.reason}`);
-      return;
+  if (ddCheck.halted && !state.openTrade) {
+    // Never pause — just block new trade entries. Bot continues monitoring & managing open trades.
+    if ((state.tickCount ?? 0) % 20 === 1) {
+      console.warn(`[tick] ⚠ Portfolio drawdown active — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} — blocking new trades only`);
     }
-    console.warn(`[tick] ⚠ Portfolio drawdown already hit — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} — Bot will not open new trades`);
-    emitActivity(state.sessionToken, "error", `⚠ ${ddCheck.reason} — bot will continue but won't open new trades`);
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: ddCheck.reason ?? "Portfolio drawdown limit — no new trades", layer: "None" };
+    return;
   }
   // 3. CooldownPeriod: mandatory 2-candle wait after any trade close
   const cooldown = isCooldownActive(state.sessionToken);
