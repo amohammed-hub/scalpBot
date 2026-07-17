@@ -946,5 +946,10 @@
 - [x] Replay July 17 FinNifty: 09:48 entry PREVENTED, 09:44 entry ALLOWED, signal count 23 (from 341)
 - [x] Shadow mode: old logic executes trades, new logic (P0+P1) logs only
 - [x] Shadow mode log format: timestamp | signal | old_decision | new_decision | difference
-- [ ] EOD summary: how many trades differed, which was right
+- [x] EOD summary: how many trades differed, which was right
 - [x] Shadow mode toggle in bot settings/dashboard
+
+## Bug Fixes — UI/Frontend Issues (July 17)
+- [ ] BUG 1 (P0): Start Bot button not working for Primary Bot and Slot 2 — click starts but reverts to "Start Bot"
+- [ ] BUG 2 (P1): Auth redirect — logged-in users see login page on bookmark/link click
+- [ ] BUG 3 (P2): Dashboard layout reorganization — clean grouping, shadow mode logs visible, mobile-friendly

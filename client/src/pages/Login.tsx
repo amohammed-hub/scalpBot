@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,19 @@ export default function Login() {
   const searchString = useSearch();
   const intent = useMemo(() => new URLSearchParams(searchString).get("intent"), [searchString]);
   const utils = trpc.useUtils();
+
+  // ── Auth check: redirect to dashboard if already logged in ──────────────
+  const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
+    staleTime: 5_000,
+    retry: 1,
+  });
+  useEffect(() => {
+    // If user already has valid auth (either server confirms via cookie/header, or localStorage token exists and me query returns data)
+    if (meQuery.data) {
+      navigate(intent === "subscribe" ? "/#pricing" : "/dashboard");
+    }
+  }, [meQuery.data, navigate, intent]);
+
   const [step, setStep] = useState<"mobile" | "otp" | "name">("mobile");
   const [mobile, setMobile] = useState("");
   const [otp, setOtp] = useState("");

@@ -321,7 +321,7 @@ export const appRouter = router({
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
 
@@ -341,10 +341,10 @@ export const appRouter = router({
             input.lotSize = serverLot;
           }
         }
-
         // ── Subscription Enforcement ────────────────────────────────────────
         const access = await checkAccess(input.sessionToken);
-        // Admin bypass: check if this sessionToken belongs to admin
+        const isAdminViaCookie = await verifyAdminAccess(ctx);
+        console.log(`[bot.start] Access check: hasAccess=${access.hasAccess}, plan=${access.plan}, isAdminViaCookie=${isAdminViaCookie}, sessionToken=${input.sessionToken.slice(0, 8)}...`);
         const isAdminSession = ENV.adminMobile && input.sessionToken ? await (async () => {
           const db = await getDb();
           if (!db) return false;
@@ -352,10 +352,10 @@ export const appRouter = router({
           const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
           return rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile);
         })() : false;
-        if (!access.hasAccess && !isAdminSession) {
+        if (!access.hasAccess && !isAdminSession && !isAdminViaCookie) {
           throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
         }
-        if (access.plan === "trial" && !isAdminSession) {
+        if (access.plan === "trial" && !isAdminSession && !isAdminViaCookie) {
           if (input.mode === "live") {
             throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
           }
@@ -2179,7 +2179,7 @@ export const appRouter = router({
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
         const slotToken = `${input.sessionToken}-slot${input.slot}`;
@@ -2202,6 +2202,7 @@ export const appRouter = router({
         // ── Subscription Enforcement ────────────────────────────────────────
         const slotAccess = await checkAccess(input.sessionToken);
         // Admin bypass for slot bots
+        const isSlotAdminViaCookie = await verifyAdminAccess(ctx);
         const isSlotAdminSession = ENV.adminMobile && input.sessionToken ? await (async () => {
           const db = await getDb();
           if (!db) return false;
@@ -2209,10 +2210,10 @@ export const appRouter = router({
           const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
           return rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile);
         })() : false;
-        if (!slotAccess.hasAccess && !isSlotAdminSession) {
+        if (!slotAccess.hasAccess && !isSlotAdminSession && !isSlotAdminViaCookie) {
           throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
         }
-        if (slotAccess.plan === "trial" && !isSlotAdminSession) {
+        if (slotAccess.plan === "trial" && !isSlotAdminSession && !isSlotAdminViaCookie) {
           if (input.mode === "live") {
             throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
           }
