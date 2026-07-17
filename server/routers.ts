@@ -1,7 +1,7 @@
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
-import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess } from "./db";
+import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess, createAccessGrant, listAccessGrants, revokeAccessGrant, extendAccessGrant } from "./db";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { ENV } from "./_core/env";
@@ -3851,6 +3851,53 @@ export const appRouter = router({
         }
 
         return Object.values(userActivity);
+      }),
+
+    // ── Manual Access Grants ────────────────────────────────────────────────
+    manualGrant: publicProcedure
+      .input(z.object({
+        userIdentifier: z.string().min(1), // mobile or email
+        userName: z.string().optional(),
+        plan: z.enum(["monthly", "quarterly", "half_yearly", "yearly", "custom"]),
+        durationDays: z.number().min(1).max(3650),
+        startsAt: z.string().optional(), // ISO date string, defaults to now
+        note: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const isEmail = input.userIdentifier.includes("@");
+        const isMobile = /^\+?\d{10,15}$/.test(input.userIdentifier.replace(/\s/g, ""));
+        const startsAt = input.startsAt ? new Date(input.startsAt) : new Date();
+        return createAccessGrant({
+          userMobile: isMobile ? input.userIdentifier.replace(/\s/g, "") : undefined,
+          userEmail: isEmail ? input.userIdentifier : undefined,
+          userName: input.userName,
+          plan: input.plan,
+          durationDays: input.durationDays,
+          startsAt,
+          note: input.note,
+          grantedBy: "admin",
+        });
+      }),
+
+    listGrants: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        return listAccessGrants();
+      }),
+
+    revokeGrant: publicProcedure
+      .input(z.object({ grantId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        return revokeAccessGrant(input.grantId);
+      }),
+
+    extendGrant: publicProcedure
+      .input(z.object({ grantId: z.number(), additionalDays: z.number().min(1).max(3650) }))
+      .mutation(async ({ input, ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        return extendAccessGrant(input.grantId, input.additionalDays);
       }),
   }),
 });

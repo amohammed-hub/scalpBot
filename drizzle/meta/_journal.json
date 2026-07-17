@@ -141,6 +141,13 @@
       "when": 1784214037961,
       "tag": "0019_lonely_gertrude_yorkes",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1784312736493,
+      "tag": "0020_mighty_stick",
+      "breakpoints": true
     }
   ]
 }

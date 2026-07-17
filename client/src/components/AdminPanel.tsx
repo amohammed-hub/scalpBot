@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Loader2, Shield, Users, CreditCard, TrendingUp, Ban, Gift, Activity, ArrowLeft } from "lucide-react";
+import { Loader2, Shield, Users, CreditCard, TrendingUp, Ban, Gift, Activity, ArrowLeft, UserPlus, Clock, RotateCcw } from "lucide-react";
 
-type AdminTab = "users" | "subscriptions" | "activity";
+type AdminTab = "users" | "subscriptions" | "activity" | "grants";
 
 export function AdminPanel({ onClose }: { onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
@@ -13,6 +13,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
   const usersQuery = trpc.admin.users.useQuery();
   const subsQuery = trpc.admin.subscriptions.useQuery();
   const activityQuery = trpc.admin.userActivity.useQuery();
+  const grantsQuery = trpc.admin.listGrants.useQuery();
 
   const [grantModal, setGrantModal] = useState<{ sessionToken: string; mobile: string } | null>(null);
   const [grantPlan, setGrantPlan] = useState<"trial" | "monthly" | "quarterly" | "half_yearly" | "yearly">("monthly");
@@ -37,12 +38,45 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
     onError: (err: { message: string }) => toast.error(err.message),
   });
 
+  // ── Manual Grant state ────────────────────────────────────────────────────
+  const [mgUserIdentifier, setMgUserIdentifier] = useState("");
+  const [mgUserName, setMgUserName] = useState("");
+  const [mgPlan, setMgPlan] = useState<"monthly" | "quarterly" | "half_yearly" | "yearly" | "custom">("monthly");
+  const [mgDuration, setMgDuration] = useState(30);
+  const [mgStartDate, setMgStartDate] = useState(new Date().toISOString().split("T")[0]);
+  const [mgNote, setMgNote] = useState("");
+
+  const manualGrantMutation = trpc.admin.manualGrant.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Access granted! Expires: ${new Date(data.expiresAt).toLocaleDateString()}`);
+      grantsQuery.refetch();
+      subsQuery.refetch();
+      setMgUserIdentifier("");
+      setMgUserName("");
+      setMgNote("");
+    },
+    onError: (err: { message: string }) => toast.error(err.message),
+  });
+
+  const revokeGrantMutation = trpc.admin.revokeGrant.useMutation({
+    onSuccess: () => { toast.success("Grant revoked"); grantsQuery.refetch(); subsQuery.refetch(); },
+    onError: (err: { message: string }) => toast.error(err.message),
+  });
+
+  const [extendId, setExtendId] = useState<number | null>(null);
+  const [extendDays, setExtendDays] = useState(30);
+  const extendGrantMutation = trpc.admin.extendGrant.useMutation({
+    onSuccess: (data) => { toast.success(`Extended! New expiry: ${new Date(data.newExpiresAt).toLocaleDateString()}`); grantsQuery.refetch(); setExtendId(null); },
+    onError: (err: { message: string }) => toast.error(err.message),
+  });
+
   const stats = statsQuery.data;
 
   const tabs: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     { id: "users", label: "Users", icon: <Users className="w-4 h-4" /> },
     { id: "subscriptions", label: "Subscriptions", icon: <CreditCard className="w-4 h-4" /> },
     { id: "activity", label: "Activity", icon: <Activity className="w-4 h-4" /> },
+    { id: "grants", label: "Access Grants", icon: <UserPlus className="w-4 h-4" /> },
   ];
 
   return (
@@ -276,6 +310,223 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
       )}
 
       {/* Grant Modal */}
+      {activeTab === "grants" && (
+        <div className="space-y-6">
+          {/* Grant Access Form */}
+          <div className="bg-white/5 border border-white/10 rounded-xl p-6">
+            <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
+              <UserPlus className="w-5 h-5 text-teal-400" /> Grant Access
+            </h2>
+            <p className="text-sm text-white/50 mb-4">Grant free platform access to beta testers, friends, or partners — no payment required.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-white/50 mb-1 block">User Email or Phone *</label>
+                <Input
+                  placeholder="+919876543210 or user@email.com"
+                  value={mgUserIdentifier}
+                  onChange={e => setMgUserIdentifier(e.target.value)}
+                  className="bg-white/5 border-white/10 text-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-white/50 mb-1 block">Name (optional)</label>
+                <Input
+                  placeholder="User's name for reference"
+                  value={mgUserName}
+                  onChange={e => setMgUserName(e.target.value)}
+                  className="bg-white/5 border-white/10 text-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-white/50 mb-1 block">Plan</label>
+                <select
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                  value={mgPlan}
+                  onChange={e => {
+                    const plan = e.target.value as typeof mgPlan;
+                    setMgPlan(plan);
+                    const daysMap: Record<string, number> = { monthly: 30, quarterly: 90, half_yearly: 180, yearly: 365, custom: 30 };
+                    setMgDuration(daysMap[plan] ?? 30);
+                  }}
+                >
+                  <option value="monthly">Monthly (30 days)</option>
+                  <option value="quarterly">3 Months (90 days)</option>
+                  <option value="half_yearly">6 Months (180 days)</option>
+                  <option value="yearly">1 Year (365 days)</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-white/50 mb-1 block">Duration (days)</label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={3650}
+                  value={mgDuration}
+                  onChange={e => setMgDuration(Number(e.target.value))}
+                  disabled={mgPlan !== "custom"}
+                  className="bg-white/5 border-white/10 text-white disabled:opacity-50"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-white/50 mb-1 block">Start Date</label>
+                <Input
+                  type="date"
+                  value={mgStartDate}
+                  onChange={e => setMgStartDate(e.target.value)}
+                  className="bg-white/5 border-white/10 text-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-white/50 mb-1 block">Note / Reason (optional)</label>
+                <Input
+                  placeholder="e.g. Beta tester, friend, partner deal"
+                  value={mgNote}
+                  onChange={e => setMgNote(e.target.value)}
+                  className="bg-white/5 border-white/10 text-white"
+                />
+              </div>
+            </div>
+            <Button
+              className="mt-4 bg-teal-500 hover:bg-teal-600 text-white"
+              disabled={!mgUserIdentifier.trim() || manualGrantMutation.isPending}
+              onClick={() => {
+                manualGrantMutation.mutate({
+                  userIdentifier: mgUserIdentifier.trim(),
+                  userName: mgUserName.trim() || undefined,
+                  plan: mgPlan,
+                  durationDays: mgDuration,
+                  startsAt: mgStartDate,
+                  note: mgNote.trim() || undefined,
+                });
+              }}
+            >
+              {manualGrantMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Gift className="w-4 h-4 mr-2" />}
+              Grant Access
+            </Button>
+          </div>
+
+          {/* Active Grants Table */}
+          <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-white/10">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Clock className="w-5 h-5 text-amber-400" /> Active Grants ({grantsQuery.data?.length ?? 0})
+              </h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-white/5">
+                  <tr>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">User</th>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Plan</th>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Granted On</th>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Expires</th>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Status</th>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Note</th>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {grantsQuery.data?.map((grant: any) => {
+                    const isExpired = grant.status === "expired" || new Date(grant.expiresAt) < new Date();
+                    const isRevoked = grant.status === "revoked";
+                    const daysLeft = Math.max(0, Math.ceil((new Date(grant.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+                    return (
+                      <tr key={grant.id} className="hover:bg-white/5">
+                        <td className="px-4 py-3">
+                          <div className="text-teal-300 font-mono text-xs">{grant.userMobile || grant.userEmail || "—"}</div>
+                          {grant.userName && <div className="text-white/40 text-xs">{grant.userName}</div>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-0.5 rounded text-xs bg-purple-500/20 text-purple-300">
+                            {grant.plan === "custom" ? `Custom (${grant.durationDays}d)` : grant.plan}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-white/50">{new Date(grant.startsAt).toLocaleDateString()}</td>
+                        <td className="px-4 py-3 text-white/50">
+                          {new Date(grant.expiresAt).toLocaleDateString()}
+                          {!isExpired && !isRevoked && <span className="text-[10px] text-amber-300 ml-1">({daysLeft}d left)</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded text-xs ${
+                            isRevoked ? "bg-red-500/20 text-red-300" :
+                            isExpired ? "bg-white/10 text-white/40" :
+                            "bg-green-500/20 text-green-300"
+                          }`}>
+                            {isRevoked ? "Revoked" : isExpired ? "Expired" : "Active"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-white/40 text-xs max-w-[150px] truncate">{grant.note || "—"}</td>
+                        <td className="px-4 py-3 space-x-1">
+                          {!isRevoked && !isExpired && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 text-[10px] border-red-500/30 text-red-300 hover:bg-red-500/10"
+                              onClick={() => { if (confirm("Revoke this grant?")) revokeGrantMutation.mutate({ grantId: grant.id }); }}
+                              disabled={revokeGrantMutation.isPending}
+                            >
+                              <Ban className="w-3 h-3 mr-0.5" /> Revoke
+                            </Button>
+                          )}
+                          {!isRevoked && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 text-[10px] border-teal-500/30 text-teal-300 hover:bg-teal-500/10"
+                              onClick={() => setExtendId(grant.id)}
+                            >
+                              <RotateCcw className="w-3 h-3 mr-0.5" /> Extend
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {(!grantsQuery.data || grantsQuery.data.length === 0) && (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-white/30">No grants yet</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extend Grant Modal */}
+      {extendId && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+          <div className="bg-[#1a1f2e] border border-white/10 rounded-xl p-6 w-full max-w-sm space-y-4">
+            <h3 className="text-lg font-semibold text-white">Extend Grant</h3>
+            <div>
+              <label className="text-xs text-white/50 mb-1 block">Additional Days</label>
+              <Input
+                type="number"
+                min={1}
+                max={3650}
+                value={extendDays}
+                onChange={e => setExtendDays(Number(e.target.value))}
+                className="bg-white/5 border-white/10 text-white"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1 bg-teal-500 hover:bg-teal-600 text-white"
+                onClick={() => extendGrantMutation.mutate({ grantId: extendId, additionalDays: extendDays })}
+                disabled={extendGrantMutation.isPending}
+              >
+                {extendGrantMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Extend"}
+              </Button>
+              <Button variant="outline" className="border-white/20 text-white/60" onClick={() => setExtendId(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {grantModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
           <div className="bg-[#1a1f2e] border border-white/10 rounded-xl p-6 w-full max-w-sm space-y-4">

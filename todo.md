@@ -1005,3 +1005,8 @@
 - [x] FIX 1: Bot cards P&L — show live unrealized P&L when in trade ("IN TRADE: BUY CE ₹545 → Current ₹560 = +₹1,500"), "No open position" when idle
 - [x] FIX 2: Live Price Chart — fix TradingView symbols for MCX (CRUDEOIL1!, GOLD1!, SILVER1!) or use Upstox candle data
 - [x] FIX 4A REDO: Add EDITABLE instrument dropdown + capital field to EACH of the 3 bot cards in Command Center. When changed on a running bot, auto stop-switch-restart. Instruments: NIFTY, BANKNIFTY, FINNIFTY, Crude Oil, Gold, Silver, Natural Gas, Copper
+- [x] Admin Manual Access Grant: DB schema (access_grants table with user, plan, duration, startDate, expiresAt, note, status)
+- [x] Admin Manual Access Grant: Backend procedures (grant, revoke, extend, listGrants)
+- [x] Admin Manual Access Grant: Frontend - Grant Access form in Admin Panel (user email/phone, plan dropdown, duration, start date, note, Grant button)
+- [x] Admin Manual Access Grant: Frontend - Active Grants table (User|Plan|Granted On|Expires|Status|Actions)
+- [x] Admin Manual Access Grant: Access check middleware - grant gives full platform access, auto-expires after duration

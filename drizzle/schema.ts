@@ -216,3 +216,29 @@ export const otpCodes = mysqlTable("otp_codes", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type OtpCode = typeof otpCodes.$inferSelect;
+
+// ── Access Grants (Admin Manual Access) ─────────────────────────────────────
+// Admin can grant free platform access to beta testers, friends, partners
+export const accessGrants = mysqlTable("access_grants", {
+  id: int("id").autoincrement().primaryKey(),
+  // User identification — either mobile (for app_users) or email
+  userMobile: varchar("userMobile", { length: 15 }),
+  userEmail: varchar("userEmail", { length: 320 }),
+  userName: varchar("userName", { length: 128 }),
+  // Plan details
+  plan: mysqlEnum("plan", ["monthly", "quarterly", "half_yearly", "yearly", "custom"]).notNull(),
+  durationDays: int("durationDays").notNull(), // actual duration in days
+  // Dates
+  startsAt: timestamp("startsAt").notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  // Status
+  status: mysqlEnum("status", ["active", "expired", "revoked"]).default("active").notNull(),
+  // Metadata
+  note: text("note"), // admin's reason/reference
+  grantedBy: varchar("grantedBy", { length: 128 }).notNull(), // admin who granted
+  revokedAt: timestamp("revokedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AccessGrant = typeof accessGrants.$inferSelect;
+export type InsertAccessGrant = typeof accessGrants.$inferInsert;

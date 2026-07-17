@@ -1,7 +1,8 @@
 import { eq, and, desc, gt } from "drizzle-orm";
+import { lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { InsertUser, users, subscriptions, appUsers, otpCodes, upstoxCredentials, botSessions, tradeLog, signalJournal } from "../drizzle/schema";
+import { InsertUser, users, subscriptions, appUsers, otpCodes, upstoxCredentials, botSessions, tradeLog, signalJournal, accessGrants } from "../drizzle/schema";
 import { ENV } from './_core/env';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _db: any = null;
@@ -710,4 +711,147 @@ export async function adminRevokeAccess(sessionToken: string) {
       eq(subscriptions.status, "active"),
     ));
   return { success: true };
+}
+
+// ── Access Grants (Admin Manual Access) ─────────────────────────────────────
+
+/**
+ * Create a new access grant for a user (admin-initiated free access)
+ */
+export async function createAccessGrant(params: {
+  userMobile?: string;
+  userEmail?: string;
+  userName?: string;
+  plan: "monthly" | "quarterly" | "half_yearly" | "yearly" | "custom";
+  durationDays: number;
+  startsAt: Date;
+  note?: string;
+  grantedBy: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const expiresAt = new Date(params.startsAt.getTime() + params.durationDays * 24 * 60 * 60 * 1000);
+
+  // Also create a subscription record so the user gets platform access
+  // Find the user's sessionToken from app_users
+  let sessionToken: string | null = null;
+  if (params.userMobile) {
+    const [user] = await db.select().from(appUsers).where(eq(appUsers.mobile, params.userMobile)).limit(1);
+    sessionToken = user?.sessionToken ?? null;
+  }
+
+  // Insert the grant record
+  const [result] = await db.insert(accessGrants).values({
+    userMobile: params.userMobile ?? null,
+    userEmail: params.userEmail ?? null,
+    userName: params.userName ?? null,
+    plan: params.plan,
+    durationDays: params.durationDays,
+    startsAt: params.startsAt,
+    expiresAt,
+    status: "active",
+    note: params.note ?? null,
+    grantedBy: params.grantedBy,
+  });
+
+  // If we found the user's sessionToken, also create a subscription so they get access
+  if (sessionToken) {
+    const planMap: Record<string, "trial" | "monthly" | "quarterly" | "half_yearly" | "yearly"> = {
+      monthly: "monthly", quarterly: "quarterly", half_yearly: "half_yearly", yearly: "yearly", custom: "monthly",
+    };
+    await db.insert(subscriptions).values({
+      sessionToken,
+      plan: planMap[params.plan] ?? "monthly",
+      status: "active",
+      amountPaid: 0,
+      razorpayOrderId: `GRANT_${result.insertId}`,
+      startsAt: params.startsAt,
+      expiresAt,
+    });
+  }
+
+  return { success: true, id: result.insertId, expiresAt, sessionToken };
+}
+
+/**
+ * List all access grants (for admin panel)
+ */
+export async function listAccessGrants() {
+  const db = await getDb();
+  if (!db) return [];
+  // Auto-expire grants that have passed their expiresAt
+  const now = new Date();
+  await db.update(accessGrants)
+    .set({ status: "expired" })
+    .where(and(
+      eq(accessGrants.status, "active"),
+      lte(accessGrants.expiresAt, now),
+    ));
+  return db.select().from(accessGrants).orderBy(desc(accessGrants.createdAt));
+}
+
+/**
+ * Revoke an access grant
+ */
+export async function revokeAccessGrant(grantId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const now = new Date();
+
+  // Get the grant to find the linked subscription
+  const [grant] = await db.select().from(accessGrants).where(eq(accessGrants.id, grantId)).limit(1);
+  if (!grant) throw new Error("Grant not found");
+
+  // Revoke the grant
+  await db.update(accessGrants)
+    .set({ status: "revoked", revokedAt: now })
+    .where(eq(accessGrants.id, grantId));
+
+  // Also revoke the linked subscription if exists
+  if (grant.userMobile) {
+    const [user] = await db.select().from(appUsers).where(eq(appUsers.mobile, grant.userMobile)).limit(1);
+    if (user?.sessionToken) {
+      await db.update(subscriptions)
+        .set({ status: "cancelled" })
+        .where(and(
+          eq(subscriptions.sessionToken, user.sessionToken),
+          eq(subscriptions.razorpayOrderId, `GRANT_${grantId}`),
+        ));
+    }
+  }
+
+  return { success: true };
+}
+
+/**
+ * Extend an access grant by additional days
+ */
+export async function extendAccessGrant(grantId: number, additionalDays: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  const [grant] = await db.select().from(accessGrants).where(eq(accessGrants.id, grantId)).limit(1);
+  if (!grant) throw new Error("Grant not found");
+
+  const newExpiresAt = new Date(grant.expiresAt.getTime() + additionalDays * 24 * 60 * 60 * 1000);
+  const newDuration = grant.durationDays + additionalDays;
+
+  await db.update(accessGrants)
+    .set({ expiresAt: newExpiresAt, durationDays: newDuration, status: "active" })
+    .where(eq(accessGrants.id, grantId));
+
+  // Also extend the linked subscription
+  if (grant.userMobile) {
+    const [user] = await db.select().from(appUsers).where(eq(appUsers.mobile, grant.userMobile)).limit(1);
+    if (user?.sessionToken) {
+      await db.update(subscriptions)
+        .set({ expiresAt: newExpiresAt, status: "active" })
+        .where(and(
+          eq(subscriptions.sessionToken, user.sessionToken),
+          eq(subscriptions.razorpayOrderId, `GRANT_${grantId}`),
+        ));
+    }
+  }
+
+  return { success: true, newExpiresAt };
 }
