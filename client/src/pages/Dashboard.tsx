@@ -65,9 +65,10 @@ interface PricePoint { time: string; price: number; }
 // Quantity is sized using the option PREMIUM price (~₹100–500), NOT the underlying futures price.
 const INSTRUMENTS = [
   // ── NSE Index Options — Auto OTM ─────────────────────────────────────────────
-  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → OTM Options (Auto)",  segment: "NSE Index Options", lotSize: 15,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
-  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 25,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
-  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 40,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
+  // NSE lot sizes revised Jan 2026 (circular FAOP70616): NIFTY 65, BANKNIFTY 30, FINNIFTY 60
+  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → OTM Options (Auto)",  segment: "NSE Index Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
+  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 65,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
+  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 60,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
   // ── MCX Commodity Options — Auto OTM ─────────────────────────────────────────
   // Tokens are numeric front-month IDs verified from Upstox instrument master (Jul 2026).
   // These auto-resolve to the correct front-month contract via resolveMcxFuturesToken() at runtime.
@@ -286,9 +287,10 @@ export default function Dashboard() {
     // Resolve token: NSE index instruments use NSE_INDEX| prefix (ATM options mode)
     // MCX instruments use MCX_FO| prefix. Never use NSE_FO| for index instruments.
     const NSE_INDEX_MAP: Record<string, { token: string; label: string; lotSize: number }> = {
-      NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → OTM Options (Auto)",   lotSize: 25 },
-      BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → OTM Options (Auto)",  lotSize: 15 },
-      FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → OTM Options (Auto)",   lotSize: 40 },
+      // NSE lot sizes revised Jan 2026: NIFTY 65, BANKNIFTY 30, FINNIFTY 60
+      NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → OTM Options (Auto)",   lotSize: 65 },
+      BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → OTM Options (Auto)",  lotSize: 30 },
+      FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → OTM Options (Auto)",   lotSize: 60 },
     };
     // Map dropdown values (MCX_CRUDE, MCX_GOLD, etc.) to actual MCX instrument symbols (CRUDEOIL, GOLD, etc.)
     const MCX_SYMBOL_MAP: Record<string, string> = {

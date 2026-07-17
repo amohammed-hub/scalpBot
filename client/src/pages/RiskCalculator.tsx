@@ -57,11 +57,12 @@ interface TradeLog {
 // ─── Instrument Data ──────────────────────────────────────────────────────────
 const INSTRUMENTS = [
   { label: "Custom (Equity)", value: "custom", lotSize: 1, type: "equity" },
-  { label: "Nifty 50 (Lot: 75)", value: "nifty", lotSize: 75, type: "index" },
-  { label: "Bank Nifty (Lot: 15)", value: "banknifty", lotSize: 15, type: "index" },
-  { label: "Fin Nifty (Lot: 40)", value: "finnifty", lotSize: 40, type: "index" },
-  { label: "Midcap Nifty (Lot: 50)", value: "midcapnifty", lotSize: 50, type: "index" },
-  { label: "Sensex (Lot: 10)", value: "sensex", lotSize: 10, type: "index" },
+  // NSE lot sizes revised Jan 2026 (circular FAOP70616)
+  { label: "Nifty 50 (Lot: 65)", value: "nifty", lotSize: 65, type: "index" },
+  { label: "Bank Nifty (Lot: 30)", value: "banknifty", lotSize: 30, type: "index" },
+  { label: "Fin Nifty (Lot: 60)", value: "finnifty", lotSize: 60, type: "index" },
+  { label: "Midcap Nifty (Lot: 120)", value: "midcapnifty", lotSize: 120, type: "index" },
+  { label: "Sensex (Lot: 20)", value: "sensex", lotSize: 20, type: "index" },
   { label: "Reliance (Lot: 250)", value: "reliance", lotSize: 250, type: "stock" },
   { label: "TCS (Lot: 150)", value: "tcs", lotSize: 150, type: "stock" },
   { label: "HDFC Bank (Lot: 550)", value: "hdfcbank", lotSize: 550, type: "stock" },

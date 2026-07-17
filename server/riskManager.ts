@@ -211,6 +211,13 @@ export function checkPortfolioDrawdown(
     portfolioHaltReason = `Portfolio daily loss limit hit: ₹${aggregatePnl.toFixed(0)} (limit: ₹${maxLoss.toFixed(0)})`;
   }
 
+  // Auto-clear halt when conditions recover (e.g., user starts fresh bot with 0 dailyPnl,
+  // or previous losing bot was stopped and new bot's aggregate is above limit)
+  if (portfolioHalted && aggregatePnl > maxLoss) {
+    portfolioHalted = false;
+    portfolioHaltReason = null;
+  }
+
   return { halted: portfolioHalted, reason: portfolioHaltReason };
 }
 

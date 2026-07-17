@@ -932,3 +932,10 @@
 - [x] S/R proximity was not the blocker either (nearest pivot 138 pts away)
 - [x] Verified: 129/131 tests pass (2 pre-existing failures unrelated)
 - [x] Push fix to GitHub for Railway auto-deploy
+
+## Fix — Bot Says "Started" But Immediately Goes Inactive
+- [x] Root cause: portfolioHalted module-level flag stays true once set, never cleared on new bot start
+- [x] Fix: Reset portfolioHalt and stoploss guard before startBot() in both start and restart procedures
+- [x] Fix: Auto-clear portfolio halt in checkPortfolioDrawdown when aggregate P&L recovers above limit
+- [x] Verified: 130/131 tests pass (1 pre-existing failure unrelated)
+- [x] Push fix to GitHub for Railway auto-deploy

@@ -14,6 +14,7 @@ import { getDb } from "./db";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, type OpenTrade, type BotState } from "./botEngine";
+import { getNseIndexLotSize } from "../shared/lotSizes";
 import axios from "axios";
 
 // Type alias for a row from botSessions (Drizzle infers this)
@@ -237,7 +238,8 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       telegramChatId: session.telegramChatId ?? null,
       telegramEnabled: session.telegramEnabled ?? false,
       botSlot: session.botSlot ?? 0,
-      lotSize: session.lotSize ?? 1,
+      // Sanitize stale NSE lot sizes persisted before the Jan-2026 revision (e.g. NIFTY 25 → 65)
+      lotSize: getNseIndexLotSize(session.instrumentSymbol ?? "") ?? session.lotSize ?? 1,
       isIndexOptions: !!(session.isIndexOptions),
       underlyingToken: session.underlyingToken ?? undefined,
       optionType: (session.optionType ?? undefined) as "CE" | "PE" | "auto" | undefined,

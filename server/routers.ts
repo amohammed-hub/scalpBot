@@ -7,6 +7,7 @@ import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { ENV } from "./_core/env";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, type Candle } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
+import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
 import {
   computeMarketRiskScore, getCachedRiskScore, getStoplossGuardState,
@@ -328,6 +329,17 @@ export const appRouter = router({
         const existingPrimaryBot = getBotState(input.sessionToken);
         if (existingPrimaryBot?.status === 'running') {
           throw new Error('Primary bot is already running. Stop it first before restarting.');
+        }
+
+        // ── Lot size sanitization: stale clients may send outdated NSE lot sizes ──
+        // (e.g. NIFTY 25 from pre-2026 configs → Upstox rejects non-lot-multiple orders).
+        // Server catalog is the authority; bot engine additionally fetches live lot size at trade time.
+        {
+          const serverLot = getNseIndexLotSize(input.instrumentSymbol) ?? getNseIndexLotSize(input.underlyingToken ?? "");
+          if (serverLot && serverLot !== input.lotSize) {
+            console.warn(`[bot.start] Correcting stale client lotSize ${input.lotSize} → ${serverLot} for ${input.instrumentSymbol}`);
+            input.lotSize = serverLot;
+          }
         }
 
         // ── Subscription Enforcement ────────────────────────────────────────
@@ -676,6 +688,11 @@ export const appRouter = router({
           } catch { /* non-fatal */ }
         };
 
+        // Reset stale risk gates before starting — prevents a previous session's
+        // portfolio halt or stoploss guard from blocking the newly started bot.
+        resetPortfolioHalt();
+        resetDailyState(input.sessionToken);
+
         startBot(
           {
             sessionToken: input.sessionToken,
@@ -998,6 +1015,10 @@ export const appRouter = router({
             updateStoplossGuard(recentRows.reverse(), input.sessionToken);
           } catch { /* non-fatal */ }
         };
+
+        // Reset stale portfolio halt before restarting
+        resetPortfolioHalt();
+
         startBot(
           {
             sessionToken: input.sessionToken,
@@ -2136,6 +2157,15 @@ export const appRouter = router({
           throw new Error(`Slot ${input.slot} bot is already running. Stop it first before restarting.`);
         }
 
+        // ── Lot size sanitization (same as primary bot.start): server catalog is the authority ──
+        {
+          const serverLot = getNseIndexLotSize(input.instrumentSymbol) ?? getNseIndexLotSize(input.underlyingToken ?? "");
+          if (serverLot && serverLot !== input.lotSize) {
+            console.warn(`[multiBots.startSlot] Correcting stale client lotSize ${input.lotSize} → ${serverLot} for ${input.instrumentSymbol}`);
+            input.lotSize = serverLot;
+          }
+        }
+
         // ── Subscription Enforcement ────────────────────────────────────────
         const slotAccess = await checkAccess(input.sessionToken);
         // Admin bypass for slot bots
@@ -2974,9 +3004,10 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
         const SCAN_INSTRUMENTS = [
-          { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ATM Options",   lotSize: 15 },
-          { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options",    lotSize: 25 },
-          { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options",    lotSize: 40 },
+          // NSE lot sizes revised Jan 2026 (circular FAOP70616): NIFTY 65, BANKNIFTY 30, FINNIFTY 60
+          { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ATM Options",   lotSize: NSE_INDEX_LOT_SIZES.BANKNIFTY },
+          { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ATM Options",    lotSize: NSE_INDEX_LOT_SIZES.NIFTY },
+          { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ATM Options",    lotSize: NSE_INDEX_LOT_SIZES.FINNIFTY },
           { token: "MCX_FO|520702",               symbol: "MCX_CRUDE", label: "Crude Oil → ATM Options",   lotSize: 100 },
           { token: "MCX_FO|552720",               symbol: "MCX_GOLD",  label: "Gold → ATM Options",        lotSize: 100 },
           { token: "MCX_FO|471725",               symbol: "MCX_SILVER",label: "Silver → ATM Options",      lotSize: 30 },

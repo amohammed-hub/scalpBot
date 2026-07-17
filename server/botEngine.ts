@@ -17,6 +17,7 @@
 
 import axios from "axios";
 import { emitActivity } from "./activityLog";
+import { getNseIndexLotSize } from "../shared/lotSizes";
 import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
 import {
   getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
@@ -2013,6 +2014,13 @@ export async function resolveAtmMcxOptionToken(
 }
 
 // ── Place order via Upstox API ────────────────────────────────────────────────
+// Last rejection reason per instrument — surfaced in activity log so the user
+// sees the REAL Upstox error (e.g. lot size mismatch) instead of a generic message.
+let lastOrderRejectionReason: string | null = null;
+export function getLastOrderRejectionReason(): string | null {
+  return lastOrderRejectionReason;
+}
+
 export async function placeUpstoxOrder(
   accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number,
 ): Promise<string | null> {
@@ -2022,9 +2030,47 @@ export async function placeUpstoxOrder(
       { quantity, product: "I", validity: "DAY", price: 0, tag: "scalp-bot", instrument_token: instrumentToken, order_type: "MARKET", transaction_type: direction, disclosed_quantity: 0, trigger_price: 0, is_amo: false },
       { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" }, timeout: 8000 }
     );
+    lastOrderRejectionReason = null;
     return resp.data?.data?.order_id ?? null;
   } catch (err: unknown) {
-    console.error("[BotEngine] Order placement failed:", err instanceof Error ? err.message : String(err));
+    // Extract the REAL Upstox rejection reason from the error response body
+    let reason = err instanceof Error ? err.message : String(err);
+    if (axios.isAxiosError(err) && err.response?.data) {
+      const body = err.response.data as { errors?: Array<{ message?: string; errorCode?: string; error_code?: string }> };
+      if (Array.isArray(body.errors) && body.errors.length > 0) {
+        reason = body.errors.map(e => `${e.errorCode ?? e.error_code ?? ""} ${e.message ?? ""}`.trim()).join("; ");
+      }
+    }
+    lastOrderRejectionReason = reason;
+    console.error(`[BotEngine] Order placement failed (${instrumentToken} ${direction} qty=${quantity}):`, reason);
+    return null;
+  }
+}
+
+// ── NSE lot size resolution (live, self-correcting) ─────────────────────────
+// The option/chain API does NOT return lot_size, so we fetch it once per day per
+// underlying from /v2/option/contract. Falls back to the shared static map.
+const nseLotSizeCache = new Map<string, { lotSize: number; fetchedAt: number }>();
+export async function resolveNseLotSize(underlyingToken: string, accessToken: string): Promise<number | null> {
+  const cached = nseLotSizeCache.get(underlyingToken);
+  if (cached && Date.now() - cached.fetchedAt < 12 * 3600 * 1000) return cached.lotSize;
+  try {
+    const resp = await axios.get(
+      `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(underlyingToken)}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+    );
+    const contracts: Array<{ lot_size?: number; expiry?: string }> = resp.data?.data ?? [];
+    // Use the nearest-expiry contract's lot size (revisions apply per-expiry)
+    const withLot = contracts.filter(c => (c.lot_size ?? 0) > 0).sort((a, b) => (a.expiry ?? "").localeCompare(b.expiry ?? ""));
+    const lot = withLot[0]?.lot_size ?? null;
+    if (lot && lot > 0) {
+      nseLotSizeCache.set(underlyingToken, { lotSize: lot, fetchedAt: Date.now() });
+      console.log(`[BotEngine] resolveNseLotSize: ${underlyingToken} → lot ${lot} (live from Upstox)`);
+      return lot;
+    }
+    return null;
+  } catch (err) {
+    console.warn("[BotEngine] resolveNseLotSize failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -3044,6 +3090,16 @@ async function tick(
       // Use the contract's actual lot size when available (MCX lot sizes vary per commodity)
       if (resolved.lotSize && resolved.lotSize > 0) {
         state.lotSize = resolved.lotSize;
+      } else if (state.accessToken && resolvedUnderlying.startsWith("NSE_INDEX|")) {
+        // NSE option chain doesn't return lot_size — fetch it live from /v2/option/contract
+        // (self-correcting: exchanges revise lot sizes; stale client configs sent 25 for NIFTY → rejected orders)
+        const liveLot = await resolveNseLotSize(resolvedUnderlying, state.accessToken);
+        const fallbackLot = getNseIndexLotSize(state.instrumentSymbol);
+        const correctLot = liveLot ?? fallbackLot;
+        if (correctLot && correctLot > 0 && correctLot !== state.lotSize) {
+          emitActivity(state.sessionToken, "signal", `⚙ Lot size corrected: ${state.lotSize} → ${correctLot} (${liveLot ? "live from Upstox" : "NSE Jan-2026 revision"}) — orders must be lot multiples`);
+          state.lotSize = correctLot;
+        }
       }
       const contractName = resolved.tradingSymbol ?? `${state.instrumentSymbol} ${resolved.strike} ${ceOrPe}`;
       emitActivity(
@@ -3135,7 +3191,8 @@ async function tick(
       // CRITICAL: if the order was rejected by Upstox, do NOT record a phantom trade.
       // Log the failure and skip this tick entirely.
       state.lastError = `Order rejected by Upstox — ${tradeInstrumentToken} ${orderDirection} ${quantity} qty`;
-      emitActivity(state.sessionToken, "error", `⚠ Live order REJECTED — ${tradeLabel} ${orderDirection} ${quantity} qty. Check Upstox logs.`);
+      const rejReason = getLastOrderRejectionReason();
+      emitActivity(state.sessionToken, "error", `⚠ Live order REJECTED — ${tradeLabel} ${orderDirection} ${quantity} qty${rejReason ? ` | Upstox: ${rejReason}` : ". Check Upstox logs."}`);
       console.error(`[BotEngine] ${state.sessionToken} — Live order rejected, trade NOT recorded.`);
       return;
     }
