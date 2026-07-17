@@ -2016,8 +2016,10 @@ export default function Dashboard() {
           </div>
           <span className="text-xs text-white/30 ml-auto">{config.mode === "paper" ? "Simulated trades, no real money" : "⚠ Real orders via Upstox"}</span>
         </div>
-        {/* Bot Configuration */}
-        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6 transition-all">
+        {/* Bot Config + Secondary Slots — side by side */}
+        <div className="flex flex-col lg:flex-row gap-4 mb-6 items-start">
+          <div className="flex-1 min-w-0">
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 transition-all">
           <div className="flex items-center justify-between mb-4 cursor-pointer select-none" onClick={() => setConfigCollapsed(!configCollapsed)}>
             <div className="flex items-center gap-2">
               <Bot className="w-5 h-5 text-teal-400" />
@@ -2382,9 +2384,10 @@ export default function Dashboard() {
           </div>
 
           </>)}
-        </div>
-
-
+            </div>
+          </div>
+          {/* Right: Secondary Slots */}
+          <div className="w-full lg:w-[340px] shrink-0">
         {/* ═══════════════════════════════════════════════════════════════════════════
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
@@ -2395,7 +2398,7 @@ export default function Dashboard() {
           </div>
           <span className="text-xs text-white/30">Run different instruments in parallel</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+        <div className="grid grid-cols-1 gap-3">
           {((allBots && allBots.length > 0) ? allBots.filter((b: any) => b.slot > 0) : [
             { slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0, openTrade: null, instrumentLabel: "", lastSignal: null, lastTickAt: 0, scanIntervalSec: 60, lastError: null, candlesCount: 0, hasRealData: false, optionPremiumPrice: null, sessionToken: `${sessionToken}-slot1` },
             { slot: 2, status: "stopped", dailyPnl: 0, tradesCount: 0, openTrade: null, instrumentLabel: "", lastSignal: null, lastTickAt: 0, scanIntervalSec: 60, lastError: null, candlesCount: 0, hasRealData: false, optionPremiumPrice: null, sessionToken: `${sessionToken}-slot2` },
@@ -2644,6 +2647,8 @@ export default function Dashboard() {
               </div>
             );
           })}
+        </div>
+          </div>
         </div>
         {/* ── Strategy Presets ──────────────────────────────────────────────────── */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
