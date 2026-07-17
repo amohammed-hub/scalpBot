@@ -2663,10 +2663,23 @@ export const appRouter = router({
     // Send a test message to verify bot token + chat ID are correct
     test: publicProcedure
       .input(z.object({
-        botToken: z.string().min(10),
+        botToken: z.string().min(1),
         chatId: z.string().min(1),
       }))
       .mutation(async ({ input }) => {
+        // Trim whitespace/newlines that may be pasted from env vars or copied from Telegram
+        const botToken = input.botToken.trim().replace(/\s+/g, "");
+        const chatId = input.chatId.trim().replace(/\s+/g, "");
+
+        if (botToken.length < 10) {
+          return { success: false, error: "Bot token too short — must be at least 10 characters" };
+        }
+        if (!chatId) {
+          return { success: false, error: "Chat ID is empty" };
+        }
+
+        console.log(`[Telegram Test] Attempting with token=${botToken.slice(0, 8)}... chatId=${chatId}`);
+
         const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
         const message = [
           `✅ <b>ScalpBot Telegram Connected!</b>`,
@@ -2681,27 +2694,33 @@ export const appRouter = router({
           `⏰ Test sent at: ${now} IST`,
         ].join("\n");
 
+        const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
         try {
-          const res = await fetch(
-            `https://api.telegram.org/bot${input.botToken}/sendMessage`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chat_id: input.chatId,
-                text: message,
-                parse_mode: "HTML",
-              }),
-              signal: AbortSignal.timeout(10000),
-            },
-          );
-          const json = await res.json() as { ok: boolean; description?: string };
-          if (!json.ok) {
-            return { success: false, error: json.description ?? "Telegram API error" };
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: message,
+              parse_mode: "HTML",
+            }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const responseText = await res.text();
+          console.log(`[Telegram Test] Response status=${res.status} body=${responseText.slice(0, 200)}`);
+          try {
+            const json = JSON.parse(responseText) as { ok: boolean; description?: string };
+            if (!json.ok) {
+              return { success: false, error: json.description ?? `Telegram API error (HTTP ${res.status})` };
+            }
+            return { success: true };
+          } catch {
+            return { success: false, error: `Invalid JSON response (HTTP ${res.status}): ${responseText.slice(0, 100)}` };
           }
-          return { success: true };
-        } catch (e) {
-          return { success: false, error: String(e) };
+        } catch (e: any) {
+          const errMsg = e?.cause?.code ?? e?.code ?? e?.message ?? String(e);
+          console.error(`[Telegram Test] Fetch error:`, errMsg);
+          return { success: false, error: `Network error: ${errMsg}` };
         }
       }),
 

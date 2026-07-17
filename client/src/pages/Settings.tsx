@@ -634,13 +634,13 @@ export default function Settings() {
   };
 
   const handleTestTelegram = () => {
-    if (!telegram.botToken || !telegram.chatId) {
+    if (!telegram.botToken?.trim() || !telegram.chatId?.trim()) {
       toast.error("Enter Bot Token and Chat ID first.");
       return;
     }
     setTelegramTesting(true);
     telegramTestMutation.mutate(
-      { botToken: telegram.botToken, chatId: telegram.chatId },
+      { botToken: telegram.botToken.trim(), chatId: telegram.chatId.trim() },
       { onSettled: () => setTelegramTesting(false) },
     );
   };

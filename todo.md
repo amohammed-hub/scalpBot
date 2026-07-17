@@ -1010,3 +1010,4 @@
 - [x] Admin Manual Access Grant: Frontend - Grant Access form in Admin Panel (user email/phone, plan dropdown, duration, start date, note, Grant button)
 - [x] Admin Manual Access Grant: Frontend - Active Grants table (User|Plan|Granted On|Expires|Status|Actions)
 - [x] Admin Manual Access Grant: Access check middleware - grant gives full platform access, auto-expires after duration
+- [x] Fix Telegram Test Connection button bug (trim whitespace, better error handling, increased timeout)
