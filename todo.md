@@ -998,3 +998,9 @@
 - [x] FIX E1: Portfolio drawdown check — NEVER pause bot, just block new trade entries with HOLD signal (bot keeps monitoring prices/managing open trades)
 - [x] FIX E2: Max trades per day check — NEVER pause bot, just block new trade entries with HOLD signal
 - [x] Both checks now also skip entirely if bot has an open trade (must continue managing SL/TP/trailing)
+## UI CORRECTIONS — 4 Items (Priority: 3→4→1→2)
+- [x] FIX 3: Open Positions table — show actual open trades table across all 3 bots (Bot|Symbol|Direction|Entry|Current|P&L|Duration), not "Scanning for signals"
+- [x] FIX 4A: Add instrument dropdown + capital field INSIDE each bot card in Command Center
+- [x] FIX 4B: Remove "Bot Configuration & Risk Settings" (Instrument+Capital+Start/Stop) from Configuration tab — keep only risk params, strategies, presets, paper costs, shadow mode
+- [x] FIX 1: Bot cards P&L — show live unrealized P&L when in trade ("IN TRADE: BUY CE ₹545 → Current ₹560 = +₹1,500"), "No open position" when idle
+- [x] FIX 2: Live Price Chart — fix TradingView symbols for MCX (CRUDEOIL1!, GOLD1!, SILVER1!) or use Upstox candle data

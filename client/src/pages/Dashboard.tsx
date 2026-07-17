@@ -1504,7 +1504,7 @@ export default function Dashboard() {
             </div>
             {(() => {
               // Collect all open positions across all slots
-              type OpenPos = { symbol: string; direction: string; entry: number; current: number; pnl: number; qty: number; slot: number; isOptions: boolean };
+              type OpenPos = { symbol: string; direction: string; entry: number; current: number; pnl: number; qty: number; slot: number; isOptions: boolean; openedAt?: number };
               const positions: OpenPos[] = [];
               // Primary slot
               if (activeTrade && effectiveLivePrice > 0) {
@@ -1518,6 +1518,7 @@ export default function Dashboard() {
                   qty: activeTrade.quantity,
                   slot: 0,
                   isOptions: isIndexOptions,
+                  openedAt: activeTrade.openedAt ?? activeTrade.entryTime,
                 });
               }
               // Secondary slots
@@ -1550,57 +1551,68 @@ export default function Dashboard() {
                     qty: ot.quantity - (ot.bookedQty ?? 0),
                     slot: bot.slot,
                     isOptions: isOpts,
+                    openedAt: ot.openedAt ?? ot.entryTime,
                   });
                 }
               });
 
               if (positions.length === 0) {
                 return (
-                  <div className="flex flex-col items-center justify-center h-36 gap-3">
-                    <div className="relative">
-                      <div className="w-10 h-10 rounded-full border-2 border-white/10 flex items-center justify-center">
-                        <Activity className="w-5 h-5 text-white/20" />
-                      </div>
-                      {isRunning && (
-                        <div className="absolute inset-0 rounded-full border-2 border-teal-400/30 animate-ping" />
-                      )}
-                    </div>
-                    <div className="text-center">
-                      <div className="text-white/40 text-sm">{isRunning ? "Scanning for signals..." : "No open positions"}</div>
-                      {isRunning && countdown > 0 && (
-                        <div className="text-white/20 text-xs mt-1">Next scan in {countdown}s</div>
-                      )}
-                    </div>
+                  <div className="flex flex-col items-center justify-center h-24 gap-2">
+                    <div className="text-white/40 text-sm">No open positions</div>
+                    {isRunning && countdown > 0 && (
+                      <div className="text-white/20 text-xs">Next scan in {countdown}s</div>
+                    )}
                   </div>
                 );
               }
 
               return (
-                <div className="space-y-2 max-h-[180px] overflow-y-auto">
-                  {positions.map((pos, idx) => {
-                    const pnlPct = pos.entry > 0 ? ((pos.current - pos.entry) / pos.entry) * 100 * (pos.direction === "BUY" ? 1 : -1) : 0;
-                    const isPos = pos.pnl >= 0;
-                    return (
-                      <div key={idx} className={`rounded-xl border p-3 transition-all ${isPos ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"}`}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${pos.direction === "BUY" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
-                              {pos.direction}
-                            </span>
-                            <span className="text-xs font-medium text-white truncate max-w-[120px]">{pos.symbol}</span>
-                            <span className="text-[10px] text-white/20">S{pos.slot}</span>
-                          </div>
-                          <span className={`text-sm font-bold tabular-nums ${isPos ? "text-emerald-400" : "text-red-400"}`}>
-                            {isPos ? "+" : ""}₹{pos.pnl.toFixed(0)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-[10px] text-white/40">
-                          <span>₹{pos.entry.toFixed(2)} → ₹{pos.current.toFixed(2)}</span>
-                          <span className={isPos ? "text-emerald-400/70" : "text-red-400/70"}>{pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%</span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="overflow-x-auto max-h-[200px] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-white/40 border-b border-white/10">
+                        <th className="text-left py-1.5 px-1 font-medium">Bot</th>
+                        <th className="text-left py-1.5 px-1 font-medium">Symbol</th>
+                        <th className="text-left py-1.5 px-1 font-medium">Dir</th>
+                        <th className="text-right py-1.5 px-1 font-medium">Entry</th>
+                        <th className="text-right py-1.5 px-1 font-medium">Current</th>
+                        <th className="text-right py-1.5 px-1 font-medium">P&L</th>
+                        <th className="text-right py-1.5 px-1 font-medium">Duration</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map((pos, idx) => {
+                        const isPos = pos.pnl >= 0;
+                        // Calculate duration from trade open time if available
+                        const openTime = (pos as any).openedAt;
+                        let durationStr = "—";
+                        if (openTime) {
+                          const elapsed = Math.floor((Date.now() - openTime) / 1000);
+                          if (elapsed < 60) durationStr = `${elapsed}s`;
+                          else if (elapsed < 3600) durationStr = `${Math.floor(elapsed / 60)}m`;
+                          else durationStr = `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`;
+                        }
+                        return (
+                          <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                            <td className="py-1.5 px-1 text-white/70">Bot {pos.slot + 1}</td>
+                            <td className="py-1.5 px-1 text-white font-medium truncate max-w-[100px]">{pos.symbol}</td>
+                            <td className="py-1.5 px-1">
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${pos.direction === "BUY" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+                                {pos.direction}
+                              </span>
+                            </td>
+                            <td className="py-1.5 px-1 text-right text-white/60 tabular-nums">₹{pos.entry.toFixed(2)}</td>
+                            <td className="py-1.5 px-1 text-right text-white/80 tabular-nums">₹{pos.current.toFixed(2)}</td>
+                            <td className={`py-1.5 px-1 text-right font-bold tabular-nums ${isPos ? "text-emerald-400" : "text-red-400"}`}>
+                              {isPos ? "+" : ""}₹{pos.pnl.toFixed(0)}
+                            </td>
+                            <td className="py-1.5 px-1 text-right text-white/40 tabular-nums">{durationStr}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               );
             })()}
@@ -1665,9 +1677,16 @@ export default function Dashboard() {
                 </div>
 
                 {/* Instrument name */}
-                <div className="text-sm font-semibold text-white mb-2 truncate">
-                  {bot.instrumentLabel || (isActive ? "Starting…" : "Inactive")}
-                </div>
+                {isActive ? (
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-semibold text-white truncate max-w-[65%]">
+                      {bot.instrumentLabel || "Starting…"}
+                    </div>
+                    <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded">₹{((bot as any).capital ?? config.capital)?.toLocaleString()}</span>
+                  </div>
+                ) : (
+                  <div className="text-sm font-semibold text-white/40 mb-2">Inactive</div>
+                )}
 
                 {/* Live Price + Trades */}
                 {isActive && (
@@ -1689,16 +1708,10 @@ export default function Dashboard() {
 
                 {/* Open trade mini-card OR scanning state */}
                 {isActive && hasOpenTrade ? (
-                  <div className={`rounded-lg border p-2 mb-2 ${
+                  <div className={`rounded-lg border p-2.5 mb-2 ${
                     bot.openTrade.direction === "BUY" ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"
                   }`}>
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className={bot.openTrade.direction === "BUY" ? "text-emerald-400 font-bold" : "text-red-400 font-bold"}>
-                        {bot.openTrade.direction} @ ₹{bot.openTrade.entryPrice?.toFixed(2)}
-                      </span>
-                      {bot.openTrade.slPrice && <span className="text-red-400/60">SL ₹{bot.openTrade.slPrice.toFixed(1)}</span>}
-                    </div>
-                    {/* Unrealized P&L for this slot */}
+                    <div className="text-[10px] text-white/50 mb-1 font-medium">● IN TRADE</div>
                     {(() => {
                       const ot = bot.openTrade;
                       const isOpts = ot.isIndexOptions;
@@ -1715,47 +1728,39 @@ export default function Dashboard() {
                       } else {
                         liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
                       }
-                      if (liveP === 0) return null;
                       const dir = ot.direction === "BUY" ? 1 : -1;
-                      const unrealised = (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0));
+                      const unrealised = liveP > 0 ? (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0)) : 0;
+                      const symbolShort = ot.symbolLabel ?? ot.symbol ?? "";
                       return (
-                        <div className={`text-xs font-bold mt-1 ${unrealised >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                          Unrealized: {unrealised >= 0 ? "+" : ""}₹{unrealised.toFixed(0)}
-                        </div>
+                        <>
+                          <div className="text-[11px] text-white/80 font-medium">
+                            {ot.direction} {symbolShort.includes("CE") ? "CE" : symbolShort.includes("PE") ? "PE" : ""} ₹{ot.entryPrice?.toFixed(2)} → {liveP > 0 ? `₹${liveP.toFixed(2)}` : "…"}
+                          </div>
+                          <div className={`text-sm font-bold mt-1 tabular-nums ${unrealised >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            {unrealised >= 0 ? "+" : ""}₹{unrealised.toFixed(0)}
+                          </div>
+                        </>
                       );
                     })()}
                   </div>
                 ) : isActive ? (
-                  <div className="flex items-center gap-2 text-xs text-white/30 mb-2 py-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-white/20 animate-pulse" />
-                    <span>Scanning for signals...</span>
-                    {bot.lastSignal && <span className="text-white/20 ml-auto">{bot.lastSignal.direction} · {bot.lastSignal.confidence}%</span>}
+                  <div className="text-xs text-white/30 mb-2 py-1.5">
+                    <div className="text-white/40">● No open position</div>
+                    {bot.lastSignal?.reason && (
+                      <div className="text-[10px] text-white/20 mt-0.5 truncate">{bot.lastSignal.direction} · {bot.lastSignal.reason}</div>
+                    )}
                   </div>
                 ) : null}
 
-                {/* Realized Daily P&L — clearly labeled */}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[10px] text-white/30 uppercase tracking-wide">Realized Today</div>
-                    <div className={`text-base font-bold tabular-nums ${
-                      (bot.dailyPnl ?? 0) > 0 ? "text-emerald-400" : (bot.dailyPnl ?? 0) < 0 ? "text-red-400" : "text-white/40"
-                    }`}>
-                      {(bot.dailyPnl ?? 0) >= 0 ? "+" : ""}₹{(bot.dailyPnl ?? 0).toFixed(0)}
-                    </div>
+                {/* Realized Today — compact line */}
+                {isActive && (
+                  <div className="flex items-center justify-between text-[10px] border-t border-white/5 pt-1.5 mt-1">
+                    <span className="text-white/30">Today</span>
+                    <span className={`font-bold tabular-nums ${
+                      (bot.dailyPnl ?? 0) > 0 ? "text-emerald-400" : (bot.dailyPnl ?? 0) < 0 ? "text-red-400" : "text-white/30"
+                    }`}>{(bot.dailyPnl ?? 0) >= 0 ? "+" : ""}₹{(bot.dailyPnl ?? 0).toFixed(0)}</span>
                   </div>
-                  {(bot.dailyPnl ?? 0) !== 0 && (
-                    <button
-                      onClick={() => {
-                        if (!confirm(`Reset P&L counter for ${slotLabel}?`)) return;
-                        resetPnlMutation.mutate({ sessionToken });
-                      }}
-                      className="text-orange-400/50 hover:text-orange-400 transition-colors p-1 rounded hover:bg-orange-500/10"
-                      title="Fix P&L counter"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
+                )}
 
                 {/* Candle readiness */}
                 {isActive && (() => {
@@ -2105,9 +2110,17 @@ export default function Dashboard() {
 
           {/* Price Chart — Real Candlestick */}
           <div className="lg:col-span-3 bg-white/5 border border-white/10 rounded-2xl p-5">
-            <div className="text-xs text-white/40 uppercase tracking-wider mb-3">Live Price — {config.instrumentSymbol} (1m candles)</div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs text-white/40 uppercase tracking-wider">Live Price — {config.instrumentSymbol} (1m candles)</div>
+              {(liveData?.candles?.length ?? 0) > 0 && (
+                <span className="text-[10px] text-emerald-400/60">{liveData?.candles?.length} candles</span>
+              )}
+            </div>
             {(liveData?.candles?.length ?? 0) < 2 ? (
-              <div className="flex items-center justify-center h-[200px] text-white/30 text-sm">Start bot to see live candlestick chart</div>
+              <div className="flex flex-col items-center justify-center h-[200px] gap-2">
+                <div className="text-white/30 text-sm">{isRunning ? "Collecting candles..." : "Start bot to see live chart"}</div>
+                <div className="text-white/20 text-xs">Uses real-time Upstox price feed</div>
+              </div>
             ) : (
               <CandlestickChart
                 candles={liveData?.candles ?? []}
@@ -2434,7 +2447,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-4 cursor-pointer select-none" onClick={() => setConfigCollapsed(!configCollapsed)}>
             <div className="flex items-center gap-2">
               <Bot className="w-5 h-5 text-teal-400" />
-              <span className="font-semibold text-white">Bot Configuration & Risk Settings</span>
+              <span className="font-semibold text-white">Risk & Strategy Settings</span>
               {isRunning && <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">Running</span>}
               <ChevronDown className={`w-4 h-4 text-white/40 transition-transform duration-200 ${configCollapsed ? "-rotate-90" : ""}`} />
             </div>
@@ -2442,47 +2455,6 @@ export default function Dashboard() {
           </div>
           {!configCollapsed && (<>
 
-          {/* Row 1: Instrument + Capital */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-            <div>
-              <label className="text-xs text-white/50 mb-1.5 block">Instrument</label>
-              <select
-                value={config.instrumentToken}
-                onChange={(e) => {
-                  const inst = INSTRUMENTS.find(i => i.token === e.target.value);
-                  if (inst) setConfig(c => ({ ...c, instrumentToken: inst.token, instrumentSymbol: inst.symbol, instrumentLabel: inst.label }));
-                }}
-                disabled={isRunning}
-                className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-teal-500 disabled:opacity-50"
-              >
-                {Array.from(new Set(INSTRUMENTS.map(i => i.segment))).map(seg => (
-                  <optgroup key={seg} label={seg} className="bg-gray-900 text-white/50">
-                    {INSTRUMENTS.filter(i => i.segment === seg).map(i => (
-                      <option key={i.token} value={i.token} className="bg-gray-900">{i.label}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              {/* Show info badge when an Index Options (Auto-ATM) instrument is selected */}
-              {(INSTRUMENTS.find(i => i.token === config.instrumentToken) as any)?.isIndexOptions && (
-                <div className="mt-1.5 flex items-start gap-1.5 bg-teal-500/10 border border-teal-500/30 rounded-lg px-2.5 py-1.5">
-                  <span className="text-teal-400 text-[10px] leading-tight">
-                    <strong>Auto-OTM Options Mode:</strong> Bot reads the index price for signals, then automatically buys 1-strike OTM CE (on BUY signal) or OTM PE (on SELL signal). Lower premiums = more lots = better profit potential. Capital is sized using the option premium price.
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="text-xs text-white/50 mb-1.5 block">Capital (₹)</label>
-              <input type="number" value={config.capital}
-                onChange={(e) => setConfig(c => ({ ...c, capital: Number(e.target.value) }))}
-                disabled={isRunning}
-                className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-teal-500 disabled:opacity-50" />
-            </div>
-          </div>
-
-          <div className="border-t border-white/10 mb-5" />
           <div className="flex items-center gap-2 mb-4">
             <AlertTriangle className="w-4 h-4 text-amber-400" />
             <span className="text-sm font-semibold text-white">Risk & Stop-Loss Parameters</span>
