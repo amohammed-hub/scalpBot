@@ -1055,8 +1055,26 @@
 - [ ] Correlation gate: if Bot 1 has BUY CE on NIFTY, Bot 2 should NOT also buy CE on NIFTY. Diversify directions or instruments.
 - [ ] Option premium SL: on expiry days, set SL based on option premium price, not underlying spot price
 
+## BACKLOG: Referral Program — Earn Extra Bot Slot
+
+- [ ] REFERRAL: Unique referral code per user (auto-generated, e.g. "ANAS2026")
+- [ ] REFERRAL: "Refer & Earn" section in dashboard sidebar — shows referral code, share link, referral count, bonus status
+- [ ] REFERRAL: On signup page, "Have a referral code?" field
+- [ ] REFERRAL: When referred user pays → auto-grant +1 bot slot (4th bot) to referrer for duration matching plan (1mo/3mo/6mo/12mo)
+- [ ] REFERRAL: Multiple referrals DON'T stack beyond 4th bot (1 extra max). Extra bot disappears when reward expires.
+- [ ] REFERRAL: Referred person gets extra 3 days on free trial (5 days instead of 2)
+- [ ] REFERRAL: Telegram notification to referrer: "Your referral [name] signed up! 4th bot unlocked."
+- [ ] REFERRAL: Admin panel — see all referrals, manually grant/revoke bonus
+
 ## P&L Analytics Page Fixes
 - [x] Fix 1: Add back button (← Back to Dashboard) at top of P&L Analytics page
 - [x] Fix 2: Improve chart — per-trade P&L bars (not daily totals), cumulative P&L line chart, bot filter dropdown, instrument filter dropdown, show daily breakdown table more prominently
 - [x] Fix 3: Fix export — Sheet 1 = All Trades (full journal details), Sheet 2 = Daily Summary. Remove weekly/monthly sheets.
 - [x] Fix 4: Detailed trade report columns — Symbol, Bot, Direction, Entry Time, Entry Price, Exit Time, Exit Price, Qty, SL, Target, P&L, Partial Profit, Exit Reason, Strategy Layer, Confidence %, Duration
+## Telegram Alerts
+
+- [x] TELEGRAM: Create telegram alert helper module (sendTelegramMessage utility)
+- [x] TELEGRAM: Send alert on every trade entry (symbol, direction, entry price, bot, strategy)
+- [x] TELEGRAM: Send alert on every trade exit (symbol, P&L, exit reason, duration)
+- [x] TELEGRAM: Send daily summary at market close (3:30 PM NSE, 11:30 PM MCX)
+- [x] TELEGRAM: Send critical alerts (bot stopped, kill switch activated, daily limit hit)

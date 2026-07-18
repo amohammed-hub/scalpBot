@@ -3208,6 +3208,71 @@ export const appRouter = router({
       }),
   }),
 
+  // NSE Close Summary — 3:30 PM IST cron
+  nseSummary: router({
+    status: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return { enabled: false };
+        const rows = await db
+          .select({ nseSummaryCronTaskUid: botSessions.nseSummaryCronTaskUid })
+          .from(botSessions)
+          .where(eq(botSessions.sessionToken, input.sessionToken))
+          .limit(1);
+        return { enabled: !!(rows[0]?.nseSummaryCronTaskUid) };
+      }),
+    enable: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        manusSession: z.string().default(""),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const rows = await db
+          .select({ nseSummaryCronTaskUid: botSessions.nseSummaryCronTaskUid })
+          .from(botSessions)
+          .where(eq(botSessions.sessionToken, input.sessionToken))
+          .limit(1);
+        if (rows[0]?.nseSummaryCronTaskUid) return { success: true, alreadyEnabled: true };
+        const job = await createHeartbeatJob({
+          name: `nse-summary-${input.sessionToken.slice(0, 8)}`,
+          cron: "0 0 10 * * *",
+          path: "/api/scheduled/nse-summary",
+          payload: { sessionToken: input.sessionToken },
+          description: "Daily NSE close P&L summary at 3:30 PM IST",
+        }, input.manusSession);
+        await db
+          .update(botSessions)
+          .set({ nseSummaryCronTaskUid: job.taskUid })
+          .where(eq(botSessions.sessionToken, input.sessionToken));
+        return { success: true, alreadyEnabled: false };
+      }),
+    disable: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        manusSession: z.string().default(""),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const rows = await db
+          .select({ nseSummaryCronTaskUid: botSessions.nseSummaryCronTaskUid })
+          .from(botSessions)
+          .where(eq(botSessions.sessionToken, input.sessionToken))
+          .limit(1);
+        const uid = rows[0]?.nseSummaryCronTaskUid;
+        if (!uid) return { success: true, alreadyDisabled: true };
+        await deleteHeartbeatJob(uid, input.manusSession);
+        await db
+          .update(botSessions)
+          .set({ nseSummaryCronTaskUid: null })
+          .where(eq(botSessions.sessionToken, input.sessionToken));
+        return { success: true, alreadyDisabled: false };
+      }),
+  }),
+
   // ── Smart Scanner ─────────────────────────────────────────────────────────────
   // Scans all instruments simultaneously, runs generateSignal on each, returns ranked list by confidence.
   // Used by Slot 1 and Slot 2 Quick Start to auto-pick the best opportunity.
@@ -3410,6 +3475,25 @@ export const appRouter = router({
         }
 
         console.log(`[KILL SWITCH] COMPLETE — ${result.stoppedBots} bots stopped, ${result.closedTrades} trades closed, ${failures.length} failures`);
+        // Telegram: send consolidated kill switch alert
+        try {
+          const db2 = await getDb();
+          if (db2) {
+            const tgRow = await db2.select({ telegramBotToken: botSessions.telegramBotToken, telegramChatId: botSessions.telegramChatId, telegramEnabled: botSessions.telegramEnabled })
+              .from(botSessions).where(eq(botSessions.sessionToken, input.sessionToken)).limit(1);
+            const tg = tgRow[0];
+            if (tg?.telegramEnabled && tg.telegramBotToken && tg.telegramChatId) {
+              await sendTelegramMessage(tg.telegramBotToken, tg.telegramChatId,
+                `🚨 <b>KILL SWITCH ACTIVATED</b>\n\n` +
+                `⚠️ ALL bots stopped, ALL positions closed\n` +
+                `🤖 Bots stopped: ${result.stoppedBots}\n` +
+                `📊 Trades closed: ${result.closedTrades}\n` +
+                (failures.length > 0 ? `❌ Failures: ${failures.join(", ")}\n` : "") +
+                `\n🕐 ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`
+              );
+            }
+          }
+        } catch { /* non-critical */ }
         return { ...result, failures };
       }),
 
@@ -4106,3 +4190,4 @@ export const appRouter = router({
   }),
 });
 export type AppRouter = typeof appRouter;
+import { sendTelegramMessage } from "./botEngine";

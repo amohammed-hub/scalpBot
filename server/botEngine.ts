@@ -233,7 +233,7 @@ export interface ShadowSummary {
 const bots = new Map<string, BotState>();
 
 // ── Telegram alert helper ─────────────────────────────────────────────────────
-async function sendTelegramAlert(state: BotState, message: string): Promise<void> {
+export async function sendTelegramAlert(state: BotState, message: string): Promise<void> {
   if (!state.telegramEnabled || !state.telegramBotToken || !state.telegramChatId) return;
   try {
     await axios.post(
@@ -243,6 +243,20 @@ async function sendTelegramAlert(state: BotState, message: string): Promise<void
     );
   } catch {
     // Telegram errors are non-critical — don't crash the bot
+  }
+}
+
+/** Standalone Telegram send (for use outside bot tick loop, e.g. kill switch) */
+export async function sendTelegramMessage(botToken: string, chatId: string, message: string): Promise<void> {
+  if (!botToken || !chatId) return;
+  try {
+    await axios.post(
+      `https://api.telegram.org/bot${botToken}/sendMessage`,
+      { chat_id: chatId, text: message, parse_mode: "HTML" },
+      { timeout: 8000 },
+    );
+  } catch {
+    // non-critical
   }
 }
 
@@ -2882,6 +2896,14 @@ async function tick(
       state.status = "paused";
       state.lastError = `Daily loss limit reached (₹${state.dailyPnl.toFixed(0)})`;
       emitActivity(state.sessionToken, "bot_stop", `🛑 Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit`);
+      // Telegram: critical alert for daily loss limit
+      sendTelegramAlert(state,
+        `🚨 <b>DAILY LOSS LIMIT HIT</b>\n` +
+        `📊 <b>${state.instrumentLabel}</b>\n` +
+        `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +
+        `⏸ Bot PAUSED — no new trades until tomorrow\n` +
+        `⚠️ Review positions and risk settings`
+      );
       return;
     }
   }
@@ -2966,6 +2988,14 @@ async function tick(
         await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
         emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
         console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
+        // Telegram: auto square-off alert
+        const sqPnlSign1 = pnl >= 0 ? "+" : "";
+        sendTelegramAlert(state,
+          `⏰ <b>AUTO SQUARE-OFF</b> (market closed)\n` +
+          `📊 <b>${trade.symbolLabel}</b> | Exit: ₹${exitPx.toFixed(2)}\n` +
+          `💰 P&L: ${sqPnlSign1}₹${pnl.toFixed(0)}\n` +
+          `📈 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Trades: ${state.tradesCount}`
+        );
         }
       }
     }
@@ -3186,6 +3216,15 @@ async function tick(
     await onTradeClose(trade.dbId, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
     emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${sqTotalPnl >= 0 ? "+" : ""}₹${sqTotalPnl.toFixed(0)}`, { price: effectivePrice, pnl: sqTotalPnl });
+    // Telegram: auto square-off alert
+    const sqPnlSign2 = sqTotalPnl >= 0 ? "+" : "";
+    sendTelegramAlert(state,
+      `⏰ <b>AUTO SQUARE-OFF</b> (market closing)\n` +
+      `📊 <b>${trade.symbolLabel}</b> | Exit: ₹${effectivePrice.toFixed(2)}\n` +
+      `💰 P&L: ${sqPnlSign2}₹${sqTotalPnl.toFixed(0)}` +
+      (trade.bookedPnl > 0 ? ` (locked: ₹${trade.bookedPnl.toFixed(0)})` : "") +
+      `\n📈 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Trades: ${state.tradesCount}`
+    );
     return;
   }
 

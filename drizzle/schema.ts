@@ -99,6 +99,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   optionType: varchar("optionType", { length: 8 }),
   // End-of-day summary cron task UID (set when EOD summary is enabled)
   eodSummaryCronTaskUid: varchar("eodSummaryCronTaskUid", { length: 128 }),
+  // NSE close summary cron task UID (3:30 PM IST)
+  nseSummaryCronTaskUid: varchar("nseSummaryCronTaskUid", { length: 128 }),
   // Strategy layer selection (JSON array of enabled layer names)
   enabledLayers: text("enabledLayers"),
   // Configurable partial profit booking percentages (persisted for restart)

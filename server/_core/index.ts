@@ -332,6 +332,78 @@ async function startServer() {
     }
   });
 
+  // NSE Close Summary — fires at 3:30 PM IST (10:00 UTC) for NSE/BankNifty sessions
+  app.post('/api/scheduled/nse-summary', async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req as any);
+      if (!user.isCron || !user.taskUid) {
+        res.status(403).json({ error: 'cron-only endpoint' });
+        return;
+      }
+      const db = await getDb();
+      if (!db) { res.json({ ok: true, skipped: 'no-db' }); return; }
+      const nowMs = Date.now(); const istOff = 5.5 * 60 * 60 * 1000;
+      const istNow = new Date(nowMs + istOff); istNow.setUTCHours(0, 0, 0, 0);
+      const todayStart = new Date(istNow.getTime() - istOff);
+      const activeSessions = await db
+        .select()
+        .from(botSessions)
+        .where(eq(botSessions.telegramEnabled, 1 as any))
+        .limit(50);
+      let summariesSent = 0;
+      for (const session of activeSessions) {
+        if (!session.telegramBotToken || !session.telegramChatId) continue;
+        const token = session.sessionToken;
+        const slotTokens = [token, `${token}-slot1`, `${token}-slot2`];
+        const trades = await db
+          .select()
+          .from(tradeLog)
+          .where(and(
+            inArray(tradeLog.sessionToken, slotTokens),
+            eq(tradeLog.status, 'closed'),
+            gte(tradeLog.enteredAt, todayStart),
+          ));
+        const mcxKeywords = ['GOLD', 'SILVER', 'CRUDE', 'OIL', 'NATGAS', 'GAS', 'COPPER', 'ZINC', 'MCX'];
+        type NseTradeRow = typeof trades[number];
+        const nseTrades = trades.filter((t: NseTradeRow) => {
+          const sym = (t.symbol ?? '').toUpperCase();
+          return !mcxKeywords.some(k => sym.includes(k));
+        });
+        if (nseTrades.length === 0) continue;
+        const totalPnl = nseTrades.reduce((s: number, t: NseTradeRow) => s + (t.pnl ?? 0), 0);
+        const wins = nseTrades.filter((t: NseTradeRow) => (t.pnl ?? 0) > 0).length;
+        const losses = nseTrades.filter((t: NseTradeRow) => (t.pnl ?? 0) <= 0).length;
+        const winRate = Math.round(wins / nseTrades.length * 100);
+        const pnlSign = totalPnl >= 0 ? '+' : '';
+        const dateStr = todayStart.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        const bestPnl = Math.max(...nseTrades.map((t: NseTradeRow) => t.pnl ?? 0));
+        const worstPnl = Math.min(...nseTrades.map((t: NseTradeRow) => t.pnl ?? 0));
+        const pnlEmoji = totalPnl >= 0 ? '\uD83D\uDFE2' : '\uD83D\uDD34';
+        const message = [
+          `${pnlEmoji} <b>NSE Close Summary \u2014 ${dateStr}</b>`,
+          ``,
+          `\uD83D\uDCB0 Net P&L: <b>${pnlSign}\u20B9${totalPnl.toFixed(0)}</b>`,
+          `\uD83D\uDCCA Trades: ${nseTrades.length} | Wins: ${wins} | Losses: ${losses} | Win Rate: ${winRate}%`,
+          `\uD83C\uDFC6 Best: +\u20B9${bestPnl.toFixed(0)} | \uD83D\uDCC9 Worst: \u20B9${worstPnl.toFixed(0)}`,
+          ``,
+          `\uD83E\uDD16 ScalpBot NSE closed \u2014 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`,
+        ].join('\n');
+        try {
+          await fetch(`https://api.telegram.org/bot${session.telegramBotToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: session.telegramChatId, text: message, parse_mode: 'HTML' }),
+            signal: AbortSignal.timeout(10000),
+          });
+          summariesSent++;
+        } catch { /* non-critical */ }
+      }
+      res.json({ ok: true, summariesSent });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

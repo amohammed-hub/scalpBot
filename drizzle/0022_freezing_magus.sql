@@ -1,0 +1,1 @@
+ALTER TABLE `bot_sessions` ADD `nseSummaryCronTaskUid` varchar(128);
