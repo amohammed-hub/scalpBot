@@ -1138,3 +1138,7 @@
 - [x] SYSTEM TEST: Add market hours guard to bot.start and startSecondary — refuse to start on weekends/outside trading hours
 - [x] FIX: Change market hours guard from "refuse to start" to "warn but allow start" — bot starts idle, no trades until market opens
 - [x] BUG: Bot 4 (slot index 3) shows "opening" but never actually starts — slotQS missing slot 3 default
+
+## Admin Features (Jul 19, 2026)
+- [x] FEATURE: "Unlimited Trades" toggle — admin-only, bypasses maxTradesPerDay limit, shows warning when enabled, disables slider
+- [x] FEATURE: Capital field freely editable — expanded range from ₹5,000 to ₹50,00,000 (was ₹10,000 min)

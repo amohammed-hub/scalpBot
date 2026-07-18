@@ -206,6 +206,8 @@ export interface BotState {
   shadowLog?: ShadowLogEntry[];
   // V2 engine: when true, use generateSignalV2 (regime-based) instead of V1
   useV2Engine?: boolean;
+  // Unlimited trades: admin-only, bypasses maxTradesPerDay limit
+  unlimitedTrades?: boolean;
 }
 
 // Shadow mode log entry
@@ -3691,7 +3693,7 @@ async function tick(
   if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < 120_000) {
     return;
   }
-  if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade) {
+  if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade && !state.unlimitedTrades) {
     // Don't pause — just block new trade entries. Bot continues monitoring open trades & prices.
     if ((state.tickCount ?? 0) % 20 === 1) {
       console.warn(`[tick] ⚠ Max trades reached — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} — blocking new entries only`);

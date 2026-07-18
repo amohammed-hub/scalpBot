@@ -12,6 +12,7 @@ import {
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
 import { Pencil } from "lucide-react";
 import { Clock, Timer, Trophy, Ban, ArrowDownUp } from "lucide-react";
+import { Infinity as InfinityIcon } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
@@ -262,6 +263,10 @@ export default function Dashboard() {
   });
   useEffect(() => { localStorage.setItem(LS_CONFIG, JSON.stringify(config)); }, [config]);
 
+  // Unlimited trades toggle (admin-only, persisted in localStorage)
+  const [unlimitedTrades, setUnlimitedTrades] = useState(() => localStorage.getItem("scalpbot_unlimited_trades") === "true");
+  useEffect(() => { localStorage.setItem("scalpbot_unlimited_trades", unlimitedTrades ? "true" : "false"); }, [unlimitedTrades]);
+
   // Morning reminder
   const [showReminder, setShowReminder] = useState(false);
   useEffect(() => {
@@ -328,6 +333,7 @@ export default function Dashboard() {
         averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
         averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
         useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
+        unlimitedTrades,
       });
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
@@ -346,6 +352,7 @@ export default function Dashboard() {
         partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
         trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
         useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
+        unlimitedTrades,
       });
     }
   };
@@ -423,6 +430,7 @@ export default function Dashboard() {
           averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
           averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
+          unlimitedTrades,
         });
       } else {
         startSecondaryMutation.mutate({
@@ -440,6 +448,7 @@ export default function Dashboard() {
           partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
           trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
+          unlimitedTrades,
         });
       }
       toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
@@ -887,6 +896,7 @@ export default function Dashboard() {
       partial2Pct: config.partial2Pct,
       averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
       averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+      unlimitedTrades,
     });
   };
 
@@ -1810,7 +1820,7 @@ export default function Dashboard() {
                       onBlur={e => {
                         const newCap = Number(e.target.value);
                         const currentCap = (bot as any).capital ?? config.capital ?? 50000;
-                        if (newCap >= 10000 && newCap !== currentCap) {
+                        if (newCap >= 5000 && newCap <= 5000000 && newCap !== currentCap) {
                           const sym = (() => {
                             const s = (bot as any).instrumentSymbol ?? "";
                             if (["NIFTY", "BANKNIFTY", "FINNIFTY"].includes(s) || s.startsWith("MCX_")) return s;
@@ -1828,7 +1838,7 @@ export default function Dashboard() {
                         }
                       }}
                       disabled={switchingSlot === bot.slot || !!bot.openTrade}
-                      min={10000}
+                      min={5000} max={5000000}
                       step={10000}
                       className="w-[70px] bg-white/5 border border-white/10 rounded-lg px-1.5 py-1 text-white text-[10px] font-mono focus:outline-none focus:border-white/30 disabled:opacity-50"
                     />
@@ -1966,7 +1976,7 @@ export default function Dashboard() {
                           </select>
                           <input type="number" value={slotQS[bot.slot]?.capital ?? 50000}
                             onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
-                            min={10000} step={10000}
+                            min={5000} max={5000000} step={5000}
                             className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none" />
                         </div>
                         <button onClick={() => handleQuickStart(bot.slot)} disabled={bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending}
@@ -2008,6 +2018,7 @@ export default function Dashboard() {
                                       trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
                                       averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
                                       averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+                                      unlimitedTrades,
                                     });
                                   } else {
                                     startSecondaryMutation.mutate({
@@ -2020,6 +2031,7 @@ export default function Dashboard() {
                                       telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
                                       partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
                                       trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct, enabledLayers: config.enabledLayers,
+                                      unlimitedTrades,
                                     });
                                   }
                                 }}>
@@ -2745,11 +2757,36 @@ export default function Dashboard() {
               <label className="text-xs text-white/60">Max Trades per Day</label>
               <span className="text-sm font-bold text-white">{config.maxTradesPerDay}</span>
             </div>
-            <input type="range" min="1" max="20" step="1" value={config.maxTradesPerDay} disabled={isRunning}
-              onChange={(e) => setConfig(c => ({ ...c, maxTradesPerDay: Number(e.target.value) }))}
-              className="w-full accent-white/60 disabled:opacity-50" />
-            <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>1</span><span className="text-white/50">Recommended: 5</span><span>20</span></div>
-          </div>
+           <input type="range" min="1" max="20" step="1" value={config.maxTradesPerDay} disabled={isRunning}
+             onChange={(e) => setConfig(c => ({ ...c, maxTradesPerDay: Number(e.target.value) }))}
+              className={`w-full accent-white/60 disabled:opacity-50 ${unlimitedTrades ? "opacity-30 pointer-events-none" : ""}`} />
+           <div className="flex justify-between text-[10px] text-white/30 mt-0.5"><span>1</span><span className="text-white/50">Recommended: 5</span><span>20</span></div>
+         </div>
+
+          {/* Unlimited Trades Toggle (admin-only) */}
+          {meQuery.data?.role === "admin" && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <InfinityIcon className="w-4 h-4 text-purple-400" />
+                  <label className="text-xs text-white/60">Unlimited Trades</label>
+                </div>
+                <button
+                  onClick={() => !isRunning && setUnlimitedTrades(v => !v)}
+                  disabled={isRunning}
+                  className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${unlimitedTrades ? "bg-purple-500" : "bg-white/10"} disabled:opacity-50`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform duration-200 ${unlimitedTrades ? "translate-x-5" : ""}`} />
+                </button>
+              </div>
+              {unlimitedTrades && (
+                <div className="mt-2 flex items-start gap-2 text-purple-300 text-[11px] bg-purple-500/10 border border-purple-500/30 rounded-lg p-2">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>No trade limit — bot will trade until daily loss limit or market close</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {config.mode === "live" && (
             <div className="mt-4 flex items-start gap-2 text-amber-400 text-xs bg-amber-500/10 border border-amber-500/30 rounded-xl p-3">

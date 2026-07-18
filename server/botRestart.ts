@@ -267,6 +267,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       carryForward: existingOpenTrade ? !!(openTradeRows[0]?.carryForward) : false,
       averagingEnabled: session.averagingEnabled ?? true,
       averagingLossThreshold: session.averagingLossThreshold ?? 0.20,
+      unlimitedTrades: (session as any).unlimitedTrades ?? false,
     },
     onTradeOpen,
     onTradeClose,

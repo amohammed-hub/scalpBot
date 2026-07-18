@@ -348,6 +348,7 @@ export const appRouter = router({
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
+        unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
       }))
      .mutation(async ({ input, ctx }) => {
       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
@@ -767,6 +768,7 @@ export const appRouter = router({
             averagingEnabled: input.averagingEnabled,
             averagingLossThreshold: input.averagingLossThreshold,
             useV2Engine: input.useV2Engine,
+            unlimitedTrades: input.unlimitedTrades,
           },
           onTradeOpen,
           onTradeClose,
@@ -1100,6 +1102,7 @@ export const appRouter = router({
             averagingEnabled: row.averagingEnabled ?? true,
             averagingLossThreshold: row.averagingLossThreshold ?? 0.20,
             useV2Engine: (row as any).useV2Engine ?? false,
+            unlimitedTrades: (row as any).unlimitedTrades ?? false,
           },
           onTradeOpen,
           onTradeClose,
@@ -2248,6 +2251,7 @@ export const appRouter = router({
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20),
         useV2Engine: z.boolean().default(false),
+        unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
@@ -2511,6 +2515,7 @@ export const appRouter = router({
           averagingEnabled: input.averagingEnabled ?? true,
           averagingLossThreshold: input.averagingLossThreshold ?? 0.20,
           useV2Engine: input.useV2Engine,
+          unlimitedTrades: input.unlimitedTrades,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;
