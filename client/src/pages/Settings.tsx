@@ -574,6 +574,14 @@ export default function Settings() {
   const [showTelegramGuide, setShowTelegramGuide] = useState(false);
   const [telegramStatus, setTelegramStatus] = useState<"idle" | "connected" | "failed">("idle");
 
+  // Collapsible section states
+  const [showNotifPrefs, setShowNotifPrefs] = useState(false);
+  const [showMcxLaunch, setShowMcxLaunch] = useState(false);
+  const [showAveraging, setShowAveraging] = useState(false);
+  const [showV2Engine, setShowV2Engine] = useState(false);
+  const [showShadowMode, setShowShadowMode] = useState(false);
+  const [showSessionShare, setShowSessionShare] = useState(false);
+
   // MCX Quick Launch state
   const [mcxCategory, setMcxCategory] = useState<"all" | "metal" | "energy" | "agri">("all");
   const [mcxSlot, setMcxSlot] = useState<1 | 2>(1);
@@ -1180,27 +1188,41 @@ export default function Settings() {
         {/* ── MCX Quick Launch ─────────────────────────────────────────────── */}
         {/* ── Notification Preferences ──────────────────────────────────────── */}
         <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
-          <div className="p-5 border-b border-white/10">
-            <div className="flex items-center gap-2 mb-1">
+          <button
+            onClick={() => setShowNotifPrefs(v => !v)}
+            className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
+          >
+            <div className="flex items-center gap-2">
               <Bell className="w-5 h-5 text-purple-400" />
               <span className="font-semibold text-white text-sm">Notification Preferences</span>
+              <span className="text-xs text-white/30">Choose which alerts to receive</span>
             </div>
-            <p className="text-xs text-white/40">Choose which Telegram alerts you want to receive. All are ON by default.</p>
-          </div>
-          <NotificationToggles sessionToken={sessionToken} />
+            {showNotifPrefs
+              ? <ChevronUp className="w-4 h-4 text-white/40" />
+              : <ChevronDown className="w-4 h-4 text-white/40" />
+            }
+          </button>
+          {showNotifPrefs && <NotificationToggles sessionToken={sessionToken} />}
         </div>
 
         {/* ── MCX Quick Launch (moved below notification prefs) ─────────────── */}
         <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
-          <div className="p-5 border-b border-white/10">
-            <div className="flex items-center gap-2 mb-1">
+          <button
+            onClick={() => setShowMcxLaunch(v => !v)}
+            className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
+          >
+            <div className="flex items-center gap-2">
               <Flame className="w-5 h-5 text-orange-400" />
               <span className="font-semibold text-white text-sm">🌙 MCX Evening Quick Launch</span>
               <span className="text-xs text-orange-300/70 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded-full">7:30–9:30 PM IST</span>
             </div>
-            <p className="text-xs text-white/40">One-click launch of an MCX Evening bot on a parallel slot. Starts in Paper mode — switch to Live in Dashboard after testing.</p>
-          </div>
-          <div className="p-5 space-y-4">
+            {showMcxLaunch
+              ? <ChevronUp className="w-4 h-4 text-white/40" />
+              : <ChevronDown className="w-4 h-4 text-white/40" />
+            }
+          </button>
+          {showMcxLaunch && (
+          <div className="p-5 space-y-4 border-t border-white/10">
             {/* Controls row */}
             <div className="flex flex-wrap gap-3">
               <div>
@@ -1289,6 +1311,7 @@ export default function Settings() {
               Bots start in <strong className="text-white/50">Paper mode</strong>. Monitor on the Dashboard → Parallel Bots panel. Switch to Live after verifying signals.
             </p>
           </div>
+          )}
         </div>
 
         {/* ── Auto Token Refresh ─────────────────────────────────────── */}
@@ -1298,69 +1321,91 @@ export default function Settings() {
         <EodSummarySection sessionToken={sessionToken} />
 
         {/* ── Averaging/DCA Settings ─────────────────────────────────────── */}
-        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <ArrowDownUp className="w-4 h-4 text-purple-400" />
-            <h2 className="text-white font-semibold text-sm">Averaging / DCA Strategy</h2>
-          </div>
-          <p className="text-white/50 text-xs mb-4 leading-relaxed">
-            When enabled, the bot will add to a losing position if candles show a clear reversal signal. This brings the average entry price down, allowing profitable exits on bounces that wouldn't reach the original entry.
-          </p>
-          <div className="space-y-4">
-            <AveragingControls />
-          </div>
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl overflow-hidden">
+          <button onClick={() => setShowAveraging(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+            <div className="flex items-center gap-2">
+              <ArrowDownUp className="w-4 h-4 text-purple-400" />
+              <span className="text-white font-semibold text-sm">Averaging / DCA Strategy</span>
+            </div>
+            {showAveraging ? <ChevronUp className="w-4 h-4 text-white/40" /> : <ChevronDown className="w-4 h-4 text-white/40" />}
+          </button>
+          {showAveraging && (
+            <div className="px-5 pb-5 space-y-4 border-t border-white/10 pt-4">
+              <p className="text-white/50 text-xs leading-relaxed">
+                When enabled, the bot will add to a losing position if candles show a clear reversal signal. This brings the average entry price down, allowing profitable exits on bounces that wouldn't reach the original entry.
+              </p>
+              <AveragingControls />
+            </div>
+          )}
+        </div>
+        {/* ── V2 Strategy Engine ───────────────────────────────────────── */}
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-emerald-500/20 rounded-2xl overflow-hidden">
+          <button onClick={() => setShowV2Engine(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-emerald-400" />
+              <span className="text-white font-semibold text-sm">V2 Strategy Engine — Regime-Based</span>
+              <span className="ml-2 text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">NEW</span>
+            </div>
+            {showV2Engine ? <ChevronUp className="w-4 h-4 text-white/40" /> : <ChevronDown className="w-4 h-4 text-white/40" />}
+          </button>
+          {showV2Engine && (
+            <div className="px-5 pb-5 space-y-4 border-t border-white/10 pt-4">
+              <p className="text-white/50 text-xs leading-relaxed">
+                2-layer decision system: Layer 1 detects market regime (TRENDING / RANGING / VOLATILE / DEAD), Layer 2 only fires strategies suited to that regime. Disables noisy layers (Breakout, Booming Bulls, MACD) and adds quality filters (15m trend alignment, R:R minimum, loss streak cooldown). Takes effect on next bot start.
+              </p>
+              <V2EngineToggle />
+            </div>
+          )}
         </div>
         {/* ── Shadow Mode (Signal Audit) ────────────────────────────────── */}
-        {/* ── V2 Strategy Engine ───────────────────────────────────────── */}
-        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-emerald-500/20 rounded-2xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Zap className="w-4 h-4 text-emerald-400" />
-            <h2 className="text-white font-semibold text-sm">V2 Strategy Engine — Regime-Based</h2>
-            <span className="ml-auto text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">NEW</span>
-          </div>
-          <p className="text-white/50 text-xs mb-4 leading-relaxed">
-            2-layer decision system: Layer 1 detects market regime (TRENDING / RANGING / VOLATILE / DEAD), Layer 2 only fires strategies suited to that regime. Disables noisy layers (Breakout, Booming Bulls, MACD) and adds quality filters (15m trend alignment, R:R minimum, loss streak cooldown). Takes effect on next bot start.
-          </p>
-          <div className="space-y-4">
-            <V2EngineToggle />
-          </div>
-        </div>
-        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-amber-500/20 rounded-2xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Eye className="w-4 h-4 text-amber-400" />
-            <h2 className="text-white font-semibold text-sm">Shadow Mode — Signal Audit</h2>
-            <span className="ml-auto text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">BETA</span>
-          </div>
-          <p className="text-white/50 text-xs mb-4 leading-relaxed">
-            Runs new signal logic (P0 ORB Freshness Gate + P1 Direction-Aware Cooldown) in parallel without executing trades. Old logic continues to trade normally. After 1 full trading day, compare results to validate improvements before going live.
-          </p>
-          <div className="space-y-4">
-            <ShadowModeControls sessionToken={sessionToken} />
-          </div>
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-amber-500/20 rounded-2xl overflow-hidden">
+          <button onClick={() => setShowShadowMode(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+            <div className="flex items-center gap-2">
+              <Eye className="w-4 h-4 text-amber-400" />
+              <span className="text-white font-semibold text-sm">Shadow Mode — Signal Audit</span>
+              <span className="ml-2 text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">BETA</span>
+            </div>
+            {showShadowMode ? <ChevronUp className="w-4 h-4 text-white/40" /> : <ChevronDown className="w-4 h-4 text-white/40" />}
+          </button>
+          {showShadowMode && (
+            <div className="px-5 pb-5 space-y-4 border-t border-white/10 pt-4">
+              <p className="text-white/50 text-xs leading-relaxed">
+                Runs new signal logic (P0 ORB Freshness Gate + P1 Direction-Aware Cooldown) in parallel without executing trades. Old logic continues to trade normally. After 1 full trading day, compare results to validate improvements before going live.
+              </p>
+              <ShadowModeControls sessionToken={sessionToken} />
+            </div>
+          )}
         </div>
         {/* ── Cross-Device Session Sharing ──────────────────────────────── */}
-        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-base">📱</span>
-            <h2 className="text-white font-semibold text-sm">Access on Other Devices</h2>
-          </div>
-          <p className="text-white/50 text-xs mb-3 leading-relaxed">
-            Your session is tied to this browser. To view the same bot status, trade log, and P&amp;L on your phone or another computer, copy the Session ID below and paste it on the other device via Settings → Restore Session.
-          </p>
-          <div className="flex items-center gap-2 bg-black/30 border border-white/10 rounded-xl px-3 py-2">
-            <span className="flex-1 text-teal-300 text-xs font-mono truncate">{sessionToken}</span>
-            <button
-              onClick={() => { navigator.clipboard.writeText(sessionToken); toast.success("Session ID copied — paste it on your other device"); }}
-              className="shrink-0 text-white/40 hover:text-teal-400 transition-colors"
-              title="Copy Session ID"
-            >
-              <Copy className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="mt-3 border-t border-white/10 pt-3">
-            <p className="text-white/40 text-xs mb-2">Restore session on another device:</p>
-            <RestoreSessionInput />
-          </div>
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl overflow-hidden">
+          <button onClick={() => setShowSessionShare(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📱</span>
+              <span className="text-white font-semibold text-sm">Access on Other Devices</span>
+            </div>
+            {showSessionShare ? <ChevronUp className="w-4 h-4 text-white/40" /> : <ChevronDown className="w-4 h-4 text-white/40" />}
+          </button>
+          {showSessionShare && (
+            <div className="px-5 pb-5 space-y-3 border-t border-white/10 pt-4">
+              <p className="text-white/50 text-xs leading-relaxed">
+                Your session is tied to this browser. To view the same bot status, trade log, and P&amp;L on your phone or another computer, copy the Session ID below and paste it on the other device via Settings → Restore Session.
+              </p>
+              <div className="flex items-center gap-2 bg-black/30 border border-white/10 rounded-xl px-3 py-2">
+                <span className="flex-1 text-teal-300 text-xs font-mono truncate">{sessionToken}</span>
+                <button
+                  onClick={() => { navigator.clipboard.writeText(sessionToken); toast.success("Session ID copied — paste it on your other device"); }}
+                  className="shrink-0 text-white/40 hover:text-teal-400 transition-colors"
+                  title="Copy Session ID"
+                >
+                  <Copy className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="border-t border-white/10 pt-3">
+                <p className="text-white/40 text-xs mb-2">Restore session on another device:</p>
+                <RestoreSessionInput />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-6 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">

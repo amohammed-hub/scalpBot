@@ -1129,3 +1129,9 @@
 - [ ] STRATEGY-SUBSET: Per-bot strategy layer assignment (Approach 2 — each bot uses different strategy subset)
 - [ ] STRATEGY-SUBSET: Presets — "Aggressive", "Conservative", "Diversified" auto-assign layers across bots
 - [ ] ANTI-DUPLICATE: When multiple bots on same instrument, ensure different strategy layers so no duplicate trades
+
+## Weekend Frontend Fixes (safe, no botEngine changes)
+- [x] FE-FIX: Settings tab — collapsible accordion sections
+- [x] FE-FIX: Kill switch — remove "Kill All" button, keep only Kill Switch at top
+- [x] FE-FIX: Export CSV — fix to 1 sheet with all trade details (not 4 sheets)
+- [x] FE-FIX: Verify auth redirect is actually working
