@@ -409,15 +409,62 @@ export async function executeKillSwitch(
 // BUG-11 fix: Per-session paper cost config
 const paperCostBySession = new Map<string, { brokerage: number; slippagePct: number }>();
 const defaultPaperCost = { brokerage: 20, slippagePct: 0.05 };
+let _paperCostLoadedFromDb = false;
 
 export function getPaperCostConfig(sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
   return paperCostBySession.get(sessionToken) ?? defaultPaperCost;
 }
 
-export function setPaperCostConfig(brokerage: number, slippagePct: number, sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
+export async function setPaperCostConfig(brokerage: number, slippagePct: number, sessionToken: string = "default"): Promise<{ brokerage: number; slippagePct: number }> {
   const config = { brokerage, slippagePct };
   paperCostBySession.set(sessionToken, config);
+  // Persist to DB so it survives Railway restarts
+  try {
+    const { getDb } = await import("./db");
+    const { adminSettings } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (db) {
+      const key = `paperCost_${sessionToken}`;
+      const value = JSON.stringify(config);
+      const existing = await db.select().from(adminSettings).where(eq(adminSettings.key, key)).limit(1);
+      if (existing.length > 0) {
+        await db.update(adminSettings).set({ value }).where(eq(adminSettings.key, key));
+      } else {
+        await db.insert(adminSettings).values({ key, value });
+      }
+    }
+  } catch (e) {
+    console.warn("[PaperCost] Failed to persist to DB:", (e as Error).message);
+  }
   return config;
+}
+
+/** Load paper costs from DB on startup (call once during init) */
+export async function loadPaperCostsFromDb(): Promise<void> {
+  if (_paperCostLoadedFromDb) return;
+  _paperCostLoadedFromDb = true;
+  try {
+    const { getDb } = await import("./db");
+    const { adminSettings } = await import("../drizzle/schema");
+    const { like } = await import("drizzle-orm");
+    const db = await getDb();
+    if (db) {
+      const rows = await db.select().from(adminSettings).where(like(adminSettings.key, "paperCost_%"));
+      for (const row of rows) {
+        const sessionToken = row.key.replace("paperCost_", "");
+        try {
+          const config = JSON.parse(row.value);
+          if (typeof config.brokerage === "number" && typeof config.slippagePct === "number") {
+            paperCostBySession.set(sessionToken, config);
+          }
+        } catch {}
+      }
+      if (rows.length > 0) console.log(`[PaperCost] Loaded ${rows.length} config(s) from DB`);
+    }
+  } catch (e) {
+    console.warn("[PaperCost] Failed to load from DB:", (e as Error).message);
+  }
 }
 
 export function applyPaperCosts(

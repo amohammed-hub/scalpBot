@@ -3730,7 +3730,7 @@ export const appRouter = router({
     /** Update paper cost settings */
     update: publicProcedure
       .input(z.object({ brokerage: z.number().min(0).max(200).default(20), slippagePct: z.number().min(0).max(1).default(0.05) }))
-      .mutation(({ input }) => setPaperCostConfig(input.brokerage, input.slippagePct, "default")),
+      .mutation(async ({ input }) => await setPaperCostConfig(input.brokerage, input.slippagePct, "default")),
   }),
 
   // ── Precision Verification ──────────────────────────────────────────────────
