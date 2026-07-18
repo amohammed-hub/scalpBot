@@ -1135,3 +1135,4 @@
 - [x] FE-FIX: Kill switch — remove "Kill All" button, keep only Kill Switch at top
 - [x] FE-FIX: Export CSV — fix to 1 sheet with all trade details (not 4 sheets)
 - [x] FE-FIX: Verify auth redirect is actually working
+- [x] SYSTEM TEST: Add market hours guard to bot.start and startSecondary — refuse to start on weekends/outside trading hours
