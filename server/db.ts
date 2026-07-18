@@ -856,19 +856,30 @@ export async function createAccessGrant(params: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
+
+  // Normalize mobile to +91XXXXXXXXXX format for consistent lookup
+  let normalizedMobile = params.userMobile?.trim();
+  if (normalizedMobile) {
+    normalizedMobile = normalizedMobile.replace(/[\s\-()]/g, "");
+    if (normalizedMobile.startsWith("0")) normalizedMobile = normalizedMobile.slice(1);
+    if (/^\d{10}$/.test(normalizedMobile)) normalizedMobile = "+91" + normalizedMobile;
+    else if (normalizedMobile.startsWith("91") && normalizedMobile.length === 12) normalizedMobile = "+" + normalizedMobile;
+    else if (!normalizedMobile.startsWith("+")) normalizedMobile = "+91" + normalizedMobile;
+  }
+
   const expiresAt = new Date(params.startsAt.getTime() + params.durationDays * 24 * 60 * 60 * 1000);
 
   // Also create a subscription record so the user gets platform access
   // Find the user's sessionToken from app_users
-  let sessionToken: string | null = null;
-  if (params.userMobile) {
-    const [user] = await db.select().from(appUsers).where(eq(appUsers.mobile, params.userMobile)).limit(1);
+  let sessionToken: string | null = null; 
+  if (normalizedMobile) {
+    const [user] = await db.select().from(appUsers).where(eq(appUsers.mobile, normalizedMobile)).limit(1);
     sessionToken = user?.sessionToken ?? null;
   }
 
   // Insert the grant record
   const [result] = await db.insert(accessGrants).values({
-    userMobile: params.userMobile ?? null,
+    userMobile: normalizedMobile ?? null,
     userEmail: params.userEmail ?? null,
     userName: params.userName ?? null,
     plan: params.plan,
