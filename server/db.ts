@@ -371,9 +371,38 @@ async function initDb() {
             PRIMARY KEY(id),
             UNIQUE KEY notification_preferences_sessionToken_unique (sessionToken)
           )`);
-          console.log("[Database] Migration complete: notification_preferences table created");
+         console.log("[Database] Migration complete: notification_preferences table created");
+       }
+     }
+
+      // ── Performance indexes (BUG 4 fix) ──────────────────────────────
+      try {
+        const [rows] = await pool.execute("SHOW INDEX FROM `trade_log` WHERE Key_name = 'idx_trade_log_sessionToken'") as any;
+        if (!rows || rows.length === 0) {
+          console.log("[Database] Auto-migrating: adding index idx_trade_log_sessionToken");
+          await pool.execute("CREATE INDEX `idx_trade_log_sessionToken` ON `trade_log` (`sessionToken`)");
+          console.log("[Database] Migration complete: idx_trade_log_sessionToken added");
         }
-      }
+      } catch (e: any) { console.warn("[Database] Index check trade_log.sessionToken failed:", e.message); }
+
+      try {
+        const [rows] = await pool.execute("SHOW INDEX FROM `bot_sessions` WHERE Key_name = 'idx_bot_sessions_sessionToken'") as any;
+        if (!rows || rows.length === 0) {
+          console.log("[Database] Auto-migrating: adding index idx_bot_sessions_sessionToken");
+          await pool.execute("CREATE INDEX `idx_bot_sessions_sessionToken` ON `bot_sessions` (`sessionToken`)");
+          console.log("[Database] Migration complete: idx_bot_sessions_sessionToken added");
+        }
+      } catch (e: any) { console.warn("[Database] Index check bot_sessions.sessionToken failed:", e.message); }
+
+      try {
+        const [rows] = await pool.execute("SHOW INDEX FROM `trade_log` WHERE Key_name = 'idx_trade_log_status'") as any;
+        if (!rows || rows.length === 0) {
+          console.log("[Database] Auto-migrating: adding index idx_trade_log_status");
+          await pool.execute("CREATE INDEX `idx_trade_log_status` ON `trade_log` (`status`)");
+          console.log("[Database] Migration complete: idx_trade_log_status added");
+        }
+      } catch (e: any) { console.warn("[Database] Index check trade_log.status failed:", e.message); }
+
     }
     return db;
   } catch (error: unknown) {
