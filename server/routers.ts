@@ -3931,13 +3931,17 @@ export const appRouter = router({
   mobileAuth: router({
     sendOtp: publicProcedure
       .input(z.object({ mobile: z.string().min(10).max(15) }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         // Normalize to E.164 format
         let mobile = input.mobile.trim();
         if (!mobile.startsWith("+")) {
           mobile = "+91" + mobile; // Default to India
         }
-        return sendOtp(mobile);
+        // Extract client IP for rate limiting
+        const clientIp = (ctx as any).req?.headers?.["x-forwarded-for"]?.split(",")[0]?.trim()
+          || (ctx as any).req?.socket?.remoteAddress
+          || undefined;
+        return sendOtp(mobile, clientIp);
       }),
 
     verifyOtp: publicProcedure

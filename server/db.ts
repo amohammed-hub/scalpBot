@@ -1,4 +1,4 @@
-import { eq, and, desc, gt } from "drizzle-orm";
+import { eq, and, desc, gt, count } from "drizzle-orm";
 import { lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -635,7 +635,10 @@ export async function activateSubscription(params: {
  * Generate a 6-digit OTP, store it in DB, and send via Twilio SMS.
  * OTP expires in 5 minutes. Rate-limited to 1 OTP per mobile per 60 seconds.
  */
-export async function sendOtp(mobile: string): Promise<{ success: boolean; message: string }> {
+// In-memory IP rate tracker (auto-clears per key after 1 hour)
+const otpIpTracker = new Map<string, number>();
+
+export async function sendOtp(mobile: string, clientIp?: string): Promise<{ success: boolean; message: string }> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
@@ -654,6 +657,33 @@ export async function sendOtp(mobile: string): Promise<{ success: boolean; messa
     .limit(1);
   if (recentOtp.length > 0) {
     return { success: false, message: "OTP already sent. Please wait 60 seconds." };
+  }
+
+  // Rate limit: max 5 OTPs per mobile per hour
+  const oneHourAgo = new Date(Date.now() - 3600_000);
+  const hourlyCount = await db
+    .select({ cnt: count() })
+    .from(otpCodes)
+    .where(and(
+      eq(otpCodes.mobile, mobile),
+      gt(otpCodes.createdAt, oneHourAgo),
+    ));
+  if ((hourlyCount[0]?.cnt ?? 0) >= 5) {
+    return { success: false, message: "Too many OTP requests. Please try again after an hour." };
+  }
+
+  // Rate limit: max 10 OTPs per IP per hour (if IP available)
+  if (clientIp) {
+    const ipKey = `otp_ip_${clientIp}`;
+    const ipCount = otpIpTracker.get(ipKey) ?? 0;
+    if (ipCount >= 10) {
+      return { success: false, message: "Too many OTP requests from this network. Please try again later." };
+    }
+    otpIpTracker.set(ipKey, ipCount + 1);
+    // Auto-clear after 1 hour
+    if (ipCount === 0) {
+      setTimeout(() => otpIpTracker.delete(ipKey), 3600_000);
+    }
   }
 
   // Generate 6-digit code (or use fixed 000000 for admin bypass)
