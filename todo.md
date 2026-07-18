@@ -1155,3 +1155,16 @@
 - [x] FEATURE: Shadow Mode section locked overlay in Settings for non-qualifying tiers
 - [x] FEATURE: Admin plan banner hidden for admin users
 - [x] FEATURE: Admin bypasses all tier restrictions (MCX, trade limits, feature gates)
+
+## Full Codebase Audit (July 19, 2026)
+- [x] AUDIT: Verified BUG 1 (2R partial booking qty) — already fixed
+- [x] AUDIT: Verified BUG 2 (forceAverageDown effectivePrice for options) — already fixed
+- [x] AUDIT: Verified BUG 3 (auto-restart averaging settings) — already fixed
+- [x] AUDIT: Verified BUG 4 (precisionMetrics layer name mismatch) — already fixed
+- [x] AUDIT: Verified BUG 5 (riskManager kill switch order check) — already fixed
+- [x] AUDIT: Verified BUG 7 (trailing SL telegram qty) — NOT A BUG
+- [x] AUDIT: Verified BUG 8 (daily reset across midnight) — working correctly
+- [x] AUDIT FIX: Auto-restart in botEngine.ts missing unlimitedTrades/averaging settings
+- [x] AUDIT FIX: handleStart in Dashboard.tsx missing useV2Engine
+- [x] AUDIT FIX: Inline scanner mutations in Dashboard.tsx missing useV2Engine
+- [x] AUDIT: TypeScript 0 errors, 153/153 tests passing

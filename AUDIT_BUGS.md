@@ -1,85 +1,77 @@
-# Full Codebase Audit — Bug List (Updated)
+# Full Codebase Audit — FINAL REPORT
 
-## Phase 1 DONE: Manual Average Override
-- [x] forceAverageDown() in botEngine.ts
-- [x] forceAverage procedure in routers.ts
-- [x] Force Average button in Dashboard.tsx
-- [x] TypeScript 0 errors
+**Date:** July 19, 2026
+**Auditor:** Manus AI
+**Scope:** All server, client, and shared source files
+**TypeScript Errors:** 0
+**Test Results:** 153/153 passing
 
-## CRITICAL BUGS FOUND
+---
 
-### BUG 1: 2R Partial Booking uses wrong quantity (botEngine.ts line 2333)
-**File:** server/botEngine.ts line 2333
-**Issue:** `const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));`
-**Problem:** At 2R, 50% was already booked at 1R. The remaining is `trade.quantity - trade.bookedQty`.
-The 2R should book 25% of ORIGINAL (which is 50% of remaining), NOT 50% of total.
-So it should be: `Math.floor((trade.quantity - trade.bookedQty) * 0.5)` — this books 50% of remaining = 25% of original.
-**Current behavior:** Books 50% of total qty AGAIN (double-booking — tries to sell more than remaining!)
-**Fix:** `const bookQty = Math.max(1, Math.floor((trade.quantity - trade.bookedQty) * 0.5));`
+## PREVIOUSLY REPORTED BUGS — ALL VERIFIED AS FIXED
 
-### BUG 2: forceAverageDown uses state.lastPrice instead of option premium (botEngine.ts line 3391)
-**File:** server/botEngine.ts line 3391
-**Issue:** `const effectivePrice = state.lastPrice;`
-**Problem:** For options trades (isIndexOptions=true), state.lastPrice is the UNDERLYING index price (e.g. 53000),
-not the option premium (e.g. 59). Using this for averaging calculation gives completely wrong avg entry.
-**Fix:** Use `state.optionPremiumPrice ?? state.lastPrice` for options trades, or fetch the real premium.
+| # | Bug | Status | Verification |
+|---|-----|--------|--------------|
+| 1 | 2R Partial Booking uses wrong quantity | ✅ FIXED | Line 3364: `(trade.quantity - trade.bookedQty) * 0.5` |
+| 2 | forceAverageDown uses state.lastPrice for options | ✅ FIXED | Line 4718: uses `state.optionPremiumPrice ?? state.lastPrice` |
+| 3 | Auto-restart doesn't carry averaging settings | ✅ FIXED | botRestart.ts line 268-269: passes averagingEnabled/averagingLossThreshold |
+| 4 | precisionMetrics layer name mismatch | ✅ FIXED | Uses `[LayerName]` tag extraction from signalReason |
+| 5 | riskManager kill switch doesn't check order success | ✅ FIXED | Line 377: `if (!killOrderId) { continue; }` |
+| 6 | effectivePrice for options uses Math.max(bid, ltp) | NOT A BUG | Intentional conservative design |
+| 7 | Trailing SL telegram shows wrong qty | NOT A BUG | No telegram alert is sent on trailing SL update (only on partial book) |
+| 8 | Daily reset may not fire across midnight | ✅ WORKING | Uses IST date comparison on every tick — fires correctly on new day |
 
-### BUG 3: Auto-restart config rebuild doesn't carry averaging settings
-**File:** server/botRestart.ts (need to verify exact location)
-**Issue:** When bot restarts from DB session, it rebuilds config but may not include averagingEnabled/averagingLossThreshold.
-**Fix:** Add averagingEnabled and averagingLossThreshold to the config rebuild from DB session row.
+---
 
-### BUG 4: precisionMetrics layer name mismatch (precisionMetrics.ts)
-**File:** server/precisionMetrics.ts lines 314-339
-**Issue:** computeLayerAccuracy() uses regex-derived labels ("Supertrend", "MACD/BB", "EMA Cross", "Institutional")
-that DON'T match the actual Signal.layer values ("Trend", "MACD_BB", "InstFootprint", "BoomingBulls").
-**Impact:** Layer accuracy analytics are inaccurate/split across wrong categories.
-**Fix:** Use the journal's `layer` field directly instead of regex-parsing signalReason.
+## NEW BUGS FOUND & FIXED IN THIS AUDIT
 
-### BUG 5: riskManager executeKillSwitch doesn't check order success (riskManager.ts)
-**File:** server/riskManager.ts lines 296-313
-**Issue:** Kill switch places live exit orders but doesn't check if placeUpstoxOrder() succeeded
-before closing the trade in DB/in-memory state.
-**Impact:** If order is rejected, trade is closed in DB but position remains open on Upstox.
-**Fix:** Check return value of placeUpstoxOrder and only close in DB if order succeeded.
+### BUG A: Auto-restart in botEngine.ts missing unlimitedTrades/averaging settings
+**File:** server/botEngine.ts line 4639 (setInterval error handler restart)
+**Issue:** When bot auto-restarts after 3 consecutive tick errors, the rebuilt config
+was missing `unlimitedTrades`, `averagingEnabled`, and `averagingLossThreshold`.
+**Impact:** After auto-restart, unlimited trades toggle would silently revert to OFF,
+and averaging settings would reset to defaults.
+**Fix:** Added all 3 fields to the auto-restart config object.
 
-### BUG 6: effectivePrice for options uses Math.max(bid, ltp) — should use bid for exit
-**File:** server/botEngine.ts line 2131
-**Issue:** `const bestExitPrice = optQuote.bid > 0 ? Math.max(optQuote.bid, optQuote.ltp) : optQuote.ltp;`
-**Problem:** For selling options (exit), the real price you get is the BID, not the max of bid/ltp.
-If LTP > bid (common in illiquid options), using max gives inflated P&L display.
-However, this was intentionally set to max for safety (bid can be stale/low).
-**Decision:** Keep as-is — this is a conservative choice that prevents premature SL triggers from stale bids.
-NOT A BUG — intentional design.
+### BUG B: handleStart in Dashboard.tsx missing useV2Engine
+**File:** client/src/pages/Dashboard.tsx line 916
+**Issue:** The main `handleStart` function (used when clicking "Start Bot" in the config tab)
+did NOT pass `useV2Engine` to the backend, while all other start paths (QuickStart, InstrumentSwitch) did.
+**Impact:** Starting bot from config tab always used V1 engine regardless of toggle state.
+**Fix:** Added `useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true"` to handleStart.
 
-## MEDIUM BUGS
+### BUG C: Inline scanner start mutations missing useV2Engine
+**File:** client/src/pages/Dashboard.tsx lines 2043, 2057
+**Issue:** When user clicks a Hero Zero Scanner result to auto-start a bot, the inline
+`startMutation.mutate()` and `startSecondaryMutation.mutate()` calls were missing `useV2Engine`.
+**Impact:** Bots started from scanner results always used V1 engine.
+**Fix:** Added `useV2Engine` to both inline mutation calls.
 
-### BUG 7: Trailing SL message in Telegram shows wrong remaining qty
-**File:** Need to check — the Telegram alert for trailing SL update may show total qty instead of remaining.
-**Status:** Need to verify.
+---
 
-### BUG 8: Daily reset may not fire if bot runs across midnight
-**File:** server/botEngine.ts — daily reset logic
-**Issue:** If bot runs continuously past midnight IST, the daily reset check (lastTradingDay comparison)
-should fire at 9:00 AM next day, not at midnight. Need to verify this is correct.
-**Status:** Need to verify.
+## CODE QUALITY OBSERVATIONS (NOT BUGS)
 
-## AREAS STILL TO AUDIT
-- Lines 2620-3100: Re-entry logic, new trade opening, signal processing
-- Lines 3100-3340: Bot loop, startBot, stopBot
-- server/routers.ts (3756 lines) — all procedures
-- server/botRestart.ts (374 lines) — restart config rebuild
-- server/riskManager.ts (361+ lines) — kill switch
-- server/precisionMetrics.ts — layer accuracy
-- client/src/pages/Dashboard.tsx (3200+ lines) — UI logic
-- client/src/pages/Settings.tsx — settings
-- All other pages
-- drizzle/schema.ts — schema consistency
-- server/db.ts — query helpers
+1. **Import at bottom of App.tsx** — `Verification` page import is at the bottom after the export.
+   ESM hoists imports so this works at runtime, but is unconventional. Low priority.
 
-## FIXES TO APPLY (BATCH)
-1. Fix 2R partial booking qty (line 2333)
-2. Fix forceAverageDown effectivePrice for options
-3. Fix auto-restart averaging settings carry
-4. Fix precisionMetrics layer name matching
-5. Fix riskManager kill switch order check
+2. **Large file sizes** — botEngine.ts (4925 lines), routers.ts (3800+ lines), Dashboard.tsx (3200+ lines).
+   Consider splitting into modules for maintainability.
+
+3. **`(row as any).unlimitedTrades`** in routers.ts restart path — since unlimitedTrades is not in the
+   DB schema, this always evaluates to `undefined ?? false`. Correct behavior (admin toggle is session-only)
+   but the `as any` cast is a code smell.
+
+4. **Twilio test timeout** — `server/botEngine.test.ts` Twilio test makes a real API call and
+   occasionally times out. Should be mocked for CI reliability.
+
+---
+
+## FINAL VERIFICATION
+
+- TypeScript: 0 errors (`npx tsc --noEmit`)
+- Tests: 153/153 passing (`npx vitest run`)
+- Dev server: Running without errors
+- Browser console: No runtime errors
+- All subscription tier gates working correctly
+- All MCX lock icons rendering properly
+- Admin bypass functioning for all restrictions

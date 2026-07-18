@@ -4635,9 +4635,12 @@ export function startBot(
             consecutiveTickErrors: 0,
             enabledLayers: state.enabledLayers,
             partial1Pct: state.partial1Pct,
-            partial2Pct: state.partial2Pct,
-            carryForward: state.carryForward,
-          }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
+           partial2Pct: state.partial2Pct,
+           carryForward: state.carryForward,
+           unlimitedTrades: state.unlimitedTrades,
+           averagingEnabled: state.averagingEnabled,
+           averagingLossThreshold: state.averagingLossThreshold,
+         }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
         }
       });
   }, intervalMs);

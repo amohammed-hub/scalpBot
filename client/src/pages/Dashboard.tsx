@@ -911,10 +911,11 @@ export default function Dashboard() {
       partial1Pct: config.partial1Pct,
       partial2Pct: config.partial2Pct,
       averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
-      averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
-      unlimitedTrades,
-    });
-  };
+     averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+     unlimitedTrades,
+     useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
+   });
+ };
 
   const handleStop = () => stopMutation.mutate({ sessionToken });
 
@@ -2039,6 +2040,7 @@ export default function Dashboard() {
                                       trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
                                       averagingEnabled: localStorage.getItem("scalpbot_averaging_enabled") !== "false",
                                       averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
+                                      useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
                                       unlimitedTrades,
                                     });
                                   } else {
@@ -2052,6 +2054,7 @@ export default function Dashboard() {
                                       telegramBotToken: tg.botToken ?? "", telegramChatId: tg.chatId ?? "", telegramEnabled: tg.enabled ?? false,
                                       partial1Pct: config.partial1Pct, partial2Pct: config.partial2Pct,
                                       trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct, enabledLayers: config.enabledLayers,
+                                      useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
                                       unlimitedTrades,
                                     });
                                   }
