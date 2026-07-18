@@ -1078,3 +1078,31 @@
 - [x] TELEGRAM: Send alert on every trade exit (symbol, P&L, exit reason, duration)
 - [x] TELEGRAM: Send daily summary at market close (3:30 PM NSE, 11:30 PM MCX)
 - [x] TELEGRAM: Send critical alerts (bot stopped, kill switch activated, daily limit hit)
+
+## BACKLOG: Telegram Signal Broadcast — Free + Paid Channels
+
+- [ ] BROADCAST: Admin settings — Free Channel ID, Paid Channel ID, max free calls/day (default 3), free call delay (default 300s), min confidence for free (default 75%)
+- [ ] BROADCAST: Free channel logic — send only top 1-3 highest confidence signals (>75%), delayed by 5 minutes, prioritize variety across instruments
+- [ ] BROADCAST: Paid channel logic — ALL signals in real-time (no delay), every entry + exit with P&L, full daily report
+- [ ] BROADCAST: Access control — add user to paid channel on subscription, remove on expiry (Telegram invite link with member approval)
+- [ ] BROADCAST: End-of-day FOMO summary on free channel (3:35 PM NSE, 11:35 PM MCX) — shows paid results vs free results, upsell link
+- [ ] BROADCAST: Entry call format (BUY/SELL CALL with symbol, entry range, SL, T1/T2, time, confidence)
+- [ ] BROADCAST: Exit update format (EXIT with P&L, entry→exit price, duration, exit reason)
+
+## Admin 4-Bot Slot
+
+- [x] ADMIN-4BOT: Add 4th bot slot for admin accounts (slot3 prefix, same rules as slot0/1/2)
+- [x] ADMIN-4BOT: Show 4th card in Command Center ONLY for admin users (rose color theme)
+- [x] ADMIN-4BOT: Verify existing 3 bots still work after change (153 tests passing)
+- [x] ADMIN-4BOT: Backend — allStatus, startSecondary, stopSecondary accept slot 3
+- [x] ADMIN-4BOT: Backend — all slot token arrays include slot3 (stats, trades, export, delete, etc.)
+- [x] ADMIN-4BOT: Backend — botRestart regex updated for slot3
+- [x] ADMIN-4BOT: Frontend — grid-cols-4 for admin, slot type casts updated to 1|2|3
+
+## BACKLOG: Paid Extra Bot Slots + Strategy Subset Config
+
+- [ ] PAID-SLOTS: In pricing/admin panel, add option for users to buy extra bot slots (₹2,999/month per extra, max 6 total)
+- [ ] PAID-SLOTS: Admin can grant extra slots for free (like referral system)
+- [ ] STRATEGY-SUBSET: Per-bot strategy layer assignment (Approach 2 — each bot uses different strategy subset)
+- [ ] STRATEGY-SUBSET: Presets — "Aggressive", "Conservative", "Diversified" auto-assign layers across bots
+- [ ] ANTI-DUPLICATE: When multiple bots on same instrument, ensure different strategy layers so no duplicate trades

@@ -287,7 +287,7 @@ export default function Dashboard() {
       // Cancel in-flight queries to prevent stale "stopped" responses from overwriting optimistic update
       utils.multiBots.allStatus.cancel();
       // Optimistic: immediately update the slot to "running"
-      utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
+      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
         if (!old) return old;
         return old.map((b: any) => b.slot === vars.slot ? { ...b, status: "running" } : b);
       });
@@ -332,7 +332,7 @@ export default function Dashboard() {
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
       startSecondaryMutation.mutate({
-        sessionToken, slot: slot as 1 | 2,
+        sessionToken, slot: slot as 1 | 2 | 3,
         instrumentToken: resolved.token,
         instrumentSymbol: qs.symbol, instrumentLabel: resolved.label,
         mode: config.mode, capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
@@ -389,7 +389,7 @@ export default function Dashboard() {
       if (slot === 0) {
         await stopMutation.mutateAsync({ sessionToken });
       } else {
-        await stopSecondaryMutation.mutateAsync({ sessionToken, slot: slot as 1 | 2 });
+        await stopSecondaryMutation.mutateAsync({ sessionToken, slot: slot as 1 | 2 | 3 });
       }
       // Step 2: Wait briefly for cleanup
       await new Promise(r => setTimeout(r, 1500));
@@ -426,7 +426,7 @@ export default function Dashboard() {
         });
       } else {
         startSecondaryMutation.mutate({
-          sessionToken, slot: slot as 1 | 2,
+          sessionToken, slot: slot as 1 | 2 | 3,
           instrumentToken: resolved.token,
           instrumentSymbol: newSymbol, instrumentLabel: resolved.label,
           mode: config.mode, capital: newCapital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
@@ -503,7 +503,7 @@ export default function Dashboard() {
 
   // Multi-bot: all 3 slots
   const { data: allBots } = trpc.multiBots.allStatus.useQuery(
-    { sessionToken },
+    { sessionToken, isAdmin: meQuery.data?.role === "admin" },
     { refetchInterval: 3000, staleTime: 1000 }
   );
   // Lightweight live price polling — updates every 5 seconds independently of scan interval
@@ -515,7 +515,7 @@ export default function Dashboard() {
     onSuccess: (_, vars) => {
       toast.info(`Bot ${vars.slot + 1} stopped.`);
       // Optimistic: immediately update the slot to "stopped"
-      utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
+      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
         if (!old) return old;
         return old.map((b: any) => b.slot === vars.slot ? { ...b, status: "stopped" } : b);
       });
@@ -569,7 +569,7 @@ export default function Dashboard() {
       // Optimistic: immediately set bot.status cache to "running" so UI updates instantly
       utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "running" } : { status: "running" });
       // Optimistic: immediately update allBots slot 0 to "running"
-      utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
+      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
         if (!old) return old;
         return old.map((b: any) => b.slot === 0 ? { ...b, status: "running" } : b);
       });
@@ -591,7 +591,7 @@ export default function Dashboard() {
       // Optimistic: immediately set bot.status cache to "stopped"
       utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "stopped" } : { status: "stopped" });
       // Optimistic: immediately update allBots slot 0 to "stopped"
-      utils.multiBots.allStatus.setData({ sessionToken }, (old: any) => {
+      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
         if (!old) return old;
         return old.map((b: any) => b.slot === 0 ? { ...b, status: "stopped" } : b);
       });
@@ -1707,11 +1707,12 @@ export default function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════════════════
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-6">
+        <div className={`grid gap-2 sm:gap-3 mb-6 ${meQuery.data?.role === "admin" ? "grid-cols-4" : "grid-cols-3"}`}>
           {((allBots && allBots.length > 0) ? allBots : [
             { sessionToken, slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0 },
             { sessionToken: `${sessionToken}-slot1`, slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0 },
             { sessionToken: `${sessionToken}-slot2`, slot: 2, status: "stopped", dailyPnl: 0, tradesCount: 0 },
+            ...(meQuery.data?.role === "admin" ? [{ sessionToken: `${sessionToken}-slot3`, slot: 3, status: "stopped", dailyPnl: 0, tradesCount: 0 }] : []),
           ]).map((bot: any) => {
             const isActive = bot.status === "running";
             const slotLabel = `Bot ${bot.slot + 1}`;
@@ -1719,7 +1720,9 @@ export default function Dashboard() {
               ? { border: "border-teal-500/30", borderActive: "border-teal-500/40", bg: "bg-teal-500/5", badge: "bg-teal-500/20", text: "text-teal-300", glow: "shadow-[0_0_20px_oklch(0.78_0.18_195/0.06)]" }
               : bot.slot === 1
                 ? { border: "border-purple-500/30", borderActive: "border-purple-500/40", bg: "bg-purple-500/5", badge: "bg-purple-500/20", text: "text-purple-300", glow: "shadow-[0_0_20px_oklch(0.7_0.15_280/0.06)]" }
-                : { border: "border-amber-500/30", borderActive: "border-amber-500/40", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_65/0.06)]" };
+                : bot.slot === 2
+                  ? { border: "border-amber-500/30", borderActive: "border-amber-500/40", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_65/0.06)]" }
+                  : { border: "border-rose-500/30", borderActive: "border-rose-500/40", bg: "bg-rose-500/5", badge: "bg-rose-500/20", text: "text-rose-300", glow: "shadow-[0_0_20px_oklch(0.7_0.18_15/0.06)]" };
             const hasOpenTrade = !!bot.openTrade;
             const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
 
@@ -2008,7 +2011,7 @@ export default function Dashboard() {
                                     });
                                   } else {
                                     startSecondaryMutation.mutate({
-                                      sessionToken, slot: bot.slot as 1 | 2,
+                                      sessionToken, slot: bot.slot as 1 | 2 | 3,
                                       instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
                                       mode: config.mode, capital: slotQS[bot.slot]?.capital ?? 50000,
                                       riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,

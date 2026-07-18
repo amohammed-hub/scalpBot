@@ -881,8 +881,10 @@ export const appRouter = router({
         // Also set for slot bots
         const slot1 = getBotState(`${input.sessionToken}-slot1`);
         const slot2 = getBotState(`${input.sessionToken}-slot2`);
+        const slot3 = getBotState(`${input.sessionToken}-slot3`);
         if (slot1) slot1.carryForward = input.carryForward;
         if (slot2) slot2.carryForward = input.carryForward;
+        if (slot3) slot3.carryForward = input.carryForward;
         // Persist to DB on the open trade so it survives server restarts
         const db = await getDb();
         if (db && state.openTrade) {
@@ -893,6 +895,9 @@ export const appRouter = router({
         }
         if (db && slot2?.openTrade) {
           await db.update(tradeLog).set({ carryForward: input.carryForward }).where(eq(tradeLog.id, slot2.openTrade.dbId));
+        }
+        if (db && slot3?.openTrade) {
+          await db.update(tradeLog).set({ carryForward: input.carryForward }).where(eq(tradeLog.id, slot3.openTrade.dbId));
         }
         return { success: true, carryForward: input.carryForward };
       }),
@@ -1315,12 +1320,13 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const db = await getDb();
         if (!db) return [];
-        // Include trades from all 3 slots: primary + slot1 + slot2
+        // Include trades from all 4 slots: primary + slot1 + slot2 + slot3
         const { inArray } = await import("drizzle-orm");
         const allTokens = [
           input.sessionToken,
           `${input.sessionToken}-slot1`,
           `${input.sessionToken}-slot2`,
+          `${input.sessionToken}-slot3`,
         ];
         return db
           .select()
@@ -1367,7 +1373,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return { totalTrades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
         const { inArray: inArrayStats } = await import("drizzle-orm");
-        const statsTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const statsTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -1395,7 +1401,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return { todayTrades: 0, todayPnl: 0, wins: 0, losses: 0, winRate: 0 };
         const { inArray: inArrayToday } = await import("drizzle-orm");
-        const todayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const todayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const trades = await db
@@ -1425,7 +1431,7 @@ export const appRouter = router({
         const db = await getDb();
                 if (!db) return [];
         const { inArray: inArrayDay } = await import("drizzle-orm");
-        const dayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const dayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -1471,7 +1477,7 @@ export const appRouter = router({
         const db = await getDb();
                 if (!db) return [];
         const { inArray: inArrayWeek } = await import("drizzle-orm");
-        const weekTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const weekTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -1548,7 +1554,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return [];
         const { inArray: inArrayMonth } = await import("drizzle-orm");
-        const monthTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const monthTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -1612,7 +1618,7 @@ export const appRouter = router({
         if (!db) throw new Error("DB unavailable");
         // Allow deleting trades from primary or any slot
         const { inArray: inArrayDel } = await import("drizzle-orm");
-        const delTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const delTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         await db.delete(tradeLog).where(
           and(
             eq(tradeLog.id, input.tradeId),
@@ -1990,10 +1996,10 @@ export const appRouter = router({
   multiBots: router({
     // Returns live data for all running bot slots (primary + secondary + tertiary)
     allStatus: publicProcedure
-      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .input(z.object({ sessionToken: sessionTokenSchema, isAdmin: z.boolean().default(false) }))
       .query(async ({ input }) => {
         const db = await getDb();
-        const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const slotTokens = getSlotTokens(input.sessionToken, input.isAdmin);
         // Load DB rows for all 3 slot tokens in one pass
         const dbRows: Record<string, typeof botSessions.$inferSelect> = {};
         const nowMs_ = Date.now(); const istOff_ = 5.5 * 60 * 60 * 1000; const istN_ = new Date(nowMs_ + istOff_); istN_.setUTCHours(0, 0, 0, 0); const todayStart = new Date(istN_.getTime() - istOff_);
@@ -2015,8 +2021,7 @@ export const appRouter = router({
         return slotTokens.map(tok => {
           const inMem = getBotState(tok);
           const dbRow = dbRows[tok];
-          const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
-          // Consistent with bot.status: DB is the source of truth for running state.
+          const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : tok.endsWith("-slot2") ? 2 : 3;
           // If DB says 'running' but the bot is not in this process's memory (server
           // restart / redeploy), still report 'running' — the watchdog restores it within 60s.
           const effectiveStatus = inMem?.status ?? dbRow?.status ?? "stopped";
@@ -2065,7 +2070,7 @@ export const appRouter = router({
     livePrices: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
-        const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         const results: Array<{ sessionToken: string; slot: number; livePrice: number; updatedAt: number; optionPremiumPrice?: number }> = [];
 
         for (const tok of slotTokens) {
@@ -2179,7 +2184,7 @@ export const appRouter = router({
     startSecondary: publicProcedure
       .input(z.object({
         sessionToken: sessionTokenSchema,
-        slot: z.number().min(1).max(2).default(1),
+        slot: z.number().min(1).max(3).default(1),
         instrumentToken: z.string(),
         instrumentSymbol: z.string(),
         instrumentLabel: z.string(),
@@ -2270,7 +2275,7 @@ export const appRouter = router({
         let accessToken: string | null = null;
         {
           // Slot bots (e.g. "abc-slot1") store credentials under the base token "abc"
-          const baseTokenForCreds = input.sessionToken.replace(/-slot[12]$/, "");
+          const baseTokenForCreds = input.sessionToken.replace(/-slot[123]$/, "");
           const creds = await db
             .select()
             .from(upstoxCredentials)
@@ -2486,7 +2491,7 @@ export const appRouter = router({
       }),
 
     stopSecondary: publicProcedure
-      .input(z.object({ sessionToken: sessionTokenSchema, slot: z.number().min(1).max(2) }))
+      .input(z.object({ sessionToken: sessionTokenSchema, slot: z.number().min(1).max(3) }))
       .mutation(async ({ input }) => {
         const slotToken = `${input.sessionToken}-slot${input.slot}`;
         // Capture bot state BEFORE stopping (need lastPrice for closing trades)
@@ -3370,7 +3375,7 @@ export const appRouter = router({
         let recentTrades: Array<{ exitReason: string | null; pnl: number | null }> = [];
         if (db) {
           const { inArray } = await import("drizzle-orm");
-          const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+          const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
           const rows = await db.select({ exitReason: tradeLog.exitReason, pnl: tradeLog.pnl })
             .from(tradeLog)
             .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed")))
@@ -3392,7 +3397,7 @@ export const appRouter = router({
         let recentTrades: Array<{ exitReason: string | null; pnl: number | null }> = [];
         if (db) {
           const { inArray } = await import("drizzle-orm");
-          const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+          const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
           const rows = await db.select({ exitReason: tradeLog.exitReason, pnl: tradeLog.pnl })
             .from(tradeLog)
             .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed")))
@@ -3558,7 +3563,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return [];
         const { inArray } = await import("drizzle-orm");
-        const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         const trades = await db.select({ signalReason: tradeLog.signalReason, pnl: tradeLog.pnl, exitedAt: tradeLog.exitedAt })
           .from(tradeLog)
           .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed")))
@@ -3628,7 +3633,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return { ready: false, score: 0, checks: [] };
         const { inArray } = await import("drizzle-orm");
-        const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`];
+        const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
         const trades = await db.select({ pnl: tradeLog.pnl, mode: tradeLog.mode, entryPrice: tradeLog.entryPrice, quantity: tradeLog.quantity })
           .from(tradeLog)
           .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed"), eq(tradeLog.mode, "paper")))
@@ -4191,3 +4196,10 @@ export const appRouter = router({
 });
 export type AppRouter = typeof appRouter;
 import { sendTelegramMessage } from "./botEngine";
+
+// Helper: get all slot tokens for a session (includes slot3 for admin)
+function getSlotTokens(sessionToken: string, includeSlot3 = false): string[] {
+  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`, `${sessionToken}-slot3`];
+  if (includeSlot3) tokens.push(`${sessionToken}-slot3`);
+  return tokens;
+}

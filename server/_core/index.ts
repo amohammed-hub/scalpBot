@@ -287,7 +287,7 @@ async function startServer() {
       for (const session of activeSessions) {
         if (!session.telegramBotToken || !session.telegramChatId) continue;
         const token = session.sessionToken;
-        const slotTokens = [token, `${token}-slot1`, `${token}-slot2`];
+        const slotTokens = [token, `${token}-slot1`, `${token}-slot2`, `${token}-slot3`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -354,7 +354,7 @@ async function startServer() {
       for (const session of activeSessions) {
         if (!session.telegramBotToken || !session.telegramChatId) continue;
         const token = session.sessionToken;
-        const slotTokens = [token, `${token}-slot1`, `${token}-slot2`];
+        const slotTokens = [token, `${token}-slot1`, `${token}-slot2`, `${token}-slot3`];
         const trades = await db
           .select()
           .from(tradeLog)

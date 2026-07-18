@@ -107,7 +107,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
   }
 
   // Look up access token (BUG 19 fix: slot bots use base token for creds)
-  const baseToken = session.sessionToken.replace(/-slot[12]$/, "");
+  const baseToken = session.sessionToken.replace(/-slot[123]$/, "");
   const credRows = await db
     .select()
     .from(upstoxCredentials)
@@ -306,7 +306,7 @@ export async function restartRunningBots(): Promise<void> {
         try {
           // Look up access token for this trade's session
           // BUG 19 fix: slot bots store creds under base token (strip -slot1/-slot2)
-          const baseSessionToken = t.sessionToken.replace(/-slot[12]$/, "");
+          const baseSessionToken = t.sessionToken.replace(/-slot[123]$/, "");
           const credRow = await db.select().from(upstoxCredentials)
             .where(eq(upstoxCredentials.sessionToken, baseSessionToken))
             .limit(1);
