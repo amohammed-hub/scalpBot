@@ -248,6 +248,132 @@ async function initDb() {
           console.log("[Database] Migration complete: otp_codes table created");
         }
       }
+      // Check useV2Engine column on bot_sessions (migration 0021)
+      try {
+        await pool.execute("SELECT `useV2Engine` FROM `bot_sessions` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding useV2Engine to bot_sessions");
+          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `useV2Engine` boolean DEFAULT false");
+          console.log("[Database] Migration complete: useV2Engine column added");
+        }
+      }
+      // Check nseSummaryCronTaskUid column on bot_sessions (migration 0022)
+      try {
+        await pool.execute("SELECT `nseSummaryCronTaskUid` FROM `bot_sessions` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding nseSummaryCronTaskUid to bot_sessions");
+          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `nseSummaryCronTaskUid` varchar(128)");
+          console.log("[Database] Migration complete: nseSummaryCronTaskUid column added");
+        }
+      }
+      // Check access_grants table (migration 0020)
+      try {
+        await pool.execute("SELECT 1 FROM `access_grants` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating access_grants table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS access_grants (
+            id int AUTO_INCREMENT NOT NULL,
+            userMobile varchar(15),
+            userEmail varchar(320),
+            userName varchar(128),
+            plan enum('monthly','quarterly','half_yearly','yearly','custom') NOT NULL,
+            durationDays int NOT NULL,
+            startsAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expiresAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status enum('active','expired','revoked') NOT NULL DEFAULT 'active',
+            note text,
+            grantedBy varchar(128) NOT NULL,
+            revokedAt timestamp NULL,
+            createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY(id)
+          )`);
+          console.log("[Database] Migration complete: access_grants table created");
+        }
+      }
+      // Check admin_settings table (migration 0023)
+      try {
+        await pool.execute("SELECT 1 FROM `admin_settings` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating admin_settings table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS admin_settings (
+            id int AUTO_INCREMENT NOT NULL,
+            settingKey varchar(128) NOT NULL,
+            settingValue text NOT NULL,
+            updatedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY(id),
+            UNIQUE KEY admin_settings_settingKey_unique (settingKey)
+          )`);
+          console.log("[Database] Migration complete: admin_settings table created");
+        }
+      }
+      // Check alert_templates table (migration 0023)
+      try {
+        await pool.execute("SELECT 1 FROM `alert_templates` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating alert_templates table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS alert_templates (
+            id int AUTO_INCREMENT NOT NULL,
+            templateType enum('entry','exit','daily_summary','critical') NOT NULL,
+            template text NOT NULL,
+            isActive tinyint NOT NULL DEFAULT 1,
+            updatedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY(id),
+            UNIQUE KEY alert_templates_templateType_unique (templateType)
+          )`);
+          console.log("[Database] Migration complete: alert_templates table created");
+        }
+      }
+      // Check broadcast_messages table (migration 0023)
+      try {
+        await pool.execute("SELECT 1 FROM `broadcast_messages` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating broadcast_messages table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS broadcast_messages (
+            id int AUTO_INCREMENT NOT NULL,
+            message text NOT NULL,
+            audience enum('all','paid','free','specific') NOT NULL DEFAULT 'all',
+            specificTarget varchar(255),
+            status enum('draft','sent','scheduled','failed') NOT NULL DEFAULT 'draft',
+            scheduledAt timestamp NULL,
+            sentAt timestamp NULL,
+            sentCount int DEFAULT 0,
+            failedCount int DEFAULT 0,
+            createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(id)
+          )`);
+          console.log("[Database] Migration complete: broadcast_messages table created");
+        }
+      }
+      // Check notification_preferences table (migration 0023)
+      try {
+        await pool.execute("SELECT 1 FROM `notification_preferences` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating notification_preferences table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS notification_preferences (
+            id int AUTO_INCREMENT NOT NULL,
+            sessionToken varchar(255) NOT NULL,
+            tradeEntry tinyint NOT NULL DEFAULT 1,
+            tradeExit tinyint NOT NULL DEFAULT 1,
+            dailySummary tinyint NOT NULL DEFAULT 1,
+            criticalAlerts tinyint NOT NULL DEFAULT 1,
+            announcements tinyint NOT NULL DEFAULT 1,
+            adminOverride tinyint NOT NULL DEFAULT 0,
+            createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY(id),
+            UNIQUE KEY notification_preferences_sessionToken_unique (sessionToken)
+          )`);
+          console.log("[Database] Migration complete: notification_preferences table created");
+        }
+      }
     }
     return db;
   } catch (error: unknown) {
