@@ -4,9 +4,10 @@ import {
   Settings as SettingsIcon, Zap, Activity, Calculator, Key,
   ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle,
   AlertTriangle, ChevronDown, ChevronUp, MousePointer,
-  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2, ArrowDownUp
+  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2, ArrowDownUp, Lock
 } from "lucide-react";
 import { MCX_INSTRUMENTS, getMCXByCategory } from "@shared/mcxInstruments";
+import { getTierLimits, FEATURE_MIN_PLAN } from "@shared/tierLimits";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -464,6 +465,7 @@ export default function Settings() {
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
 
+  // ── Subscription Access ────────────────────────────────────────────────────
   const [creds, setCreds] = useState<Credentials>(loadCreds);
   const [showSecret, setShowSecret] = useState(false);
   const [showToken, setShowToken] = useState(false);
@@ -471,6 +473,14 @@ export default function Settings() {
   const [showApiGuide, setShowApiGuide] = useState(false);
   const [showTokenGuide, setShowTokenGuide] = useState(true);
   const [sessionToken] = useState(getSessionToken);
+  // ── Subscription Access ────────────────────────────────────────────────────
+  const accessQuery = trpc.subscription.checkAccess.useQuery(
+    { sessionToken },
+    { staleTime: 60_000, refetchOnWindowFocus: false }
+  );
+  const isAdmin = accessQuery.data?.isAdmin ?? (meQuery?.data as any)?.role === "admin";
+  const currentTierLimits = accessQuery.data?.tierLimits ?? getTierLimits(accessQuery.data?.plan, isAdmin);
+  const hasTelegramAccess = isAdmin || currentTierLimits.telegram;
 
   // Sync the redirect URI to always use the current origin
   useEffect(() => {
@@ -1035,7 +1045,19 @@ export default function Settings() {
         </div>
 
         {/* ── Telegram Alerts ───────────────────────────────────────── */}
-        <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
+        <div className={`bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden ${!hasTelegramAccess ? "relative" : ""}`}>
+          {!hasTelegramAccess && (
+            <div className="absolute inset-0 z-10 bg-black/70 backdrop-blur-[2px] flex items-center justify-center rounded-2xl">
+              <div className="text-center space-y-2 px-4">
+                <div className="w-10 h-10 mx-auto bg-amber-500/20 rounded-full flex items-center justify-center">
+                  <Bell className="w-5 h-5 text-amber-400" />
+                </div>
+                <p className="text-sm text-white font-medium">🔒 Telegram Alerts</p>
+                <p className="text-xs text-white/50">{FEATURE_MIN_PLAN.telegram.label}</p>
+                <button onClick={() => navigate("/")} className="text-xs text-teal-400 hover:text-teal-300 underline">Upgrade Now</button>
+              </div>
+            </div>
+          )}
           <button
             onClick={() => setShowTelegramGuide(v => !v)}
             className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
@@ -1358,7 +1380,19 @@ export default function Settings() {
           )}
         </div>
         {/* ── Shadow Mode (Signal Audit) ────────────────────────────────── */}
-        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-amber-500/20 rounded-2xl overflow-hidden">
+        <div className={`mt-6 bg-[oklch(0.18_0.03_240)] border border-amber-500/20 rounded-2xl overflow-hidden ${!(isAdmin || currentTierLimits.shadowMode) ? "relative" : ""}`}>
+          {!(isAdmin || currentTierLimits.shadowMode) && (
+            <div className="absolute inset-0 z-10 bg-black/70 backdrop-blur-[2px] flex items-center justify-center rounded-2xl">
+              <div className="text-center space-y-2 px-4">
+                <div className="w-10 h-10 mx-auto bg-amber-500/20 rounded-full flex items-center justify-center">
+                  <Lock className="w-5 h-5 text-amber-400" />
+                </div>
+                <p className="text-sm text-white font-medium">🔒 Shadow Mode</p>
+                <p className="text-xs text-white/50">{FEATURE_MIN_PLAN.shadowMode.label}</p>
+                <button onClick={() => navigate("/")} className="text-xs text-teal-400 hover:text-teal-300 underline">Upgrade Now</button>
+              </div>
+            </div>
+          )}
           <button onClick={() => setShowShadowMode(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
             <div className="flex items-center gap-2">
               <Eye className="w-4 h-4 text-amber-400" />

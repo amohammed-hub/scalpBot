@@ -2,6 +2,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess, createAccessGrant, listAccessGrants, revokeAccessGrant, extendAccessGrant } from "./db";
+import { getTierLimits, TIER_LIMITS, type TierLimits } from "../shared/tierLimits";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, notificationPreferences, adminSettings, broadcastMessages, alertTemplates, subscriptions } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
@@ -385,15 +386,25 @@ export const appRouter = router({
           const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
           return rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile);
         })() : false;
-        if (!access.hasAccess && !isAdminSession && !isAdminViaCookie) {
-          throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
-        }
-        if (access.plan === "trial" && !isAdminSession && !isAdminViaCookie) {
-          if (input.mode === "live") {
+       if (!access.hasAccess && !isAdminSession && !isAdminViaCookie) {
+         throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
+       }
+        // Tier-based enforcement (admin bypasses all)
+        if (!isAdminSession && !isAdminViaCookie) {
+          const limits = getTierLimits(access.plan, false);
+          if (access.plan === "trial" && input.mode === "live") {
             throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
           }
-          if (input.instrumentToken.startsWith("MCX_FO|")) {
-            throw new Error("MCX trading is not available during the free trial. Subscribe to unlock MCX markets.");
+         if (!limits.mcxAccess && input.instrumentToken.startsWith("MCX_FO|")) {
+           throw new Error("MCX markets require 3-Month plan or higher. Upgrade → /pricing");
+         }
+          // Cap maxTradesPerDay to tier limit (0 = unlimited for that tier)
+          if (limits.maxTradesPerDay > 0 && input.maxTradesPerDay > limits.maxTradesPerDay) {
+            input.maxTradesPerDay = limits.maxTradesPerDay;
+          }
+          // Block unlimitedTrades for non-admin users below annual plan
+          if (input.unlimitedTrades && limits.maxTradesPerDay > 0) {
+            input.unlimitedTrades = false;
           }
         }
 
@@ -2287,15 +2298,25 @@ export const appRouter = router({
           const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
           return rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile);
         })() : false;
-        if (!slotAccess.hasAccess && !isSlotAdminSession && !isSlotAdminViaCookie) {
-          throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
-        }
-        if (slotAccess.plan === "trial" && !isSlotAdminSession && !isSlotAdminViaCookie) {
-          if (input.mode === "live") {
+       if (!slotAccess.hasAccess && !isSlotAdminSession && !isSlotAdminViaCookie) {
+         throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
+       }
+        // Tier-based enforcement (admin bypasses all)
+        if (!isSlotAdminSession && !isSlotAdminViaCookie) {
+          const slotLimits = getTierLimits(slotAccess.plan, false);
+          if (slotAccess.plan === "trial" && input.mode === "live") {
             throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
           }
-          if (input.instrumentToken.startsWith("MCX_FO|")) {
-            throw new Error("MCX trading is not available during the free trial. Subscribe to unlock MCX markets.");
+          if (!slotLimits.mcxAccess && input.instrumentToken.startsWith("MCX_FO|")) {
+            throw new Error("MCX markets require 3-Month plan or higher. Upgrade → /pricing");
+          }
+          // Cap maxTradesPerDay to tier limit
+          if (slotLimits.maxTradesPerDay > 0 && input.maxTradesPerDay > slotLimits.maxTradesPerDay) {
+            input.maxTradesPerDay = slotLimits.maxTradesPerDay;
+          }
+          // Block unlimitedTrades for non-admin users below annual plan
+          if (input.unlimitedTrades && slotLimits.maxTradesPerDay > 0) {
+            input.unlimitedTrades = false;
           }
         }
 
@@ -3795,30 +3816,31 @@ export const appRouter = router({
         if (adminToken) {
           try {
             const decoded = jwt.verify(adminToken, process.env.JWT_SECRET || "fallback-secret") as { userId: number; mobile: string; role: string };
-            if (decoded.role === "admin" || decoded.mobile === ENV.adminMobile) {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false };
-            }
-            // Also check DB for role (handles case where JWT was issued before role promotion)
-            const dbUser = await getAppUserById(decoded.userId);
-            if (dbUser?.role === "admin") {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false };
-            }
-          } catch {}
-        }
-        // Also check by sessionToken: if this sessionToken belongs to admin user, bypass
-        if (input.sessionToken) {
-          const db = await getDb();
-          if (db) {
-            const { appUsers } = await import("../drizzle/schema");
-            const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-            if (rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile)) {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false };
-            }
-          }
-        }
-        const access = await checkAccess(input.sessionToken);
-        const trialUsed = await hasUsedTrial(input.sessionToken);
-        return { ...access, trialUsed };
+           if (decoded.role === "admin" || decoded.mobile === ENV.adminMobile) {
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin };
+           }
+           // Also check DB for role (handles case where JWT was issued before role promotion)
+           const dbUser = await getAppUserById(decoded.userId);
+           if (dbUser?.role === "admin") {
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin };
+           }
+         } catch {}
+       }
+       // Also check by sessionToken: if this sessionToken belongs to admin user, bypass
+       if (input.sessionToken) {
+         const db = await getDb();
+         if (db) {
+           const { appUsers } = await import("../drizzle/schema");
+           const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+           if (rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile)) {
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin };
+           }
+         }
+       }
+       const access = await checkAccess(input.sessionToken);
+       const trialUsed = await hasUsedTrial(input.sessionToken);
+        const tierLimits = getTierLimits(access.plan, false);
+        return { ...access, trialUsed, isAdmin: false, tierLimits };
       }),
 
     /** Start a 2-day free trial */

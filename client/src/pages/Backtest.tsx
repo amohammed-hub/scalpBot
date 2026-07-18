@@ -2,10 +2,11 @@ import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, Play, BarChart2, TrendingUp, TrendingDown,
-  CheckCircle, XCircle, Minus, AlertTriangle, Info, GitCompare, Zap
+  CheckCircle, XCircle, Minus, AlertTriangle, Info, GitCompare, Zap, Lock
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { getTierLimits, FEATURE_MIN_PLAN } from "@shared/tierLimits";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, BarChart, Bar, Cell
@@ -50,6 +51,15 @@ type BacktestResult = {
 export default function Backtest() {
   const [, navigate] = useLocation();
   const sessionToken = getSessionToken();
+  // Access control
+  const accessQuery = trpc.subscription.checkAccess.useQuery(
+    { sessionToken },
+    { staleTime: 60_000, refetchOnWindowFocus: false }
+  );
+  const meQuery = trpc.auth.me.useQuery();
+  const isAdmin = accessQuery.data?.isAdmin ?? (meQuery.data as any)?.role === "admin";
+  const tierLimits = accessQuery.data?.tierLimits ?? getTierLimits(accessQuery.data?.plan, isAdmin);
+  const hasBacktesterAccess = isAdmin || tierLimits.backtester;
 
   const [instrumentToken, setInstrumentToken] = useState(INSTRUMENTS[0].token);
   const [fromDate, setFromDate] = useState(daysAgoStr(30));
@@ -124,6 +134,26 @@ export default function Backtest() {
 
   return (
     <div className="min-h-screen bg-[oklch(0.11_0.025_240)] text-white">
+      {/* Upgrade Wall */}
+      {!hasBacktesterAccess && (
+        <div className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-[oklch(0.15_0.02_240)] border border-white/10 rounded-2xl p-8 text-center space-y-5">
+            <div className="w-16 h-16 mx-auto bg-amber-500/20 rounded-full flex items-center justify-center">
+              <Lock className="w-8 h-8 text-amber-400" />
+            </div>
+            <h2 className="text-xl font-bold text-white">Backtester Locked</h2>
+            <p className="text-white/60 text-sm leading-relaxed">
+              {FEATURE_MIN_PLAN.backtester.label}. Replay historical candles through the signal engine to validate strategies before going live.
+            </p>
+            <button onClick={() => navigate("/")} className="w-full py-3 px-6 bg-teal-500 hover:bg-teal-400 text-black font-bold rounded-lg transition-all active:scale-[0.97]">
+              Upgrade Now
+            </button>
+            <button onClick={() => navigate("/dashboard")} className="w-full py-2 px-6 text-white/40 hover:text-white/70 text-xs underline transition-colors">
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="border-b border-white/10 px-6 py-4 flex items-center gap-4">
         <button onClick={() => navigate("/dashboard")}

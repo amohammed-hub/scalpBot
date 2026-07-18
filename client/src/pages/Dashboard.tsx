@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ReferenceLine } from "recharts";
 import { trpc } from "@/lib/trpc";
 import { MCX_INSTRUMENTS } from "@shared/mcxInstruments";
-
+import { getTierLimits, FEATURE_MIN_PLAN, type TierLimits } from "@shared/tierLimits";
 // ── Session Token ─────────────────────────────────────────────────────────────
 // A UUID stored in localStorage — no Manus login needed. Used as the user identity key.
 const LS_SESSION = "scalpbot_session";
@@ -225,6 +225,12 @@ export default function Dashboard() {
     { sessionToken },
     { staleTime: 60_000, refetchOnWindowFocus: false }
   );
+  // Derived tier limits for access control
+  const isAdmin = accessQuery.data?.isAdmin ?? meQuery.data?.role === "admin";
+  const currentTierLimits: TierLimits = accessQuery.data?.tierLimits ?? getTierLimits(accessQuery.data?.plan, isAdmin);
+  const hasMcxAccess = isAdmin || currentTierLimits.mcxAccess;
+  const hasTelegramAccess = isAdmin || currentTierLimits.telegram;
+
   const startTrialMutation = trpc.subscription.startTrial.useMutation({
     onSuccess: (data) => {
       if (data.success) {
@@ -302,6 +308,11 @@ export default function Dashboard() {
   });
   const handleQuickStart = (slot: number) => {
     const qs = slotQS[slot];
+    // MCX access gate
+    if (qs?.symbol?.startsWith("MCX_") && !hasMcxAccess) {
+      toast.error("MCX markets require 3-Month plan or higher. Upgrade → Pricing page.");
+      return;
+    }
     console.log(`[QuickStart] slot=${slot}, symbol=${qs?.symbol}, capital=${qs?.capital}`);
     toast.info(`Starting Bot ${slot + 1}...`);
     const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
@@ -389,6 +400,11 @@ export default function Dashboard() {
   // ── Instrument Switch (stop → change → restart) ──────────────────────────────
   const [switchingSlot, setSwitchingSlot] = useState<number | null>(null);
   const handleInstrumentSwitch = async (slot: number, newSymbol: string, newCapital: number) => {
+    // MCX access gate
+    if (newSymbol.startsWith("MCX_") && !hasMcxAccess) {
+      toast.error("MCX markets require 3-Month plan or higher. Upgrade → Pricing page.");
+      return;
+    }
     setSwitchingSlot(slot);
     toast.info(`Switching Bot ${slot + 1} to ${newSymbol}...`);
     try {
@@ -1041,8 +1057,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Trial/Plan Banner ────────────────────────────────────────────────── */}
-      {accessQuery.data?.hasAccess && accessQuery.data.plan === "trial" && (
+     {/* ── Trial/Plan Banner ────────────────────────────────────────────────── */}
+      {accessQuery.data?.hasAccess && accessQuery.data.plan === "trial" && !isAdmin && (
         <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between gap-3 px-4 py-2 bg-teal-600 text-white text-sm font-medium shadow-lg">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 shrink-0" />
@@ -1056,7 +1072,7 @@ export default function Dashboard() {
           </button>
         </div>
       )}
-      {accessQuery.data?.hasAccess && accessQuery.data.plan && accessQuery.data.plan !== "trial" && (
+      {accessQuery.data?.hasAccess && accessQuery.data.plan && accessQuery.data.plan !== "trial" && !isAdmin && (
         <div className="fixed top-0 left-64 right-0 z-40 flex items-center gap-2 px-4 py-1.5 bg-emerald-600/80 text-white text-xs font-medium">
           <Award className="w-3.5 h-3.5" />
           <span>{accessQuery.data.plan.replace("_", " ").replace(/^\w/, (c: string) => c.toUpperCase())} Plan — {accessQuery.data.daysLeft} days left</span>
@@ -1151,7 +1167,7 @@ export default function Dashboard() {
           Precision Verify
         </button>
         {/* Admin Panel — only visible to admin users */}
-        {meQuery.data?.role === "admin" && (
+        {isAdmin && (
           <button onClick={() => setShowAdminPanel(!showAdminPanel)}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors ${showAdminPanel ? "bg-red-500/20 text-red-400 border border-red-500/30" : "text-red-400 hover:bg-red-500/10 border border-red-500/20"}`}>
             <Shield className="w-4 h-4" />
@@ -1804,14 +1820,14 @@ export default function Dashboard() {
                       title={bot.openTrade ? "Close open trade before switching instrument" : "Switch instrument (will stop & restart bot)"}
                       className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-1.5 py-1 text-white text-[11px] font-semibold focus:outline-none focus:border-white/30 disabled:opacity-50 cursor-pointer appearance-none truncate"
                     >
-                      <option value="NIFTY">Nifty 50</option>
-                      <option value="BANKNIFTY">BankNifty</option>
-                      <option value="FINNIFTY">FinNifty</option>
-                      <option value="MCX_CRUDE">Crude Oil</option>
-                      <option value="MCX_GOLD">Gold</option>
-                      <option value="MCX_SILVER">Silver</option>
-                      <option value="MCX_NATGAS">Natural Gas</option>
-                      <option value="MCX_COPPER">Copper</option>
+                     <option value="NIFTY">Nifty 50</option>
+                     <option value="BANKNIFTY">BankNifty</option>
+                     <option value="FINNIFTY">FinNifty</option>
+                      <option value="MCX_CRUDE" disabled={!hasMcxAccess}>{hasMcxAccess ? "Crude Oil" : "🔒 Crude Oil"}</option>
+                      <option value="MCX_GOLD" disabled={!hasMcxAccess}>{hasMcxAccess ? "Gold" : "🔒 Gold"}</option>
+                      <option value="MCX_SILVER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Silver" : "🔒 Silver"}</option>
+                      <option value="MCX_NATGAS" disabled={!hasMcxAccess}>{hasMcxAccess ? "Natural Gas" : "🔒 Natural Gas"}</option>
+                      <option value="MCX_COPPER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Copper" : "🔒 Copper"}</option>
                     </select>
                     <input
                       key={`cap-${bot.slot}-${(bot as any).capital ?? config.capital ?? 50000}`}
@@ -1864,7 +1880,12 @@ export default function Dashboard() {
                         </span>
                       );
                     })()}
-                    <span className="text-white/40">{bot.tradesCount ?? 0} trades</span>
+                   <span className="text-white/40">{bot.tradesCount ?? 0} trades</span>
+                    {!isAdmin && currentTierLimits.maxTradesPerDay > 0 && (
+                      <span className={`text-[10px] ${(bot.tradesCount ?? 0) >= currentTierLimits.maxTradesPerDay ? "text-red-400" : "text-white/30"}`}>
+                        ({bot.tradesCount ?? 0}/{currentTierLimits.maxTradesPerDay})
+                      </span>
+                    )}
                   </div>
                 )}
 
@@ -1963,16 +1984,16 @@ export default function Dashboard() {
                       <>
                         <div className="flex gap-2">
                           <select value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
-                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
-                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none">
-                            <option value="NIFTY">NIFTY</option>
-                            <option value="BANKNIFTY">BANKNIFTY</option>
-                            <option value="FINNIFTY">FINNIFTY</option>
-                            <option value="MCX_CRUDE">Crude Oil</option>
-                            <option value="MCX_GOLD">Gold</option>
-                            <option value="MCX_SILVER">Silver</option>
-                            <option value="MCX_NATGAS">Natural Gas</option>
-                            <option value="MCX_COPPER">Copper</option>
+                           onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
+                           className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none">
+                           <option value="NIFTY">NIFTY</option>
+                           <option value="BANKNIFTY">BANKNIFTY</option>
+                           <option value="FINNIFTY">FINNIFTY</option>
+                            <option value="MCX_CRUDE" disabled={!hasMcxAccess}>{hasMcxAccess ? "Crude Oil" : "🔒 Crude Oil"}</option>
+                            <option value="MCX_GOLD" disabled={!hasMcxAccess}>{hasMcxAccess ? "Gold" : "🔒 Gold"}</option>
+                            <option value="MCX_SILVER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Silver" : "🔒 Silver"}</option>
+                            <option value="MCX_NATGAS" disabled={!hasMcxAccess}>{hasMcxAccess ? "Natural Gas" : "🔒 Natural Gas"}</option>
+                            <option value="MCX_COPPER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Copper" : "🔒 Copper"}</option>
                           </select>
                           <input type="number" value={slotQS[bot.slot]?.capital ?? 50000}
                             onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
@@ -2764,7 +2785,7 @@ export default function Dashboard() {
          </div>
 
           {/* Unlimited Trades Toggle (admin-only) */}
-          {meQuery.data?.role === "admin" && (
+          {isAdmin && (
             <div className="mt-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -2965,7 +2986,7 @@ export default function Dashboard() {
         </div>
 
         {/* ── Paper Costs & Readiness ──────────────────────────────────────────── */}
-        {meQuery.data?.role === "admin" && (
+        {isAdmin && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           {/* Paper Costs Config */}
           {config.mode === "paper" && (

@@ -1142,3 +1142,16 @@
 ## Admin Features (Jul 19, 2026)
 - [x] FEATURE: "Unlimited Trades" toggle — admin-only, bypasses maxTradesPerDay limit, shows warning when enabled, disables slider
 - [x] FEATURE: Capital field freely editable — expanded range from ₹5,000 to ₹50,00,000 (was ₹10,000 min)
+
+## Subscription Tier System (Jul 19, 2026)
+- [x] FEATURE: TIER_LIMITS config (shared/tierLimits.ts) — 6 tiers (trial, monthly, quarterly, biannual, annual, admin) with maxTradesPerDay, mcxAccess, backtester, shadowMode, customStrategy, telegram
+- [x] FEATURE: Backend tier enforcement — maxTradesPerDay capped per tier, MCX blocked for trial/monthly, unlimitedTrades blocked for non-annual
+- [x] FEATURE: checkAccess response includes tierLimits + isAdmin flag
+- [x] FEATURE: MCX instruments greyed out + locked in dropdowns for trial/monthly users
+- [x] FEATURE: handleQuickStart + handleInstrumentSwitch MCX access gate with toast error
+- [x] FEATURE: Trade limit display (X/Y) next to trades count in bot cards
+- [x] FEATURE: Backtester upgrade wall — full-screen lock overlay when tier lacks backtester access
+- [x] FEATURE: Telegram section locked overlay in Settings for non-qualifying tiers
+- [x] FEATURE: Shadow Mode section locked overlay in Settings for non-qualifying tiers
+- [x] FEATURE: Admin plan banner hidden for admin users
+- [x] FEATURE: Admin bypasses all tier restrictions (MCX, trade limits, feature gates)
