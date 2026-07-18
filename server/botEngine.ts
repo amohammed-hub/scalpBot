@@ -4029,6 +4029,85 @@ async function tick(
     return;
   }
 
+  // ══════════════════════════════════════════════════════════════════════════════════
+  // ── OPTION EXECUTION QUALITY GATES ─────────────────────────────────────────────
+  // Three pre-entry filters to eliminate trades with guaranteed slippage loss.
+  // ══════════════════════════════════════════════════════════════════════════════════
+  if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
+    // ── FIX 2: Minimum Premium Floor ─────────────────────────────────────────────
+    // Options with premium < ₹10 are illiquid garbage — wide spreads eat you alive on exit.
+    if (optionPremiumForSizing < 10) {
+      const reason = `Entry blocked — premium too low (₹${optionPremiumForSizing.toFixed(1)} < ₹10 floor). Illiquid option.`;
+      console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
+      emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "Premium < ₹10");
+      logSignalToJournal({
+        sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+        direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+        entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+        atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: "Premium < ₹10",
+      });
+      return;
+    }
+
+    // ── FIX 3: Expiry-Day ATM Only (no OTM on 0DTE) ─────────────────────────────
+    // On expiry day, OTM options have extreme theta decay. Force ATM selection.
+    if (resolvedExpiry) {
+      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const isZeroDTE = resolvedExpiry === today;
+      if (isZeroDTE && tradeInstrumentToken !== state.instrumentToken) {
+        emitActivity(state.sessionToken, "signal", `📋 0DTE enforcement: forcing ATM selection (OTM theta decay too high on expiry day)`);
+        console.log(`[BotEngine] ${state.sessionToken} — 0DTE: re-resolving to ATM (was OTM)`);
+        const ceOrPe0dte = signal.direction === "BUY" ? "CE" as const : "PE" as const;
+        const resolvedUnderlying0dte = state.underlyingToken || state.instrumentToken;
+        if (state.accessToken) {
+          const isMcx0dte = resolvedUnderlying0dte.startsWith("MCX_FO|");
+          const atmResolved = isMcx0dte
+            ? await resolveAtmMcxOptionToken(resolvedUnderlying0dte, ceOrPe0dte, state.accessToken)
+            : await resolveAtmOptionToken(resolvedUnderlying0dte, ceOrPe0dte, state.accessToken);
+          if (atmResolved) {
+            tradeInstrumentToken = atmResolved.token;
+            optionPremiumForSizing = atmResolved.premium;
+            state.optionTradeToken = atmResolved.token;
+            state.optionPremiumPrice = atmResolved.premium;
+          }
+        }
+      }
+    }
+
+    // ── FIX 1: Bid-Ask Spread Check (HIGH PRIORITY) ─────────────────────────────
+    // Before entering ANY trade, check the spread. If spread > 5% of premium, SKIP.
+    // Wide spread = guaranteed slippage loss on entry AND exit.
+    if (state.accessToken && tradeInstrumentToken) {
+      const optQuote = await fetchFullQuote(tradeInstrumentToken, state.accessToken);
+      if (optQuote && optQuote.bid > 0 && optQuote.ask > 0) {
+        const spreadAbs = optQuote.ask - optQuote.bid;
+        const midPrice = (optQuote.ask + optQuote.bid) / 2;
+        const spreadPct = midPrice > 0 ? (spreadAbs / midPrice) * 100 : 0;
+        if (spreadPct > 5) {
+          const reason = `Entry blocked — spread too wide (${spreadPct.toFixed(1)}%). Bid: ₹${optQuote.bid.toFixed(1)}, Ask: ₹${optQuote.ask.toFixed(1)}, Spread: ₹${spreadAbs.toFixed(1)}`;
+          console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
+          emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+          pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Spread too wide (${spreadPct.toFixed(1)}%)`);
+          logSignalToJournal({
+            sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+            direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+            entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+            atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `Spread ${spreadPct.toFixed(1)}% > 5%`,
+          });
+          return;
+        }
+        // Update premium with live mid-price for more accurate sizing
+        if (midPrice > 0 && Math.abs(midPrice - optionPremiumForSizing) / optionPremiumForSizing < 0.2) {
+          optionPremiumForSizing = midPrice;
+          state.optionPremiumPrice = midPrice;
+        }
+      }
+      // If quote fetch fails, proceed with LTP-based premium (don't block on API failure)
+    }
+  }
+  // ══════════════════════════════════════════════════════════════════════════════════
+
   // ── Position sizing ───────────────────────────────────────────────────────────────
   // For options: use option premium price for SL distance (not underlying price).
   // SL for options = 50% of premium (standard options risk management).

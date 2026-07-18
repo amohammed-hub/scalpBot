@@ -1039,3 +1039,9 @@
 - [x] STAGE 1 RESULT: V2 wins 3/4 days | Total V2: +₹988 vs V1: -₹392 | Net improvement: +₹1,380
 - [ ] STAGE 2: Paper trade V2 engine Mon-Wed next week (live market, fake money)
 - [ ] STAGE 3: Go live with reduced capital (50%) after Stage 2 approval
+
+## Option Execution Fixes (Strike Selection)
+- [x] Fix 1: Bid-ask spread check before entry (>5% of premium = skip)
+- [x] Fix 2: Minimum premium floor (< ₹10 = skip)
+- [x] Fix 3: Expiry-day ATM only (no OTM on 0DTE)
+- [x] Backtest each fix on 6-month data showing impact on V1 results
