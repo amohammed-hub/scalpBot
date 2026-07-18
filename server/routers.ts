@@ -4199,7 +4199,7 @@ import { sendTelegramMessage } from "./botEngine";
 
 // Helper: get all slot tokens for a session (includes slot3 for admin)
 function getSlotTokens(sessionToken: string, includeSlot3 = false): string[] {
-  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`, `${sessionToken}-slot3`];
+  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
   if (includeSlot3) tokens.push(`${sessionToken}-slot3`);
   return tokens;
 }
