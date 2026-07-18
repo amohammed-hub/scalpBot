@@ -3694,10 +3694,22 @@ async function tick(
   // Hero Zero: expiry-day OTM options (11:00 AM – 1:30 PM IST, NIFTY/BANKNIFTY option instruments)
   const isOptionInstrument = state.instrumentToken.includes("_CE") || state.instrumentToken.includes("_PE");
   const optionType: "CE" | "PE" = state.instrumentToken.includes("_CE") ? "CE" : "PE";
-  // Expiry day detection: Thursday for NIFTY weekly, Wednesday for BANKNIFTY weekly
+  // Expiry day detection:
+  // - NIFTY: weekly expiry every Thursday (dayOfWeek === 4)
+  // - BANKNIFTY: monthly expiry on LAST THURSDAY of month (weekly discontinued Nov 2024)
   const dayOfWeek = now2.getUTCDay(); // 0=Sun, 1=Mon, ... 4=Thu, 3=Wed
   const isBankNiftyOption = state.instrumentToken.includes("BNF") || state.instrumentToken.includes("BANKNIFTY");
-  const isExpiryDay = isOptionInstrument && (isBankNiftyOption ? dayOfWeek === 3 : dayOfWeek === 4);
+  const isLastThursdayOfMonth = (() => {
+    if (dayOfWeek !== 4) return false; // Must be Thursday
+    const istDate = new Date(now2.getTime() + 5.5 * 60 * 60 * 1000);
+    const dayOfMonth = istDate.getUTCDate();
+    // Check if there's another Thursday this month (i.e., day + 7 <= days in month)
+    const year = istDate.getUTCFullYear();
+    const month = istDate.getUTCMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    return (dayOfMonth + 7) > daysInMonth; // No more Thursdays left = last Thursday
+  })();
+  const isExpiryDay = isOptionInstrument && (isBankNiftyOption ? isLastThursdayOfMonth : dayOfWeek === 4);
   const heroZeroWindowStart = 11 * 60;
   const heroZeroWindowEnd   = 13 * 60 + 30;
   const inHeroZeroWindow = isExpiryDay && istMin2 >= heroZeroWindowStart && istMin2 < heroZeroWindowEnd;

@@ -1045,3 +1045,12 @@
 - [x] Fix 2: Minimum premium floor (< ₹10 = skip)
 - [x] Fix 3: Expiry-day ATM only (no OTM on 0DTE)
 - [x] Backtest each fix on 6-month data showing impact on V1 results
+
+## Pre-Monday Paper Trading Verification
+- [x] Kill switch: confirmed ONE button only (sticky sub-bar, line 1257-1266)
+- [x] Auth redirect: Login.tsx redirects to /dashboard if scalpbot_auth_token exists in localStorage
+- [x] BankNifty Hero Zero Wednesday expiry bug — BankNifty weekly expiry discontinued 2024, code still uses dayOfWeek===3 (Wednesday). Fix: use monthly expiry last Thursday detection
+
+## Backlog — Execution Quality (Post Paper Trading)
+- [ ] Correlation gate: if Bot 1 has BUY CE on NIFTY, Bot 2 should NOT also buy CE on NIFTY. Diversify directions or instruments.
+- [ ] Option premium SL: on expiry days, set SL based on option premium price, not underlying spot price
