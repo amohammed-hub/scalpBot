@@ -12,7 +12,7 @@
  */
 import { getDb } from "./db";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, gte } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import axios from "axios";
@@ -37,6 +37,23 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} already in memory — skipping`);
     return false;
   }
+
+  // BUG-9 FIX: Calculate dailyPnl from today's closed trades (same as bot.start)
+  // This avoids double-counting when bot_sessions.dailyPnl is stale but trade_log.bookedPnl was persisted
+  const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const todayStartIST = new Date(nowIST);
+  todayStartIST.setUTCHours(0, 0, 0, 0);
+  const todayStartUTC = new Date(todayStartIST.getTime() - 5.5 * 60 * 60 * 1000);
+  const todayPnlRows = await db
+    .select({ pnl: tradeLog.pnl })
+    .from(tradeLog)
+    .where(and(
+      eq(tradeLog.sessionToken, session.sessionToken),
+      eq(tradeLog.status, "closed"),
+      gte(tradeLog.enteredAt, todayStartUTC),
+    ));
+  const restoredDailyPnl = todayPnlRows.reduce((sum: number, r: { pnl: number | null }) => sum + (r.pnl ?? 0), 0);
+
   // Check if there is an open trade to restore
   const openTradeRows = await db
     .select()
@@ -232,7 +249,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       minConfidence: session.minConfidence ?? 60,
       scanIntervalSec: session.scanIntervalSec ?? 60,
       tradesCount: session.tradesCount ?? 0,
-      dailyPnl: session.dailyPnl ?? 0,
+      dailyPnl: restoredDailyPnl,
       accessToken,
       telegramBotToken: session.telegramBotToken ?? null,
       telegramChatId: session.telegramChatId ?? null,
