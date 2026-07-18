@@ -3532,10 +3532,17 @@ export const appRouter = router({
         try {
           const db2 = await getDb();
           if (db2) {
-            const tgRow = await db2.select({ telegramBotToken: botSessions.telegramBotToken, telegramChatId: botSessions.telegramChatId, telegramEnabled: botSessions.telegramEnabled })
-              .from(botSessions).where(eq(botSessions.sessionToken, input.sessionToken)).limit(1);
-            const tg = tgRow[0];
-            if (tg?.telegramEnabled && tg.telegramBotToken && tg.telegramChatId) {
+            // BUG-7 FIX: Check ALL sessions for Telegram config (not just primary)
+            const { inArray } = await import("drizzle-orm");
+            const allTokens = allBots.map(b => b.sessionToken);
+            if (allTokens.length === 0) allTokens.push(input.sessionToken);
+            const tgRows = await db2.select({ telegramBotToken: botSessions.telegramBotToken, telegramChatId: botSessions.telegramChatId, telegramEnabled: botSessions.telegramEnabled })
+              .from(botSessions).where(inArray(botSessions.sessionToken, allTokens));
+            // Deduplicate: send to each unique chatId only once
+            const sentChatIds = new Set<string>();
+            for (const tg of tgRows) {
+            if (tg?.telegramEnabled && tg.telegramBotToken && tg.telegramChatId && !sentChatIds.has(tg.telegramChatId)) {
+              sentChatIds.add(tg.telegramChatId);
               await sendTelegramMessage(tg.telegramBotToken, tg.telegramChatId,
                 `🚨 <b>KILL SWITCH ACTIVATED</b>\n\n` +
                 `⚠️ ALL bots stopped, ALL positions closed\n` +
@@ -3544,6 +3551,7 @@ export const appRouter = router({
                 (failures.length > 0 ? `❌ Failures: ${failures.join(", ")}\n` : "") +
                 `\n🕐 ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`
               );
+            }
             }
           }
         } catch { /* non-critical */ }
