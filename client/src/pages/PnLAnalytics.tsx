@@ -52,6 +52,7 @@ const clr = (n: number) => n >= 0 ? "text-emerald-400" : "text-red-400";
 const bgClr = (n: number) => n >= 0 ? "#10b981" : "#ef4444";
 
 type ChartView = "per-trade" | "cumulative";
+type TimeTab = "daily" | "weekly" | "monthly";
 
 // ── summary card ─────────────────────────────────────────────────────────────
 function StatCard({ label, value, sub, positive }: { label: string; value: string; sub?: string; positive?: boolean }) {
@@ -72,8 +73,17 @@ export default function PnLAnalytics() {
   const [chartView, setChartView] = useState<ChartView>("per-trade");
   const [botFilter, setBotFilter] = useState<string>("all");
   const [instrumentFilter, setInstrumentFilter] = useState<string>("all");
+  const [timeTab, setTimeTab] = useState<TimeTab>("daily");
 
   const { data: dayData = [], isLoading: dayLoading } = trpc.trades.pnlByDay.useQuery(
+    { sessionToken },
+    { enabled: !!sessionToken, refetchInterval: 60000 }
+  );
+  const { data: weekData = [], isLoading: weekLoading } = trpc.trades.pnlByWeek.useQuery(
+    { sessionToken },
+    { enabled: !!sessionToken, refetchInterval: 60000 }
+  );
+  const { data: monthData = [], isLoading: monthLoading } = trpc.trades.pnlByMonth.useQuery(
     { sessionToken },
     { enabled: !!sessionToken, refetchInterval: 60000 }
   );
@@ -216,7 +226,7 @@ export default function PnLAnalytics() {
     URL.revokeObjectURL(url);
   };
 
-  const isLoading = dayLoading || exportLoading;
+  const isLoading = dayLoading || weekLoading || monthLoading || exportLoading;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -377,54 +387,168 @@ export default function PnLAnalytics() {
           </div>
         )}
 
-        {/* Daily Breakdown Table — Always visible, prominent */}
+        {/* Day / Week / Month Breakdown with Tabs */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">📅 Daily Breakdown</h2>
-            <span className="text-xs text-zinc-500">{dayData.length} trading days</span>
+          {/* Tab bar */}
+          <div className="flex border-b border-zinc-800">
+            {(["daily", "weekly", "monthly"] as TimeTab[]).map(t => (
+              <button
+                key={t}
+                onClick={() => setTimeTab(t)}
+                className={`px-5 py-3 text-sm font-medium capitalize transition-colors ${
+                  timeTab === t
+                    ? "text-white border-b-2 border-emerald-500 bg-zinc-800"
+                    : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {t === "daily" ? "📅 Daily" : t === "weekly" ? "📆 Weekly" : "🗓️ Monthly"}
+              </button>
+            ))}
           </div>
-          <div className="overflow-x-auto">
-            {dayLoading ? (
-              <div className="p-8 text-center text-zinc-500 text-sm">Loading…</div>
-            ) : dayData.length === 0 ? (
-              <div className="p-8 text-center text-zinc-500 text-sm">No data yet</div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-zinc-500 uppercase border-b border-zinc-800">
-                    <th className="px-4 py-3 text-left">Date</th>
-                    <th className="px-4 py-3 text-right">Trades</th>
-                    <th className="px-4 py-3 text-right">W / L</th>
-                    <th className="px-4 py-3 text-right">Win Rate</th>
-                    <th className="px-4 py-3 text-right">Total P&amp;L</th>
-                    <th className="px-4 py-3 text-right">Best Trade</th>
-                    <th className="px-4 py-3 text-right">Worst Trade</th>
-                    <th className="px-4 py-3 text-right">Avg P&amp;L</th>
-                    <th className="px-4 py-3 text-left">Instruments</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dayData.map((d, i) => (
-                    <tr key={d.date} className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
-                      <td className="px-4 py-3 font-mono text-zinc-300">{d.date}</td>
-                      <td className="px-4 py-3 text-right text-zinc-400">{d.trades}</td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="text-emerald-400">{d.wins}</span>
-                        <span className="text-zinc-600"> / </span>
-                        <span className="text-red-400">{d.losses}</span>
-                      </td>
-                      <td className={`px-4 py-3 text-right font-medium ${clr(d.winRate - 50)}`}>{pct(d.winRate)}</td>
-                      <td className={`px-4 py-3 text-right font-bold ${clr(d.totalPnl)}`}>{fmt(d.totalPnl)}</td>
-                      <td className="px-4 py-3 text-right text-emerald-400">{fmt(d.bestTrade)}</td>
-                      <td className="px-4 py-3 text-right text-red-400">{fmt(d.worstTrade)}</td>
-                      <td className={`px-4 py-3 text-right ${clr(d.avgPnl)}`}>{fmt(d.avgPnl)}</td>
-                      <td className="px-4 py-3 text-zinc-500 text-xs max-w-[160px] truncate">{d.instruments || "—"}</td>
+
+          {/* Daily Table */}
+          {timeTab === "daily" && (
+            <div className="overflow-x-auto">
+              {dayLoading ? (
+                <div className="p-8 text-center text-zinc-500 text-sm">Loading…</div>
+              ) : dayData.length === 0 ? (
+                <div className="p-8 text-center text-zinc-500 text-sm">No data yet</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-zinc-500 uppercase border-b border-zinc-800">
+                      <th className="px-4 py-3 text-left">Date</th>
+                      <th className="px-4 py-3 text-right">Trades</th>
+                      <th className="px-4 py-3 text-right">W / L</th>
+                      <th className="px-4 py-3 text-right">Win Rate</th>
+                      <th className="px-4 py-3 text-right">Total P&amp;L</th>
+                      <th className="px-4 py-3 text-right">Best Trade</th>
+                      <th className="px-4 py-3 text-right">Worst Trade</th>
+                      <th className="px-4 py-3 text-right">Avg P&amp;L</th>
+                      <th className="px-4 py-3 text-left">Instruments</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+                  </thead>
+                  <tbody>
+                    {dayData.map((d, i) => (
+                      <tr key={d.date} className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
+                        <td className="px-4 py-3 font-mono text-zinc-300">{d.date}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{d.trades}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-emerald-400">{d.wins}</span>
+                          <span className="text-zinc-600"> / </span>
+                          <span className="text-red-400">{d.losses}</span>
+                        </td>
+                        <td className={`px-4 py-3 text-right font-medium ${clr(d.winRate - 50)}`}>{pct(d.winRate)}</td>
+                        <td className={`px-4 py-3 text-right font-bold ${clr(d.totalPnl)}`}>{fmt(d.totalPnl)}</td>
+                        <td className="px-4 py-3 text-right text-emerald-400">{fmt(d.bestTrade)}</td>
+                        <td className="px-4 py-3 text-right text-red-400">{fmt(d.worstTrade)}</td>
+                        <td className={`px-4 py-3 text-right ${clr(d.avgPnl)}`}>{fmt(d.avgPnl)}</td>
+                        <td className="px-4 py-3 text-zinc-500 text-xs max-w-[160px] truncate">{d.instruments || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {/* Weekly Table */}
+          {timeTab === "weekly" && (
+            <div className="overflow-x-auto">
+              {weekLoading ? (
+                <div className="p-8 text-center text-zinc-500 text-sm">Loading…</div>
+              ) : weekData.length === 0 ? (
+                <div className="p-8 text-center text-zinc-500 text-sm">No data yet</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-zinc-500 uppercase border-b border-zinc-800">
+                      <th className="px-4 py-3 text-left">Week</th>
+                      <th className="px-4 py-3 text-left">Range</th>
+                      <th className="px-4 py-3 text-right">Trades</th>
+                      <th className="px-4 py-3 text-right">W / L</th>
+                      <th className="px-4 py-3 text-right">Win Rate</th>
+                      <th className="px-4 py-3 text-right">Total P&amp;L</th>
+                      <th className="px-4 py-3 text-right">Best Trade</th>
+                      <th className="px-4 py-3 text-right">Worst Trade</th>
+                      <th className="px-4 py-3 text-right">Best Day</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {weekData.map((w, i) => (
+                      <tr key={w.weekKey} className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
+                        <td className="px-4 py-3 font-mono text-zinc-300 text-xs">{w.weekKey}</td>
+                        <td className="px-4 py-3 text-zinc-400 text-xs">{w.weekRange}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{w.trades}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-emerald-400">{w.wins}</span>
+                          <span className="text-zinc-600"> / </span>
+                          <span className="text-red-400">{w.losses}</span>
+                        </td>
+                        <td className={`px-4 py-3 text-right font-medium ${clr(w.winRate - 50)}`}>{pct(w.winRate)}</td>
+                        <td className={`px-4 py-3 text-right font-bold ${clr(w.totalPnl)}`}>{fmt(w.totalPnl)}</td>
+                        <td className="px-4 py-3 text-right text-emerald-400">{fmt(w.bestTrade)}</td>
+                        <td className="px-4 py-3 text-right text-red-400">{fmt(w.worstTrade)}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400 text-xs">{w.bestDay}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {/* Monthly Table */}
+          {timeTab === "monthly" && (
+            <div className="overflow-x-auto">
+              {monthLoading ? (
+                <div className="p-8 text-center text-zinc-500 text-sm">Loading…</div>
+              ) : monthData.length === 0 ? (
+                <div className="p-8 text-center text-zinc-500 text-sm">No data yet</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-zinc-500 uppercase border-b border-zinc-800">
+                      <th className="px-4 py-3 text-left">Month</th>
+                      <th className="px-4 py-3 text-right">Trades</th>
+                      <th className="px-4 py-3 text-right">W / L</th>
+                      <th className="px-4 py-3 text-right">Win Rate</th>
+                      <th className="px-4 py-3 text-right">Total P&amp;L</th>
+                      <th className="px-4 py-3 text-right">Best Trade</th>
+                      <th className="px-4 py-3 text-right">Worst Trade</th>
+                      <th className="px-4 py-3 text-right">Avg Daily P&amp;L</th>
+                      <th className="px-4 py-3 text-right">Trading Days</th>
+                      <th className="px-4 py-3 text-right">Consistency</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthData.map((m, i) => (
+                      <tr key={m.monthKey} className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
+                        <td className="px-4 py-3 font-medium text-zinc-200">{m.monthLabel}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{m.trades}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-emerald-400">{m.wins}</span>
+                          <span className="text-zinc-600"> / </span>
+                          <span className="text-red-400">{m.losses}</span>
+                        </td>
+                        <td className={`px-4 py-3 text-right font-medium ${clr(m.winRate - 50)}`}>{pct(m.winRate)}</td>
+                        <td className={`px-4 py-3 text-right font-bold text-lg ${clr(m.totalPnl)}`}>{fmt(m.totalPnl)}</td>
+                        <td className="px-4 py-3 text-right text-emerald-400">{fmt(m.bestTrade)}</td>
+                        <td className="px-4 py-3 text-right text-red-400">{fmt(m.worstTrade)}</td>
+                        <td className={`px-4 py-3 text-right ${clr(m.avgDailyPnl)}`}>{fmt(m.avgDailyPnl)}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{m.tradingDays}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={`font-medium ${m.consistency >= 60 ? "text-emerald-400" : m.consistency >= 40 ? "text-yellow-400" : "text-red-400"}`}>
+                            {pct(m.consistency)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Full Trade Journal Table */}
