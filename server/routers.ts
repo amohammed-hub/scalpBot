@@ -1397,15 +1397,18 @@ export const appRouter = router({
       }),
 
     todayStats: publicProcedure
-      .input(z.object({ sessionToken: sessionTokenSchema }))
-      .query(async ({ input }) => {
-        const db = await getDb();
-        if (!db) return { todayTrades: 0, todayPnl: 0, wins: 0, losses: 0, winRate: 0 };
-        const { inArray: inArrayToday } = await import("drizzle-orm");
-        const todayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const trades = await db
+     .input(z.object({ sessionToken: sessionTokenSchema }))
+     .query(async ({ input }) => {
+       const db = await getDb();
+       if (!db) return { todayTrades: 0, todayPnl: 0, wins: 0, losses: 0, winRate: 0 };
+       const { inArray: inArrayToday } = await import("drizzle-orm");
+       const todayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        // IST midnight calculation (UTC+5:30) — Railway runs in UTC
+        const nowMs_ = Date.now(); const istOff_ = 5.5 * 60 * 60 * 1000;
+        const istNow = new Date(nowMs_ + istOff_);
+        istNow.setUTCHours(0, 0, 0, 0);
+        const today = new Date(istNow.getTime() - istOff_);
+       const trades = await db
           .select()
           .from(tradeLog)
           .where(and(
@@ -2764,12 +2767,15 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return { success: false, error: "DB unavailable" };
 
-        // Get today's trades for this session
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const trades = await db
-          .select()
-          .from(tradeLog)
+       // Get today's trades for this session
+        // IST midnight calculation (UTC+5:30) — Railway runs in UTC
+        const nowMs_ = Date.now(); const istOff_ = 5.5 * 60 * 60 * 1000;
+        const istNow = new Date(nowMs_ + istOff_);
+        istNow.setUTCHours(0, 0, 0, 0);
+        const today = new Date(istNow.getTime() - istOff_);
+       const trades = await db
+         .select()
+         .from(tradeLog)
           .where(and(
             eq(tradeLog.sessionToken, input.sessionToken),
             eq(tradeLog.status, "closed"),
