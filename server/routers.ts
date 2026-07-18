@@ -2,8 +2,9 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess, createAccessGrant, listAccessGrants, revokeAccessGrant, extendAccessGrant } from "./db";
-import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers } from "../drizzle/schema";
+import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, notificationPreferences, adminSettings, broadcastMessages, alertTemplates, subscriptions } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
@@ -4191,6 +4192,230 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
         return extendAccessGrant(input.grantId, input.additionalDays);
+      }),
+  }),
+
+  // ── Notification Preferences ──────────────────────────────────────────────
+  notifPrefs: router({
+    get: publicProcedure
+      .input(z.object({ sessionToken: z.string() }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return { tradeEntry: 1, tradeExit: 1, dailySummary: 1, criticalAlerts: 1, announcements: 1 };
+        const rows = await db.select().from(notificationPreferences).where(eq(notificationPreferences.sessionToken, input.sessionToken)).limit(1);
+        if (rows.length === 0) {
+          // Auto-create defaults for new user
+          await db.insert(notificationPreferences).values({ sessionToken: input.sessionToken });
+          return { tradeEntry: 1, tradeExit: 1, dailySummary: 1, criticalAlerts: 1, announcements: 1 };
+        }
+        const r = rows[0];
+        return { tradeEntry: r.tradeEntry, tradeExit: r.tradeExit, dailySummary: r.dailySummary, criticalAlerts: r.criticalAlerts, announcements: r.announcements };
+      }),
+    update: publicProcedure
+      .input(z.object({
+        sessionToken: z.string(),
+        tradeEntry: z.number().min(0).max(1).optional(),
+        tradeExit: z.number().min(0).max(1).optional(),
+        dailySummary: z.number().min(0).max(1).optional(),
+        criticalAlerts: z.number().min(0).max(1).optional(),
+        announcements: z.number().min(0).max(1).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB not available");
+        const { sessionToken, ...prefs } = input;
+        // Upsert: try update, if no rows affected then insert
+        const existing = await db.select().from(notificationPreferences).where(eq(notificationPreferences.sessionToken, sessionToken)).limit(1);
+        if (existing.length === 0) {
+          await db.insert(notificationPreferences).values({ sessionToken, ...prefs });
+        } else {
+          const updateData: Record<string, number> = {};
+          if (prefs.tradeEntry !== undefined) updateData.tradeEntry = prefs.tradeEntry;
+          if (prefs.tradeExit !== undefined) updateData.tradeExit = prefs.tradeExit;
+          if (prefs.dailySummary !== undefined) updateData.dailySummary = prefs.dailySummary;
+          if (prefs.criticalAlerts !== undefined) updateData.criticalAlerts = prefs.criticalAlerts;
+          if (prefs.announcements !== undefined) updateData.announcements = prefs.announcements;
+          if (Object.keys(updateData).length > 0) {
+            await db.update(notificationPreferences).set(updateData).where(eq(notificationPreferences.sessionToken, sessionToken));
+          }
+        }
+        return { success: true };
+      }),
+  }),
+
+  // ── Admin Notification Control ────────────────────────────────────────────
+  adminNotif: router({
+    // Master switch
+    getMasterSwitch: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) return { active: true };
+        const rows = await db.select().from(adminSettings).where(eq(adminSettings.key, "telegram_alerts_active")).limit(1);
+        return { active: rows.length > 0 ? rows[0].value === "1" : true };
+      }),
+    setMasterSwitch: publicProcedure
+      .input(z.object({ active: z.boolean() }))
+      .mutation(async ({ input, ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) throw new Error("DB not available");
+        const existing = await db.select().from(adminSettings).where(eq(adminSettings.key, "telegram_alerts_active")).limit(1);
+        if (existing.length === 0) {
+          await db.insert(adminSettings).values({ key: "telegram_alerts_active", value: input.active ? "1" : "0" });
+        } else {
+          await db.update(adminSettings).set({ value: input.active ? "1" : "0" }).where(eq(adminSettings.key, "telegram_alerts_active"));
+        }
+        return { success: true };
+      }),
+    // Per-user notification overrides list
+    listUserPrefs: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) return [];
+        const rows = await db.select().from(notificationPreferences);
+        return rows;
+      }),
+    // Admin force override a user's prefs
+    overrideUserPrefs: publicProcedure
+      .input(z.object({
+        sessionToken: z.string(),
+        tradeEntry: z.number().min(0).max(1).optional(),
+        tradeExit: z.number().min(0).max(1).optional(),
+        dailySummary: z.number().min(0).max(1).optional(),
+        criticalAlerts: z.number().min(0).max(1).optional(),
+        announcements: z.number().min(0).max(1).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) throw new Error("DB not available");
+        const { sessionToken, ...prefs } = input;
+        const existing = await db.select().from(notificationPreferences).where(eq(notificationPreferences.sessionToken, sessionToken)).limit(1);
+        const updateData: Record<string, any> = { adminOverride: 1 };
+        if (prefs.tradeEntry !== undefined) updateData.tradeEntry = prefs.tradeEntry;
+        if (prefs.tradeExit !== undefined) updateData.tradeExit = prefs.tradeExit;
+        if (prefs.dailySummary !== undefined) updateData.dailySummary = prefs.dailySummary;
+        if (prefs.criticalAlerts !== undefined) updateData.criticalAlerts = prefs.criticalAlerts;
+        if (prefs.announcements !== undefined) updateData.announcements = prefs.announcements;
+        if (existing.length === 0) {
+          await db.insert(notificationPreferences).values({ sessionToken, ...updateData });
+        } else {
+          await db.update(notificationPreferences).set(updateData).where(eq(notificationPreferences.sessionToken, sessionToken));
+        }
+        return { success: true };
+      }),
+    // Broadcast: create/send
+    listBroadcasts: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) return [];
+        return db.select().from(broadcastMessages).orderBy(desc(broadcastMessages.id)).limit(50);
+      }),
+    sendBroadcast: publicProcedure
+      .input(z.object({
+        message: z.string().min(1),
+        audience: z.enum(["all", "paid", "free", "specific"]),
+        specificTarget: z.string().optional(),
+        scheduledAt: z.string().optional(), // ISO date or null for immediate
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) throw new Error("DB not available");
+        // If scheduled for later, just save as "scheduled"
+        if (input.scheduledAt) {
+          await db.insert(broadcastMessages).values({
+            message: input.message,
+            audience: input.audience,
+            specificTarget: input.specificTarget || null,
+            status: "scheduled",
+            scheduledAt: new Date(input.scheduledAt),
+          });
+          return { success: true, status: "scheduled" };
+        }
+        // Send now: find all sessions with announcements ON
+        let sessions: { sessionToken: string }[] = [];
+        if (input.audience === "specific" && input.specificTarget) {
+          sessions = [{ sessionToken: input.specificTarget }];
+        } else {
+          const allPrefs = await db.select().from(notificationPreferences).where(eq(notificationPreferences.announcements, 1));
+          sessions = allPrefs;
+          // Filter by audience if needed
+          if (input.audience === "paid" || input.audience === "free") {
+            const allSubs = await db.select({ sessionToken: subscriptions.sessionToken, plan: subscriptions.plan, status: subscriptions.status }).from(subscriptions).where(eq(subscriptions.status, "active"));
+            const planMap = new Map(allSubs.map((s: { sessionToken: string; plan: string }) => [s.sessionToken, s.plan]));
+            sessions = sessions.filter((s: { sessionToken: string }) => {
+              const plan = planMap.get(s.sessionToken);
+              if (input.audience === "paid") return plan && plan !== "trial";
+              return !plan || plan === "trial";
+            });
+          }
+        }
+        // Send to each session's Telegram
+        let sentCount = 0;
+        let failedCount = 0;
+        for (const session of sessions) {
+          try {
+            const botSessionRows = await db.select().from(botSessions).where(eq(botSessions.sessionToken, session.sessionToken)).limit(1);
+            if (botSessionRows.length > 0 && botSessionRows[0].telegramChatId && botSessionRows[0].telegramBotToken) {
+              await sendTelegramMessage(botSessionRows[0].telegramBotToken, botSessionRows[0].telegramChatId, `🔔 Announcement\n\n${input.message}`);
+              sentCount++;
+            }
+          } catch { failedCount++; }
+        }
+        await db.insert(broadcastMessages).values({
+          message: input.message,
+          audience: input.audience,
+          specificTarget: input.specificTarget || null,
+          status: "sent",
+          sentAt: new Date(),
+          sentCount,
+          failedCount,
+        });
+        return { success: true, status: "sent", sentCount, failedCount };
+      }),
+    // Alert Templates CRUD
+    getTemplates: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) return [];
+        return db.select().from(alertTemplates);
+      }),
+    updateTemplate: publicProcedure
+      .input(z.object({
+        templateType: z.enum(["entry", "exit", "daily_summary", "critical"]),
+        template: z.string().min(1),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) throw new Error("DB not available");
+        await db.update(alertTemplates).set({ template: input.template }).where(eq(alertTemplates.templateType, input.templateType));
+        return { success: true };
+      }),
+    previewTemplate: publicProcedure
+      .input(z.object({
+        templateType: z.enum(["entry", "exit", "daily_summary", "critical"]),
+        template: z.string(),
+      }))
+      .query(({ input }) => {
+        // Return preview with sample data
+        const sampleData: Record<string, Record<string, string>> = {
+          entry: { direction: "BUY", strategy: "VWAP_Bounce", symbol: "NIFTY 24300 CE", entryPrice: "285.50", sl: "142.75", target: "571.00", confidence: "78", qty: "65", reason: "Price bounced off VWAP with strong volume" },
+          exit: { exitReason: "TARGET HIT", symbol: "NIFTY 24300 CE", exitPrice: "571.00", pnlSign: "+", pnl: "18,557", bookedPnl: "4,200", dayPnl: "22,340", tradesCount: "3" },
+          daily_summary: { marketLabel: "NSE", date: "18 Jul 2026", pnlSign: "+", netPnl: "8,450", totalTrades: "5", wins: "3", losses: "2", winRate: "60", bestTrade: "4,200", worstTrade: "-1,800", timestamp: "18 Jul 2026, 3:30:00 PM IST" },
+          critical: { alertTitle: "DAILY LOSS LIMIT HIT", symbol: "CRUDEOIL 7550 PE", details: "Day P&L: ₹-15,000 | Limit: ₹-15,000", action: "Bot PAUSED — no new trades until tomorrow" },
+        };
+        let preview = input.template;
+        const data = sampleData[input.templateType] || {};
+        for (const [key, val] of Object.entries(data)) {
+          preview = preview.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), val);
+        }
+        return { preview };
       }),
   }),
 });

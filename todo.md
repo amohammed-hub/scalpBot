@@ -1101,6 +1101,29 @@
 
 ## BACKLOG: Paid Extra Bot Slots + Strategy Subset Config
 
+## Notification Preferences + Admin Broadcast Control
+
+### User Side (Settings → Telegram)
+- [x] NOTIF-PREFS: DB schema — notification_preferences table (sessionToken, tradeEntry, tradeExit, dailySummary, criticalAlerts, announcements — all default ON)
+- [x] NOTIF-PREFS: tRPC procedure — notifPrefs.get / notifPrefs.update (per-session toggles)
+- [x] NOTIF-PREFS: Settings UI — 5 toggles (Trade Entry, Trade Exit, Daily Summary, Critical Alerts, Announcements)
+- [x] NOTIF-PREFS: botEngine respects user prefs before sending each alert type
+
+### Admin Side — Global Notification Control
+- [x] ADMIN-NOTIF: Master switch "Telegram Alerts Active" (ON/OFF for entire platform) stored in admin_settings table
+- [x] ADMIN-NOTIF: Per-user override list — see all users with their toggles, force ON/OFF any user's alerts
+
+### Admin Side — Custom Broadcast Editor
+- [x] ADMIN-BROADCAST: Text field + preview for custom Telegram message
+- [x] ADMIN-BROADCAST: Send to filter — All Users / Paid Only / Free Only / Specific User
+- [x] ADMIN-BROADCAST: Schedule — Send Now / Schedule for later (date+time picker)
+- [x] ADMIN-BROADCAST: Only sends to users with "Announcements" toggle ON
+
+### Admin Side — Message Template Editor
+- [x] ADMIN-TEMPLATES: Editable templates for Entry, Exit, Daily Summary, Critical alerts
+- [x] ADMIN-TEMPLATES: Preview with sample data
+- [x] ADMIN-TEMPLATES: Save template → all future alerts use new format (no code changes needed)
+
 - [ ] PAID-SLOTS: In pricing/admin panel, add option for users to buy extra bot slots (₹2,999/month per extra, max 6 total)
 - [ ] PAID-SLOTS: Admin can grant extra slots for free (like referral system)
 - [ ] STRATEGY-SUBSET: Per-bot strategy layer assignment (Approach 2 — each bot uses different strategy subset)

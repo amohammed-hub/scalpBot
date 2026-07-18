@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, float, boolean, bigint } from "drizzle-orm/mysql-core";
+import { int, tinyint, mysqlEnum, mysqlTable, text, timestamp, varchar, float, boolean, bigint } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -245,3 +245,52 @@ export const accessGrants = mysqlTable("access_grants", {
 });
 export type AccessGrant = typeof accessGrants.$inferSelect;
 export type InsertAccessGrant = typeof accessGrants.$inferInsert;
+
+// ── Notification Preferences (per-user toggles) ──────────────────────────────
+export const notificationPreferences = mysqlTable("notification_preferences", {
+  id: int("id").autoincrement().primaryKey(),
+  sessionToken: varchar("sessionToken", { length: 255 }).notNull().unique(),
+  tradeEntry: tinyint("tradeEntry").default(1).notNull(), // 1=ON, 0=OFF
+  tradeExit: tinyint("tradeExit").default(1).notNull(),
+  dailySummary: tinyint("dailySummary").default(1).notNull(),
+  criticalAlerts: tinyint("criticalAlerts").default(1).notNull(),
+  announcements: tinyint("announcements").default(1).notNull(),
+  // Admin override: if set, overrides user's own preferences
+  adminOverride: tinyint("adminOverride").default(0).notNull(), // 1 = admin has forced settings
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type NotificationPreference = typeof notificationPreferences.$inferSelect;
+
+// ── Admin Settings (global platform config) ──────────────────────────────────
+export const adminSettings = mysqlTable("admin_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  key: varchar("settingKey", { length: 128 }).notNull().unique(),
+  value: text("settingValue").notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// ── Broadcast Messages (admin announcements) ──────────────────────────────────
+export const broadcastMessages = mysqlTable("broadcast_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  message: text("message").notNull(),
+  audience: mysqlEnum("audience", ["all", "paid", "free", "specific"]).default("all").notNull(),
+  specificTarget: varchar("specificTarget", { length: 255 }), // specific user mobile/session
+  status: mysqlEnum("status", ["draft", "sent", "scheduled", "failed"]).default("draft").notNull(),
+  scheduledAt: timestamp("scheduledAt"), // null = send now
+  sentAt: timestamp("sentAt"),
+  sentCount: int("sentCount").default(0),
+  failedCount: int("failedCount").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type BroadcastMessage = typeof broadcastMessages.$inferSelect;
+
+// ── Alert Templates (editable message formats) ──────────────────────────────
+export const alertTemplates = mysqlTable("alert_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  templateType: mysqlEnum("templateType", ["entry", "exit", "daily_summary", "critical"]).notNull().unique(),
+  template: text("template").notNull(), // template string with {{variable}} placeholders
+  isActive: tinyint("isActive").default(1).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AlertTemplate = typeof alertTemplates.$inferSelect;

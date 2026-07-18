@@ -233,8 +233,27 @@ export interface ShadowSummary {
 const bots = new Map<string, BotState>();
 
 // ── Telegram alert helper ─────────────────────────────────────────────────────
-export async function sendTelegramAlert(state: BotState, message: string): Promise<void> {
+export type AlertCategory = "tradeEntry" | "tradeExit" | "dailySummary" | "criticalAlerts" | "announcements";
+
+export async function sendTelegramAlert(state: BotState, message: string, category?: AlertCategory): Promise<void> {
   if (!state.telegramEnabled || !state.telegramBotToken || !state.telegramChatId) return;
+  // Check master switch and user notification preferences
+  if (category) {
+    try {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      const { adminSettings, notificationPreferences } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      // Master switch — if OFF, block all alerts
+      const [masterRow] = await db.select().from(adminSettings).where(eq(adminSettings.key, "telegram_master_switch")).limit(1);
+      if (masterRow && masterRow.value === "off") return;
+      // User preference — if category disabled, block
+      const [prefs] = await db.select().from(notificationPreferences).where(eq(notificationPreferences.sessionToken, state.sessionToken)).limit(1);
+      if (prefs && prefs[category] === 0) return;
+    } catch {
+      // Fail-open: if DB check fails, still send the alert
+    }
+  }
   try {
     await axios.post(
       `https://api.telegram.org/bot${state.telegramBotToken}/sendMessage`,
@@ -2903,7 +2922,7 @@ async function tick(
         `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +
         `⏸ Bot PAUSED — no new trades until tomorrow\n` +
         `⚠️ Review positions and risk settings`
-      );
+      , "criticalAlerts");
       return;
     }
   }
@@ -3182,7 +3201,7 @@ async function tick(
           : (trade.entryPrice - effectivePrice) * cfRemQty;
         const totalPnl = unrealizedPnl + (trade.bookedPnlAddedToDaily ? 0 : trade.bookedPnl);
         emitActivity(state.sessionToken, "market_closed", `🌙 Carry Forward Active — ${trade.symbolLabel} held overnight | Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
-        sendTelegramAlert(state, `🌙 <b>CARRY FORWARD</b>\n📊 <b>${trade.symbolLabel}</b>\n💰 Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}\n⏰ Trade held overnight — will resume tomorrow`);
+        sendTelegramAlert(state, `🌙 <b>CARRY FORWARD</b>\n📊 <b>${trade.symbolLabel}</b>\n💰 Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}\n⏰ Trade held overnight — will resume tomorrow`, "tradeExit");
         console.log(`[BotEngine] ${state.sessionToken} — carry forward active, skipping auto square-off | Unrealized P&L: ₹${totalPnl.toFixed(0)}`);
       }
       return; // Skip square-off — trade stays open
@@ -3193,7 +3212,7 @@ async function tick(
       if (!sqOffId) {
         state.lastError = `Auto square-off REJECTED — close ${trade.symbolLabel} manually on Upstox`;
         emitActivity(state.sessionToken, "error", `⚠ AUTO SQUARE-OFF FAILED — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
-        sendTelegramAlert(state, `🚨 <b>AUTO SQUARE-OFF FAILED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Market close order rejected. CLOSE MANUALLY ON UPSTOX NOW.`);
+        sendTelegramAlert(state, `🚨 <b>AUTO SQUARE-OFF FAILED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Market close order rejected. CLOSE MANUALLY ON UPSTOX NOW.`, "criticalAlerts");
         return; // do NOT close trade in DB — position still open
       }
    }
@@ -3252,7 +3271,7 @@ async function tick(
           if (!heroOrderId2) {
             state.lastError = `Hero Zero exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
             emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
-            sendTelegramAlert(state, `🚨 <b>HERO ZERO EXIT FAILED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Exit order rejected. CLOSE MANUALLY ON UPSTOX.`);
+            sendTelegramAlert(state, `🚨 <b>HERO ZERO EXIT FAILED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Exit order rejected. CLOSE MANUALLY ON UPSTOX.`, "criticalAlerts");
             return; // do NOT close trade in DB — position still open
           }
         }
@@ -3296,7 +3315,7 @@ async function tick(
           if (!partialOrderId) {
             state.lastError = `Partial 1R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 1R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
-            sendTelegramAlert(state, `🚨 <b>PARTIAL BOOKING FAILED (1R)</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not book 50% profit. Will retry.`);
+            sendTelegramAlert(state, `🚨 <b>PARTIAL BOOKING FAILED (1R)</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not book 50% profit. Will retry.`, "criticalAlerts");
             return; // do NOT update bookedQty/bookedPnl — order didn't execute
           }
        }
@@ -3348,7 +3367,7 @@ async function tick(
           if (!partialOrderId) {
             state.lastError = `Partial 2R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 2R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
-            sendTelegramAlert(state, `🚨 <b>PARTIAL BOOKING FAILED (2R)</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not book 25% profit. Will retry.`);
+            sendTelegramAlert(state, `🚨 <b>PARTIAL BOOKING FAILED (2R)</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not book 25% profit. Will retry.`, "criticalAlerts");
             return; // do NOT update bookedQty/bookedPnl — order didn't execute
           }
        }
@@ -3618,7 +3637,7 @@ async function tick(
           // Both attempts failed — keep trade open, alert user to close manually
           state.lastError = `EXIT ORDER FAILED — close ${trade.symbolLabel} manually on Upstox`;
           emitActivity(state.sessionToken, "error", `⚠ EXIT ORDER FAILED (${exitReason}) — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
-          sendTelegramAlert(state, `🚨 <b>EXIT ORDER FAILED</b> — ${exitReason}\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not place exit order after 2 attempts.\n⚠ CLOSE MANUALLY ON UPSTOX NOW.`);
+          sendTelegramAlert(state, `🚨 <b>EXIT ORDER FAILED</b> — ${exitReason}\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not place exit order after 2 attempts.\n⚠ CLOSE MANUALLY ON UPSTOX NOW.`, "criticalAlerts");
           return; // do NOT close in DB — trade remains open until manual intervention
         }
       }
@@ -3657,7 +3676,8 @@ async function tick(
         `📊 <b>${state.instrumentLabel}</b> | Exit: ₹${effectivePrice.toFixed(2)}\n` +
         `💰 Total P&L: ${pnlSign}₹${totalPnl.toFixed(0)}` +
         (trade.bookedPnl > 0 ? ` (locked: ₹${trade.bookedPnl.toFixed(0)})` : "") +
-        `\n📈 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Trades: ${state.tradesCount}`,
+        `\n📈 Day P&L: ${state.dailyPnl.toFixed(0)} | Trades: ${state.tradesCount}`,
+        "tradeExit",
       );
     }
     return;
@@ -4398,6 +4418,7 @@ async function tick(
       `✂️ Cut: ₹${signal.slPrice.toFixed(1)} (50% loss)\n` +
       `📊 Book 50% at ₹${partial1RPrice.toFixed(1)} | 25% at ₹${partial2RPrice.toFixed(1)}\n` +
       `💯 Confidence: ${(signal.confidence * 100).toFixed(0)}%`,
+      "tradeEntry",
     );
   } else {
     sendTelegramAlert(state,
@@ -4406,6 +4427,7 @@ async function tick(
       `🛑 SL: ₹${signal.slPrice.toFixed(2)} | 🎯 Target: ₹${signal.targetPrice.toFixed(2)}\n` +
       `💯 Confidence: ${(signal.confidence * 100).toFixed(0)}% | Qty: ${quantity}\n` +
       `📝 ${signal.reason}`,
+      "tradeEntry",
     );
   }
   } catch (tickErr: unknown) {

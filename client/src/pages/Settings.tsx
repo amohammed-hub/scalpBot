@@ -1178,6 +1178,19 @@ export default function Settings() {
         </div>
 
         {/* ── MCX Quick Launch ─────────────────────────────────────────────── */}
+        {/* ── Notification Preferences ──────────────────────────────────────── */}
+        <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
+          <div className="p-5 border-b border-white/10">
+            <div className="flex items-center gap-2 mb-1">
+              <Bell className="w-5 h-5 text-purple-400" />
+              <span className="font-semibold text-white text-sm">Notification Preferences</span>
+            </div>
+            <p className="text-xs text-white/40">Choose which Telegram alerts you want to receive. All are ON by default.</p>
+          </div>
+          <NotificationToggles sessionToken={sessionToken} />
+        </div>
+
+        {/* ── MCX Quick Launch (moved below notification prefs) ─────────────── */}
         <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
           <div className="p-5 border-b border-white/10">
             <div className="flex items-center gap-2 mb-1">
@@ -1359,6 +1372,48 @@ export default function Settings() {
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+// ── Notification Preferences Toggles ────────────────────────────────────────
+function NotificationToggles({ sessionToken }: { sessionToken: string }) {
+  const { data: prefs, refetch } = trpc.notifPrefs.get.useQuery({ sessionToken });
+  const updateMutation = trpc.notifPrefs.update.useMutation({
+    onSuccess: () => { refetch(); toast.success("Preference updated"); },
+    onError: () => toast.error("Failed to update preference"),
+  });
+
+  const toggles = [
+    { key: "tradeEntry" as const, label: "Trade Entry Alerts", desc: "When bot enters a trade", icon: "📊" },
+    { key: "tradeExit" as const, label: "Trade Exit Alerts", desc: "When bot exits with P&L", icon: "💰" },
+    { key: "dailySummary" as const, label: "Daily P&L Summary", desc: "End of day report", icon: "📈" },
+    { key: "criticalAlerts" as const, label: "Critical Alerts", desc: "Bot stopped, loss limit hit, token expired", icon: "🚨" },
+    { key: "announcements" as const, label: "Product Updates & Announcements", desc: "Admin broadcasts", icon: "🔔" },
+  ];
+
+  return (
+    <div className="p-5 space-y-3">
+      {toggles.map(t => {
+        const isOn = prefs ? prefs[t.key] === 1 : true;
+        return (
+          <div key={t.key} className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
+            <div className="flex items-center gap-3">
+              <span className="text-lg">{t.icon}</span>
+              <div>
+                <p className="text-sm text-white font-medium">{t.label}</p>
+                <p className="text-xs text-white/40">{t.desc}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => updateMutation.mutate({ sessionToken, [t.key]: isOn ? 0 : 1 })}
+              className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${isOn ? "bg-purple-500" : "bg-white/20"}`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${isOn ? "translate-x-5" : "translate-x-0.5"}`} />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

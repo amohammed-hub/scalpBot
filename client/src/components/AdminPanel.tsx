@@ -3,12 +3,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Loader2, Shield, Users, CreditCard, TrendingUp, Ban, Gift, Activity, ArrowLeft, UserPlus, Clock, RotateCcw } from "lucide-react";
+import { Loader2, Shield, Users, CreditCard, TrendingUp, Ban, Gift, Activity, ArrowLeft, UserPlus, Clock, RotateCcw, Bell, Send, FileText } from "lucide-react";
 
-type AdminTab = "users" | "subscriptions" | "activity" | "grants";
+type AdminTab = "users" | "subscriptions" | "activity" | "grants" | "notifications" | "broadcast" | "templates";
 
 export function AdminPanel({ onClose }: { onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
+  // Notification admin queries
+  const masterSwitchQuery = trpc.adminNotif.getMasterSwitch.useQuery();
+  const userPrefsQuery = trpc.adminNotif.listUserPrefs.useQuery();
+  const broadcastsQuery = trpc.adminNotif.listBroadcasts.useQuery();
+  const templatesQuery = trpc.adminNotif.getTemplates.useQuery();
+  const setMasterMutation = trpc.adminNotif.setMasterSwitch.useMutation({ onSuccess: () => { masterSwitchQuery.refetch(); toast.success("Master switch updated"); } });
+  const overrideMutation = trpc.adminNotif.overrideUserPrefs.useMutation({ onSuccess: () => { userPrefsQuery.refetch(); toast.success("Override applied"); } });
+  const sendBroadcastMutation = trpc.adminNotif.sendBroadcast.useMutation({ onSuccess: (d) => { broadcastsQuery.refetch(); toast.success(`Broadcast ${d.status}: sent to ${d.sentCount} users`); } });
+  const updateTemplateMutation = trpc.adminNotif.updateTemplate.useMutation({ onSuccess: () => { templatesQuery.refetch(); toast.success("Template saved"); } });
+  // Broadcast form state
+  const [broadcastMsg, setBroadcastMsg] = useState("");
+  const [broadcastAudience, setBroadcastAudience] = useState<"all" | "paid" | "free" | "specific">("all");
+  const [broadcastTarget, setBroadcastTarget] = useState("");
+  // Template edit state
+  const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
+  const [templateDraft, setTemplateDraft] = useState("");
   const statsQuery = trpc.admin.stats.useQuery();
   const usersQuery = trpc.admin.users.useQuery();
   const subsQuery = trpc.admin.subscriptions.useQuery();
@@ -77,6 +93,9 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
     { id: "subscriptions", label: "Subscriptions", icon: <CreditCard className="w-4 h-4" /> },
     { id: "activity", label: "Activity", icon: <Activity className="w-4 h-4" /> },
     { id: "grants", label: "Access Grants", icon: <UserPlus className="w-4 h-4" /> },
+    { id: "notifications", label: "Notifications", icon: <Bell className="w-4 h-4" /> },
+    { id: "broadcast", label: "Broadcast", icon: <Send className="w-4 h-4" /> },
+    { id: "templates", label: "Templates", icon: <FileText className="w-4 h-4" /> },
   ];
 
   return (
@@ -309,7 +328,177 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {/* Grant Modal */}
+      {/* Notifications Tab */}
+      {activeTab === "notifications" && (
+        <div className="space-y-6">
+          {/* Master Switch */}
+          <div className="bg-white/5 border border-white/10 rounded-xl p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-white font-semibold">Telegram Alerts Master Switch</h3>
+                <p className="text-white/40 text-xs mt-1">When OFF, no Telegram alerts are sent to any user</p>
+              </div>
+              <button
+                onClick={() => setMasterMutation.mutate({ active: !(masterSwitchQuery.data?.active ?? true) })}
+                className={`relative w-12 h-6 rounded-full transition-colors ${masterSwitchQuery.data?.active ? "bg-emerald-500" : "bg-red-500/50"}`}
+              >
+                <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${masterSwitchQuery.data?.active ? "translate-x-7" : "translate-x-1"}`} />
+              </button>
+            </div>
+          </div>
+          {/* Per-user overrides */}
+          <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-white/10">
+              <h3 className="text-white font-semibold text-sm">User Notification Preferences</h3>
+              <p className="text-white/40 text-xs">Override individual user settings</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="bg-white/5 text-white/50">
+                  <th className="p-3 text-left">Session</th>
+                  <th className="p-3">Entry</th><th className="p-3">Exit</th>
+                  <th className="p-3">Summary</th><th className="p-3">Critical</th>
+                  <th className="p-3">Announce</th><th className="p-3">Override</th>
+                </tr></thead>
+                <tbody>
+                  {(userPrefsQuery.data || []).map((u: any) => (
+                    <tr key={u.id} className="border-t border-white/5">
+                      <td className="p-3 text-white/70 font-mono text-xs">{u.sessionToken.slice(0, 12)}...</td>
+                      {(["tradeEntry", "tradeExit", "dailySummary", "criticalAlerts", "announcements"] as const).map(k => (
+                        <td key={k} className="p-3 text-center">
+                          <button
+                            onClick={() => overrideMutation.mutate({ sessionToken: u.sessionToken, [k]: u[k] ? 0 : 1 })}
+                            className={`w-6 h-6 rounded ${u[k] ? "bg-emerald-500/30 text-emerald-400" : "bg-red-500/20 text-red-400"} text-xs font-bold`}
+                          >{u[k] ? "ON" : "OFF"}</button>
+                        </td>
+                      ))}
+                      <td className="p-3 text-center">
+                        <span className={`text-xs px-2 py-0.5 rounded ${u.adminOverride ? "bg-amber-500/20 text-amber-400" : "bg-white/5 text-white/30"}`}>
+                          {u.adminOverride ? "Yes" : "No"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Broadcast Tab */}
+      {activeTab === "broadcast" && (
+        <div className="space-y-6">
+          {/* Compose */}
+          <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
+            <h3 className="text-white font-semibold">Send Announcement</h3>
+            <textarea
+              value={broadcastMsg}
+              onChange={(e) => setBroadcastMsg(e.target.value)}
+              placeholder="Type your announcement message..."
+              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white text-sm placeholder-white/30 focus:outline-none focus:border-purple-500 min-h-[100px] resize-y"
+            />
+            <div className="flex gap-3 flex-wrap items-end">
+              <div>
+                <label className="text-xs text-white/50 mb-1 block">Audience</label>
+                <select
+                  value={broadcastAudience}
+                  onChange={(e) => setBroadcastAudience(e.target.value as any)}
+                  className="bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm"
+                >
+                  <option value="all">All Users</option>
+                  <option value="paid">Paid Only</option>
+                  <option value="free">Free Only</option>
+                  <option value="specific">Specific User</option>
+                </select>
+              </div>
+              {broadcastAudience === "specific" && (
+                <div>
+                  <label className="text-xs text-white/50 mb-1 block">Session Token</label>
+                  <Input value={broadcastTarget} onChange={(e) => setBroadcastTarget(e.target.value)} placeholder="Session token..." className="bg-white/10 border-white/20 text-white" />
+                </div>
+              )}
+              <Button
+                className="bg-purple-500 hover:bg-purple-600 text-white"
+                onClick={() => sendBroadcastMutation.mutate({ message: broadcastMsg, audience: broadcastAudience, specificTarget: broadcastTarget || undefined })}
+                disabled={!broadcastMsg.trim() || sendBroadcastMutation.isPending}
+              >
+                {sendBroadcastMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+                Send Now
+              </Button>
+            </div>
+            {/* Preview */}
+            {broadcastMsg.trim() && (
+              <div className="bg-black/30 border border-white/10 rounded-xl p-4">
+                <p className="text-xs text-white/40 mb-2">Preview:</p>
+                <pre className="text-sm text-white whitespace-pre-wrap font-sans">🔔 Announcement{"\n\n"}{broadcastMsg}</pre>
+              </div>
+            )}
+          </div>
+          {/* History */}
+          <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-white/10">
+              <h3 className="text-white font-semibold text-sm">Broadcast History</h3>
+            </div>
+            <div className="divide-y divide-white/5 max-h-[300px] overflow-y-auto">
+              {(broadcastsQuery.data || []).map((b: any) => (
+                <div key={b.id} className="p-3 flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white/80 text-sm truncate">{b.message.slice(0, 60)}...</p>
+                    <p className="text-white/30 text-xs">{b.audience} • {b.sentCount} sent • {b.sentAt ? new Date(b.sentAt).toLocaleString() : "pending"}</p>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded ${b.status === "sent" ? "bg-emerald-500/20 text-emerald-400" : b.status === "scheduled" ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>
+                    {b.status}
+                  </span>
+                </div>
+              ))}
+              {(!broadcastsQuery.data || broadcastsQuery.data.length === 0) && (
+                <p className="p-4 text-white/30 text-sm text-center">No broadcasts sent yet</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Templates Tab */}
+      {activeTab === "templates" && (
+        <div className="space-y-4">
+          <div className="bg-white/5 border border-white/10 rounded-xl p-5">
+            <h3 className="text-white font-semibold mb-1">Alert Message Templates</h3>
+            <p className="text-white/40 text-xs mb-4">Edit the format of automated alerts. Use {"{{variable}}"} placeholders.</p>
+            <div className="space-y-4">
+              {(templatesQuery.data || []).map((t: any) => (
+                <div key={t.id} className="bg-black/20 border border-white/10 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-semibold text-white capitalize">{t.templateType.replace("_", " ")} Alert</span>
+                    <div className="flex gap-2">
+                      {editingTemplate === t.templateType ? (
+                        <>
+                          <Button size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-white text-xs h-7" onClick={() => { updateTemplateMutation.mutate({ templateType: t.templateType, template: templateDraft }); setEditingTemplate(null); }}>Save</Button>
+                          <Button size="sm" variant="outline" className="border-white/20 text-white/60 text-xs h-7" onClick={() => setEditingTemplate(null)}>Cancel</Button>
+                        </>
+                      ) : (
+                        <Button size="sm" variant="outline" className="border-white/20 text-white/60 text-xs h-7" onClick={() => { setEditingTemplate(t.templateType); setTemplateDraft(t.template); }}>Edit</Button>
+                      )}
+                    </div>
+                  </div>
+                  {editingTemplate === t.templateType ? (
+                    <textarea
+                      value={templateDraft}
+                      onChange={(e) => setTemplateDraft(e.target.value)}
+                      className="w-full bg-white/5 border border-white/20 rounded-lg px-3 py-2 text-white text-xs font-mono min-h-[120px] resize-y focus:outline-none focus:border-purple-500"
+                    />
+                  ) : (
+                    <pre className="text-xs text-white/60 font-mono whitespace-pre-wrap bg-white/5 rounded-lg p-3">{t.template}</pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Grant Access Modal */}
       {activeTab === "grants" && (
         <div className="space-y-6">
           {/* Grant Access Form */}
