@@ -29,7 +29,7 @@ const sessionTokenSchema = z.string().min(8).max(128);
 
 // Helper: verify admin access via cookie (checks role, mobile, and ADMIN_MOBILE)
 async function verifyAdminAccess(ctx: any): Promise<boolean> {
-  const authToken = ctx.req?.cookies?.scalpbot_auth
+  const authToken: string | undefined = ctx.req?.cookies?.scalpbot_auth
     || ctx.req?.headers?.authorization?.replace("Bearer ", "")
     || (ctx.req?.headers?.["x-auth-token"] as string | undefined);
   if (authToken) {
@@ -52,6 +52,32 @@ async function verifyAdminAccess(ctx: any): Promise<boolean> {
     } catch {}
   }
   return false;
+}
+
+// Helper: verify session ownership — checks JWT cookie belongs to the user who owns the sessionToken (or is admin)
+async function verifySessionOwnership(ctx: any, inputSessionToken: string): Promise<void> {
+  const authToken: string | undefined = ctx.req?.cookies?.scalpbot_auth
+    || ctx.req?.headers?.authorization?.replace("Bearer ", "")
+    || (ctx.req?.headers?.["x-auth-token"] as string | undefined);
+  if (!authToken) {
+    throw new Error("Unauthorized: no auth token");
+  }
+  let decoded: { userId?: number; role?: string; mobile?: string };
+  try {
+    decoded = jwt.verify(authToken, process.env.JWT_SECRET || "fallback-secret") as any;
+  } catch {
+    throw new Error("Unauthorized: invalid auth token");
+  }
+  // Admin can control any session
+  if (decoded.role === "admin" || decoded.mobile === ENV.adminMobile) return;
+  // Check user's sessionToken matches the input (strip slot suffix for secondary bots)
+  const baseToken = inputSessionToken.replace(/-slot[0-9]+$/, "");
+  if (decoded.userId) {
+    const user = await getAppUserById(decoded.userId);
+    if (user?.sessionToken === baseToken) return;
+    if (user?.role === "admin" || user?.mobile === ENV.adminMobile) return;
+  }
+  throw new Error("Unauthorized: session does not belong to you");
 }
 
 export const appRouter = router({
@@ -323,8 +349,11 @@ export const appRouter = router({
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
       }))
-      .mutation(async ({ input, ctx }) => {
-       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
+     .mutation(async ({ input, ctx }) => {
+      console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
+        // SECURITY: Verify caller owns this session
+        await verifySessionOwnership(ctx, input.sessionToken);
+
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
 
@@ -765,7 +794,10 @@ export const appRouter = router({
 
     stop: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // SECURITY: Verify caller owns this session
+        await verifySessionOwnership(ctx, input.sessionToken);
+
         // Capture bot state BEFORE stopping (need lastPrice for closing trades)
         const botState = getBotState(input.sessionToken);
         const lastPrice = botState?.lastPrice ?? 0;
@@ -2217,7 +2249,10 @@ export const appRouter = router({
         averagingLossThreshold: z.number().default(0.20),
         useV2Engine: z.boolean().default(false),
       }))
-      .mutation(async ({ input, ctx }) => {
+     .mutation(async ({ input, ctx }) => {
+        // SECURITY: Verify caller owns this session
+        await verifySessionOwnership(ctx, input.sessionToken);
+
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
         const slotToken = `${input.sessionToken}-slot${input.slot}`;
@@ -2496,7 +2531,10 @@ export const appRouter = router({
 
     stopSecondary: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema, slot: z.number().min(1).max(3) }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // SECURITY: Verify caller owns this session
+        await verifySessionOwnership(ctx, input.sessionToken);
+
         const slotToken = `${input.sessionToken}-slot${input.slot}`;
         // Capture bot state BEFORE stopping (need lastPrice for closing trades)
         const botState = getBotState(slotToken);
@@ -3437,7 +3475,10 @@ export const appRouter = router({
     /** Emergency Kill Switch — close all trades + stop all bots */
     killSwitch: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // SECURITY: Verify caller owns this session
+        await verifySessionOwnership(ctx, input.sessionToken);
+
         console.log("[KILL SWITCH] ⚠️ ACTIVATED — stopping ALL bots, closing ALL positions");
         const db = await getDb();
         const onTradeCloseKill = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
