@@ -3047,6 +3047,7 @@ async function tick(
     state.lastTradeOpenedAt = undefined; // Clear cooldown from previous day
     state.status = "running"; // un-pause if paused from previous day limits
     state.lastError = null;
+    state.alertsSent.clear(); // BUG-8 FIX: Clear daily alerts so Power Hour/MCX alerts re-fire each day
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
     resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
     emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
