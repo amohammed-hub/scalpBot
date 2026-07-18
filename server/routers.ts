@@ -1863,26 +1863,41 @@ export const appRouter = router({
           .from(tradeLog)
           .where(inArray(tradeLog.sessionToken, allTokens))
           .orderBy(desc(tradeLog.enteredAt));
-        return trades.map((t: TradeLog) => ({
-          id: t.id,
-          date: new Date(t.enteredAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }),
-          time: new Date(t.enteredAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }),
-          symbol: t.symbolLabel ?? t.symbol ?? "",
-          direction: t.direction ?? "",
-          mode: t.mode ?? "",
-          entryPrice: t.entryPrice ?? 0,
-          exitPrice: t.exitPrice ?? 0,
-          quantity: t.quantity ?? 0,
-          stopLoss: t.slPrice ?? 0,
-          target: t.targetPrice ?? 0,
-          pnl: t.pnl ?? 0,
-          status: t.status ?? "",
-          exitReason: t.exitReason ?? "",
-          confidence: t.confidence ?? 0,
-          botSlot: t.botSlot ?? 0,
-          enteredAt: t.enteredAt,
-          exitedAt: t.exitedAt,
-        }));
+        return trades.map((t: TradeLog) => {
+          // Calculate duration
+          let duration = "";
+          if (t.enteredAt && t.exitedAt) {
+            const ms = new Date(t.exitedAt).getTime() - new Date(t.enteredAt).getTime();
+            const mins = Math.floor(ms / 60000);
+            if (mins < 60) duration = `${mins}m`;
+            else duration = `${Math.floor(mins / 60)}h ${mins % 60}m`;
+          }
+          return {
+            id: t.id,
+            date: new Date(t.enteredAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }),
+            time: new Date(t.enteredAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }),
+            exitTime: t.exitedAt ? new Date(t.exitedAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) : "",
+            exitDate: t.exitedAt ? new Date(t.exitedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) : "",
+            symbol: t.symbolLabel ?? t.symbol ?? "",
+            direction: t.direction ?? "",
+            mode: t.mode ?? "",
+            entryPrice: t.entryPrice ?? 0,
+            exitPrice: t.exitPrice ?? 0,
+            quantity: t.quantity ?? 0,
+            stopLoss: t.slPrice ?? 0,
+            target: t.targetPrice ?? 0,
+            pnl: t.pnl ?? 0,
+            status: t.status ?? "",
+            exitReason: t.exitReason ?? "",
+            confidence: t.confidence ?? 0,
+            botSlot: t.botSlot ?? 0,
+            strategy: t.signalReason ?? "",
+            partialProfit: t.bookedPnl ?? 0,
+            duration,
+            enteredAt: t.enteredAt,
+            exitedAt: t.exitedAt,
+          };
+        });
       }),
   }),
 

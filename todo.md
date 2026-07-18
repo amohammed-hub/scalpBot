@@ -1054,3 +1054,9 @@
 ## Backlog — Execution Quality (Post Paper Trading)
 - [ ] Correlation gate: if Bot 1 has BUY CE on NIFTY, Bot 2 should NOT also buy CE on NIFTY. Diversify directions or instruments.
 - [ ] Option premium SL: on expiry days, set SL based on option premium price, not underlying spot price
+
+## P&L Analytics Page Fixes
+- [x] Fix 1: Add back button (← Back to Dashboard) at top of P&L Analytics page
+- [x] Fix 2: Improve chart — per-trade P&L bars (not daily totals), cumulative P&L line chart, bot filter dropdown, instrument filter dropdown, show daily breakdown table more prominently
+- [x] Fix 3: Fix export — Sheet 1 = All Trades (full journal details), Sheet 2 = Daily Summary. Remove weekly/monthly sheets.
+- [x] Fix 4: Detailed trade report columns — Symbol, Bot, Direction, Entry Time, Entry Price, Exit Time, Exit Price, Qty, SL, Target, P&L, Partial Profit, Exit Reason, Strategy Layer, Confidence %, Duration
