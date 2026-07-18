@@ -279,7 +279,7 @@ export default function Dashboard() {
 
   // Per-slot Quick Start state for the Parallel Bots panel
   const [slotQS, setSlotQS] = useState<Record<number, { symbol: string; capital: number }>>(
-    { 0: { symbol: "NIFTY", capital: 50000 }, 1: { symbol: "BANKNIFTY", capital: 50000 }, 2: { symbol: "CRUDEOIL", capital: 50000 } }
+    { 0: { symbol: "NIFTY", capital: 50000 }, 1: { symbol: "BANKNIFTY", capital: 50000 }, 2: { symbol: "CRUDEOIL", capital: 50000 }, 3: { symbol: "FINNIFTY", capital: 50000 } }
   );
   const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
     onSuccess: (_, vars) => {

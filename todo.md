@@ -1136,3 +1136,5 @@
 - [x] FE-FIX: Export CSV — fix to 1 sheet with all trade details (not 4 sheets)
 - [x] FE-FIX: Verify auth redirect is actually working
 - [x] SYSTEM TEST: Add market hours guard to bot.start and startSecondary — refuse to start on weekends/outside trading hours
+- [x] FIX: Change market hours guard from "refuse to start" to "warn but allow start" — bot starts idle, no trades until market opens
+- [x] BUG: Bot 4 (slot index 3) shows "opening" but never actually starts — slotQS missing slot 3 default

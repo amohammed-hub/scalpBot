@@ -325,31 +325,8 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
        console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
-       const db = await getDb();
-       if (!db) throw new Error("DB unavailable");
-
-        // ── Market Hours Guard: refuse to start on weekends / outside trading hours ──
-        {
-          const now = new Date();
-          const istMs = now.getTime() + 5.5 * 60 * 60 * 1000;
-          const istDate = new Date(istMs);
-          const dayOfWeek = istDate.getUTCDay(); // 0=Sun, 6=Sat
-          const istHour = istDate.getUTCHours();
-          const istMin = istHour * 60 + istDate.getUTCMinutes();
-          const isMCX = input.instrumentToken.startsWith("MCX_FO|") || input.instrumentSymbol.startsWith("MCX_");
-          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-          // NSE: 9:15 AM – 3:30 PM (555–930 min), MCX: 9:00 AM – 11:30 PM (540–1410 min)
-          const nseOpen = istMin >= 555 && istMin <= 930;
-          const mcxOpen = istMin >= 540 && istMin <= 1410;
-          const marketOpen = isMCX ? mcxOpen : nseOpen;
-          if (isWeekend) {
-            throw new Error("Market is closed on weekends (Saturday/Sunday). Bot cannot start — try again on Monday after 9:15 AM IST.");
-          }
-          if (!marketOpen) {
-            const hours = isMCX ? "9:00 AM – 11:30 PM" : "9:15 AM – 3:30 PM";
-            throw new Error(`Market is closed right now. ${isMCX ? "MCX" : "NSE"} trading hours: ${hours} IST. Bot cannot start outside market hours.`);
-          }
-        }
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
 
         // SAFETY: Reject if primary bot is already running in memory (prevents double-start from rapid clicks)
         const existingPrimaryBot = getBotState(input.sessionToken);
@@ -2241,28 +2218,6 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
         const slotToken = `${input.sessionToken}-slot${input.slot}`;
-
-        // ── Market Hours Guard: refuse to start on weekends / outside trading hours ──
-        {
-          const now = new Date();
-          const istMs = now.getTime() + 5.5 * 60 * 60 * 1000;
-          const istDate = new Date(istMs);
-          const dayOfWeek = istDate.getUTCDay(); // 0=Sun, 6=Sat
-          const istHour = istDate.getUTCHours();
-          const istMin = istHour * 60 + istDate.getUTCMinutes();
-          const isMCX = input.instrumentToken.startsWith("MCX_FO|") || input.instrumentSymbol.startsWith("MCX_");
-          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-          const nseOpen = istMin >= 555 && istMin <= 930;
-          const mcxOpen = istMin >= 540 && istMin <= 1410;
-          const marketOpen = isMCX ? mcxOpen : nseOpen;
-          if (isWeekend) {
-            throw new Error("Market is closed on weekends (Saturday/Sunday). Bot cannot start — try again on Monday after 9:15 AM IST.");
-          }
-          if (!marketOpen) {
-            const hours = isMCX ? "9:00 AM – 11:30 PM" : "9:15 AM – 3:30 PM";
-            throw new Error(`Market is closed right now. ${isMCX ? "MCX" : "NSE"} trading hours: ${hours} IST. Bot cannot start outside market hours.`);
-          }
-        }
 
         // SAFETY: Reject if this slot is already running in memory (prevents double-start from rapid clicks)
         const existingSlotBot = getBotState(slotToken);
