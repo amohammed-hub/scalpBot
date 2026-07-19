@@ -1251,3 +1251,13 @@
 - [x] Bug #9: Averaging state persistence (botRestart.ts)
 - [x] Bug #12: restoredDailyPnl filter exitedAt (botRestart.ts)
 - [x] Bug #8+10: nextScanAt cosmetic — set at end of tick (botEngine.ts)
+
+## Fresh Audit #2 (Jul 20, 2025) — 8 Bugs Fixed
+- [x] Bug #1: livePrices slot3 ternary — now correctly assigns slot 3
+- [x] Bug #2+3: Primary & Slot bot UPDATE paths now persist averagingEnabled, averagingLossThreshold, useV2Engine, unlimitedTrades, openingBurstEnabled
+- [x] Bug #4: P&L restore queries use exitedAt instead of enteredAt
+- [x] Bug #5: Risk endpoints use input.sessionToken instead of "default"
+- [x] Bug #6: resetHalt/resetDaily mutations scoped to session
+- [x] Bug #7: getSlotTokens always includes slot3
+- [x] Bug #8: restart mutation includes openingBurstEnabled in startBot config
+- [x] Schema: Added unlimitedTrades and openingBurstEnabled columns to bot_sessions

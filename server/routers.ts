@@ -504,7 +504,7 @@ export const appRouter = router({
           .where(and(
             eq(tradeLog.sessionToken, input.sessionToken),
             eq(tradeLog.status, "closed"),
-            gte(tradeLog.enteredAt, todayStart),
+            gte(tradeLog.exitedAt, todayStart),
           ));
         const restoredDailyPnl = todayPnlRows.reduce((sum: number, r: { pnl: number | null }) => sum + (r.pnl ?? 0), 0);
 
@@ -595,11 +595,16 @@ export const appRouter = router({
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
               enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
-              partial1Pct: input.partial1Pct,
-              partial2Pct: input.partial2Pct,
-            })
-            .where(eq(botSessions.sessionToken, input.sessionToken));
-        } else {
+             partial1Pct: input.partial1Pct,
+             partial2Pct: input.partial2Pct,
+             averagingEnabled: input.averagingEnabled,
+             averagingLossThreshold: input.averagingLossThreshold,
+             useV2Engine: input.useV2Engine,
+             unlimitedTrades: input.unlimitedTrades,
+             openingBurstEnabled: input.openingBurstEnabled,
+           })
+           .where(eq(botSessions.sessionToken, input.sessionToken));
+       } else {
           const result = await db.insert(botSessions).values({
             sessionToken: input.sessionToken,
             status: "running",
@@ -630,6 +635,8 @@ export const appRouter = router({
               averagingEnabled: input.averagingEnabled,
               averagingLossThreshold: input.averagingLossThreshold,
               useV2Engine: input.useV2Engine,
+              unlimitedTrades: input.unlimitedTrades,
+              openingBurstEnabled: input.openingBurstEnabled,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -999,7 +1006,7 @@ export const appRouter = router({
           .where(and(
             eq(tradeLog.sessionToken, input.sessionToken),
             eq(tradeLog.status, "closed"),
-            gte(tradeLog.enteredAt, todayStart),
+            gte(tradeLog.exitedAt, todayStart),
           ));
         const todayCount = todayTrades.length;
         const restoredPnl = todayTrades.reduce((s: number, t: { pnl: number | null }) => s + (t.pnl ?? 0), 0);
@@ -1118,11 +1125,12 @@ export const appRouter = router({
             carryForward: existingOpenTrade?.carryForward ?? false,
             averagingEnabled: row.averagingEnabled ?? true,
             averagingLossThreshold: row.averagingLossThreshold ?? 0.20,
-            useV2Engine: (row as any).useV2Engine ?? false,
-            unlimitedTrades: (row as any).unlimitedTrades ?? false,
-          },
-          onTradeOpen,
-          onTradeClose,
+           useV2Engine: row.useV2Engine ?? false,
+           unlimitedTrades: row.unlimitedTrades ?? false,
+           openingBurstEnabled: row.openingBurstEnabled ?? false,
+         },
+         onTradeOpen,
+         onTradeClose,
           existingOpenTrade,
           async (tickState) => {
             const dbInner = await getDb();
@@ -2217,7 +2225,7 @@ export const appRouter = router({
               }
             }
 
-            const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
+            const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : tok.endsWith("-slot2") ? 2 : 3;
             results.push({
               sessionToken: tok,
               slot,
@@ -2227,7 +2235,7 @@ export const appRouter = router({
             });
           } catch {
             // On error, return the last known price from memory
-            const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : 2;
+            const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : tok.endsWith("-slot2") ? 2 : 3;
             results.push({
               sessionToken: tok,
               slot,
@@ -2427,7 +2435,7 @@ export const appRouter = router({
           .where(and(
             eq(tradeLog.sessionToken, slotToken),
             eq(tradeLog.status, "closed"),
-            gte(tradeLog.enteredAt, slotTodayStart),
+            gte(tradeLog.exitedAt, slotTodayStart),
           ));
         const slotRestoredDailyPnl = slotTodayPnlRows.reduce((sum: number, r: { pnl: number | null }) => sum + (r.pnl ?? 0), 0);
         const slotTodayCountRows = await db
@@ -2463,11 +2471,16 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions ?? false,
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(), stoppedAt: null, lastError: null,
-            enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
-            partial1Pct: input.partial1Pct,
-            partial2Pct: input.partial2Pct,
-          }).where(eq(botSessions.sessionToken, slotToken));
-        } else {
+           enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+           partial1Pct: input.partial1Pct,
+           partial2Pct: input.partial2Pct,
+           averagingEnabled: input.averagingEnabled ?? true,
+           averagingLossThreshold: input.averagingLossThreshold ?? 0.20,
+           useV2Engine: input.useV2Engine ?? false,
+           unlimitedTrades: input.unlimitedTrades ?? false,
+           openingBurstEnabled: input.openingBurstEnabled ?? false,
+         }).where(eq(botSessions.sessionToken, slotToken));
+       } else {
           const result = await db.insert(botSessions).values({
             sessionToken: slotToken, status: "running", mode: input.mode,
             instrumentToken: input.instrumentToken, instrumentSymbol: input.instrumentSymbol,
@@ -2485,6 +2498,11 @@ export const appRouter = router({
             enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
             partial1Pct: input.partial1Pct,
             partial2Pct: input.partial2Pct,
+            averagingEnabled: input.averagingEnabled ?? true,
+            averagingLossThreshold: input.averagingLossThreshold ?? 0.20,
+            useV2Engine: input.useV2Engine ?? false,
+            unlimitedTrades: input.unlimitedTrades ?? false,
+            openingBurstEnabled: input.openingBurstEnabled ?? false,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -3469,7 +3487,7 @@ export const appRouter = router({
             .limit(20);
           recentTrades = rows;
         }
-        return computeMarketRiskScore(candles, recentTrades, "default");
+        return computeMarketRiskScore(candles, recentTrades, input.sessionToken);
       }),
 
     /** Cached risk score (no re-compute, fast) */
@@ -3491,7 +3509,7 @@ export const appRouter = router({
             .limit(20);
           recentTrades = rows;
         }
-        return updateStoplossGuard(recentTrades, "default");
+        return updateStoplossGuard(recentTrades, input.sessionToken);
       }),
 
     /** Portfolio-level status (exposure, drawdown, halt) */
@@ -3499,7 +3517,7 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(({ input }) => {
         const allBots = getAllRunningBotsForSession(input.sessionToken);
-        return getPortfolioStatus(allBots);
+        return getPortfolioStatus(allBots, input.sessionToken);
       }),
 
     /** Check portfolio drawdown halt */
@@ -3511,7 +3529,7 @@ export const appRouter = router({
       }),
 
     /** Reset portfolio halt (after review) */
-    resetHalt: publicProcedure.mutation(() => { resetPortfolioHalt(); return { success: true }; }),
+    resetHalt: publicProcedure.input(z.object({ sessionToken: sessionTokenSchema })).mutation(({ input }) => { resetPortfolioHalt(input.sessionToken); return { success: true }; }),
 
     /** Emergency Kill Switch — close all trades + stop all bots */
     killSwitch: publicProcedure
@@ -3608,7 +3626,7 @@ export const appRouter = router({
     vix: publicProcedure.query(() => fetchIndiaVix()),
 
     /** Reset daily state (call at market open) */
-    resetDaily: publicProcedure.mutation(() => { resetDailyState(); return { success: true }; }),
+    resetDaily: publicProcedure.input(z.object({ sessionToken: sessionTokenSchema })).mutation(({ input }) => { resetDailyState(input.sessionToken); return { success: true }; }),
   }),
 
   // ── Options Analytics ────────────────────────────────────────────────────────
@@ -4624,7 +4642,7 @@ export type AppRouter = typeof appRouter;
 import { sendTelegramMessage } from "./botEngine";
 
 // Helper: get all slot tokens for a session (includes slot3 for admin)
-function getSlotTokens(sessionToken: string, includeSlot3 = false): string[] {
+function getSlotTokens(sessionToken: string, includeSlot3 = true): string[] {
   const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
   if (includeSlot3) tokens.push(`${sessionToken}-slot3`);
   return tokens;

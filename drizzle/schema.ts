@@ -110,6 +110,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   averagingEnabled: boolean("averagingEnabled").default(true),
   averagingLossThreshold: float("averagingLossThreshold").default(0.20),
   useV2Engine: boolean("useV2Engine").default(false),
+  unlimitedTrades: boolean("unlimitedTrades").default(false),
+  openingBurstEnabled: boolean("openingBurstEnabled").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
