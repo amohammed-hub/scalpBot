@@ -820,18 +820,22 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
           await tx.update(upstoxCredentials).set({ sessionToken: newToken }).where(eq(upstoxCredentials.sessionToken, oldToken));
           await tx.update(upstoxCredentials).set({ sessionToken: newToken + "-slot1" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot1"));
           await tx.update(upstoxCredentials).set({ sessionToken: newToken + "-slot2" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot2"));
+          await tx.update(upstoxCredentials).set({ sessionToken: newToken + "-slot3" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot3"));
           // Migrate bot_sessions (primary + slots)
           await tx.update(botSessions).set({ sessionToken: newToken }).where(eq(botSessions.sessionToken, oldToken));
           await tx.update(botSessions).set({ sessionToken: newToken + "-slot1" }).where(eq(botSessions.sessionToken, oldToken + "-slot1"));
           await tx.update(botSessions).set({ sessionToken: newToken + "-slot2" }).where(eq(botSessions.sessionToken, oldToken + "-slot2"));
+          await tx.update(botSessions).set({ sessionToken: newToken + "-slot3" }).where(eq(botSessions.sessionToken, oldToken + "-slot3"));
           // Migrate trade_log (primary + slots)
           await tx.update(tradeLog).set({ sessionToken: newToken }).where(eq(tradeLog.sessionToken, oldToken));
           await tx.update(tradeLog).set({ sessionToken: newToken + "-slot1" }).where(eq(tradeLog.sessionToken, oldToken + "-slot1"));
           await tx.update(tradeLog).set({ sessionToken: newToken + "-slot2" }).where(eq(tradeLog.sessionToken, oldToken + "-slot2"));
+          await tx.update(tradeLog).set({ sessionToken: newToken + "-slot3" }).where(eq(tradeLog.sessionToken, oldToken + "-slot3"));
           // Migrate signal_journal (primary + slots)
           await tx.update(signalJournal).set({ sessionToken: newToken }).where(eq(signalJournal.sessionToken, oldToken));
           await tx.update(signalJournal).set({ sessionToken: newToken + "-slot1" }).where(eq(signalJournal.sessionToken, oldToken + "-slot1"));
           await tx.update(signalJournal).set({ sessionToken: newToken + "-slot2" }).where(eq(signalJournal.sessionToken, oldToken + "-slot2"));
+          await tx.update(signalJournal).set({ sessionToken: newToken + "-slot3" }).where(eq(signalJournal.sessionToken, oldToken + "-slot3"));
           // Migrate subscriptions
           await tx.update(subscriptions).set({ sessionToken: newToken }).where(eq(subscriptions.sessionToken, oldToken));
         });

@@ -61,8 +61,12 @@ function getSlGuard(sessionToken: string): StoplossGuardState {
   return stoplossGuardBySession.get(sessionToken)!;
 }
 
-let portfolioHalted = false;
-let portfolioHaltReason: string | null = null;
+// Per-session portfolio halt state (keyed by root session token)
+const portfolioHaltBySession = new Map<string, { halted: boolean; reason: string | null }>();
+
+function getPortfolioHalt(sessionToken: string): { halted: boolean; reason: string | null } {
+  return portfolioHaltBySession.get(sessionToken) ?? { halted: false, reason: null };
+}
 
 // Per-session cooldown tracking
 const cooldowns = new Map<string, CooldownState>();
@@ -199,35 +203,42 @@ export function getStoplossGuardState(sessionToken: string = "default"): Stoplos
 export function checkPortfolioDrawdown(
   allBots: BotState[],
   dailyLossLimitPct: number,
+  sessionToken?: string,
 ): { halted: boolean; reason: string | null } {
-  if (allBots.length === 0) return { halted: portfolioHalted, reason: portfolioHaltReason };
+  const key = sessionToken ?? "default";
+  const current = getPortfolioHalt(key);
+  if (allBots.length === 0) return current;
 
   const totalCapital = allBots.reduce((sum, b) => sum + b.capital, 0);
   const aggregatePnl = allBots.reduce((sum, b) => sum + b.dailyPnl, 0);
   const maxLoss = -(totalCapital * dailyLossLimitPct) / 100;
 
-  if (aggregatePnl <= maxLoss && !portfolioHalted) {
-    portfolioHalted = true;
-    portfolioHaltReason = `Portfolio daily loss limit hit: ₹${aggregatePnl.toFixed(0)} (limit: ₹${maxLoss.toFixed(0)})`;
+  if (aggregatePnl <= maxLoss && !current.halted) {
+    const reason = `Portfolio daily loss limit hit: ₹${aggregatePnl.toFixed(0)} (limit: ₹${maxLoss.toFixed(0)})`;
+    portfolioHaltBySession.set(key, { halted: true, reason });
+    return { halted: true, reason };
   }
 
   // Auto-clear halt when conditions recover (e.g., user starts fresh bot with 0 dailyPnl,
   // or previous losing bot was stopped and new bot's aggregate is above limit)
-  if (portfolioHalted && aggregatePnl > maxLoss) {
-    portfolioHalted = false;
-    portfolioHaltReason = null;
+  if (current.halted && aggregatePnl > maxLoss) {
+    portfolioHaltBySession.set(key, { halted: false, reason: null });
+    return { halted: false, reason: null };
   }
 
-  return { halted: portfolioHalted, reason: portfolioHaltReason };
+  return current;
 }
 
-export function resetPortfolioHalt(): void {
-  portfolioHalted = false;
-  portfolioHaltReason = null;
+export function resetPortfolioHalt(sessionToken?: string): void {
+  if (sessionToken) {
+    portfolioHaltBySession.delete(sessionToken);
+  } else {
+    portfolioHaltBySession.clear();
+  }
 }
 
 // ── Portfolio Exposure ───────────────────────────────────────────────────────
-export function getPortfolioStatus(allBots: BotState[]): PortfolioStatus {
+export function getPortfolioStatus(allBots: BotState[], sessionToken?: string): PortfolioStatus {
   const totalCapital = allBots.reduce((sum, b) => sum + b.capital, 0) || 100000;
   let totalExposure = 0;
   let openTrades = 0;
@@ -249,8 +260,8 @@ export function getPortfolioStatus(allBots: BotState[]): PortfolioStatus {
     exposurePct,
     aggregateDailyPnl,
     aggregateDailyPnlPct,
-    isHalted: portfolioHalted,
-    haltReason: portfolioHaltReason,
+    isHalted: getPortfolioHalt(sessionToken ?? "default").halted,
+    haltReason: getPortfolioHalt(sessionToken ?? "default").reason,
     runningBots: allBots.filter(b => b.status === "running").length,
     openTrades,
   };
@@ -485,8 +496,7 @@ export function applyPaperCosts(
 
 // ── Daily reset (call at market open) ────────────────────────────────────────
 export function resetDailyState(sessionToken?: string): void {
-  portfolioHalted = false;
-  portfolioHaltReason = null;
+  resetPortfolioHalt(sessionToken);
   if (sessionToken) {
     stoplossGuardBySession.set(sessionToken, { ...defaultSlGuard });
     cooldowns.delete(sessionToken);

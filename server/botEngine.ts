@@ -3161,7 +3161,6 @@ async function tick(
   }
 
   const price = state.lastPrice;
-  state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
   // Update lastTickAt so Dashboard can detect staleness
   state.lastTickAt = Date.now();
 
@@ -3188,6 +3187,7 @@ async function tick(
     state.lastError = null;
     state.alertsSent.clear(); // BUG-8 FIX: Clear daily alerts so Power Hour/MCX alerts re-fire each day
     state.openingBurstTradeTaken = false; // Reset Opening Burst for new day
+    state.dailyLossAcknowledged = false; // Reset so new day's losses trigger pause correctly
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
     resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
     emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
@@ -3878,7 +3878,7 @@ async function tick(
   // 2. Portfolio MaxDrawdown Halt: unified daily loss limit across all slots
   const baseToken = state.sessionToken.replace(/-slot\d+$/, "");
   const portfolioBots = getAllRunningBotsForSession(baseToken);
-  const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct);
+  const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct, baseToken);
   if (ddCheck.halted && !state.openTrade) {
     // Never pause — just block new trade entries. Bot continues monitoring & managing open trades.
     if ((state.tickCount ?? 0) % 20 === 1) {
@@ -3950,7 +3950,6 @@ async function tick(
     signal = generateOpeningBurstSignal(state.candles, prevDayClose, slMult, vixNow);
     // If Opening Burst fires a BUY/SELL, mark as taken so we don't re-enter
     if (signal.direction !== "HOLD") {
-      state.openingBurstTradeTaken = true;
       emitActivity(state.sessionToken, "signal", `🚀 Opening Burst: ${signal.direction} | gap-aligned | conf=${(signal.confidence * 100).toFixed(0)}% | VIX=${vixNow.toFixed(1)}`);
     }
     // Scan every candle during Opening Burst: override nextScanAt to 15s (minimum interval)
@@ -4571,6 +4570,10 @@ async function tick(
   if (signal.layer === "HourlyClose") {
     state.hourlyCloseSignalFired = true;
   }
+  // Mark Opening Burst as taken AFTER trade actually opens (not at signal generation)
+  if (signal.layer === "OpeningBurst") {
+    state.openingBurstTradeTaken = true;
+  }
   // Log signal as traded in journal
   logSignalToJournal({
     sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
@@ -4621,6 +4624,11 @@ async function tick(
     // Re-throw so the setInterval .catch() handler counts it toward the 3-error auto-restart
     throw tickErr;
   } finally {
+    // BUG-8+10 fix: Set nextScanAt at END of tick so Opening Burst 15s override is reflected
+    // If Opening Burst already set nextScanAt to 15s, don't overwrite it with the default interval
+    if (!state.nextScanAt || state.nextScanAt <= Date.now()) {
+      state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
+    }
     state.tickInProgress = false;
   }
 }

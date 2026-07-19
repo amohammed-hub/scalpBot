@@ -50,7 +50,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     .where(and(
       eq(tradeLog.sessionToken, session.sessionToken),
       eq(tradeLog.status, "closed"),
-      gte(tradeLog.enteredAt, todayStartUTC),
+      gte(tradeLog.exitedAt, todayStartUTC), // BUG-12 fix: use exitedAt — a trade entered yesterday but closed today should count in today's P&L
     ));
   const restoredDailyPnl = todayPnlRows.reduce((sum: number, r: { pnl: number | null }) => sum + (r.pnl ?? 0), 0);
 
@@ -100,6 +100,16 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       bookedQty: t.bookedQty ?? 0,
       bookedPnl: t.bookedPnl ?? 0,
       bookedPnlAddedToDaily: (t.bookedPnl ?? 0) > 0, // BUG-1 fix: if bookedPnl was persisted, dailyPnl already includes it
+      // BUG-9 fix: Infer averageCount from quantity — if trade qty > initial lot allocation, it was averaged
+      averageCount: (() => {
+        const lotSz = session.lotSize ?? 1;
+        const capital = session.capital ?? 100000;
+        const riskPct = session.riskPerTradePct ?? 1;
+        const slDist2 = Math.abs(t.entryPrice - (t.slPrice ?? t.entryPrice)) || t.entryPrice * 0.01;
+        const riskAmt = capital * riskPct / 100;
+        const initialQty = Math.max(lotSz, Math.floor(riskAmt / slDist2 / lotSz) * lotSz);
+        return t.quantity > initialQty ? 1 : 0;
+      })(),
       isIndexOptions: !!(session.isIndexOptions),
       entryUnderlyingPrice: session.isIndexOptions
         ? ((t as any).entryUnderlyingPrice ?? undefined)

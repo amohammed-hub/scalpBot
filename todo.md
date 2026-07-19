@@ -1239,3 +1239,15 @@
 
 ## Dashboard Helper Notes (July 19, 2026)
 - [x] Add subtle helper notes throughout Dashboard — Command Center, Configuration, Strategy Cards, Trade Log, Activity Log
+
+## Audit Bug Fixes (Phase 2 — All 12 Fixed)
+- [x] Bug #1: Slot3 activity log regex (activityLog.ts)
+- [x] Bug #2: Token migration misses slot3 (db.ts)
+- [x] Bug #3: Analytics exclude slot3 (precisionMetrics.ts)
+- [x] Bug #4: Global portfolio halt → per-session (riskManager.ts)
+- [x] Bug #5: Opening Burst flag after gates (botEngine.ts)
+- [x] Bug #6: dailyLossAcknowledged reset on new day (botEngine.ts)
+- [x] Bug #7+11: Missing ownership checks on 5 mutations (routers.ts)
+- [x] Bug #9: Averaging state persistence (botRestart.ts)
+- [x] Bug #12: restoredDailyPnl filter exitedAt (botRestart.ts)
+- [x] Bug #8+10: nextScanAt cosmetic — set at end of tick (botEngine.ts)

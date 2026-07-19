@@ -125,7 +125,7 @@ export async function computePrecisionMetrics(
   if (toDate) dateFilters.push(lte(tradeLog.enteredAt, istDateToUTC(toDate, true)));
 
   // Fetch all closed trades for this session (including slots)
-  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
+  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`, `${sessionToken}-slot3`];
   const trades: TradeRow[] = await db
     .select()
     .from(tradeLog)
@@ -301,7 +301,7 @@ export async function computeLayerAccuracy(
   const db = await getDb();
   if (!db) return [];
 
-  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
+  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`, `${sessionToken}-slot3`];
 
 
   // Fetch signals grouped by layer
@@ -402,7 +402,7 @@ export async function computeDailyReports(
   const db = await getDb();
   if (!db) return [];
 
-  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
+  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`, `${sessionToken}-slot3`];
 
   const since = new Date(Date.now() - days * 86400000);
 

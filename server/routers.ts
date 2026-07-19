@@ -924,7 +924,8 @@ export const appRouter = router({
     // Set carry-forward preference — if true, skip auto square-off at market close
     setCarryForward: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema, carryForward: z.boolean() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         const state = getBotState(input.sessionToken);
         if (!state) throw new Error("Bot not running");
         state.carryForward = input.carryForward;
@@ -954,7 +955,8 @@ export const appRouter = router({
 
     restart: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         // Stop the bot first
         stopBot(input.sessionToken);
         const db = await getDb();
@@ -1239,7 +1241,8 @@ export const appRouter = router({
       .input(z.object({
         sessionToken: sessionTokenSchema,
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         const result = await forceAverageDown(input.sessionToken);
         if (!result.success) throw new Error(result.error ?? "Force average failed");
         return result;
@@ -1251,7 +1254,8 @@ export const appRouter = router({
         sessionToken: sessionTokenSchema,
         enabled: z.boolean(),
       }))
-      .mutation(({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         const result = toggleShadowMode(input.sessionToken, input.enabled);
         if (!result.success) throw new Error(result.error ?? "Toggle shadow mode failed");
         return { success: true, enabled: input.enabled };
@@ -1281,7 +1285,8 @@ export const appRouter = router({
         tradeId: z.number(),
         exitPrice: z.number(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
 
@@ -3502,7 +3507,7 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema, dailyLossLimitPct: z.number().default(3) }))
       .query(({ input }) => {
         const allBots = getAllRunningBotsForSession(input.sessionToken);
-        return checkPortfolioDrawdown(allBots, input.dailyLossLimitPct);
+        return checkPortfolioDrawdown(allBots, input.dailyLossLimitPct, input.sessionToken);
       }),
 
     /** Reset portfolio halt (after review) */
