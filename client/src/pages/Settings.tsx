@@ -310,13 +310,13 @@ function V2EngineToggle() {
 }
 
 function OpeningBurstToggle() {
-  const [enabled, setEnabled] = useState(() => localStorage.getItem("scalpbot_opening_burst") !== "false");
+  const [enabled, setEnabled] = useState(() => localStorage.getItem("scalpbot_opening_burst") === "true");
 
   return (
     <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-emerald-500/10 to-lime-500/10 border border-emerald-500/20">
       <div>
         <p className="text-sm text-white font-medium">🚀 Opening Burst Strategy</p>
-        <p className="text-xs text-white/40">Captures gap follow-through in 9:15–9:25 AM window. Requires gap &gt; 0.2% + confirmation candle (body &gt; 70%, move &gt; 0.3%). Only 1 trade per day.</p>
+        <p className="text-xs text-white/40">Captures gap follow-through in 9:15–9:25 AM. Rules: Gap &gt; 0.2%, VIX &lt; 20, no candle contradiction, 30% SL / 80-100% target (premium-based), 10-min time limit, no partial booking. Default OFF for regular users.</p>
       </div>
       <label className="relative inline-flex items-center cursor-pointer">
         <input type="checkbox" className="sr-only peer"

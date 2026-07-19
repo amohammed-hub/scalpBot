@@ -92,7 +92,8 @@ describe("Opening Burst Strategy — generateOpeningBurstSignal", () => {
     ];
     const signal = generateOpeningBurstSignal(candles, 24500);
     expect(signal.direction).toBe("HOLD");
-    expect(signal.reason).toContain("no confirmation candle");
+    // Now caught by candle contradiction filter (candle 1 bearish, candle 2 bullish)
+    expect(signal.reason).toContain("contradiction");
   });
 
   it("returns HOLD when body ratio is too low (< 70%)", () => {
@@ -161,22 +162,45 @@ describe("Opening Burst Strategy — generateOpeningBurstSignal", () => {
     }
   });
 
-  it("SL multiplier scales target and stop-loss", () => {
+  it("fixed premium-based SL/Target (not ATR-based)", () => {
     const candles = [
       makeCandle(24600, 24620, 24590, 24610),
       makeCandle(24610, 24710, 24605, 24700),
     ];
+    // SL multiplier no longer affects Opening Burst (fixed % exits)
     const signal1 = generateOpeningBurstSignal(candles, 24500, 1.0);
     const signal2 = generateOpeningBurstSignal(candles, 24500, 2.0);
 
-    // With higher SL multiplier, target should be further and SL should be wider
+    // Both should have the SAME target and SL distances (fixed 0.4% target, 0.15% SL)
     const target1Dist = Math.abs(signal1.targetPrice - signal1.entryPrice);
     const target2Dist = Math.abs(signal2.targetPrice - signal2.entryPrice);
-    expect(target2Dist).toBeGreaterThan(target1Dist);
+    expect(target1Dist).toBeCloseTo(target2Dist, 0);
 
     const sl1Dist = Math.abs(signal1.slPrice - signal1.entryPrice);
     const sl2Dist = Math.abs(signal2.slPrice - signal2.entryPrice);
-    expect(sl2Dist).toBeGreaterThan(sl1Dist);
+    expect(sl1Dist).toBeCloseTo(sl2Dist, 0);
+  });
+
+  it("VIX > 20 filter: returns HOLD when VIX is high", () => {
+    const candles = [
+      makeCandle(24600, 24620, 24590, 24610),
+      makeCandle(24610, 24710, 24605, 24700),
+    ];
+    // VIX = 22 → should skip
+    const signal = generateOpeningBurstSignal(candles, 24500, 1.5, 22);
+    expect(signal.direction).toBe("HOLD");
+    expect(signal.reason).toContain("VIX too high");
+  });
+
+  it("candle contradiction filter: 1 green + 1 red = HOLD", () => {
+    // Gap UP, candle 1 bullish, candle 2 bearish → contradiction
+    const candles = [
+      makeCandle(24600, 24650, 24590, 24640), // bullish (close > open)
+      makeCandle(24640, 24650, 24590, 24600), // bearish (close < open)
+    ];
+    const signal = generateOpeningBurstSignal(candles, 24500);
+    expect(signal.direction).toBe("HOLD");
+    expect(signal.reason).toContain("contradiction");
   });
 
   it("does not trade when prevDayClose is 0 or invalid", () => {

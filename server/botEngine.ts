@@ -24,6 +24,7 @@ import {
   recordTradeClose, isCooldownActive, applyPaperCosts, getPaperCostConfig, resetDailyState,
   recordDirectionalLoss, recordDirectionalWin, isDirectionBlocked, resetDirectionStreak,
 } from "./riskManager";
+import { fetchIndiaVix } from "./riskManager";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface Candle {
@@ -2295,23 +2296,33 @@ export function generateHeroZeroSignal(
 }
 
 // ── Opening Burst Strategy (9:15-9:25 AM IST) ────────────────────────────────
-// Captures the biggest move of the day — the opening gap follow-through.
-// Rules:
-// 1. Gap must be > 0.2% from previous close (skip flat opens)
-// 2. Wait for confirmation candle: body > 70% of range AND cumulative move > 0.3% from day open
+// V2: Captures the biggest move of the day — the opening gap follow-through.
+// PREMIUM-BASED RULES (options move 5-10x at open due to gamma + IV):
+// 1. Gap must be > 0.2% from previous close (skip flat opens < 0.1%)
+// 2. Wait for 2nd/3rd candle confirmation: body > 70% of range AND move > 0.3% from open
 // 3. Direction must align with gap direction (gap-aligned filter)
-// 4. Target: +0.3% index move (≈50-100% premium gain for ATM options)
-// 5. SL: -0.15% index move against (≈30% premium drop)
-// 6. Only 1 trade per day in this window
+// 4. Candle contradiction filter: first 2 candles must NOT contradict (1 green + 1 red = skip)
+// 5. Target: 80-100% premium gain (NOT ATR-based — options move differently at open)
+// 6. SL: 30% premium drop (fixed %, NOT ATR-based)
+// 7. Full exit at target — NO partial booking (moves happen in 2-3 min, reversals violent)
+// 8. Time limit: 10 minutes max. If not at target by 9:25, close at market.
+// 9. Only 1 trade per day in this window (win or lose, done)
+// 10. VIX > 20 = skip (whipsaws more likely)
 export function generateOpeningBurstSignal(
   candles: Candle[],
   prevDayClose: number,
   slMultiplier = 1.5,
+  vixValue = 0,
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Opening Burst: waiting", layer: "OpeningBurst" };
 
   if (!candles || candles.length < 2 || prevDayClose <= 0) {
     return { ...hold, reason: "Opening Burst: insufficient data" };
+  }
+
+  // VIX filter: skip if VIX > 20 (whipsaws more likely)
+  if (vixValue > 20) {
+    return { ...hold, reason: `Opening Burst: VIX too high (${vixValue.toFixed(1)} > 20) — whipsaw risk` };
   }
 
   // Day open = first candle's open price
@@ -2334,12 +2345,22 @@ export function generateOpeningBurstSignal(
 
   const gapDirection: "BUY" | "SELL" = gapPct > 0 ? "BUY" : "SELL";
 
-  // Look for confirmation candle (skip first candle = 9:15, check candles 2-6)
-  // Confirmation: body > 70% of range AND cumulative move > 0.3% from day open
+  // Candle contradiction filter: first 2 candles must agree on direction
+  // If candle 1 is green and candle 2 is red (or vice versa), skip — confusion signal
+  if (candles.length >= 2) {
+    const c1Bullish = candles[0].close > candles[0].open;
+    const c2Bullish = candles[1].close > candles[1].open;
+    if (c1Bullish !== c2Bullish) {
+      return { ...hold, reason: "Opening Burst: candle contradiction (1 green + 1 red = confusion)" };
+    }
+  }
+
+  // Look for confirmation candle (2nd or 3rd candle — don't trade candle 1)
+  // Confirmation: body > 70% of range AND cumulative move > 0.3% from day open AND gap-aligned
   let confirmationCandle: Candle | null = null;
   let bodyRatio = 0;
 
-  for (let i = 1; i < Math.min(candles.length, 6); i++) {
+  for (let i = 1; i < Math.min(candles.length, 5); i++) {
     const c = candles[i];
     const body = Math.abs(c.close - c.open);
     const range = c.high - c.low;
@@ -2370,13 +2391,16 @@ export function generateOpeningBurstSignal(
   const isBullish = confirmationCandle.close > confirmationCandle.open;
   const direction: "BUY" | "SELL" = isBullish ? "BUY" : "SELL";
 
-  // Confidence: map body ratio (0.70-1.0) to confidence (0.80-1.0)
+  // Confidence: map body ratio (0.70-1.0) to confidence (0.80-0.95)
+  // Require 80%+ confidence threshold (only strong bursts)
   const confidence = Math.min(0.80 + (bodyRatio - 0.70) * 0.67, 1.0);
 
-  // Target: +0.3% index move in direction (≈50-100% premium gain for ATM options)
-  // SL: -0.15% against (≈30% premium drop)
-  const targetMove = 0.003 * slMultiplier; // scale with user's SL multiplier
-  const slMove = 0.0015 * slMultiplier;
+  // PREMIUM-BASED exits (NOT ATR-based — options move differently at open):
+  // Target: 80-100% premium gain → index move ~0.4-0.5% (gamma amplifies at open)
+  // SL: 30% premium drop → index move ~0.15%
+  // These are FIXED percentages because ATR hasn't formed yet at 9:15
+  const targetMove = 0.004; // 0.4% index move ≈ 80-100% premium gain at open
+  const slMove = 0.0015; // 0.15% index move ≈ 30% premium drop
 
   let targetPrice: number;
   let slPrice: number;
@@ -3436,7 +3460,8 @@ async function tick(
     }
 
     // ── Partial profit booking (pyramid exit) ────────────────────────────────
-    if (trade.partialBooked === 0) {
+    // SKIP partial booking for Opening Burst trades — full exit at target (moves are fast, reversals violent)
+    if (trade.partialBooked === 0 && trade.signalLayer !== "OpeningBurst") {
       // Safety guard: partial1RPrice must be a valid non-zero price above/below entry
       // A value of 0 would immediately trigger on any price (e.g. after DB restore without recalculation)
       const partial1Valid = trade.partial1RPrice > 0 &&
@@ -3489,7 +3514,7 @@ async function tick(
           }
         })();
       }
-    } else if (trade.partialBooked === 1) {
+    } else if (trade.partialBooked === 1 && trade.signalLayer !== "OpeningBurst") {
      // Safety guard: partial2RPrice must be a valid non-zero price above/below entry (same as 1R guard)
      const partial2Valid = trade.partial2RPrice > 0 &&
        (trade.direction === "BUY" ? trade.partial2RPrice > trade.entryPrice : trade.partial2RPrice < trade.entryPrice);
@@ -3721,13 +3746,18 @@ async function tick(
     // Exit if: (1) trade is older than 20 minutes, AND (2) trade is in loss or flat.
     // This prevents holding losing options that slowly bleed to zero.
     // If trade was averaged, give more time (30 min) since the new avg entry is lower
-    const MAX_HOLD_MINUTES = (trade.averageCount ?? 0) > 0 ? 30 : 20;
+    // Opening Burst: strict 10-minute limit (moves happen in 2-3 min, don't hold long)
+    const MAX_HOLD_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : (trade.averageCount ?? 0) > 0 ? 30 : 20;
     if (!exitReason && trade.isIndexOptions && tradeAgeMs > MAX_HOLD_MINUTES * 60 * 1000) {
       const currentPnlPerUnit = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
         : trade.entryPrice - effectivePrice;
-      // Exit if trade is in loss OR barely profitable (< 5% of entry)
-      if (currentPnlPerUnit < trade.entryPrice * 0.05) {
+      // Opening Burst: ALWAYS exit at time limit (win or lose, done)
+      // Regular trades: exit only if in loss or barely profitable
+      if (trade.signalLayer === "OpeningBurst") {
+        exitReason = `Opening Burst Time Exit (${MAX_HOLD_MINUTES}min) — close at market`;
+        emitActivity(state.sessionToken, "signal", `🚀⏰ Opening Burst time limit: held ${Math.floor(tradeAgeMs / 60000)}min — closing at market | P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}`);
+      } else if (currentPnlPerUnit < trade.entryPrice * 0.05) {
         exitReason = `Time Exit (${MAX_HOLD_MINUTES}min) — no momentum`;
         emitActivity(state.sessionToken, "signal", `⏰ Time-based exit: held ${Math.floor(tradeAgeMs / 60000)}min with P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)} — cutting losses`);
       }
@@ -3915,12 +3945,17 @@ async function tick(
 
   console.log(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | openingBurst=${inOpeningBurst} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
   if (inOpeningBurst && state.candles.length >= 2) {
-    signal = generateOpeningBurstSignal(state.candles, prevDayClose, slMult);
+    // Fetch VIX for Opening Burst filter (cached 60s, fail-open returns 0)
+    const vixNow = await fetchIndiaVix(state.accessToken ?? undefined);
+    signal = generateOpeningBurstSignal(state.candles, prevDayClose, slMult, vixNow);
     // If Opening Burst fires a BUY/SELL, mark as taken so we don't re-enter
     if (signal.direction !== "HOLD") {
       state.openingBurstTradeTaken = true;
-      emitActivity(state.sessionToken, "signal", `🚀 Opening Burst: ${signal.direction} | gap-aligned | conf=${(signal.confidence * 100).toFixed(0)}%`);
+      emitActivity(state.sessionToken, "signal", `🚀 Opening Burst: ${signal.direction} | gap-aligned | conf=${(signal.confidence * 100).toFixed(0)}% | VIX=${vixNow.toFixed(1)}`);
     }
+    // Scan every candle during Opening Burst: override nextScanAt to 15s (minimum interval)
+    // Normal scan might be 30-60s, but burst moves happen in 1-2 candles
+    state.nextScanAt = Date.now() + 15_000;
   } else if (inPowerHour) {
     signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, state.targetMultiplier);
   } else if (inMCXEvening) {

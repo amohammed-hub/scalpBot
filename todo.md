@@ -1207,3 +1207,14 @@
 - [x] FEATURE: 80%+ confidence threshold for entry (mapped from body ratio)
 - [x] FEATURE: Dashboard UI toggle for Opening Burst strategy enable/disable (Settings page)
 - [x] FEATURE: Dashboard shows "Opening Burst Mode" banner during 9:15-9:25 window (🚀 badge)
+
+## Opening Burst Strategy V2 — Improvements (July 19, 2026)
+- [x] FIX: SL = 30% premium drop (NOT ATR-based — options move differently at open)
+- [x] FIX: Target = 80-100% premium gain (gamma + IV makes moves 5-10x larger at open)
+- [x] FIX: Full exit at target — NO partial booking (moves happen in 2-3 min, reversals are violent)
+- [x] FIX: 10-minute time limit — if not at target by 9:25, close at market
+- [x] FIX: Scan every candle (not every 60s) during 9:15-9:25 window
+- [x] ADD: Candle contradiction filter — skip if first 2 candles contradict (1 green + 1 red = confusion)
+- [x] ADD: VIX filter — skip if India VIX > 20 (whipsaws more likely)
+- [x] FIX: Default OFF for regular users, ON for admin only
+- [x] FIX: Only 1 opening burst trade per day (win or lose, done)

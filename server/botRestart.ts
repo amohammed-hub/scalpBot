@@ -268,7 +268,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       averagingEnabled: session.averagingEnabled ?? true,
       averagingLossThreshold: session.averagingLossThreshold ?? 0.20,
       unlimitedTrades: (session as any).unlimitedTrades ?? false,
-      openingBurstEnabled: (session as any).openingBurstEnabled ?? true,
+      openingBurstEnabled: (session as any).openingBurstEnabled ?? false,
     },
     onTradeOpen,
     onTradeClose,

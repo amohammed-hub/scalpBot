@@ -350,7 +350,7 @@ export const appRouter = router({
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
-        openingBurstEnabled: z.boolean().default(true), // Opening Burst strategy (9:15-9:25 AM)
+        openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
       }))
      .mutation(async ({ input, ctx }) => {
       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
@@ -2269,7 +2269,7 @@ export const appRouter = router({
         averagingLossThreshold: z.number().default(0.20),
         useV2Engine: z.boolean().default(false),
         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
-        openingBurstEnabled: z.boolean().default(true), // Opening Burst strategy (9:15-9:25 AM)
+        openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session

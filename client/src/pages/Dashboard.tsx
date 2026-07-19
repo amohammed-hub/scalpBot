@@ -345,7 +345,7 @@ export default function Dashboard() {
         averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
         useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
         unlimitedTrades,
-        openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
+        openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       });
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
@@ -365,7 +365,7 @@ export default function Dashboard() {
         trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
         useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
         unlimitedTrades,
-        openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
+        openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       });
     }
   };
@@ -449,7 +449,7 @@ export default function Dashboard() {
           averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
           unlimitedTrades,
-          openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
+          openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
         });
       } else {
         startSecondaryMutation.mutate({
@@ -468,7 +468,7 @@ export default function Dashboard() {
           trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
           unlimitedTrades,
-          openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
+          openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
         });
       }
       toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
@@ -919,7 +919,7 @@ export default function Dashboard() {
      averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
      unlimitedTrades,
      useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
-     openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
+     openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
    });
  };
 
