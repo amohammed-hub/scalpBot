@@ -585,12 +585,15 @@ export default function Settings() {
   const [telegramStatus, setTelegramStatus] = useState<"idle" | "connected" | "failed">("idle");
 
   // Collapsible section states
-  const [showNotifPrefs, setShowNotifPrefs] = useState(false);
-  const [showMcxLaunch, setShowMcxLaunch] = useState(false);
-  const [showAveraging, setShowAveraging] = useState(false);
-  const [showV2Engine, setShowV2Engine] = useState(false);
-  const [showShadowMode, setShowShadowMode] = useState(false);
-  const [showSessionShare, setShowSessionShare] = useState(false);
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+  const toggleSection = (section: string) => setActiveSection(prev => prev === section ? null : section);
+  // Derived booleans for backward compat
+  const showNotifPrefs = activeSection === "notifPrefs";
+  const showMcxLaunch = activeSection === "mcxLaunch";
+  const showAveraging = activeSection === "averaging";
+  const showV2Engine = activeSection === "v2Engine";
+  const showShadowMode = activeSection === "shadowMode";
+  const showSessionShare = activeSection === "sessionShare";
 
   // MCX Quick Launch state
   const [mcxCategory, setMcxCategory] = useState<"all" | "metal" | "energy" | "agri">("all");
@@ -1211,7 +1214,7 @@ export default function Settings() {
         {/* ── Notification Preferences ──────────────────────────────────────── */}
         <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
           <button
-            onClick={() => setShowNotifPrefs(v => !v)}
+            onClick={() => toggleSection("notifPrefs")}
             className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
           >
             <div className="flex items-center gap-2">
@@ -1230,7 +1233,7 @@ export default function Settings() {
         {/* ── MCX Quick Launch (moved below notification prefs) ─────────────── */}
         <div className="bg-white/5 border border-white/10 rounded-2xl mt-6 overflow-hidden">
           <button
-            onClick={() => setShowMcxLaunch(v => !v)}
+            onClick={() => toggleSection("mcxLaunch")}
             className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors"
           >
             <div className="flex items-center gap-2">
@@ -1344,7 +1347,7 @@ export default function Settings() {
 
         {/* ── Averaging/DCA Settings ─────────────────────────────────────── */}
         <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl overflow-hidden">
-          <button onClick={() => setShowAveraging(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+          <button onClick={() => toggleSection("averaging")} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
             <div className="flex items-center gap-2">
               <ArrowDownUp className="w-4 h-4 text-purple-400" />
               <span className="text-white font-semibold text-sm">Averaging / DCA Strategy</span>
@@ -1362,7 +1365,7 @@ export default function Settings() {
         </div>
         {/* ── V2 Strategy Engine ───────────────────────────────────────── */}
         <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-emerald-500/20 rounded-2xl overflow-hidden">
-          <button onClick={() => setShowV2Engine(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+          <button onClick={() => toggleSection("v2Engine")} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-emerald-400" />
               <span className="text-white font-semibold text-sm">V2 Strategy Engine — Regime-Based</span>
@@ -1393,7 +1396,7 @@ export default function Settings() {
               </div>
             </div>
           )}
-          <button onClick={() => setShowShadowMode(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+          <button onClick={() => toggleSection("shadowMode")} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
             <div className="flex items-center gap-2">
               <Eye className="w-4 h-4 text-amber-400" />
               <span className="text-white font-semibold text-sm">Shadow Mode — Signal Audit</span>
@@ -1415,7 +1418,7 @@ export default function Settings() {
 
         {/* ── Cross-Device Session Sharing ──────────────────────────────── */}
         <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl overflow-hidden">
-          <button onClick={() => setShowSessionShare(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+          <button onClick={() => toggleSection("sessionShare")} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
             <div className="flex items-center gap-2">
               <span className="text-base">📱</span>
               <span className="text-white font-semibold text-sm">Access on Other Devices</span>

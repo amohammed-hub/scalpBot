@@ -1187,10 +1187,10 @@
 - [x] AUDIT: TypeScript 0 errors, 153/153 tests passing
 
 ## Weekend Build (July 19, 2026) — IMPLEMENT NOW
-- [ ] #1 Fix Bot 4 database error (ALTER TABLE — allow botSlot values 0-3)
-- [ ] #2 Hide admin banner (frontend — already partially done, verify complete)
-- [ ] #3 Subscription tier access control (verify already implemented and working)
-- [ ] #4 Grant Access admin feature (admin can grant/revoke subscription to users for beta testing)
-- [ ] #5 Referral program (unique referral code per user, extra bot slot reward)
-- [ ] #6 Unlimited trades toggle (verify already implemented and working)
-- [ ] #7 Settings accordion collapse (frontend cleanup — collapsible sections)
+- [x] #1 Fix Bot 4 database error (ALTER TABLE — allow botSlot values 0-3)
+- [x] #2 Hide admin banner (frontend — already partially done, verify complete)
+- [x] #3 Subscription tier access control (verify already implemented and working)
+- [x] #4 Grant Access admin feature (admin can grant/revoke subscription to users for beta testing)
+- [x] #5 Referral program (unique referral code per user, extra bot slot reward)
+- [x] #6 Unlimited trades toggle (verify already implemented and working)
+- [x] #7 Settings accordion collapse (frontend cleanup — collapsible sections)
