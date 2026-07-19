@@ -380,14 +380,16 @@ export const appRouter = router({
         const isAdminViaCookie = await verifyAdminAccess(ctx);
         console.log(`[bot.start] Access check: hasAccess=${access.hasAccess}, plan=${access.plan}, isAdminViaCookie=${isAdminViaCookie}, sessionToken=${input.sessionToken.slice(0, 8)}...`);
         const isAdminSession = ENV.adminMobile && input.sessionToken ? await (async () => {
-          const db = await getDb();
-          if (!db) return false;
-          const { appUsers } = await import("../drizzle/schema");
-          const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-          return rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile);
-        })() : false;
-       if (!access.hasAccess && !isAdminSession && !isAdminViaCookie) {
-         throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
+         const db = await getDb();
+         if (!db) return false;
+          try {
+            const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
+            return !!row && (row.role === "admin" || row.mobile === ENV.adminMobile);
+          } catch { return false; }
+       })() : false;
+      if (!access.hasAccess && !isAdminSession && !isAdminViaCookie) {
+        throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
        }
         // Tier-based enforcement (admin bypasses all)
         if (!isAdminSession && !isAdminViaCookie) {
@@ -2292,14 +2294,16 @@ export const appRouter = router({
         // Admin bypass for slot bots
         const isSlotAdminViaCookie = await verifyAdminAccess(ctx);
         const isSlotAdminSession = ENV.adminMobile && input.sessionToken ? await (async () => {
-          const db = await getDb();
-          if (!db) return false;
-          const { appUsers } = await import("../drizzle/schema");
-          const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-          return rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile);
-        })() : false;
-       if (!slotAccess.hasAccess && !isSlotAdminSession && !isSlotAdminViaCookie) {
-         throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
+         const db = await getDb();
+         if (!db) return false;
+          try {
+            const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
+            return !!row && (row.role === "admin" || row.mobile === ENV.adminMobile);
+          } catch { return false; }
+       })() : false;
+      if (!slotAccess.hasAccess && !isSlotAdminSession && !isSlotAdminViaCookie) {
+        throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
        }
         // Tier-based enforcement (admin bypasses all)
         if (!isSlotAdminSession && !isSlotAdminViaCookie) {
@@ -3827,25 +3831,35 @@ export const appRouter = router({
          } catch {}
        }
        // Also check by sessionToken: if this sessionToken belongs to admin user, bypass
-       if (input.sessionToken) {
-         const db = await getDb();
-         if (db) {
-           const { appUsers } = await import("../drizzle/schema");
-           const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-           if (rows.length > 0 && (rows[0].role === "admin" || rows[0].mobile === ENV.adminMobile)) {
+      if (input.sessionToken) {
+        const db = await getDb();
+        if (db) {
+          try {
+            const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
+            if (row && (row.role === "admin" || row.mobile === ENV.adminMobile)) {
               return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin };
-           }
-         }
-       }
-     const access = await checkAccess(input.sessionToken);
-     const trialUsed = await hasUsedTrial(input.sessionToken);
-      const tierLimits = getTierLimits(access.plan, false);
-       // Get extra bot slots from referrals
-        const db2 = await getDb();
-        const userRows = db2 ? await db2.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1) : [];
-        const extraBotSlots = userRows[0]?.extraBotSlots ?? 0;
-        return { ...access, trialUsed, isAdmin: false, tierLimits, extraBotSlots };
-      }),
+            }
+          } catch (e) {
+            console.error("[checkAccess] admin sessionToken check failed:", e);
+          }
+        }
+      }
+    const access = await checkAccess(input.sessionToken);
+    const trialUsed = await hasUsedTrial(input.sessionToken);
+     const tierLimits = getTierLimits(access.plan, false);
+      // Get extra bot slots from referrals
+        let extraBotSlots = 0;
+        try {
+          const db2 = await getDb();
+          if (db2) {
+            const [ebRaw]: any = await db2.execute(sql`SELECT extraBotSlots FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            const ebRow = Array.isArray(ebRaw) ? ebRaw[0] : ebRaw;
+            extraBotSlots = ebRow?.extraBotSlots ?? 0;
+          }
+        } catch { /* column may not exist on Railway DB */ }
+       return { ...access, trialUsed, isAdmin: false, tierLimits, extraBotSlots };
+     }),
 
     /** Start a 2-day free trial */
     startTrial: publicProcedure
@@ -4509,74 +4523,91 @@ export const appRouter = router({
      }),
   }),
   // ── Referral System ─────────────────────────────────────────────────────────
-  referral: router({
-    // Get the current user's referral info (code, stats)
-    myReferral: publicProcedure
-      .input(z.object({ sessionToken: z.string() }))
-      .query(async ({ input }) => {
-        const db = await getDb();
-        if (!db) throw new Error("DB unavailable");
-        const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-        if (!rows.length) return { referralCode: null, referralCount: 0, extraBotSlots: 0 };
-        const user = rows[0];
-        // Generate referral code if not exists
-        if (!user.referralCode) {
-          const code = generateReferralCode();
-          await db.update(appUsers).set({ referralCode: code }).where(eq(appUsers.id, user.id));
-          user.referralCode = code;
+ referral: router({
+   // Get the current user's referral info (code, stats)
+   myReferral: publicProcedure
+     .input(z.object({ sessionToken: z.string() }))
+     .query(async ({ input }) => {
+       const db = await getDb();
+       if (!db) throw new Error("DB unavailable");
+        try {
+          const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+          if (!rows.length) return { referralCode: null, referralCount: 0, extraBotSlots: 0 };
+          const user = rows[0];
+          // Generate referral code if not exists
+          if (!user.referralCode) {
+            const code = generateReferralCode();
+            await db.update(appUsers).set({ referralCode: code }).where(eq(appUsers.id, user.id));
+            user.referralCode = code;
+          }
+          // Count successful referrals
+          const refCount = await db.select({ cnt: count() }).from(referrals).where(eq(referrals.referrerMobile, user.mobile));
+          return {
+            referralCode: user.referralCode,
+            referralCount: refCount[0]?.cnt ?? 0,
+            extraBotSlots: user.extraBotSlots ?? 0,
+          };
+        } catch (e) {
+          console.error("[referral.myReferral] Query failed (table may not exist):", e);
+          return { referralCode: null, referralCount: 0, extraBotSlots: 0 };
         }
-        // Count successful referrals
-        const refCount = await db.select({ cnt: count() }).from(referrals).where(eq(referrals.referrerMobile, user.mobile));
-        return {
-          referralCode: user.referralCode,
-          referralCount: refCount[0]?.cnt ?? 0,
-          extraBotSlots: user.extraBotSlots ?? 0,
-        };
-      }),
-    // Apply a referral code (called during signup or from settings)
-    applyCode: publicProcedure
-      .input(z.object({ sessionToken: z.string(), referralCode: z.string().min(4).max(12) }))
-      .mutation(async ({ input }) => {
-        const db = await getDb();
-        if (!db) throw new Error("DB unavailable");
-        // Get current user
-        const userRows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-        if (!userRows.length) throw new Error("User not found");
-        const user = userRows[0];
-        // Check if already referred
-        if (user.referredBy) throw new Error("You have already used a referral code");
-        // Find referrer by code
-        const referrerRows = await db.select().from(appUsers).where(eq(appUsers.referralCode, input.referralCode)).limit(1);
-        if (!referrerRows.length) throw new Error("Invalid referral code");
-        const referrer = referrerRows[0];
-        // Can't refer yourself
-        if (referrer.id === user.id) throw new Error("You cannot use your own referral code");
-        // Apply referral
-        await db.update(appUsers).set({ referredBy: input.referralCode }).where(eq(appUsers.id, user.id));
-        // Record the referral
-        await db.insert(referrals).values({
-          referrerMobile: referrer.mobile,
-          refereeMobile: user.mobile,
-          referralCode: input.referralCode,
-          rewardGranted: true,
-        });
-        // Grant extra bot slot to referrer
-        await db.update(appUsers).set({ extraBotSlots: (referrer.extraBotSlots ?? 0) + 1 }).where(eq(appUsers.id, referrer.id));
-        return { success: true, message: "Referral code applied! Your referrer earned an extra bot slot." };
-      }),
-    // Admin: list all referrals
-    listAll: publicProcedure
-      .input(z.object({ sessionToken: z.string() }))
-      .query(async ({ input }) => {
-        const db = await getDb();
-        if (!db) throw new Error("DB unavailable");
-        // Verify admin
-        const adminRows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
-        if (!adminRows.length || adminRows[0].role !== "admin") throw new Error("Admin only");
-        const allRefs = await db.select().from(referrals).orderBy(desc(referrals.createdAt)).limit(100);
-        return allRefs;
-      }),
-  }),
+     }),
+   // Apply a referral code (called during signup or from settings)
+   applyCode: publicProcedure
+     .input(z.object({ sessionToken: z.string(), referralCode: z.string().min(4).max(12) }))
+     .mutation(async ({ input }) => {
+       const db = await getDb();
+       if (!db) throw new Error("DB unavailable");
+        try {
+          // Get current user
+          const userRows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+          if (!userRows.length) throw new Error("User not found");
+          const user = userRows[0];
+          // Check if already referred
+          if (user.referredBy) throw new Error("You have already used a referral code");
+          // Find referrer by code
+          const referrerRows = await db.select().from(appUsers).where(eq(appUsers.referralCode, input.referralCode)).limit(1);
+          if (!referrerRows.length) throw new Error("Invalid referral code");
+          const referrer = referrerRows[0];
+          // Can't refer yourself
+          if (referrer.id === user.id) throw new Error("You cannot use your own referral code");
+          // Apply referral
+          await db.update(appUsers).set({ referredBy: input.referralCode }).where(eq(appUsers.id, user.id));
+          // Record the referral
+          await db.insert(referrals).values({
+            referrerMobile: referrer.mobile,
+            refereeMobile: user.mobile,
+            referralCode: input.referralCode,
+            rewardGranted: true,
+          });
+          // Grant extra bot slot to referrer
+          await db.update(appUsers).set({ extraBotSlots: (referrer.extraBotSlots ?? 0) + 1 }).where(eq(appUsers.id, referrer.id));
+          return { success: true, message: "Referral code applied! Your referrer earned an extra bot slot." };
+        } catch (e: any) {
+          if (e.message?.includes("User not found") || e.message?.includes("already used") || e.message?.includes("Invalid") || e.message?.includes("cannot use your own")) throw e;
+          console.error("[referral.applyCode] Query failed:", e);
+          throw new Error("Referral system is not available yet. Please try again later.");
+        }
+     }),
+   // Admin: list all referrals
+   listAll: publicProcedure
+     .input(z.object({ sessionToken: z.string() }))
+     .query(async ({ input }) => {
+       const db = await getDb();
+       if (!db) throw new Error("DB unavailable");
+        try {
+          // Verify admin
+          const adminRows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+          if (!adminRows.length || adminRows[0].role !== "admin") throw new Error("Admin only");
+          const allRefs = await db.select().from(referrals).orderBy(desc(referrals.createdAt)).limit(100);
+          return allRefs;
+        } catch (e: any) {
+          if (e.message === "Admin only") throw e;
+          console.error("[referral.listAll] Query failed:", e);
+          return [];
+        }
+     }),
+ }),
 });
 export type AppRouter = typeof appRouter;
 import { sendTelegramMessage } from "./botEngine";

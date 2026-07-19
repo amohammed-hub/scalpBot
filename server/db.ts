@@ -1,4 +1,4 @@
-import { eq, and, desc, gt, count } from "drizzle-orm";
+import { eq, and, desc, gt, count, sql } from "drizzle-orm";
 import { lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -402,6 +402,36 @@ async function initDb() {
           console.log("[Database] Migration complete: idx_trade_log_status added");
         }
       } catch (e: any) { console.warn("[Database] Index check trade_log.status failed:", e.message); }
+      // Check referralCode column on app_users (referral system)
+      try {
+        await pool.execute("SELECT `referralCode` FROM `app_users` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding referral columns to app_users");
+          await pool.execute("ALTER TABLE `app_users` ADD COLUMN `referralCode` varchar(12)");
+          await pool.execute("ALTER TABLE `app_users` ADD COLUMN `referredBy` varchar(12)");
+          await pool.execute("ALTER TABLE `app_users` ADD COLUMN `extraBotSlots` int DEFAULT 0");
+          console.log("[Database] Migration complete: referral columns added to app_users");
+        }
+      }
+      // Check referrals table
+      try {
+        await pool.execute("SELECT 1 FROM `referrals` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_NO_SUCH_TABLE" || e?.message?.includes("doesn't exist")) {
+          console.log("[Database] Auto-migrating: creating referrals table");
+          await pool.execute(`CREATE TABLE IF NOT EXISTS referrals (
+            id int AUTO_INCREMENT NOT NULL,
+            referrerMobile varchar(15) NOT NULL,
+            refereeMobile varchar(15) NOT NULL,
+            referralCode varchar(12) NOT NULL,
+            rewardGranted boolean NOT NULL DEFAULT false,
+            createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(id)
+          )`);
+          console.log("[Database] Migration complete: referrals table created");
+        }
+      }
 
     }
     return db;
@@ -830,8 +860,17 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
 export async function getAppUserById(userId: number) {
   const db = await getDb();
   if (!db) return null;
-  const rows = await db.select().from(appUsers).where(eq(appUsers.id, userId)).limit(1);
-  return rows[0] ?? null;
+  try {
+    const rows = await db.select().from(appUsers).where(eq(appUsers.id, userId)).limit(1);
+    return rows[0] ?? null;
+  } catch {
+    // Fallback: referral columns may not exist on Railway
+    try {
+      const [rawRows]: any = await db.execute(sql`SELECT id, mobile, name, role, isVerified, sessionToken, lastLoginAt, createdAt, updatedAt FROM app_users WHERE id = ${userId} LIMIT 1`);
+      const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
+      return row ?? null;
+    } catch { return null; }
+  }
 }
 
 /**
@@ -840,7 +879,15 @@ export async function getAppUserById(userId: number) {
 export async function getAllAppUsers() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(appUsers).orderBy(desc(appUsers.createdAt));
+  try {
+    return await db.select().from(appUsers).orderBy(desc(appUsers.createdAt));
+  } catch {
+    // Fallback: referral columns may not exist on Railway
+    try {
+      const [rawRows]: any = await db.execute(sql`SELECT id, mobile, name, role, isVerified, sessionToken, lastLoginAt, createdAt, updatedAt FROM app_users ORDER BY createdAt DESC`);
+      return Array.isArray(rawRows) ? rawRows : [];
+    } catch { return []; }
+  }
 }
 
 /**
