@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
+import { TradeToastContainer } from "@/components/TradeToast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
@@ -42,6 +43,7 @@ function App() {
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
+          <TradeToastContainer />
           <Router />
         </TooltipProvider>
       </ThemeProvider>

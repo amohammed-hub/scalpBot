@@ -329,6 +329,26 @@ function OpeningBurstToggle() {
   );
 }
 
+function SoundNotificationsToggle() {
+  const [enabled, setEnabled] = useState(() => localStorage.getItem("scalpbot_sound_notifications") !== "false");
+
+  return (
+    <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-blue-500/10 to-indigo-500/10 border border-blue-500/20">
+      <div>
+        <p className="text-sm text-white font-medium">🔔 Sound Notifications</p>
+        <p className="text-xs text-white/40">Play sounds on trade events: entry ding, profit ka-ching, loss tone. Visual toasts always show.</p>
+      </div>
+      <label className="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" className="sr-only peer"
+          checked={enabled}
+          onChange={(e) => { const v = e.target.checked; setEnabled(v); localStorage.setItem("scalpbot_sound_notifications", String(v)); toast.success(v ? "Sound notifications ON" : "Sound notifications OFF — visual toasts still active"); }}
+        />
+        <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+      </label>
+    </div>
+  );
+}
+
 function ShadowModeControls({ sessionToken }: { sessionToken: string }) {
   const [enabled, setEnabled] = useState(false);
   const [showLog, setShowLog] = useState(false);
@@ -1399,7 +1419,8 @@ export default function Settings() {
                 2-layer decision system: Layer 1 detects market regime (TRENDING / RANGING / VOLATILE / DEAD), Layer 2 only fires strategies suited to that regime. Disables noisy layers (Breakout, Booming Bulls, MACD) and adds quality filters (15m trend alignment, R:R minimum, loss streak cooldown). Takes effect on next bot start.
               </p>
               <V2EngineToggle />
-              <OpeningBurstToggle />
+             <OpeningBurstToggle />
+              <SoundNotificationsToggle />
             </div>
           )}
         </div>

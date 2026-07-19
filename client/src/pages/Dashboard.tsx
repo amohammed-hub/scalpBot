@@ -889,6 +889,62 @@ export default function Dashboard() {
     }
   }, [serverCreds]);
 
+  // ── Trade Event Sound & Toast Notifications ──────────────────────────────────
+  const prevOpenTradeRef = useRef<any>(null);
+  const prevTradesLenRef = useRef<number>(0);
+  useEffect(() => {
+    const currentOT = openTrade ?? inMemOpenTrade ?? null;
+    const prevOT = prevOpenTradeRef.current;
+
+    // Detect ENTRY: no previous open trade → now have one
+    if (!prevOT && currentOT) {
+      const symbol = currentOT.instrumentLabel || currentOT.instrumentSymbol || "Unknown";
+      const direction = currentOT.direction === "BUY" ? "BUY" : "SELL";
+      const optType = currentOT.optionType ? ` ${currentOT.optionType}` : "";
+      const price = currentOT.entryPrice ? ` @ ₹${Number(currentOT.entryPrice).toFixed(0)}` : "";
+      playEntrySound();
+      pushTradeNotification({
+        type: "entry",
+        message: `Bot 1: ${direction} ${symbol}${optType}${price}`,
+      });
+    }
+
+    // Detect EXIT: had open trade → now gone (trade closed)
+    if (prevOT && !currentOT) {
+      // Check latest trade for P&L info
+      const latestTrade = trades?.[0];
+      if (latestTrade && latestTrade.exitPrice) {
+        const pnl = Number(latestTrade.pnl ?? 0);
+        const isProfit = pnl >= 0;
+        const symbol = latestTrade.instrumentLabel || latestTrade.instrumentSymbol || "Unknown";
+        const reason = latestTrade.exitReason || (isProfit ? "Target hit" : "Stop Loss");
+        if (isProfit) {
+          playProfitSound();
+          pushTradeNotification({
+            type: "profit",
+            message: `Bot 1: EXIT +₹${Math.abs(pnl).toLocaleString("en-IN")} (${reason})`,
+          });
+        } else {
+          playLossSound();
+          pushTradeNotification({
+            type: "loss",
+            message: `Bot 1: EXIT -₹${Math.abs(pnl).toLocaleString("en-IN")} (${reason})`,
+          });
+        }
+      } else {
+        // Fallback — trade closed but no P&L info yet
+        playLossSound();
+        pushTradeNotification({
+          type: "loss",
+          message: `Bot 1: Trade closed`,
+        });
+      }
+    }
+
+    prevOpenTradeRef.current = currentOT;
+    prevTradesLenRef.current = trades?.length ?? 0;
+  }, [openTrade, inMemOpenTrade, trades]);
+
   // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleStart = () => {
     const selectedInstr = INSTRUMENTS.find(i => i.token === config.instrumentToken);
@@ -1344,43 +1400,73 @@ export default function Dashboard() {
        )}
 
 
-        {/* Opening Burst Quick Toggle */}
-        <div className="mb-4 flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <span className="text-base">🚀</span>
-            <span className="text-sm font-medium text-white/80">Opening Burst</span>
-          </div>
-          <button
-            onClick={() => {
-              const current = localStorage.getItem("scalpbot_opening_burst") === "true";
-              localStorage.setItem("scalpbot_opening_burst", current ? "false" : "true");
-              setConfig(prev => ({ ...prev, openingBurstEnabled: !current }));
-            }}
-            className={`relative w-10 h-5 rounded-full transition-all duration-200 ${
-              config.openingBurstEnabled
-                ? "bg-emerald-500/60 border border-emerald-400/50"
-                : "bg-white/10 border border-white/20"
-            }`}
-          >
-            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-all duration-200 ${
-              config.openingBurstEnabled
-                ? "translate-x-5 bg-emerald-300"
-                : "translate-x-0 bg-white/40"
-            }`} />
-          </button>
-          <span className={`text-xs font-medium ${config.openingBurstEnabled ? "text-emerald-400" : "text-white/30"}`}>
-            {config.openingBurstEnabled ? "ON" : "OFF"}
-          </span>
-          {config.openingBurstEnabled && openingBurstMode && (
-            <div className="ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 animate-pulse">
-              <Rocket className="w-3 h-3" />
-              Burst Mode Active
+        {/* Opening Burst Quick Toggle — 4 contextual states */}
+        {(() => {
+          const now = new Date();
+          const burstIstMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
+          const isBeforeWindow = burstIstMin < 555; // Before 9:15
+          const isInWindow = burstIstMin >= 555 && burstIstMin <= 565; // 9:15-9:25
+          const isAfterWindow = burstIstMin > 565; // After 9:25
+          const enabled = config.openingBurstEnabled;
+
+          // Determine state label and styling
+          let stateLabel: React.ReactNode;
+          let borderColor: string;
+          let bgColor: string;
+
+          if (!enabled) {
+            stateLabel = <span className="text-white/30 text-xs">Opening Burst: Disabled</span>;
+            borderColor = "border-white/10";
+            bgColor = "bg-white/5";
+          } else if (isBeforeWindow) {
+            stateLabel = <span className="text-amber-400 text-xs">Opening Burst: Ready — activates at 9:15</span>;
+            borderColor = "border-amber-500/30";
+            bgColor = "bg-amber-500/5";
+          } else if (isInWindow) {
+            stateLabel = (
+              <span className="text-emerald-400 text-xs flex items-center gap-1.5 animate-pulse">
+                <Rocket className="w-3 h-3" />
+                Burst Mode Active — scanning for gap
+              </span>
+            );
+            borderColor = "border-emerald-500/40";
+            bgColor = "bg-emerald-500/10";
+          } else {
+            stateLabel = <span className="text-white/25 text-xs">Opening Burst: Done for today</span>;
+            borderColor = "border-white/5";
+            bgColor = "bg-white/[0.02]";
+          }
+
+          return (
+            <div className={`mb-4 flex items-center gap-3 ${bgColor} border ${borderColor} rounded-xl px-4 py-2.5 transition-all duration-300`}>
+              <div className="flex items-center gap-2">
+                <span className={`text-base ${!enabled || isAfterWindow ? "opacity-30" : ""}`}>🚀</span>
+                <span className={`text-sm font-medium ${!enabled || isAfterWindow ? "text-white/30" : "text-white/80"}`}>Opening Burst</span>
+              </div>
+              <button
+                onClick={() => {
+                  const current = localStorage.getItem("scalpbot_opening_burst") === "true";
+                  localStorage.setItem("scalpbot_opening_burst", current ? "false" : "true");
+                  setConfig(prev => ({ ...prev, openingBurstEnabled: !current }));
+                }}
+                className={`relative w-10 h-5 rounded-full transition-all duration-200 ${
+                  enabled
+                    ? "bg-emerald-500/60 border border-emerald-400/50"
+                    : "bg-white/10 border border-white/20"
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-all duration-200 ${
+                  enabled
+                    ? "translate-x-5 bg-emerald-300"
+                    : "translate-x-0 bg-white/40"
+                }`} />
+              </button>
+              <div className="ml-auto">
+                {stateLabel}
+              </div>
             </div>
-          )}
-          {config.openingBurstEnabled && !openingBurstMode && (
-            <span className="ml-auto text-xs text-white/30">Activates 9:15-9:25 AM</span>
-          )}
-        </div>
+          );
+        })()}
 
         {/* Market Status Badge + Auto Square-Off Warning */}
         {(() => {
@@ -3560,3 +3646,5 @@ export default function Dashboard() {
   );
 }
 import { Rocket } from "lucide-react";
+import { playEntrySound, playProfitSound, playLossSound } from "@/lib/sounds";
+import { pushTradeNotification } from "@/components/TradeToast";

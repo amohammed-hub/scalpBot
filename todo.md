@@ -1218,3 +1218,21 @@
 - [x] ADD: VIX filter — skip if India VIX > 20 (whipsaws more likely)
 - [x] FIX: Default OFF for regular users, ON for admin only
 - [x] FIX: Only 1 opening burst trade per day (win or lose, done)
+
+## Opening Burst Toggle UI Fix (July 19, 2026)
+- [x] FIX: Toggle is a PREFERENCE (always ON/OFF) — not a daily timer
+- [x] FIX: Show 4 contextual states: Disabled / Ready / Active / Done for today
+- [x] FIX: "Opening Burst: Disabled" when OFF
+- [x] FIX: "Opening Burst: Ready — activates at 9:15" when ON before 9:15
+- [x] FIX: "🚀 Burst Mode Active — scanning for gap" when ON during 9:15-9:25
+- [x] FIX: "Opening Burst: Done for today" (greyed out) when ON after 9:25
+- [x] FIX: No manual turn-off needed ever — time window enforced in code
+
+## Browser Sound Notifications (July 19, 2026)
+- [x] FEATURE: Trade entry sound — short "ding" when bot enters a trade
+- [x] FEATURE: Trade exit profit sound — "ka-ching" cash register sound
+- [x] FEATURE: Trade exit loss sound — subtle low tone (not annoying)
+- [x] FEATURE: Visual toast notification (top-right, auto-dismiss 5 sec)
+- [x] FEATURE: Toast shows entry/exit details with emoji indicators
+- [x] FEATURE: Settings toggle "Sound Notifications: ON/OFF"
+- [x] FEATURE: Use Web Audio API, sounds under 1 second
