@@ -1236,3 +1236,6 @@
 - [x] FEATURE: Toast shows entry/exit details with emoji indicators
 - [x] FEATURE: Settings toggle "Sound Notifications: ON/OFF"
 - [x] FEATURE: Use Web Audio API, sounds under 1 second
+
+## Dashboard Helper Notes (July 19, 2026)
+- [x] Add subtle helper notes throughout Dashboard — Command Center, Configuration, Strategy Cards, Trade Log, Activity Log

@@ -1401,6 +1401,7 @@ export default function Dashboard() {
 
 
         {/* Opening Burst Quick Toggle — 4 contextual states */}
+        <div className="text-[10px] text-white/30 mb-1 ml-1">Scans for gap-up/gap-down trades during 9:15–9:25 AM window only</div>
         {(() => {
           const now = new Date();
           const burstIstMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
@@ -1872,6 +1873,7 @@ export default function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════════════════
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
+        <div className="text-[10px] text-white/30 mb-1.5 ml-1">Each bot slot runs independently on a different instrument — start/stop individually</div>
         <div className={`grid gap-2 sm:gap-3 mb-6 ${meQuery.data?.role === "admin" ? "grid-cols-4" : "grid-cols-3"}`}>
           {((allBots && allBots.length > 0) ? allBots : [
             { sessionToken, slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0 },
@@ -2777,6 +2779,7 @@ export default function Dashboard() {
             <AlertTriangle className="w-4 h-4 text-amber-400" />
             <span className="text-sm font-semibold text-white">Risk & Stop-Loss Parameters</span>
           </div>
+          <div className="text-[10px] text-white/30 mb-3">These settings apply to all bots. Changes take effect on next trade entry (not mid-trade).</div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-5">
             {/* Risk per Trade */}
@@ -3040,18 +3043,19 @@ export default function Dashboard() {
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] text-white/40 uppercase tracking-wider">Other Strategies</span>
                 <button
-                  onClick={() => !isRunning && setConfig(c => ({
+                onClick={() => !isRunning && setConfig(c => ({
                     ...c,
                     enabledLayers: c.enabledLayers.length === 12
                       ? ["HourlyClose", "BoomingBulls"]
                       : ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls"],
                   }))}
-                  disabled={isRunning}
-                  className="text-[10px] text-teal-400 hover:text-teal-300 disabled:opacity-50"
+                disabled={isRunning}
+                className="text-[10px] text-teal-400 hover:text-teal-300 disabled:opacity-50"
                 >
                   {config.enabledLayers.length === 12 ? "Only New Strategies" : "Enable All"}
                 </button>
               </div>
+              <div className="text-[10px] text-white/25 mb-2">Multiple strategies run simultaneously — bot picks the highest-confidence signal each scan</div>
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
                 {[
                   { id: "Breakout", label: "Breakout", on: "bg-yellow-500/20 border-yellow-500/40 text-yellow-400", dot: "bg-yellow-400" },
@@ -3261,6 +3265,7 @@ export default function Dashboard() {
               <span className="font-semibold text-white">Trade Log</span>
             </div>
             <div className="flex items-center gap-4 text-sm">
+              <span className="text-[10px] text-white/25 hidden lg:inline">Paper trades unless Live mode + valid token</span>
               <span className="text-white/40">Total: <span className="text-white">{showAllTrades ? (allStats?.totalTrades ?? 0) : (todayStats?.todayTrades ?? 0)}</span></span>
               <span className="text-emerald-400">Wins: {showAllTrades ? (allStats?.wins ?? 0) : (todayStats?.wins ?? 0)}</span>
               <span className="text-red-400">Losses: {showAllTrades ? (allStats?.losses ?? 0) : (todayStats?.losses ?? 0)}</span>
@@ -3591,6 +3596,7 @@ export default function Dashboard() {
               <Activity className="w-4 h-4 text-emerald-400" />
               <span className="font-semibold text-white text-sm">Bot Activity Log</span>
               <span className="text-white/30 text-xs">(last 200 events — live)</span>
+              <span className="text-white/20 text-[10px] hidden sm:inline">— signals, trades, errors, and system events</span>
             </div>
             <button
               onClick={() => { setActivityEvents([]); setActivityAfterId(0); }}
