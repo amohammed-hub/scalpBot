@@ -53,6 +53,7 @@ interface BotConfig {
   enabledLayers: string[];
   partial1Pct: number;  // Book 50% at this % profit (e.g., 30 = +30%)
   partial2Pct: number;  // Book 25% at this % profit (e.g., 60 = +60%)
+  openingBurstEnabled: boolean;
 }
 
 interface PricePoint { time: string; price: number; }
@@ -263,6 +264,7 @@ export default function Dashboard() {
       enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls"],
       partial1Pct: 30,
       partial2Pct: 60,
+      openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
     };
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(LS_CONFIG) ?? "null") }; }
     catch { return defaults; }
@@ -1330,17 +1332,55 @@ export default function Dashboard() {
         </div>
 
         {activeTab === "command" && (<>
-        {/* Token warning */}
-        {tokenStatus !== "valid" && config.mode === "live" && !showReminder && (
-          <div className="mb-4 flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
-            <ShieldOff className="w-4 h-4 shrink-0" />
-            <span><strong>Live mode requires an Access Token.</strong>{" "}
-              <button onClick={() => navigate("/settings")} className="underline hover:opacity-80">Go to Settings to add it</button>
-              {" "}— or switch to Paper mode.
-            </span>
-          </div>
-        )}
+       {/* Token warning */}
+       {tokenStatus !== "valid" && config.mode === "live" && !showReminder && (
+         <div className="mb-4 flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
+           <ShieldOff className="w-4 h-4 shrink-0" />
+           <span><strong>Live mode requires an Access Token.</strong>{" "}
+             <button onClick={() => navigate("/settings")} className="underline hover:opacity-80">Go to Settings to add it</button>
+             {" "}— or switch to Paper mode.
+           </span>
+         </div>
+       )}
 
+
+        {/* Opening Burst Quick Toggle */}
+        <div className="mb-4 flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🚀</span>
+            <span className="text-sm font-medium text-white/80">Opening Burst</span>
+          </div>
+          <button
+            onClick={() => {
+              const current = localStorage.getItem("scalpbot_opening_burst") === "true";
+              localStorage.setItem("scalpbot_opening_burst", current ? "false" : "true");
+              setConfig(prev => ({ ...prev, openingBurstEnabled: !current }));
+            }}
+            className={`relative w-10 h-5 rounded-full transition-all duration-200 ${
+              config.openingBurstEnabled
+                ? "bg-emerald-500/60 border border-emerald-400/50"
+                : "bg-white/10 border border-white/20"
+            }`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-all duration-200 ${
+              config.openingBurstEnabled
+                ? "translate-x-5 bg-emerald-300"
+                : "translate-x-0 bg-white/40"
+            }`} />
+          </button>
+          <span className={`text-xs font-medium ${config.openingBurstEnabled ? "text-emerald-400" : "text-white/30"}`}>
+            {config.openingBurstEnabled ? "ON" : "OFF"}
+          </span>
+          {config.openingBurstEnabled && openingBurstMode && (
+            <div className="ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 animate-pulse">
+              <Rocket className="w-3 h-3" />
+              Burst Mode Active
+            </div>
+          )}
+          {config.openingBurstEnabled && !openingBurstMode && (
+            <span className="ml-auto text-xs text-white/30">Activates 9:15-9:25 AM</span>
+          )}
+        </div>
 
         {/* Market Status Badge + Auto Square-Off Warning */}
         {(() => {
