@@ -3491,7 +3491,7 @@ export const appRouter = router({
       }),
 
     /** Cached risk score (no re-compute, fast) */
-    cachedScore: publicProcedure.query(() => getCachedRiskScore("default")),
+    cachedScore: publicProcedure.input(z.object({ sessionToken: sessionTokenSchema })).query(({ input }) => getCachedRiskScore(input.sessionToken)),
 
     /** StoplossGuard state */
     stoplossGuard: publicProcedure
