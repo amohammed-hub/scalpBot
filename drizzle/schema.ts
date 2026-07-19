@@ -202,6 +202,9 @@ export const appUsers = mysqlTable("app_users", {
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   isVerified: boolean("isVerified").default(false).notNull(),
   sessionToken: varchar("sessionToken", { length: 128 }), // links to existing sessionToken-based data
+  referralCode: varchar("referralCode", { length: 12 }), // unique code for this user to share
+  referredBy: varchar("referredBy", { length: 12 }), // referralCode of the user who referred this one
+  extraBotSlots: int("extraBotSlots").default(0), // bonus bot slots earned from referrals
   lastLoginAt: timestamp("lastLoginAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -219,6 +222,17 @@ export const otpCodes = mysqlTable("otp_codes", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type OtpCode = typeof otpCodes.$inferSelect;
+
+// ── Referrals ──────────────────────────────────────────────────────────────────
+export const referrals = mysqlTable("referrals", {
+  id: int("id").autoincrement().primaryKey(),
+  referrerMobile: varchar("referrerMobile", { length: 15 }).notNull(), // who shared the code
+  refereeMobile: varchar("refereeMobile", { length: 15 }).notNull(), // who signed up with the code
+  referralCode: varchar("referralCode", { length: 12 }).notNull(),
+  rewardGranted: boolean("rewardGranted").default(false).notNull(), // true once extra slot given
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type Referral = typeof referrals.$inferSelect;
 
 // ── Access Grants (Admin Manual Access) ─────────────────────────────────────
 // Admin can grant free platform access to beta testers, friends, partners

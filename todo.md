@@ -1130,6 +1130,23 @@
 - [ ] STRATEGY-SUBSET: Presets — "Aggressive", "Conservative", "Diversified" auto-assign layers across bots
 - [ ] ANTI-DUPLICATE: When multiple bots on same instrument, ensure different strategy layers so no duplicate trades
 
+## Custom Strategy Builder (6-Month Plan — BACKLOG, DO NOT IMPLEMENT YET)
+- [ ] STRATEGY-BUILDER: DB schema — user_strategies table (userId, name, entryRulesJSON, exitRulesJSON, filtersJSON, timesUsed, winRate, totalPnl, createdAt)
+- [ ] STRATEGY-BUILDER: User side — visual builder UI (dropdowns/toggles, NOT code) for entry conditions (EMA cross, RSI threshold, VWAP position, ADX level, candle pattern, breakout, Supertrend direction)
+- [ ] STRATEGY-BUILDER: User side — exit conditions builder (SL type, target type, time exit, trailing SL)
+- [ ] STRATEGY-BUILDER: User side — filters builder (time of day, min confidence, trend direction)
+- [ ] STRATEGY-BUILDER: User side — name strategy and assign to a bot
+- [ ] STRATEGY-BUILDER: User side — can use default strategies OR custom ones OR both
+- [ ] STRATEGY-BUILDER: Admin panel — "User Strategies" section with table of ALL user-created strategies across all users (User, Strategy Name, Entry Rules, Exit Rules, Times Used, Win Rate, P&L)
+- [ ] STRATEGY-BUILDER: Admin panel — click any strategy to see full details
+- [ ] STRATEGY-BUILDER: Admin panel — "Backtest This" button runs strategy through backtester with 6-month data
+- [ ] STRATEGY-BUILDER: Admin panel — if strategy outperforms default, admin can add it to platform's default strategy list
+- [ ] STRATEGY-BUILDER: Performance tracking — win rate, P&L per strategy tracked automatically
+- [ ] STRATEGY-BUILDER: Privacy — user-created strategies visible to ADMIN ONLY, users cannot see other users' strategies
+- [ ] STRATEGY-BUILDER: ToS — users agree strategies created on platform may be used to improve the system
+- [ ] STRATEGY-BUILDER: Architecture — store strategy rules as JSON in DB, admin can view all
+- [ ] STRATEGY-BUILDER: Tier gate — available only for 6-month plan and above
+
 ## Weekend Frontend Fixes (safe, no botEngine changes)
 - [x] FE-FIX: Settings tab — collapsible accordion sections
 - [x] FE-FIX: Kill switch — remove "Kill All" button, keep only Kill Switch at top
@@ -1168,3 +1185,12 @@
 - [x] AUDIT FIX: handleStart in Dashboard.tsx missing useV2Engine
 - [x] AUDIT FIX: Inline scanner mutations in Dashboard.tsx missing useV2Engine
 - [x] AUDIT: TypeScript 0 errors, 153/153 tests passing
+
+## Weekend Build (July 19, 2026) — IMPLEMENT NOW
+- [ ] #1 Fix Bot 4 database error (ALTER TABLE — allow botSlot values 0-3)
+- [ ] #2 Hide admin banner (frontend — already partially done, verify complete)
+- [ ] #3 Subscription tier access control (verify already implemented and working)
+- [ ] #4 Grant Access admin feature (admin can grant/revoke subscription to users for beta testing)
+- [ ] #5 Referral program (unique referral code per user, extra bot slot reward)
+- [ ] #6 Unlimited trades toggle (verify already implemented and working)
+- [ ] #7 Settings accordion collapse (frontend cleanup — collapsible sections)

@@ -3,7 +3,7 @@ import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess, createAccessGrant, listAccessGrants, revokeAccessGrant, extendAccessGrant } from "./db";
 import { getTierLimits, TIER_LIMITS, type TierLimits } from "../shared/tierLimits";
-import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, notificationPreferences, adminSettings, broadcastMessages, alertTemplates, subscriptions } from "../drizzle/schema";
+import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, notificationPreferences, adminSettings, broadcastMessages, alertTemplates, subscriptions, referrals } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
@@ -3837,10 +3837,14 @@ export const appRouter = router({
            }
          }
        }
-       const access = await checkAccess(input.sessionToken);
-       const trialUsed = await hasUsedTrial(input.sessionToken);
-        const tierLimits = getTierLimits(access.plan, false);
-        return { ...access, trialUsed, isAdmin: false, tierLimits };
+     const access = await checkAccess(input.sessionToken);
+     const trialUsed = await hasUsedTrial(input.sessionToken);
+      const tierLimits = getTierLimits(access.plan, false);
+       // Get extra bot slots from referrals
+        const db2 = await getDb();
+        const userRows = db2 ? await db2.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1) : [];
+        const extraBotSlots = userRows[0]?.extraBotSlots ?? 0;
+        return { ...access, trialUsed, isAdmin: false, tierLimits, extraBotSlots };
       }),
 
     /** Start a 2-day free trial */
@@ -4501,7 +4505,76 @@ export const appRouter = router({
         for (const [key, val] of Object.entries(data)) {
           preview = preview.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), val);
         }
-        return { preview };
+       return { preview };
+     }),
+  }),
+  // ── Referral System ─────────────────────────────────────────────────────────
+  referral: router({
+    // Get the current user's referral info (code, stats)
+    myReferral: publicProcedure
+      .input(z.object({ sessionToken: z.string() }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const rows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+        if (!rows.length) return { referralCode: null, referralCount: 0, extraBotSlots: 0 };
+        const user = rows[0];
+        // Generate referral code if not exists
+        if (!user.referralCode) {
+          const code = generateReferralCode();
+          await db.update(appUsers).set({ referralCode: code }).where(eq(appUsers.id, user.id));
+          user.referralCode = code;
+        }
+        // Count successful referrals
+        const refCount = await db.select({ cnt: count() }).from(referrals).where(eq(referrals.referrerMobile, user.mobile));
+        return {
+          referralCode: user.referralCode,
+          referralCount: refCount[0]?.cnt ?? 0,
+          extraBotSlots: user.extraBotSlots ?? 0,
+        };
+      }),
+    // Apply a referral code (called during signup or from settings)
+    applyCode: publicProcedure
+      .input(z.object({ sessionToken: z.string(), referralCode: z.string().min(4).max(12) }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        // Get current user
+        const userRows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+        if (!userRows.length) throw new Error("User not found");
+        const user = userRows[0];
+        // Check if already referred
+        if (user.referredBy) throw new Error("You have already used a referral code");
+        // Find referrer by code
+        const referrerRows = await db.select().from(appUsers).where(eq(appUsers.referralCode, input.referralCode)).limit(1);
+        if (!referrerRows.length) throw new Error("Invalid referral code");
+        const referrer = referrerRows[0];
+        // Can't refer yourself
+        if (referrer.id === user.id) throw new Error("You cannot use your own referral code");
+        // Apply referral
+        await db.update(appUsers).set({ referredBy: input.referralCode }).where(eq(appUsers.id, user.id));
+        // Record the referral
+        await db.insert(referrals).values({
+          referrerMobile: referrer.mobile,
+          refereeMobile: user.mobile,
+          referralCode: input.referralCode,
+          rewardGranted: true,
+        });
+        // Grant extra bot slot to referrer
+        await db.update(appUsers).set({ extraBotSlots: (referrer.extraBotSlots ?? 0) + 1 }).where(eq(appUsers.id, referrer.id));
+        return { success: true, message: "Referral code applied! Your referrer earned an extra bot slot." };
+      }),
+    // Admin: list all referrals
+    listAll: publicProcedure
+      .input(z.object({ sessionToken: z.string() }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        // Verify admin
+        const adminRows = await db.select().from(appUsers).where(eq(appUsers.sessionToken, input.sessionToken)).limit(1);
+        if (!adminRows.length || adminRows[0].role !== "admin") throw new Error("Admin only");
+        const allRefs = await db.select().from(referrals).orderBy(desc(referrals.createdAt)).limit(100);
+        return allRefs;
       }),
   }),
 });
@@ -4513,4 +4586,14 @@ function getSlotTokens(sessionToken: string, includeSlot3 = false): string[] {
   const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
   if (includeSlot3) tokens.push(`${sessionToken}-slot3`);
   return tokens;
+}
+
+// Helper: generate a unique referral code
+function generateReferralCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I, O, 0, 1 to avoid confusion
+  let code = "";
+  for (let i = 0; i < 8; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
 }

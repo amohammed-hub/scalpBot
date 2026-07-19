@@ -4,7 +4,7 @@ import {
   Settings as SettingsIcon, Zap, Activity, Calculator, Key,
   ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle,
   AlertTriangle, ChevronDown, ChevronUp, MousePointer,
-  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2, ArrowDownUp, Lock
+  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2, ArrowDownUp, Lock, Gift, Users
 } from "lucide-react";
 import { MCX_INSTRUMENTS, getMCXByCategory } from "@shared/mcxInstruments";
 import { getTierLimits, FEATURE_MIN_PLAN } from "@shared/tierLimits";
@@ -1410,6 +1410,9 @@ export default function Settings() {
             </div>
           )}
         </div>
+        {/* ── Referral Program ──────────────────────────────────────────── */}
+        <ReferralSection sessionToken={sessionToken} />
+
         {/* ── Cross-Device Session Sharing ──────────────────────────────── */}
         <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-white/10 rounded-2xl overflow-hidden">
           <button onClick={() => setShowSessionShare(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
@@ -1456,6 +1459,87 @@ export default function Settings() {
 }
 
 // ── Notification Preferences Toggles ────────────────────────────────────────
+
+// ── Referral Section ────────────────────────────────────────────────────────
+function ReferralSection({ sessionToken }: { sessionToken: string }) {
+  const [showReferral, setShowReferral] = useState(false);
+  const [applyCode, setApplyCode] = useState("");
+  const referralQuery = trpc.referral.myReferral.useQuery({ sessionToken });
+  const applyMutation = trpc.referral.applyCode.useMutation({
+    onSuccess: (data) => { toast.success(data.message); referralQuery.refetch(); setApplyCode(""); },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-teal-500/20 rounded-2xl overflow-hidden">
+      <button onClick={() => setShowReferral(v => !v)} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+        <div className="flex items-center gap-2">
+          <Gift className="w-4 h-4 text-teal-400" />
+          <span className="text-white font-semibold text-sm">Referral Program</span>
+          <span className="ml-2 text-[10px] bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded-full">FREE BOT SLOT</span>
+        </div>
+        {showReferral ? <ChevronUp className="w-4 h-4 text-white/40" /> : <ChevronDown className="w-4 h-4 text-white/40" />}
+      </button>
+      {showReferral && (
+        <div className="px-5 pb-5 space-y-4 border-t border-white/10 pt-4">
+          <p className="text-white/50 text-xs leading-relaxed">
+            Share your referral code with friends. When they sign up and verify, you earn an <strong className="text-teal-300">extra bot slot</strong> (up to 1 bonus slot). More referrals = priority access to new features.
+          </p>
+
+          {/* Your Referral Code */}
+          {referralQuery.data?.referralCode && (
+            <div className="bg-black/30 border border-teal-500/20 rounded-xl p-4 space-y-2">
+              <p className="text-xs text-white/40 uppercase tracking-wider">Your Referral Code</p>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl font-mono font-bold text-teal-300 tracking-widest">{referralQuery.data.referralCode}</span>
+                <button
+                  onClick={() => { navigator.clipboard.writeText(referralQuery.data!.referralCode!); toast.success("Referral code copied!"); }}
+                  className="text-white/40 hover:text-teal-400 transition-colors"
+                >
+                  <Copy className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex items-center gap-4 mt-2">
+                <div className="flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-purple-400" />
+                  <span className="text-xs text-white/60">{referralQuery.data.referralCount} referral{referralQuery.data.referralCount !== 1 ? "s" : ""}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Gift className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-xs text-white/60">{referralQuery.data.extraBotSlots} bonus slot{referralQuery.data.extraBotSlots !== 1 ? "s" : ""}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Apply a Referral Code */}
+          <div className="bg-black/20 border border-white/10 rounded-xl p-4 space-y-3">
+            <p className="text-xs text-white/40 uppercase tracking-wider">Have a referral code?</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={applyCode}
+                onChange={(e) => setApplyCode(e.target.value.toUpperCase())}
+                placeholder="Enter code (e.g., ABC12345)"
+                className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-teal-500/50"
+                maxLength={12}
+              />
+              <Button
+                size="sm"
+                onClick={() => applyMutation.mutate({ sessionToken, referralCode: applyCode })}
+                disabled={applyCode.length < 4 || applyMutation.isPending}
+                className="bg-teal-500 hover:bg-teal-600 text-white"
+              >
+                {applyMutation.isPending ? "..." : "Apply"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NotificationToggles({ sessionToken }: { sessionToken: string }) {
   const { data: prefs, refetch } = trpc.notifPrefs.get.useQuery({ sessionToken });
   const updateMutation = trpc.notifPrefs.update.useMutation({

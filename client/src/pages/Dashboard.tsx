@@ -528,7 +528,7 @@ export default function Dashboard() {
 
   // Multi-bot: all 3 slots
   const { data: allBots } = trpc.multiBots.allStatus.useQuery(
-    { sessionToken, isAdmin: meQuery.data?.role === "admin" },
+    { sessionToken, isAdmin: meQuery.data?.role === "admin" || (accessQuery.data as any)?.extraBotSlots > 0 },
     { refetchInterval: 3000, staleTime: 1000 }
   );
   // Lightweight live price polling — updates every 5 seconds independently of scan interval
@@ -1739,7 +1739,7 @@ export default function Dashboard() {
             { sessionToken, slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0 },
             { sessionToken: `${sessionToken}-slot1`, slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0 },
             { sessionToken: `${sessionToken}-slot2`, slot: 2, status: "stopped", dailyPnl: 0, tradesCount: 0 },
-            ...(meQuery.data?.role === "admin" ? [{ sessionToken: `${sessionToken}-slot3`, slot: 3, status: "stopped", dailyPnl: 0, tradesCount: 0 }] : []),
+            ...(isAdmin || (accessQuery.data as any)?.extraBotSlots > 0 ? [{ sessionToken: `${sessionToken}-slot3`, slot: 3, status: "stopped", dailyPnl: 0, tradesCount: 0 }] : []),
           ]).map((bot: any) => {
             const isActive = bot.status === "running";
             const slotLabel = `Bot ${bot.slot + 1}`;
