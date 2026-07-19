@@ -309,6 +309,26 @@ function V2EngineToggle() {
   );
 }
 
+function OpeningBurstToggle() {
+  const [enabled, setEnabled] = useState(() => localStorage.getItem("scalpbot_opening_burst") !== "false");
+
+  return (
+    <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-emerald-500/10 to-lime-500/10 border border-emerald-500/20">
+      <div>
+        <p className="text-sm text-white font-medium">🚀 Opening Burst Strategy</p>
+        <p className="text-xs text-white/40">Captures gap follow-through in 9:15–9:25 AM window. Requires gap &gt; 0.2% + confirmation candle (body &gt; 70%, move &gt; 0.3%). Only 1 trade per day.</p>
+      </div>
+      <label className="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" className="sr-only peer"
+          checked={enabled}
+          onChange={(e) => { const v = e.target.checked; setEnabled(v); localStorage.setItem("scalpbot_opening_burst", String(v)); toast.success(v ? "Opening Burst ON — will trade gap follow-through at 9:15-9:25 AM" : "Opening Burst OFF — 9:15-9:30 window will be skipped as before"); }}
+        />
+        <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+      </label>
+    </div>
+  );
+}
+
 function ShadowModeControls({ sessionToken }: { sessionToken: string }) {
   const [enabled, setEnabled] = useState(false);
   const [showLog, setShowLog] = useState(false);
@@ -1379,6 +1399,7 @@ export default function Settings() {
                 2-layer decision system: Layer 1 detects market regime (TRENDING / RANGING / VOLATILE / DEAD), Layer 2 only fires strategies suited to that regime. Disables noisy layers (Breakout, Booming Bulls, MACD) and adds quality filters (15m trend alignment, R:R minimum, loss streak cooldown). Takes effect on next bot start.
               </p>
               <V2EngineToggle />
+              <OpeningBurstToggle />
             </div>
           )}
         </div>

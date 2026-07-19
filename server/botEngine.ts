@@ -43,7 +43,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -208,6 +208,10 @@ export interface BotState {
   useV2Engine?: boolean;
   // Unlimited trades: admin-only, bypasses maxTradesPerDay limit
   unlimitedTrades?: boolean;
+  // Opening Burst Strategy (9:15-9:25 AM)
+  openingBurstMode?: boolean;
+  openingBurstTradeTaken?: boolean; // true after burst trade taken today (reset daily)
+  openingBurstEnabled?: boolean; // user toggle (default true for NSE)
 }
 
 // Shadow mode log entry
@@ -2290,6 +2294,115 @@ export function generateHeroZeroSignal(
   };
 }
 
+// ── Opening Burst Strategy (9:15-9:25 AM IST) ────────────────────────────────
+// Captures the biggest move of the day — the opening gap follow-through.
+// Rules:
+// 1. Gap must be > 0.2% from previous close (skip flat opens)
+// 2. Wait for confirmation candle: body > 70% of range AND cumulative move > 0.3% from day open
+// 3. Direction must align with gap direction (gap-aligned filter)
+// 4. Target: +0.3% index move (≈50-100% premium gain for ATM options)
+// 5. SL: -0.15% index move against (≈30% premium drop)
+// 6. Only 1 trade per day in this window
+export function generateOpeningBurstSignal(
+  candles: Candle[],
+  prevDayClose: number,
+  slMultiplier = 1.5,
+): Signal {
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Opening Burst: waiting", layer: "OpeningBurst" };
+
+  if (!candles || candles.length < 2 || prevDayClose <= 0) {
+    return { ...hold, reason: "Opening Burst: insufficient data" };
+  }
+
+  // Day open = first candle's open price
+  const dayOpen = candles[0].open;
+  if (dayOpen <= 0) return { ...hold, reason: "Opening Burst: invalid day open" };
+
+  // Calculate gap
+  const gapPct = (dayOpen - prevDayClose) / prevDayClose;
+  const absGap = Math.abs(gapPct);
+
+  // Safety: skip flat opens (< 0.1% gap = no burst)
+  if (absGap < 0.001) {
+    return { ...hold, reason: `Opening Burst: flat open (gap ${(gapPct * 100).toFixed(3)}% < 0.1%)` };
+  }
+
+  // Minimum gap filter: require > 0.2% for trade
+  if (absGap < 0.002) {
+    return { ...hold, reason: `Opening Burst: gap too small (${(gapPct * 100).toFixed(3)}% < 0.2%)` };
+  }
+
+  const gapDirection: "BUY" | "SELL" = gapPct > 0 ? "BUY" : "SELL";
+
+  // Look for confirmation candle (skip first candle = 9:15, check candles 2-6)
+  // Confirmation: body > 70% of range AND cumulative move > 0.3% from day open
+  let confirmationCandle: Candle | null = null;
+  let bodyRatio = 0;
+
+  for (let i = 1; i < Math.min(candles.length, 6); i++) {
+    const c = candles[i];
+    const body = Math.abs(c.close - c.open);
+    const range = c.high - c.low;
+    if (range <= 0) continue;
+
+    const ratio = body / range;
+    const cumMove = Math.abs(c.close - dayOpen) / dayOpen;
+
+    if (ratio >= 0.70 && cumMove >= 0.003) {
+      // Check direction alignment with gap
+      const candleBullish = c.close > c.open;
+      const gapAligned = (gapDirection === "BUY" && candleBullish) || (gapDirection === "SELL" && !candleBullish);
+
+      if (gapAligned) {
+        confirmationCandle = c;
+        bodyRatio = ratio;
+        break;
+      }
+    }
+  }
+
+  if (!confirmationCandle) {
+    return { ...hold, reason: "Opening Burst: no confirmation candle (body<70% or move<0.3% or not gap-aligned)" };
+  }
+
+  // Entry on close of confirmation candle
+  const entryPrice = confirmationCandle.close;
+  const isBullish = confirmationCandle.close > confirmationCandle.open;
+  const direction: "BUY" | "SELL" = isBullish ? "BUY" : "SELL";
+
+  // Confidence: map body ratio (0.70-1.0) to confidence (0.80-1.0)
+  const confidence = Math.min(0.80 + (bodyRatio - 0.70) * 0.67, 1.0);
+
+  // Target: +0.3% index move in direction (≈50-100% premium gain for ATM options)
+  // SL: -0.15% against (≈30% premium drop)
+  const targetMove = 0.003 * slMultiplier; // scale with user's SL multiplier
+  const slMove = 0.0015 * slMultiplier;
+
+  let targetPrice: number;
+  let slPrice: number;
+
+  if (isBullish) {
+    targetPrice = entryPrice * (1 + targetMove);
+    slPrice = entryPrice * (1 - slMove);
+  } else {
+    targetPrice = entryPrice * (1 - targetMove);
+    slPrice = entryPrice * (1 + slMove);
+  }
+
+  const atr = calcATR(candles);
+
+  return {
+    direction,
+    confidence,
+    entryPrice,
+    slPrice,
+    targetPrice,
+    atr,
+    reason: `Opening Burst: gap ${(gapPct * 100).toFixed(2)}% ${gapDirection === "BUY" ? "↑" : "↓"} | body ${(bodyRatio * 100).toFixed(0)}% | conf ${(confidence * 100).toFixed(0)}%`,
+    layer: "OpeningBurst",
+  };
+}
+
 // ── Fetch 1-min candles from Upstox ───────────────────────────────────────────
 export async function fetchUpstoxCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
   try {
@@ -3050,6 +3163,7 @@ async function tick(
     state.status = "running"; // un-pause if paused from previous day limits
     state.lastError = null;
     state.alertsSent.clear(); // BUG-8 FIX: Clear daily alerts so Power Hour/MCX alerts re-fire each day
+    state.openingBurstTradeTaken = false; // Reset Opening Burst for new day
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
     resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
     emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
@@ -3121,6 +3235,28 @@ async function tick(
     );
   }
   state.isMCXLateSessionMode = inMCXLateSession;
+
+  // ── Opening Burst Window: 9:15-9:25 AM IST (NSE only) ──────────────────────
+  const openingBurstStart = 9 * 60 + 15; // 555 min
+  const openingBurstEnd   = 9 * 60 + 25; // 565 min
+  const inOpeningBurst = !isMCX && istMin2 >= openingBurstStart && istMin2 < openingBurstEnd
+    && (state.openingBurstEnabled !== false) // default enabled
+    && !state.openingBurstTradeTaken; // only 1 trade per day in this window
+  state.openingBurstMode = inOpeningBurst;
+
+  // Send Telegram alert when Opening Burst window opens (once per session)
+  if (inOpeningBurst && !state.alertsSent.has("openingBurst")) {
+    state.alertsSent.add("openingBurst");
+    const prevDayC = state.candlesDay.length >= 2 ? state.candlesDay[state.candlesDay.length - 2]?.close ?? 0 : 0;
+    const gapPct = prevDayC > 0 ? ((price - prevDayC) / prevDayC * 100).toFixed(2) : "?";
+    sendTelegramAlert(state,
+      `🚀 <b>OPENING BURST ACTIVATED</b> 🚀\n` +
+      `📊 <b>${state.instrumentLabel}</b> | ₹${price.toFixed(2)}\n` +
+      `📈 Gap: ${gapPct}% from prev close\n` +
+      `⏰ Window: 9:15–9:25 AM IST | Waiting for confirmation candle\n` +
+      `🎯 Rules: Body>70% + Move>0.3% + Gap-aligned`,
+    );
+  }
 
   // ── Resolve effective price for open trade monitoring ───────────────────────
   // For options mode: use current option premium (not underlying spot price) for P&L.
@@ -3777,8 +3913,15 @@ async function tick(
   const inHeroZeroWindow = isExpiryDay && istMin2 >= heroZeroWindowStart && istMin2 < heroZeroWindowEnd;
   state.heroZeroMode = inHeroZeroWindow;
 
-  console.log(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
-  if (inPowerHour) {
+  console.log(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | openingBurst=${inOpeningBurst} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
+  if (inOpeningBurst && state.candles.length >= 2) {
+    signal = generateOpeningBurstSignal(state.candles, prevDayClose, slMult);
+    // If Opening Burst fires a BUY/SELL, mark as taken so we don't re-enter
+    if (signal.direction !== "HOLD") {
+      state.openingBurstTradeTaken = true;
+      emitActivity(state.sessionToken, "signal", `🚀 Opening Burst: ${signal.direction} | gap-aligned | conf=${(signal.confidence * 100).toFixed(0)}%`);
+    }
+  } else if (inPowerHour) {
     signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, state.targetMultiplier);
   } else if (inMCXEvening) {
     signal = generateMCXEveningSignal(state.candles, state.candles5m, isWednesdayCrude, slMult, state.targetMultiplier);
@@ -3811,7 +3954,7 @@ async function tick(
   // ── Shadow Mode: compare old logic vs new logic ───────────────────────────
   // When shadowMode=true: OLD logic (no P0, no P1) executes trades.
   // NEW logic (P0+P1) only LOGS decisions for comparison.
-  if (state.shadowMode && !inPowerHour && !inMCXEvening && !inMCXLateSession && !inHeroZeroWindow) {
+  if (state.shadowMode && !inOpeningBurst && !inPowerHour && !inMCXEvening && !inMCXLateSession && !inHeroZeroWindow) {
     try {
     const newSignal = signal; // current signal already has P0 ORB freshness gate
     // Generate OLD signal: same params but skip ORB freshness gate
@@ -3949,7 +4092,7 @@ async function tick(
   // ── Layer filter: skip signals from disabled layers ─────────────────────────
   // Time-window strategies (PowerHour, MCXEvening, MCXLateSession, HeroZero) bypass this filter
   // because they are activated by TIME, not user selection. The filter only applies to generic signal layers.
-  const timeWindowLayers = new Set(["PowerHour", "MCXEvening", "MCXLateSession", "HeroZero"]);
+  const timeWindowLayers = new Set(["PowerHour", "MCXEvening", "MCXLateSession", "HeroZero", "OpeningBurst"]);
   if (state.enabledLayers && state.enabledLayers.length > 0 && signal.layer !== "None" && !timeWindowLayers.has(signal.layer)) {
     if (!state.enabledLayers.includes(signal.layer)) {
       emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal from ${signal.layer} skipped (layer disabled)`);
@@ -4463,7 +4606,7 @@ export type TradeInsert = {
 // ── Public API ────────────────────────────────────────────────────────────────
 export function startBot(
   config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastTickAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "lastSlExitDirection" | "lastSlExitAt" | "consecutiveSameDirectionSLs" | "isPowerHourMode" | "isMCXEveningMode" | "isMCXLateSessionMode" | "heroZeroMode" | "alertsSent">,
-  onTradeOpen: (trade: TradeInsert) => Promise<number>,
+  onTradeOpen: (trade: TradeInsert) => Promise<number>,  
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
   onTick?: (state: BotState) => Promise<void>,
@@ -4486,7 +4629,9 @@ export function startBot(
     lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0,
     lastSlExitDirection: null, lastSlExitAt: null, consecutiveSameDirectionSLs: 0,
     isPowerHourMode: false,
-    isMCXEveningMode: false, isMCXLateSessionMode: false, heroZeroMode: false, alertsSent: new Set<string>(),
+    isMCXEveningMode: false, isMCXLateSessionMode: false, heroZeroMode: false,
+    openingBurstMode: false, openingBurstTradeTaken: false,
+    alertsSent: new Set<string>(),
   };
 
   // Restore optionTradeToken from existing open trade so live quote fetching works after restart
@@ -4633,13 +4778,14 @@ export function startBot(
             underlyingToken: state.underlyingToken,
             optionType: state.optionType,
             consecutiveTickErrors: 0,
-            enabledLayers: state.enabledLayers,
+           enabledLayers: state.enabledLayers,
             partial1Pct: state.partial1Pct,
            partial2Pct: state.partial2Pct,
            carryForward: state.carryForward,
            unlimitedTrades: state.unlimitedTrades,
            averagingEnabled: state.averagingEnabled,
            averagingLossThreshold: state.averagingLossThreshold,
+           openingBurstEnabled: state.openingBurstEnabled,
          }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
         }
       });

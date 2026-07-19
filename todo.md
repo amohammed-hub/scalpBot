@@ -1194,3 +1194,16 @@
 - [x] #5 Referral program (unique referral code per user, extra bot slot reward)
 - [x] #6 Unlimited trades toggle (verify already implemented and working)
 - [x] #7 Settings accordion collapse (frontend cleanup — collapsible sections)
+
+## Opening Burst Strategy (9:15-9:25 AM) — July 19, 2026
+- [x] BACKTEST: Fetch 6-month NIFTY 1-min candle data for gap analysis
+- [x] BACKTEST: Calculate gap days (>0.2% from prev close), follow-through rate, 3rd candle entry win rate
+- [x] BACKTEST: Show results — if win rate < 50%, skip implementation (PASSED: 59% follow-through for 0.2-0.5% gaps)
+- [x] FEATURE: OpeningBurst strategy layer in botEngine.ts (9:15-9:25 AM only)
+- [x] FEATURE: Entry rule — confirmation candle body > 70% of range AND move > 0.3% from open
+- [x] FEATURE: Exit rules — +0.3% target (scaled by SL multiplier), -0.15% SL, gap-aligned filter
+- [x] FEATURE: Safety — 1 trade only, skip if gap < 0.2%, priority over other layers during 9:15-9:25
+- [x] FEATURE: Does NOT count toward opening volatility skip (bypasses timeWindowLayers)
+- [x] FEATURE: 80%+ confidence threshold for entry (mapped from body ratio)
+- [x] FEATURE: Dashboard UI toggle for Opening Burst strategy enable/disable (Settings page)
+- [x] FEATURE: Dashboard shows "Opening Burst Mode" banner during 9:15-9:25 window (🚀 badge)

@@ -350,6 +350,7 @@ export const appRouter = router({
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
+        openingBurstEnabled: z.boolean().default(true), // Opening Burst strategy (9:15-9:25 AM)
       }))
      .mutation(async ({ input, ctx }) => {
       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
@@ -782,6 +783,7 @@ export const appRouter = router({
             averagingLossThreshold: input.averagingLossThreshold,
             useV2Engine: input.useV2Engine,
             unlimitedTrades: input.unlimitedTrades,
+            openingBurstEnabled: input.openingBurstEnabled,
           },
           onTradeOpen,
           onTradeClose,
@@ -1217,6 +1219,7 @@ export const appRouter = router({
           isMCXEveningMode: state.isMCXEveningMode,
           isMCXLateSessionMode: state.isMCXLateSessionMode,
           heroZeroMode: state.heroZeroMode,
+          openingBurstMode: state.openingBurstMode ?? false,
           reEntryCandles: state.reEntryCandles,
           // Options mode: current option premium price (for live P&L display on Dashboard)
           optionPremiumPrice: state.optionPremiumPrice ?? null,
@@ -2100,6 +2103,7 @@ export const appRouter = router({
             isMCXEveningMode: inMem?.isMCXEveningMode ?? false,
             isMCXLateSessionMode: inMem?.isMCXLateSessionMode ?? false,
             heroZeroMode: inMem?.heroZeroMode ?? false,
+            openingBurstMode: inMem?.openingBurstMode ?? false,
             // Health indicator fields
             lastTickAt: inMem?.lastTickAt ?? (dbRow?.lastTickAt ? Number(dbRow.lastTickAt) : 0),
             scanIntervalSec: inMem?.scanIntervalSec ?? dbRow?.scanIntervalSec ?? 60,
@@ -2265,6 +2269,7 @@ export const appRouter = router({
         averagingLossThreshold: z.number().default(0.20),
         useV2Engine: z.boolean().default(false),
         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
+        openingBurstEnabled: z.boolean().default(true), // Opening Burst strategy (9:15-9:25 AM)
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
@@ -2541,6 +2546,7 @@ export const appRouter = router({
           averagingLossThreshold: input.averagingLossThreshold ?? 0.20,
           useV2Engine: input.useV2Engine,
           unlimitedTrades: input.unlimitedTrades,
+          openingBurstEnabled: input.openingBurstEnabled,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;

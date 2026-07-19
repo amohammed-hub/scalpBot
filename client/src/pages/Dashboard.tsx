@@ -345,6 +345,7 @@ export default function Dashboard() {
         averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
         useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
         unlimitedTrades,
+        openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
       });
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
@@ -364,6 +365,7 @@ export default function Dashboard() {
         trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
         useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
         unlimitedTrades,
+        openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
       });
     }
   };
@@ -447,6 +449,7 @@ export default function Dashboard() {
           averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
           unlimitedTrades,
+          openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
         });
       } else {
         startSecondaryMutation.mutate({
@@ -465,6 +468,7 @@ export default function Dashboard() {
           trailingSlEnabled: config.trailingSlEnabled, trailingSlPct: config.trailingSlPct,
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
           unlimitedTrades,
+          openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
         });
       }
       toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
@@ -788,6 +792,7 @@ export default function Dashboard() {
   const isMCXEveningMode = liveData?.isMCXEveningMode ?? false;
   const isMCXLateSessionMode = liveData?.isMCXLateSessionMode ?? false;
   const heroZeroMode = liveData?.heroZeroMode ?? false;
+  const openingBurstMode = (liveData as any)?.openingBurstMode ?? false;
   const reEntryCandles = liveData?.reEntryCandles ?? 0;
   const optionPremiumPrice = liveData?.optionPremiumPrice ?? null;
   const isIndexOptions = liveData?.isIndexOptions ?? false;
@@ -914,6 +919,7 @@ export default function Dashboard() {
      averagingLossThreshold: parseInt(localStorage.getItem("scalpbot_averaging_threshold") ?? "20", 10) / 100,
      unlimitedTrades,
      useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
+     openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") !== "false",
    });
  };
 
@@ -1211,6 +1217,12 @@ export default function Dashboard() {
             <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-400 animate-pulse">
               <span className="text-xs font-bold">0→H</span>
               Hero Zero Active
+            </div>
+          )}
+          {openingBurstMode && (
+            <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 animate-pulse">
+              <Rocket className="w-3.5 h-3.5" />
+              Opening Burst (9:15-9:25)
             </div>
           )}
           {reEntryCandles > 0 && (
@@ -1751,7 +1763,7 @@ export default function Dashboard() {
                   ? { border: "border-amber-500/30", borderActive: "border-amber-500/40", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_65/0.06)]" }
                   : { border: "border-rose-500/30", borderActive: "border-rose-500/40", bg: "bg-rose-500/5", badge: "bg-rose-500/20", text: "text-rose-300", glow: "shadow-[0_0_20px_oklch(0.7_0.18_15/0.06)]" };
             const hasOpenTrade = !!bot.openTrade;
-            const modeTag = bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
+            const modeTag = bot.openingBurstMode ? "🚀 Opening Burst" : bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
 
             return (
               <div key={bot.sessionToken} className={`rounded-xl sm:rounded-2xl border p-2 sm:p-4 transition-all duration-300 ${
@@ -3507,3 +3519,4 @@ export default function Dashboard() {
     </div>
   );
 }
+import { Rocket } from "lucide-react";
