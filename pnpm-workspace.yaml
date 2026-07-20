@@ -1,0 +1,5 @@
+# Disable minimum release age policy (pnpm v11 default is 1440 min = 24h)
+# This prevents ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION in CI/CD
+minimumReleaseAge: 0
+onlyBuiltDependencies:
+  - "*"
