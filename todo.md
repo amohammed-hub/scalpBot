@@ -1280,3 +1280,11 @@
 - [x] SL tightening (already existing) automatically adjusts SL to keep actual risk within riskAmount budget
 - [x] Example: ₹50,000 capital, ₹556 premium, lot=30 → 2 lots (60 qty) instead of 1 lot (30 qty)
 - [x] Default SL changed from 50% to 20% of premium (SL at 80% of entry price) — tighter, more realistic for scalping
+
+## Critical Fix (Jul 20, 2025) — MaxTradesPerDay Enforcement + Anti-Duplicate Hardening
+- [x] BUG: tradesCount was incremented AFTER DB write (line 4612), creating a window where concurrent ticks could pass the maxTradesPerDay check
+- [x] FIX: tradesCount now incremented IMMEDIATELY when isOpeningTrade mutex is acquired (before DB write)
+- [x] FIX: On DB write failure, tradesCount is rolled back (decremented)
+- [x] FIX: Added final safety check — verifies state.openTrade is null right before acquiring mutex
+- [x] Cross-bot duplicate guard (deployed earlier) prevents same instrument across different bot slots
+- [x] tickInProgress lock already prevents overlapping ticks on same bot (verified working)

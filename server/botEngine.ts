@@ -4556,7 +4556,16 @@ async function tick(
       return;
     }
   }
+  // FINAL SAFETY: Double-check no open trade exists (guards against any code path that might skip the early return)
+  if (state.openTrade) {
+    emitActivity(state.sessionToken, "signal", `⊘ Trade blocked — already has open position`);
+    return;
+  }
   state.isOpeningTrade = true;
+  // CRITICAL: Increment trade counter IMMEDIATELY when mutex is acquired
+  // This prevents race conditions where another tick could pass the maxTradesPerDay check
+  state.tradesCount += 1;
+  state.lastTradeOpenedAt = Date.now();
   let dbId: number;
   try {
     dbId = await onTradeOpen({
@@ -4569,8 +4578,10 @@ async function tick(
       entryUnderlyingPrice: isOptionsMode ? price : undefined,
     });
   } catch (tradeOpenErr) {
-    // CRITICAL: if DB insert fails, release the mutex so bot isn't permanently blocked
     state.isOpeningTrade = false;
+    // Rollback counter on failure
+    state.tradesCount -= 1;
+    state.lastTradeOpenedAt = undefined;
     const errMsg = tradeOpenErr instanceof Error ? tradeOpenErr.message : String(tradeOpenErr);
     state.lastError = `Trade open DB write failed: ${errMsg}`;
     console.error(`[BotEngine] ${state.sessionToken} — onTradeOpen failed, mutex released:`, errMsg);
@@ -4609,8 +4620,6 @@ async function tick(
   };
 
   state.isOpeningTrade = false; // Release mutex after openTrade is set
-  state.tradesCount += 1;
-  state.lastTradeOpenedAt = Date.now(); // Set cooldown timestamp
   // Mark HourlyClose as fired for today (one-shot strategy)
   if (signal.layer === "HourlyClose") {
     state.hourlyCloseSignalFired = true;
