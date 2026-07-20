@@ -4,5 +4,4 @@ packages:
 minimumReleaseAge: 0
 
 onlyBuiltDependencies:
-  - esbuild
-  - "@tailwindcss/oxide"
+  - "*"
