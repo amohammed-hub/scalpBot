@@ -262,7 +262,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
-      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls"],
+      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR"],
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -3167,6 +3167,7 @@ export default function Dashboard() {
                   { id: "VWAPPullback", label: "VWAP Pull", on: "bg-sky-500/20 border-sky-500/40 text-sky-400", dot: "bg-sky-400" },
                   { id: "FailedBreakout", label: "Failed BO", on: "bg-orange-500/20 border-orange-500/40 text-orange-400", dot: "bg-orange-400" },
                   { id: "InstFootprint", label: "Institutional", on: "bg-rose-500/20 border-rose-500/40 text-rose-400", dot: "bg-rose-400" },
+                  { id: "CPR", label: "CPR", on: "bg-emerald-500/20 border-emerald-500/40 text-emerald-400", dot: "bg-emerald-400" },
                 ].map(layer => {
                   const isEnabled = config.enabledLayers.includes(layer.id);
                   return (

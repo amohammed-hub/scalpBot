@@ -1321,3 +1321,13 @@
 - [x] Auto-check ADX every 5 minutes and switch strategies automatically
 - [x] Show current regime on dashboard: "Market: Trending (ADX 32)" or "Market: Choppy (ADX 18)"
 - [x] User can override by manually enabling/disabling strategies
+
+## CPR Strategy + Adaptive Regime Default (Jul 21, 2026)
+- [x] CPR (Central Pivot Range) strategy layer — added to V1 engine as Layer 13
+- [x] CPR strategy added to V2 engine (generateSignalV2)
+- [x] CPR logic: Narrow CPR (<0.3%) = breakout above TC / below BC; Wide CPR = mean reversion at R1/S1
+- [x] CPR exempted from S/R proximity filter (it uses pivot levels intentionally)
+- [x] CPR added to Signal interface layer type union
+- [x] CPR added to Dashboard strategy grid (emerald green color)
+- [x] CPR enabled by default in enabledLayers
+- [x] Adaptive regime enabled by default when bot starts

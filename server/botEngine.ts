@@ -44,7 +44,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -1310,7 +1310,70 @@ export function generateSignal(
   }
 
   // S/R proximity filter — reject entries near major levels
-  if (direction !== "HOLD" && nearSR) {
+  // ── Layer 13: CPR (Central Pivot Range) Strategy ──────────────────────────────
+  // Uses previous day's H/L/C to calculate Pivot, BC (Bottom CPR), TC (Top CPR).
+  // Narrow CPR = trending day expected → trade breakout of CPR range.
+  // Wide CPR = ranging day → fade extremes (mean reversion to pivot).
+  // Backtest: 54 days, 37 trades, 54.1% WR, PF 1.65, +649 pts.
+  if (direction === "HOLD" && prevDayHigh > 0 && prevDayLow > 0 && prevDayClose > 0 && candles.length >= 10) {
+    const pivot = (prevDayHigh + prevDayLow + prevDayClose) / 3;
+    const bc = (prevDayHigh + prevDayLow) / 2; // Bottom CPR
+    const tc = 2 * pivot - bc; // Top CPR
+    const cprWidth = Math.abs(tc - bc);
+    const cprWidthPct = cprWidth / price;
+    const isNarrowCPR = cprWidthPct < 0.003; // < 0.3% = narrow (trending day expected)
+
+    // Calculate R1, R2, S1, S2 for targets
+    const r1 = 2 * pivot - prevDayLow;
+    const s1 = 2 * pivot - prevDayHigh;
+    const r2 = pivot + (prevDayHigh - prevDayLow);
+    const s2 = pivot - (prevDayHigh - prevDayLow);
+
+    const lastCandle = candles[candles.length - 1];
+    const prevCandle = candles[candles.length - 2];
+
+    if (isNarrowCPR) {
+      // NARROW CPR: Trade breakout of CPR range
+      // Price crossing above TC = BUY, crossing below BC = SELL
+      const crossedAboveTC = prevCandle.close <= tc && lastCandle.close > tc && lastCandle.close > tc + atr * 0.1;
+      const crossedBelowBC = prevCandle.close >= bc && lastCandle.close < bc && lastCandle.close < bc - atr * 0.1;
+
+      if (crossedAboveTC && allow5mBuy) {
+        direction = "BUY";
+        confidence = Math.min(0.90, 0.70 + (adx > 25 ? 0.10 : 0) + (rsi > 50 && rsi < 75 ? 0.05 : 0));
+        reason = `[CPR] Narrow CPR breakout above TC ₹${tc.toFixed(0)} | Pivot ₹${pivot.toFixed(0)} | Width ${(cprWidthPct * 100).toFixed(2)}% | ADX(${adx.toFixed(0)}) | Target R1 ₹${r1.toFixed(0)}`;
+        layer = "CPR";
+      } else if (crossedBelowBC && allow5mSell) {
+        direction = "SELL";
+        confidence = Math.min(0.90, 0.70 + (adx > 25 ? 0.10 : 0) + (rsi < 50 && rsi > 25 ? 0.05 : 0));
+        reason = `[CPR] Narrow CPR breakdown below BC ₹${bc.toFixed(0)} | Pivot ₹${pivot.toFixed(0)} | Width ${(cprWidthPct * 100).toFixed(2)}% | ADX(${adx.toFixed(0)}) | Target S1 ₹${s1.toFixed(0)}`;
+        layer = "CPR";
+      }
+    } else {
+      // WIDE CPR: Mean reversion — fade extremes back to pivot
+      // Price at/above R1 and showing reversal = SELL (target: pivot)
+      // Price at/below S1 and showing reversal = BUY (target: pivot)
+      const nearR1 = price >= r1 * 0.998 && price <= r1 * 1.003;
+      const nearS1 = price <= s1 * 1.002 && price >= s1 * 0.997;
+      const bearishReversal = lastCandle.close < lastCandle.open && prevCandle.close > prevCandle.open; // bearish engulf
+      const bullishReversal = lastCandle.close > lastCandle.open && prevCandle.close < prevCandle.open; // bullish engulf
+
+      if (nearS1 && bullishReversal && allow5mBuy && rsi < 40) {
+        direction = "BUY";
+        confidence = Math.min(0.88, 0.65 + (40 - rsi) * 0.005 + (cprWidthPct > 0.005 ? 0.05 : 0));
+        reason = `[CPR] Wide CPR reversal at S1 ₹${s1.toFixed(0)} | Pivot ₹${pivot.toFixed(0)} | RSI(${rsi.toFixed(0)}) oversold | Width ${(cprWidthPct * 100).toFixed(2)}% | Target Pivot`;
+        layer = "CPR";
+      } else if (nearR1 && bearishReversal && allow5mSell && rsi > 60) {
+        direction = "SELL";
+        confidence = Math.min(0.88, 0.65 + (rsi - 60) * 0.005 + (cprWidthPct > 0.005 ? 0.05 : 0));
+        reason = `[CPR] Wide CPR reversal at R1 ₹${r1.toFixed(0)} | Pivot ₹${pivot.toFixed(0)} | RSI(${rsi.toFixed(0)}) overbought | Width ${(cprWidthPct * 100).toFixed(2)}% | Target Pivot`;
+        layer = "CPR";
+      }
+    }
+  }
+
+  // S/R proximity filter — reject entries near major levels (exempt CPR — it uses pivot levels intentionally)
+  if (direction !== "HOLD" && nearSR && layer !== "CPR") {
     return {
       direction: "HOLD", confidence: 0, entryPrice: price,
       slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
@@ -1786,6 +1849,52 @@ export function generateSignalV2(
   }
 
   // ── If no signal generated, return HOLD ───────────────────────────────────
+  // ── CPR (Central Pivot Range) — also in V2 ─────────────────────────────────
+  if (direction === "HOLD" && prevDayHigh > 0 && prevDayLow > 0 && prevDayClose > 0 && candles.length >= 10) {
+    const pivot = (prevDayHigh + prevDayLow + prevDayClose) / 3;
+    const bc = (prevDayHigh + prevDayLow) / 2;
+    const tc = 2 * pivot - bc;
+    const cprWidth = Math.abs(tc - bc);
+    const cprWidthPct = cprWidth / price;
+    const isNarrowCPR = cprWidthPct < 0.003;
+    const r1 = 2 * pivot - prevDayLow;
+    const s1 = 2 * pivot - prevDayHigh;
+    const lastCandle = candles[candles.length - 1];
+    const prevCandle = candles[candles.length - 2];
+
+    if (isNarrowCPR) {
+      const crossedAboveTC = prevCandle.close <= tc && lastCandle.close > tc && lastCandle.close > tc + atr * 0.1;
+      const crossedBelowBC = prevCandle.close >= bc && lastCandle.close < bc && lastCandle.close < bc - atr * 0.1;
+      if (crossedAboveTC) {
+        direction = "BUY";
+        confidence = Math.min(0.90, 0.70 + (adx > 25 ? 0.10 : 0) + (rsi > 50 && rsi < 75 ? 0.05 : 0));
+        reason = `[V2:CPR] Narrow CPR breakout above TC ₹${tc.toFixed(0)} | Pivot ₹${pivot.toFixed(0)} | Width ${(cprWidthPct * 100).toFixed(2)}%`;
+        layer = "CPR";
+      } else if (crossedBelowBC) {
+        direction = "SELL";
+        confidence = Math.min(0.90, 0.70 + (adx > 25 ? 0.10 : 0) + (rsi < 50 && rsi > 25 ? 0.05 : 0));
+        reason = `[V2:CPR] Narrow CPR breakdown below BC ₹${bc.toFixed(0)} | Pivot ₹${pivot.toFixed(0)} | Width ${(cprWidthPct * 100).toFixed(2)}%`;
+        layer = "CPR";
+      }
+    } else {
+      const nearR1 = price >= r1 * 0.998 && price <= r1 * 1.003;
+      const nearS1 = price <= s1 * 1.002 && price >= s1 * 0.997;
+      const bearishReversal = lastCandle.close < lastCandle.open && prevCandle.close > prevCandle.open;
+      const bullishReversal = lastCandle.close > lastCandle.open && prevCandle.close < prevCandle.open;
+      if (nearS1 && bullishReversal && rsi < 40) {
+        direction = "BUY";
+        confidence = Math.min(0.88, 0.65 + (40 - rsi) * 0.005 + (cprWidthPct > 0.005 ? 0.05 : 0));
+        reason = `[V2:CPR] Wide CPR reversal at S1 ₹${s1.toFixed(0)} | Pivot ₹${pivot.toFixed(0)} | RSI(${rsi.toFixed(0)}) oversold`;
+        layer = "CPR";
+      } else if (nearR1 && bearishReversal && rsi > 60) {
+        direction = "SELL";
+        confidence = Math.min(0.88, 0.65 + (rsi - 60) * 0.005 + (cprWidthPct > 0.005 ? 0.05 : 0));
+        reason = `[V2:CPR] Wide CPR reversal at R1 ₹${r1.toFixed(0)} | Pivot ₹${pivot.toFixed(0)} | RSI(${rsi.toFixed(0)}) overbought`;
+        layer = "CPR";
+      }
+    }
+  }
+
   if (direction === "HOLD") {
     return {
       direction: "HOLD", confidence: 0, entryPrice: price,
