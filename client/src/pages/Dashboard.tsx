@@ -262,7 +262,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
-      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "Renko"],
+      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "Renko", "SmartRenko"],
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -3159,9 +3159,34 @@ export default function Dashboard() {
                 <p className="text-[11px] text-white/50 leading-relaxed">
                   Noise-filtered trend detection using Renko bricks. Enters on 3 consecutive same-direction bricks.
                 </p>
-                <div className="mt-2 text-[10px] text-orange-400/70">Best for: Choppy markets, noise reduction</div>
+               <div className="mt-2 text-[10px] text-orange-400/70">Best for: Choppy markets, noise reduction</div>
+             </button>
+
+              {/* SmartRenko Card */}
+              <button
+                onClick={() => toggleLayer("SmartRenko")}
+                className={`relative p-4 rounded-xl border-2 text-left transition-all ${
+                  config.enabledLayers.includes("SmartRenko")
+                    ? "border-violet-500 bg-violet-500/10 shadow-lg shadow-violet-500/10"
+                    : "border-white/10 bg-white/5 hover:border-white/20"
+                }`}
+              >
+                {config.enabledLayers.includes("SmartRenko") && (
+                  <div className="absolute top-2 right-2 w-5 h-5 bg-violet-500 rounded-full flex items-center justify-center">
+                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">🧠</span>
+                  <span className="font-bold text-white text-sm">SmartRenko</span>
+                  <span className="text-[9px] bg-violet-500/20 text-violet-400 px-1.5 py-0.5 rounded font-bold">NEW</span>
+                </div>
+                <p className="text-[11px] text-white/50 leading-relaxed">
+                  EMA(9)/EMA(21) cloud + Renko bricks + pullback entry. Dr. Devendra's method — trades WITH trend only.
+                </p>
+                <div className="mt-2 text-[10px] text-violet-400/70">Best for: Trending markets, high-conviction entries</div>
               </button>
-            </div>
+           </div>
 
             {/* Other Layers - Compact Toggle Grid */}
             <div className="border-t border-white/10 pt-3">
@@ -3169,7 +3194,7 @@ export default function Dashboard() {
                 <span className="text-[11px] text-white/40 uppercase tracking-wider">Other Strategies</span>
                <button
                onClick={() => {
-                  const allLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "Renko"];
+                  const allLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "Renko", "SmartRenko"];
                   const newLayers = config.enabledLayers.length >= 12 ? ["HourlyClose", "BoomingBulls"] : allLayers;
                   setConfig(c => ({ ...c, enabledLayers: newLayers }));
                   if (isRunning) updateLayersMutation.mutate({ sessionToken, enabledLayers: newLayers });
