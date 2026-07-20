@@ -1812,16 +1812,17 @@ export default function Dashboard() {
             {(() => {
               // Collect all open positions across all slots
               type OpenPos = { symbol: string; direction: string; entry: number; current: number; pnl: number; qty: number; slot: number; isOptions: boolean; openedAt?: number };
-              const positions: OpenPos[] = [];
-              // Primary slot
-              if (activeTrade && effectiveLivePrice > 0) {
+             const positions: OpenPos[] = [];
+             // Primary slot
+              if (activeTrade) {
+                const liveP = effectiveLivePrice > 0 ? effectiveLivePrice : activeTrade.entryPrice;
                 const dir = activeTrade.direction === "BUY" ? 1 : -1;
                 positions.push({
                   symbol: activeTrade.symbolLabel ?? config.instrumentLabel,
                   direction: activeTrade.direction,
                   entry: activeTrade.entryPrice,
-                  current: effectiveLivePrice,
-                  pnl: (effectiveLivePrice - activeTrade.entryPrice) * dir * activeTrade.quantity,
+                  current: liveP,
+                  pnl: (liveP - activeTrade.entryPrice) * dir * activeTrade.quantity,
                   qty: activeTrade.quantity,
                   slot: 0,
                   isOptions: isIndexOptions,

@@ -4449,17 +4449,20 @@ async function tick(
   // ══════════════════════════════════════════════════════════════════════════════════
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
     // ── FIX 2: Minimum Premium Floor ─────────────────────────────────────────────
-    // Options with premium < ₹10 are illiquid garbage — wide spreads eat you alive on exit.
-    if (optionPremiumForSizing < 10) {
-      const reason = `Entry blocked — premium too low (₹${optionPremiumForSizing.toFixed(1)} < ₹10 floor). Illiquid option.`;
+    // Options with very low premium are illiquid — wide spreads eat you alive on exit.
+    // MCX instruments (Natural Gas, Crude Oil) have naturally lower premiums, so use ₹3 floor.
+    // NSE instruments (NIFTY, BANKNIFTY) use ₹10 floor.
+    const premiumFloor = isMCX ? 3 : 10;
+    if (optionPremiumForSizing < premiumFloor) {
+      const reason = `Entry blocked — premium too low (₹${optionPremiumForSizing.toFixed(1)} < ₹${premiumFloor} floor). Illiquid option.`;
       console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
       emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
-      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "Premium < ₹10");
+      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Premium < ₹${premiumFloor}`);
       logSignalToJournal({
         sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
         direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
         entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-        atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: "Premium < ₹10",
+        atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `Premium < ₹${premiumFloor}`,
       });
       return;
     }

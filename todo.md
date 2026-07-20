@@ -1306,3 +1306,9 @@
 - [x] Add dashboard display showing crude oil status ("Crude Oil: +1.2% ↑ (Nifty bearish bias active)")
 - [x] Add "Cross-Market Correlation: ON/OFF" toggle in dashboard (next to Opening Burst toggle)
 - [x] Fix Manus deployment build failure (Dockerfile with --no-frozen-lockfile)
+- [x] Fix Manus deployment build failure (Dockerfile with --no-frozen-lockfile)
+
+## Fixes — July 20, 2025 (Evening)
+- [x] Fix Manus deploy ERR_PNPM_IGNORED_BUILDS — add pnpm.onlyBuiltDependencies for esbuild and tailwindcss oxide
+- [x] Lower minimum premium floor for MCX instruments (₹3) vs NSE (₹10) — Natural Gas options have naturally lower premiums
+- [x] Fix Open Positions panel not showing trade when effectiveLivePrice is 0 — use entry price as fallback for current price
