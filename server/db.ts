@@ -402,37 +402,6 @@ async function initDb() {
           console.log("[Database] Migration complete: idx_trade_log_status added");
         }
       } catch (e: any) { console.warn("[Database] Index check trade_log.status failed:", e.message); }
-      // Check unlimitedTrades column on bot_sessions
-      try {
-        await pool.execute("SELECT `unlimitedTrades` FROM `bot_sessions` LIMIT 1");
-      } catch (e: any) {
-        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
-          console.log("[Database] Auto-migrating: adding unlimitedTrades to bot_sessions");
-          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `unlimitedTrades` boolean DEFAULT false");
-          console.log("[Database] Migration complete: unlimitedTrades column added");
-        }
-      }
-      // Check openingBurstEnabled column on bot_sessions
-      try {
-        await pool.execute("SELECT `openingBurstEnabled` FROM `bot_sessions` LIMIT 1");
-      } catch (e: any) {
-        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
-          console.log("[Database] Auto-migrating: adding openingBurstEnabled to bot_sessions");
-          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `openingBurstEnabled` boolean DEFAULT true");
-          console.log("[Database] Migration complete: openingBurstEnabled column added");
-        }
-      }
-      // Check crudeOilCorrelation column on bot_sessions
-      try {
-        await pool.execute("SELECT `crudeOilCorrelation` FROM `bot_sessions` LIMIT 1");
-      } catch (e: any) {
-        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
-          console.log("[Database] Auto-migrating: adding crudeOilCorrelation to bot_sessions");
-          await pool.execute("ALTER TABLE `bot_sessions` ADD COLUMN `crudeOilCorrelation` boolean DEFAULT false");
-          console.log("[Database] Migration complete: crudeOilCorrelation column added");
-        }
-      }
-
       // Check referralCode column on app_users (referral system)
       try {
         await pool.execute("SELECT `referralCode` FROM `app_users` LIMIT 1");

@@ -1313,11 +1313,11 @@
 - [x] Lower minimum premium floor for MCX instruments (₹3) vs NSE (₹10) — Natural Gas options have naturally lower premiums
 - [x] Fix Open Positions panel not showing trade when effectiveLivePrice is 0 — use entry price as fallback for current price
 
-## SmartRenko Strategy Layer (Dr. Devendra's Renko Engine)
-- [ ] Implement SmartRenko signal generator: EMA(9)/EMA(21) cloud + virtual Renko bricks + pullback entry
-- [ ] BUY logic: 3+ green bricks (uptrend) + price above cloud + pullback to cloud + close above cloud
-- [ ] SELL logic: 3+ red bricks (downtrend) + price below cloud + rally to cloud + close below cloud
-- [ ] SL: below EMA cloud (buys) or above cloud (sells), or 0.5 Fibonacci of recent swing
-- [ ] EXIT: first opposite-color Renko brick, or price closes wrong side of cloud, or 40% premium target
-- [ ] Add SmartRenko as featured strategy card in Dashboard UI
-- [ ] Backtest SmartRenko on 6-month data and compare with other layers
+## Strategy Toggle Bug Fix + Adaptive Regime (Jul 21, 2026)
+- [x] BUG FIX: Strategy toggle doesn't work — clicking a strategy card does nothing when bot is running (disabled={isRunning} blocks it, no hot-update endpoint exists)
+- [x] Allow toggling strategies WHILE bot is running — add server endpoint to hot-update enabledLayers on running bot state in memory
+- [x] Visual feedback: green dot = enabled, grey = disabled, immediate color change on click (works both running and stopped)
+- [x] Implement Adaptive Regime Switching: ADX > 25 → enable Supertrend (layer "Trend"), disable SmartRenko; ADX < 25 → disable Supertrend, enable SmartRenko
+- [x] Auto-check ADX every 5 minutes and switch strategies automatically
+- [x] Show current regime on dashboard: "Market: Trending (ADX 32)" or "Market: Choppy (ADX 18)"
+- [x] User can override by manually enabling/disabling strategies

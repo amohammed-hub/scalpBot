@@ -352,6 +352,7 @@ export const appRouter = router({
        unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
        openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
         crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
+        adaptiveRegimeEnabled: z.boolean().default(true), // Adaptive Regime Switching (default ON)
       }))
      .mutation(async ({ input, ctx }) => {
       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
@@ -604,6 +605,7 @@ export const appRouter = router({
              unlimitedTrades: input.unlimitedTrades,
              openingBurstEnabled: input.openingBurstEnabled,
              crudeOilCorrelation: input.crudeOilCorrelation,
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
            })
            .where(eq(botSessions.sessionToken, input.sessionToken));
@@ -641,6 +643,7 @@ export const appRouter = router({
               unlimitedTrades: input.unlimitedTrades,
               openingBurstEnabled: input.openingBurstEnabled,
               crudeOilCorrelation: input.crudeOilCorrelation,
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
@@ -797,6 +800,7 @@ export const appRouter = router({
             unlimitedTrades: input.unlimitedTrades,
             openingBurstEnabled: input.openingBurstEnabled,
             crudeOilCorrelation: input.crudeOilCorrelation,
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           },
           onTradeOpen,
@@ -1143,6 +1147,7 @@ export const appRouter = router({
            unlimitedTrades: row.unlimitedTrades ?? false,
            openingBurstEnabled: row.openingBurstEnabled ?? false,
            crudeOilCorrelation: row.crudeOilCorrelation ?? false,
+           adaptiveRegimeEnabled: (row as any).adaptiveRegimeEnabled ?? true,
            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
          },
          onTradeOpen,
@@ -1159,8 +1164,37 @@ export const appRouter = router({
             }).where(eq(botSessions.sessionToken, tickState.sessionToken));
           },
         );
-        console.log(`[bot.start] ✓ SUCCESS — sessionToken=${input.sessionToken.slice(0,8)}, sessionId=${sessionId}, mapHasBot=${!!getBotState(input.sessionToken)}`);
-        return { success: true, sessionId };
+       console.log(`[bot.start] ✓ SUCCESS — sessionToken=${input.sessionToken.slice(0,8)}, sessionId=${sessionId}, mapHasBot=${!!getBotState(input.sessionToken)}`);
+       return { success: true, sessionId };
+     }),
+
+    // ── Hot-update enabledLayers on running bot(s) ───────────────────────────
+    updateLayers: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        enabledLayers: z.array(z.string()),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
+        // Update ALL running bots for this session (all slots)
+        const allBots = getAllRunningBotsForSession(input.sessionToken);
+        let updated = 0;
+        for (const bot of allBots) {
+          bot.enabledLayers = input.enabledLayers;
+          updated++;
+        }
+        // Also persist to DB so restart picks up the new layers
+        const db = await getDb();
+        if (db) {
+          const slotTokens = getSlotTokens(input.sessionToken);
+          for (const tok of slotTokens) {
+            await db.update(botSessions)
+              .set({ enabledLayers: JSON.stringify(input.enabledLayers) })
+              .where(eq(botSessions.sessionToken, tok))
+              .catch(() => {});
+          }
+        }
+        return { success: true, updated, layers: input.enabledLayers };
       }),
 
     liveData: publicProcedure
@@ -1258,6 +1292,10 @@ export const appRouter = router({
           // Shadow mode status
           shadowMode: state.shadowMode ?? false,
           shadowLogCount: state.shadowLog?.length ?? 0,
+          // Adaptive Regime info
+          currentRegime: state.currentRegime ?? null,
+          currentADX: state.currentADX ?? null,
+          adaptiveRegimeEnabled: state.adaptiveRegimeEnabled !== false,
         };
       }),
 
@@ -2148,6 +2186,8 @@ export const appRouter = router({
             isMCXLateSessionMode: inMem?.isMCXLateSessionMode ?? false,
             heroZeroMode: inMem?.heroZeroMode ?? false,
             openingBurstMode: inMem?.openingBurstMode ?? false,
+            currentRegime: inMem?.currentRegime ?? null,
+            currentADX: inMem?.currentADX ?? null,
             // Health indicator fields
             lastTickAt: inMem?.lastTickAt ?? (dbRow?.lastTickAt ? Number(dbRow.lastTickAt) : 0),
             scanIntervalSec: inMem?.scanIntervalSec ?? dbRow?.scanIntervalSec ?? 60,
@@ -2315,6 +2355,7 @@ export const appRouter = router({
         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
         openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
         crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
+        adaptiveRegimeEnabled: z.boolean().default(true), // Adaptive Regime Switching (default ON)
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
@@ -2512,6 +2553,7 @@ export const appRouter = router({
            unlimitedTrades: input.unlimitedTrades ?? false,
            openingBurstEnabled: input.openingBurstEnabled ?? false,
            crudeOilCorrelation: input.crudeOilCorrelation,
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
          }).where(eq(botSessions.sessionToken, slotToken));
        } else {
@@ -2538,6 +2580,7 @@ export const appRouter = router({
             unlimitedTrades: input.unlimitedTrades ?? false,
             openingBurstEnabled: input.openingBurstEnabled ?? false,
             crudeOilCorrelation: input.crudeOilCorrelation,
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
@@ -2607,6 +2650,7 @@ export const appRouter = router({
           unlimitedTrades: input.unlimitedTrades,
           openingBurstEnabled: input.openingBurstEnabled,
           crudeOilCorrelation: input.crudeOilCorrelation,
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();

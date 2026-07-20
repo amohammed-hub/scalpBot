@@ -44,7 +44,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "Renko" | "SmartRenko" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -218,9 +218,12 @@ export interface BotState {
   openingBurstEnabled?: boolean; // user toggle (default true for NSE)
   // Cross-Market Correlation: Crude Oil → NIFTY soft bias filter
   crudeOilCorrelation?: boolean; // user toggle (default OFF)
-  // Renko layer state: tracks constructed bricks for signal generation
-  renkoBricks?: Array<{ open: number; close: number; color: "green" | "red" }>;
-  renkoLastPrice?: number; // last price used for brick construction
+  // Adaptive Regime Switching: auto-toggle Supertrend vs SmartRenko based on ADX
+  adaptiveRegimeEnabled?: boolean; // user toggle (default ON)
+  currentRegime?: "trending" | "choppy"; // last detected regime
+  currentADX?: number; // last ADX value
+  lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
+  regimeManualOverride?: boolean; // true if user manually toggled a layer since last regime check
 }
 
 // Shadow mode log entry
@@ -2437,330 +2440,6 @@ export function generateOpeningBurstSignal(
 
 // ── Fetch 1-min candles from Upstox ───────────────────────────────────────────
 // ── Cross-Market Correlation: Crude Oil → NIFTY ──────────────────────────────
-// ── Renko Signal Layer ──────────────────────────────────────────────────────────
-// Constructs Renko bricks from 1-min candle closes using ATR(14) as adaptive brick size.
-// BUY: 3 consecutive green bricks. SELL: 3 consecutive red bricks.
-// EXIT: first opposite color brick after entry.
-
-interface RenkoBrick {
-  open: number;
-  close: number;
-  color: "green" | "red";
-}
-
-/**
- * Build Renko bricks from candle close prices.
- * Uses ATR(14) as the brick size (adaptive to volatility).
- * Returns the array of bricks constructed from the price series.
- */
-function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
-  if (candles.length < 2 || atr <= 0) return [];
-  const brickSize = atr; // ATR(14) adaptive brick size
-  const bricks: RenkoBrick[] = [];
-  let basePrice = candles[0].close;
-
-  for (let i = 1; i < candles.length; i++) {
-    const price = candles[i].close;
-    const diff = price - basePrice;
-
-    // Build as many bricks as the price movement allows
-    if (diff >= brickSize) {
-      const numBricks = Math.floor(diff / brickSize);
-      for (let j = 0; j < numBricks; j++) {
-        const brickOpen = basePrice + j * brickSize;
-        const brickClose = brickOpen + brickSize;
-        bricks.push({ open: brickOpen, close: brickClose, color: "green" });
-      }
-      basePrice = basePrice + numBricks * brickSize;
-    } else if (diff <= -brickSize) {
-      const numBricks = Math.floor(Math.abs(diff) / brickSize);
-      for (let j = 0; j < numBricks; j++) {
-        const brickOpen = basePrice - j * brickSize;
-        const brickClose = brickOpen - brickSize;
-        bricks.push({ open: brickOpen, close: brickClose, color: "red" });
-      }
-      basePrice = basePrice - numBricks * brickSize;
-    }
-    // If |diff| < brickSize, no new brick — price hasn't moved enough
-  }
-
-  return bricks;
-}
-
-/**
- * Generate Renko signal from candle data.
- * Entry: 3 consecutive same-color bricks.
- * Confidence scales with brick count (3 = 70%, 4 = 80%, 5+ = 85%).
- */
-export function generateRenkoSignal(
-  candles: Candle[],
-  slMultiplier = 1.5,
-  tpMultiplier = 3.0,
-): Signal {
-  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Renko: insufficient data", layer: "Renko" };
-  if (!candles || candles.length < 20) return hold;
-
-  const atr = calcATR(candles, 14);
-  if (atr <= 0) return { ...hold, reason: "Renko: ATR is 0" };
-
-  const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length < 3) return { ...hold, atr, reason: `Renko: only ${bricks.length} bricks (need 3)` };
-
-  // Check last N bricks for consecutive same color
-  const lastBricks = bricks.slice(-5); // look at last 5 bricks max
-  let consecutiveGreen = 0;
-  let consecutiveRed = 0;
-
-  // Count consecutive bricks from the end
-  for (let i = lastBricks.length - 1; i >= 0; i--) {
-    if (lastBricks[i].color === "green") {
-      if (consecutiveRed > 0) break; // mixed — stop counting
-      consecutiveGreen++;
-    } else {
-      if (consecutiveGreen > 0) break;
-      consecutiveRed++;
-    }
-  }
-
-  const price = candles[candles.length - 1].close;
-  const slPrice_buy = price - atr * slMultiplier;
-  const tpPrice_buy = price + atr * tpMultiplier;
-  const slPrice_sell = price + atr * slMultiplier;
-  const tpPrice_sell = price - atr * tpMultiplier;
-
-  if (consecutiveGreen >= 3) {
-    const confidence = Math.min(0.85, 0.65 + (consecutiveGreen - 3) * 0.10);
-    return {
-      direction: "BUY",
-      confidence,
-      entryPrice: price,
-      slPrice: slPrice_buy,
-      targetPrice: tpPrice_buy,
-      atr,
-      reason: `[Renko] ${consecutiveGreen} consecutive green bricks (brick size: ₹${atr.toFixed(1)}) | Strong uptrend`,
-      layer: "Renko",
-    };
-  }
-
-  if (consecutiveRed >= 3) {
-    const confidence = Math.min(0.85, 0.65 + (consecutiveRed - 3) * 0.10);
-    return {
-      direction: "SELL",
-      confidence,
-      entryPrice: price,
-      slPrice: slPrice_sell,
-      targetPrice: tpPrice_sell,
-      atr,
-      reason: `[Renko] ${consecutiveRed} consecutive red bricks (brick size: ₹${atr.toFixed(1)}) | Strong downtrend`,
-      layer: "Renko",
-    };
-  }
-
-  return { ...hold, atr, entryPrice: price, reason: `[Renko] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${atr.toFixed(1)}` };
-}
-
-/**
- * Check if Renko exit condition is met: first opposite color brick after entry.
- * Returns true if the trade should be exited based on Renko reversal.
- */
-export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL", atr: number): { shouldExit: boolean; reason: string } {
-  if (!candles || candles.length < 10 || atr <= 0) return { shouldExit: false, reason: "" };
-
-  const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length === 0) return { shouldExit: false, reason: "" };
-
-  const lastBrick = bricks[bricks.length - 1];
-
-  // BUY trade exits on first RED brick; SELL trade exits on first GREEN brick
-  if (tradeDirection === "BUY" && lastBrick.color === "red") {
-    return { shouldExit: true, reason: `Renko Exit — first red brick after BUY entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
-  }
-  if (tradeDirection === "SELL" && lastBrick.color === "green") {
-    return { shouldExit: true, reason: `Renko Exit — first green brick after SELL entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
-  }
-
-  return { shouldExit: false, reason: "" };
-}
-
-// ── SmartRenko Signal Layer (Dr. Devendra's Renko Engine Strategy) ─────────────
-// Uses EMA(9)/EMA(21) cloud + virtual Renko bricks + pullback-to-cloud entry.
-// Only trades WITH the Renko trend, waits for pullback to EMA cloud before entry.
-
-/**
- * SmartRenko: Advanced Renko strategy with EMA cloud filter.
- * BUY: 3+ green bricks (uptrend) + price above cloud + pullback to cloud + close above cloud
- * SELL: 3+ red bricks (downtrend) + price below cloud + rally to cloud + close below cloud
- * SL: below EMA cloud (buys) or above cloud (sells)
- * EXIT: first opposite-color brick, or price closes wrong side of cloud, or 40% premium target
- */
-export function generateSmartRenkoSignal(
-  candles: Candle[],
-  slMultiplier = 1.5,
-  tpMultiplier = 2.5,
-): Signal {
-  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "SmartRenko: insufficient data", layer: "SmartRenko" };
-  if (!candles || candles.length < 30) return hold;
-
-  const closes = candles.map(c => c.close);
-  const atr = calcATR(candles, 14);
-  if (atr <= 0) return { ...hold, reason: "SmartRenko: ATR is 0" };
-
-  // ── EMA Cloud: EMA(9) and EMA(21) ──
-  const ema9arr = ema(closes, 9);
-  const ema21arr = ema(closes, 21);
-  if (ema9arr.length === 0 || ema21arr.length === 0) return { ...hold, atr, reason: "SmartRenko: EMA calc failed" };
-
-  const ema9 = ema9arr[ema9arr.length - 1];
-  const ema21 = ema21arr[ema21arr.length - 1];
-
-  // Cloud direction: green cloud = EMA9 > EMA21 (bullish), red cloud = EMA9 < EMA21 (bearish)
-  const cloudBullish = ema9 > ema21;
-  const cloudBearish = ema9 < ema21;
-  const cloudTop = Math.max(ema9, ema21);
-  const cloudBottom = Math.min(ema9, ema21);
-  const cloudWidth = cloudTop - cloudBottom;
-
-  // ── Virtual Renko Bricks ──
-  const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length < 3) return { ...hold, atr, reason: `SmartRenko: only ${bricks.length} bricks (need 3)` };
-
-  // Count consecutive bricks from the end (trend determination / master filter)
-  let consecutiveGreen = 0;
-  let consecutiveRed = 0;
-  for (let i = bricks.length - 1; i >= 0; i--) {
-    if (bricks[i].color === "green") {
-      if (consecutiveRed > 0) break;
-      consecutiveGreen++;
-    } else {
-      if (consecutiveGreen > 0) break;
-      consecutiveRed++;
-    }
-  }
-
-  // Master Filter: need 3+ same-color bricks for trend confirmation
-  const isUptrend = consecutiveGreen >= 3;
-  const isDowntrend = consecutiveRed >= 3;
-  if (!isUptrend && !isDowntrend) {
-    return { ...hold, atr, entryPrice: closes[closes.length - 1], reason: `[SmartRenko] No trend (G:${consecutiveGreen} R:${consecutiveRed}) — mixed, no trade` };
-  }
-
-  const price = candles[candles.length - 1].close;
-  const prevPrice = candles.length >= 2 ? candles[candles.length - 2].close : price;
-
-  // ── BUY SIGNAL ──
-  if (isUptrend && cloudBullish) {
-    // Check: price pulled back TO the cloud (touched EMA9 or entered cloud zone) in recent candles
-    const recentCandles = candles.slice(-5);
-    const hadPullback = recentCandles.some(c =>
-      c.low <= ema9 + cloudWidth * 0.3 || // touched near EMA9
-      (c.low <= cloudTop && c.low >= cloudBottom) // entered cloud zone
-    );
-    // Check: current candle closes ABOVE cloud (confirmation after pullback)
-    const closesAboveCloud = price > cloudTop;
-
-    // Alternative: breakout above horizontal resistance in uptrend
-    const recentHighs = candles.slice(-20).map(c => c.high);
-    const resistance = Math.max(...recentHighs.slice(0, -3));
-    const breakoutAboveResistance = price > resistance && prevPrice <= resistance;
-
-    if ((hadPullback && closesAboveCloud) || breakoutAboveResistance) {
-      // SL: below the EMA cloud bottom (+ small buffer)
-      const slPrice = cloudBottom - atr * 0.3;
-      const riskPerUnit = price - slPrice;
-      // Target: 2.5R or ATR-based, whichever is larger
-      const targetPrice = price + Math.max(riskPerUnit * 2.5, atr * tpMultiplier);
-
-      const confidence = Math.min(0.90, 0.60 + (consecutiveGreen - 3) * 0.05 + (hadPullback ? 0.10 : 0) + (breakoutAboveResistance ? 0.05 : 0));
-      const reason = breakoutAboveResistance
-        ? `[SmartRenko] BUY — ${consecutiveGreen} green bricks + breakout above ₹${resistance.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
-        : `[SmartRenko] BUY — ${consecutiveGreen} green bricks + pullback to cloud + close above | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
-
-      return { direction: "BUY", confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "SmartRenko" };
-    }
-
-    return { ...hold, atr, entryPrice: price, reason: `[SmartRenko] Uptrend (${consecutiveGreen}G) + bullish cloud — waiting for pullback` };
-  }
-
-  // ── SELL SIGNAL ──
-  if (isDowntrend && cloudBearish) {
-    // Check: price rallied back TO the cloud in recent candles
-    const recentCandles = candles.slice(-5);
-    const hadRally = recentCandles.some(c =>
-      c.high >= ema9 - cloudWidth * 0.3 || // touched near EMA9
-      (c.high >= cloudBottom && c.high <= cloudTop) // entered cloud zone
-    );
-    // Check: current candle closes BELOW cloud (confirmation after rally)
-    const closesBelowCloud = price < cloudBottom;
-
-    // Alternative: breakdown below horizontal support in downtrend
-    const recentLows = candles.slice(-20).map(c => c.low);
-    const support = Math.min(...recentLows.slice(0, -3));
-    const breakdownBelowSupport = price < support && prevPrice >= support;
-
-    if ((hadRally && closesBelowCloud) || breakdownBelowSupport) {
-      // SL: above the EMA cloud top (+ small buffer)
-      const slPrice = cloudTop + atr * 0.3;
-      const riskPerUnit = slPrice - price;
-      // Target: 2.5R or ATR-based, whichever is larger
-      const targetPrice = price - Math.max(riskPerUnit * 2.5, atr * tpMultiplier);
-
-      const confidence = Math.min(0.90, 0.60 + (consecutiveRed - 3) * 0.05 + (hadRally ? 0.10 : 0) + (breakdownBelowSupport ? 0.05 : 0));
-      const reason = breakdownBelowSupport
-        ? `[SmartRenko] SELL — ${consecutiveRed} red bricks + breakdown below ₹${support.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
-        : `[SmartRenko] SELL — ${consecutiveRed} red bricks + rally to cloud + close below | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
-
-      return { direction: "SELL", confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "SmartRenko" };
-    }
-
-    return { ...hold, atr, entryPrice: price, reason: `[SmartRenko] Downtrend (${consecutiveRed}R) + bearish cloud — waiting for rally to cloud` };
-  }
-
-  // Trend and cloud disagree — no trade (master filter prevents choppy trades)
-  return { ...hold, atr, entryPrice: price, reason: `[SmartRenko] Trend/cloud mismatch (${isUptrend ? "UP" : "DOWN"} trend vs ${cloudBullish ? "bullish" : "bearish"} cloud) — no trade` };
-}
-
-/**
- * SmartRenko exit check:
- * 1. First opposite-color Renko brick (trend weakening)
- * 2. Price closes on wrong side of EMA cloud
- */
-export function checkSmartRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL", atr: number): { shouldExit: boolean; reason: string } {
-  if (!candles || candles.length < 15 || atr <= 0) return { shouldExit: false, reason: "" };
-
-  const closes = candles.map(c => c.close);
-  const ema9arr = ema(closes, 9);
-  const ema21arr = ema(closes, 21);
-  if (ema9arr.length === 0 || ema21arr.length === 0) return { shouldExit: false, reason: "" };
-
-  const ema9 = ema9arr[ema9arr.length - 1];
-  const ema21 = ema21arr[ema21arr.length - 1];
-  const cloudTop = Math.max(ema9, ema21);
-  const cloudBottom = Math.min(ema9, ema21);
-  const price = candles[candles.length - 1].close;
-
-  // Exit condition 1: first opposite-color Renko brick
-  const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length > 0) {
-    const lastBrick = bricks[bricks.length - 1];
-    if (tradeDirection === "BUY" && lastBrick.color === "red") {
-      return { shouldExit: true, reason: `SmartRenko Exit — red brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
-    }
-    if (tradeDirection === "SELL" && lastBrick.color === "green") {
-      return { shouldExit: true, reason: `SmartRenko Exit — green brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
-    }
-  }
-
-  // Exit condition 2: price closes on wrong side of cloud
-  if (tradeDirection === "BUY" && price < cloudBottom) {
-    return { shouldExit: true, reason: `SmartRenko Exit — price below cloud (₹${price.toFixed(0)} < ₹${cloudBottom.toFixed(0)})` };
-  }
-  if (tradeDirection === "SELL" && price > cloudTop) {
-    return { shouldExit: true, reason: `SmartRenko Exit — price above cloud (₹${price.toFixed(0)} > ₹${cloudTop.toFixed(0)})` };
-  }
-
-  return { shouldExit: false, reason: "" };
-}
-
 // Tracks Crude Oil intraday movement relative to day open.
 // If Crude moved +1% → "CrudeUp" (bearish for Nifty); -1% → "CrudeDown" (bullish for Nifty).
 // Applied as a SOFT BIAS (confidence adjustment) during NSE morning session only.
@@ -3559,26 +3238,9 @@ async function tick(
         } else {
         // Market is closed — force close the open trade at last known price
         const trade = state.openTrade;
-        let exitPx: number;
-        if (trade.isIndexOptions) {
-          if (state.optionPremiumPrice && state.optionPremiumPrice > 0) {
-            exitPx = state.optionPremiumPrice;
-          } else if (trade.entryUnderlyingPrice && trade.entryUnderlyingPrice > 0 && state.lastPrice > 0) {
-            // BUG-FIX: Delta approximation instead of using entryPrice (which gives fake P&L = 0)
-            const underlyingMove = state.lastPrice - trade.entryUnderlyingPrice;
-            const movePct = Math.abs(underlyingMove) / trade.entryUnderlyingPrice;
-            const delta = movePct < 0.005 ? 0.5 : movePct < 0.015 ? 0.4 : 0.3;
-            const isCall = (trade.symbol ?? "").includes("CE") || (trade.symbolLabel ?? "").includes("CE");
-            exitPx = Math.max(0.05, trade.entryPrice + (isCall ? underlyingMove * delta : -underlyingMove * delta));
-            console.log(`[BotEngine] ${state.sessionToken} — auto-close delta approx: entry=${trade.entryPrice}, underlying ${trade.entryUnderlyingPrice}→${state.lastPrice}, exitPx=${exitPx.toFixed(2)}`);
-          } else {
-            // Absolute last resort: use entryPrice (P&L = 0) — but log a warning
-            exitPx = trade.entryPrice;
-            console.warn(`[BotEngine] ${state.sessionToken} — auto-close FALLBACK to entryPrice (no premium, no underlying data)`);
-          }
-        } else {
-          exitPx = state.lastPrice > 0 ? state.lastPrice : trade.entryPrice;
-        }
+        const exitPx = trade.isIndexOptions
+          ? (state.optionPremiumPrice && state.optionPremiumPrice > 0 ? state.optionPremiumPrice : trade.entryPrice)
+          : (state.lastPrice > 0 ? state.lastPrice : trade.entryPrice);
         const noDataRemQty = trade.quantity - (trade.bookedQty ?? 0);
         const remainderPnl = trade.direction === "BUY" ? (exitPx - trade.entryPrice) * noDataRemQty : (trade.entryPrice - exitPx) * noDataRemQty;
         // Only add bookedPnl if it wasn't already added to dailyPnl during this session
@@ -4233,29 +3895,6 @@ async function tick(
       else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
     }
 
-    // ── RENKO EXIT: If trade was opened by Renko layer, exit on first opposite brick ──
-    if (!exitReason && trade.signalLayer === "Renko" && state.candles.length >= 10) {
-      const atrNow = calcATR(state.candles, 14);
-      if (atrNow > 0) {
-        const renkoExit = checkRenkoExit(state.candles, trade.direction, atrNow);
-        if (renkoExit.shouldExit) {
-          exitReason = renkoExit.reason;
-          emitActivity(state.sessionToken, "signal", `🧱 ${renkoExit.reason}`);
-        }
-      }
-    }
-    // ── SMARTRENKO EXIT: If trade was opened by SmartRenko, exit on opposite brick or cloud breach ──
-    if (!exitReason && trade.signalLayer === "SmartRenko" && state.candles.length >= 15) {
-      const atrNow = calcATR(state.candles, 14);
-      if (atrNow > 0) {
-        const smartRenkoExit = checkSmartRenkoExit(state.candles, trade.direction, atrNow);
-        if (smartRenkoExit.shouldExit) {
-          exitReason = smartRenkoExit.reason;
-          emitActivity(state.sessionToken, "signal", `🧱 ${smartRenkoExit.reason}`);
-        }
-      }
-    }
-
     if (exitReason) {
       // Use remaining quantity (after partial booking) for P&L on the remaining position
       const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
@@ -4461,18 +4100,36 @@ async function tick(
     } else {
       signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
     }
-    // Renko layer: if enabled and main signal is HOLD, try Renko
-    if (signal.direction === "HOLD" && state.enabledLayers?.includes("Renko")) {
-      const renkoSignal = generateRenkoSignal(state.candles, slMult, state.targetMultiplier);
-      if (renkoSignal.direction !== "HOLD") {
-        signal = renkoSignal;
-      }
-    }
-    // SmartRenko layer: if enabled and main signal is still HOLD, try SmartRenko
-    if (signal.direction === "HOLD" && state.enabledLayers?.includes("SmartRenko")) {
-      const smartRenkoSignal = generateSmartRenkoSignal(state.candles, slMult, state.targetMultiplier);
-      if (smartRenkoSignal.direction !== "HOLD") {
-        signal = smartRenkoSignal;
+
+    // ── Adaptive Regime Switching: auto-toggle Supertrend based on ADX ──────
+    // Every 5 minutes, check ADX. If ADX > 25 → enable Supertrend (layer "Trend").
+    // If ADX < 25 → disable Supertrend. User manual override resets on next check.
+    if (state.adaptiveRegimeEnabled !== false && state.candles.length >= 20 && !state.regimeManualOverride) {
+      const now = Date.now();
+      const REGIME_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
+      if (!state.lastRegimeCheckAt || (now - state.lastRegimeCheckAt) >= REGIME_CHECK_INTERVAL) {
+        const adxVal = calcADX(state.candles, 14);
+        state.currentADX = adxVal;
+        state.lastRegimeCheckAt = now;
+        const prevRegime = state.currentRegime;
+        if (adxVal > 25) {
+          state.currentRegime = "trending";
+          // Enable Supertrend (layer "Trend") if not already enabled
+          if (state.enabledLayers && !state.enabledLayers.includes("Trend")) {
+            state.enabledLayers.push("Trend");
+            emitActivity(state.sessionToken, "signal", `📊 Regime → TRENDING (ADX ${adxVal.toFixed(0)}) — Supertrend ENABLED`);
+          }
+        } else {
+          state.currentRegime = "choppy";
+          // Disable Supertrend (layer "Trend") if currently enabled
+          if (state.enabledLayers && state.enabledLayers.includes("Trend")) {
+            state.enabledLayers = state.enabledLayers.filter(l => l !== "Trend");
+            emitActivity(state.sessionToken, "signal", `📊 Regime → CHOPPY (ADX ${adxVal.toFixed(0)}) — Supertrend DISABLED`);
+          }
+        }
+        if (prevRegime && prevRegime !== state.currentRegime) {
+          console.log(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched from ${prevRegime} to ${state.currentRegime} (ADX=${adxVal.toFixed(1)})`);
+        }
       }
     }
   }
@@ -5228,7 +4885,6 @@ export function startBot(
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
   onTick?: (state: BotState) => Promise<void>,
-  initialLastPrice?: number,
 ) {
   const existing = bots.get(config.sessionToken);
   if (existing?.intervalHandle) clearInterval(existing.intervalHandle);
@@ -5241,7 +4897,7 @@ export function startBot(
     candles: [],
     candles5m: [],
     candlesDay: [],
-    lastSignal: null, lastPrice: initialLastPrice ?? 0, bidPrice: 0, askPrice: 0,
+    lastSignal: null, lastPrice: 0, bidPrice: 0, askPrice: 0,
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
     lastTickAt: 0,

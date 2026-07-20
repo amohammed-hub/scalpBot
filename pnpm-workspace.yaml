@@ -1,7 +1,0 @@
-packages:
-  - "."
-
-minimumReleaseAge: 0
-
-onlyBuiltDependencies:
-  - "*"

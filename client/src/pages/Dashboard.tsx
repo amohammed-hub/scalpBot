@@ -767,6 +767,26 @@ export default function Dashboard() {
     onError: (e) => toast.error(`Update failed: ${e.message}`),
   });
 
+  // ── Hot-update strategy layers on running bot ──────────────────────────────
+  const updateLayersMutation = trpc.bot.updateLayers.useMutation({
+    onError: (e) => toast.error(`Layer update failed: ${e.message}`),
+  });
+
+  // Helper: toggle a layer and persist to running bot if active
+  const toggleLayer = (layerId: string) => {
+    setConfig(c => {
+      const isEnabled = c.enabledLayers.includes(layerId);
+      const newLayers = isEnabled
+        ? c.enabledLayers.filter((l: string) => l !== layerId)
+        : [...c.enabledLayers, layerId];
+      // If bot is running, hot-update the running bot's layers in memory
+      if (isRunning) {
+        updateLayersMutation.mutate({ sessionToken, enabledLayers: newLayers });
+      }
+      return { ...c, enabledLayers: newLayers };
+    });
+  };
+
   // ── Activity log ─────────────────────────────────────────────────────────────
   const [activityAfterId, setActivityAfterId] = useState(0);
   type ActivityEvent = { id: number; ts: number; type: string; slot: number; message: string; price?: number; pnl?: number; confidence?: number };
@@ -814,6 +834,10 @@ export default function Dashboard() {
   const recentRejectedSignals = (liveData as any)?.recentRejectedSignals ?? [];
   const averagingEnabled = (liveData as any)?.averagingEnabled ?? true;
   const averagingLossThreshold = (liveData as any)?.averagingLossThreshold ?? 0.20;
+
+  // Adaptive Regime info
+  const currentRegime = (liveData as any)?.currentRegime as "trending" | "choppy" | null;
+  const currentADX = (liveData as any)?.currentADX as number | null;
 
   // Staleness: track how many seconds since last tick
   const [secondsSinceLastTick, setSecondsSinceLastTick] = useState(0);
@@ -990,6 +1014,7 @@ export default function Dashboard() {
      useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
      openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
+      adaptiveRegimeEnabled: localStorage.getItem("scalpbot_adaptive_regime") !== "false", // default ON
    });
  };
 
@@ -1299,6 +1324,17 @@ export default function Dashboard() {
             <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
               <RotateCcw className="w-3.5 h-3.5" />
               Re-entry cooldown ({reEntryCandles}/2)
+            </div>
+          )}
+          {/* Adaptive Regime Badge */}
+          {isRunning && currentRegime && (
+            <div className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg ${
+              currentRegime === "trending"
+                ? "bg-teal-500/15 border border-teal-500/30 text-teal-400"
+                : "bg-amber-500/15 border border-amber-500/30 text-amber-400"
+            }`}>
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+              {currentRegime === "trending" ? "Trending" : "Choppy"} (ADX {currentADX?.toFixed(0) ?? "?"})
             </div>
           )}
         </div>
@@ -3025,23 +3061,36 @@ export default function Dashboard() {
                 <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                 <span className="font-semibold text-white">Select Strategy</span>
               </div>
-              <span className="text-[10px] text-white/40 bg-white/5 px-2 py-1 rounded-full">
+            <span className="text-[10px] text-white/40 bg-white/5 px-2 py-1 rounded-full">
                 {config.enabledLayers.length} active
               </span>
             </div>
 
+            {/* Adaptive Regime Indicator */}
+            {isRunning && currentRegime && (
+              <div className={`mb-4 px-4 py-2.5 rounded-lg flex items-center justify-between ${
+                currentRegime === "trending"
+                  ? "bg-teal-500/10 border border-teal-500/30"
+                  : "bg-amber-500/10 border border-amber-500/30"
+              }`}>
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full animate-pulse ${currentRegime === "trending" ? "bg-teal-400" : "bg-amber-400"}`} />
+                  <span className={`text-xs font-medium ${currentRegime === "trending" ? "text-teal-400" : "text-amber-400"}`}>
+                    Market: {currentRegime === "trending" ? "Trending" : "Choppy"} (ADX {currentADX?.toFixed(0) ?? "?"})
+                  </span>
+                </div>
+                <span className={`text-[10px] ${currentRegime === "trending" ? "text-teal-400/60" : "text-amber-400/60"}`}>
+                  {currentRegime === "trending" ? "Supertrend active" : "Supertrend paused"}
+                </span>
+              </div>
+            )}
+
             {/* Featured New Strategies */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
               {/* 1H Candle Close Card */}
-              <button
-                onClick={() => !isRunning && setConfig(c => ({
-                  ...c,
-                  enabledLayers: c.enabledLayers.includes("HourlyClose")
-                    ? c.enabledLayers.filter((l: string) => l !== "HourlyClose")
-                    : [...c.enabledLayers, "HourlyClose"],
-                }))}
-                disabled={isRunning}
-                className={`relative p-4 rounded-xl border-2 text-left transition-all disabled:opacity-50 ${
+             <button
+                onClick={() => toggleLayer("HourlyClose")}
+                className={`relative p-4 rounded-xl border-2 text-left transition-all ${
                   config.enabledLayers.includes("HourlyClose")
                     ? "border-emerald-500 bg-emerald-500/10 shadow-lg shadow-emerald-500/10"
                     : "border-white/10 bg-white/5 hover:border-white/20"
@@ -3064,15 +3113,9 @@ export default function Dashboard() {
               </button>
 
               {/* Booming Bulls Card */}
-              <button
-                onClick={() => !isRunning && setConfig(c => ({
-                  ...c,
-                  enabledLayers: c.enabledLayers.includes("BoomingBulls")
-                    ? c.enabledLayers.filter((l: string) => l !== "BoomingBulls")
-                    : [...c.enabledLayers, "BoomingBulls"],
-                }))}
-                disabled={isRunning}
-                className={`relative p-4 rounded-xl border-2 text-left transition-all disabled:opacity-50 ${
+             <button
+                onClick={() => toggleLayer("BoomingBulls")}
+                className={`relative p-4 rounded-xl border-2 text-left transition-all ${
                   config.enabledLayers.includes("BoomingBulls")
                     ? "border-indigo-500 bg-indigo-500/10 shadow-lg shadow-indigo-500/10"
                     : "border-white/10 bg-white/5 hover:border-white/20"
@@ -3093,67 +3136,6 @@ export default function Dashboard() {
                 </p>
                 <div className="mt-2 text-[10px] text-indigo-400/70">Best for: Strong trend days, Nifty/BankNifty</div>
               </button>
-
-              {/* Renko Card */}
-              <button
-                onClick={() => !isRunning && setConfig(c => ({
-                  ...c,
-                  enabledLayers: c.enabledLayers.includes("Renko")
-                    ? c.enabledLayers.filter((l: string) => l !== "Renko")
-                    : [...c.enabledLayers, "Renko"],
-                }))}
-                disabled={isRunning}
-                className={`relative p-4 rounded-xl border-2 text-left transition-all disabled:opacity-50 ${
-                  config.enabledLayers.includes("Renko")
-                    ? "border-amber-500 bg-amber-500/10 shadow-lg shadow-amber-500/10"
-                    : "border-white/10 bg-white/5 hover:border-white/20"
-                }`}
-              >
-                {config.enabledLayers.includes("Renko") && (
-                  <div className="absolute top-2 right-2 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
-                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-lg">🧱</span>
-                  <span className="font-bold text-white text-sm">Renko</span>
-                  <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-bold">NEW</span>
-                </div>
-                <p className="text-[11px] text-white/50 leading-relaxed">
-                  Noise-filtered trend detection using Renko bricks. Enters on 3 consecutive same-direction bricks.
-                </p>
-                <div className="mt-2 text-[10px] text-amber-400/70">Best for: Choppy markets, noise reduction</div>
-              </button>
-              {/* SmartRenko Card */}
-              <button
-                onClick={() => !isRunning && setConfig(c => ({
-                  ...c,
-                  enabledLayers: c.enabledLayers.includes("SmartRenko")
-                    ? c.enabledLayers.filter((l: string) => l !== "SmartRenko")
-                    : [...c.enabledLayers, "SmartRenko"],
-                }))}
-                disabled={isRunning}
-                className={`relative p-4 rounded-xl border-2 text-left transition-all disabled:opacity-50 ${
-                  config.enabledLayers.includes("SmartRenko")
-                    ? "border-rose-500 bg-rose-500/10 shadow-lg shadow-rose-500/10"
-                    : "border-white/10 bg-white/5 hover:border-white/20"
-                }`}
-              >
-                {config.enabledLayers.includes("SmartRenko") && (
-                  <div className="absolute top-2 right-2 w-5 h-5 bg-rose-500 rounded-full flex items-center justify-center">
-                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-lg">🎯</span>
-                  <span className="font-bold text-white text-sm">SmartRenko</span>
-                  <span className="text-[9px] bg-rose-500/20 text-rose-400 px-1.5 py-0.5 rounded font-bold">PRO</span>
-                </div>
-                <p className="text-[11px] text-white/50 leading-relaxed">
-                  EMA cloud + Renko trend filter. Waits for pullback to cloud before entry. Dr. Devendra's method.
-                </p>
-                <div className="mt-2 text-[10px] text-rose-400/70">Best for: Trend-following with noise filter</div>
-              </button>
             </div>
 
             {/* Other Layers - Compact Toggle Grid */}
@@ -3161,14 +3143,13 @@ export default function Dashboard() {
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] text-white/40 uppercase tracking-wider">Other Strategies</span>
                 <button
-                onClick={() => !isRunning && setConfig(c => ({
-                    ...c,
-                    enabledLayers: c.enabledLayers.length === 12
-                    ? ["HourlyClose", "BoomingBulls", "Renko"]
-                    : ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "Renko"],
-                  }))}
-                disabled={isRunning}
-                className="text-[10px] text-teal-400 hover:text-teal-300 disabled:opacity-50"
+                onClick={() => {
+                  const allLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls"];
+                  const newLayers = config.enabledLayers.length === 12 ? ["HourlyClose", "BoomingBulls"] : allLayers;
+                  setConfig(c => ({ ...c, enabledLayers: newLayers }));
+                  if (isRunning) updateLayersMutation.mutate({ sessionToken, enabledLayers: newLayers });
+                }}
+                className="text-[10px] text-teal-400 hover:text-teal-300"
                 >
                   {config.enabledLayers.length === 12 ? "Only New Strategies" : "Enable All"}
                 </button>
@@ -3186,21 +3167,13 @@ export default function Dashboard() {
                   { id: "VWAPPullback", label: "VWAP Pull", on: "bg-sky-500/20 border-sky-500/40 text-sky-400", dot: "bg-sky-400" },
                   { id: "FailedBreakout", label: "Failed BO", on: "bg-orange-500/20 border-orange-500/40 text-orange-400", dot: "bg-orange-400" },
                   { id: "InstFootprint", label: "Institutional", on: "bg-rose-500/20 border-rose-500/40 text-rose-400", dot: "bg-rose-400" },
-                  { id: "Renko", label: "Renko", on: "bg-amber-500/20 border-amber-500/40 text-amber-400", dot: "bg-amber-400" },
-                  { id: "SmartRenko", label: "SmartRenko", on: "bg-rose-500/20 border-rose-500/40 text-rose-400", dot: "bg-rose-400" },
                 ].map(layer => {
                   const isEnabled = config.enabledLayers.includes(layer.id);
                   return (
                     <button
                       key={layer.id}
-                      onClick={() => !isRunning && setConfig(c => ({
-                        ...c,
-                        enabledLayers: isEnabled
-                          ? c.enabledLayers.filter((l: string) => l !== layer.id)
-                          : [...c.enabledLayers, layer.id],
-                      }))}
-                      disabled={isRunning}
-                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-all border disabled:opacity-50 ${isEnabled ? layer.on : "bg-white/5 border-white/10 text-white/30"}`}
+                      onClick={() => toggleLayer(layer.id)}
+                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-all border ${isEnabled ? layer.on : "bg-white/5 border-white/10 text-white/30"}`}
                     >
                       <span className={`w-1.5 h-1.5 rounded-full ${isEnabled ? layer.dot : "bg-white/20"}`} />
                       {layer.label}
@@ -3210,7 +3183,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="mt-3 text-[10px] text-white/30 text-center">
-              Click a strategy card to enable/disable it. Bot only uses enabled strategies for signals.
+              Click a strategy card to enable/disable it{isRunning ? " (changes apply immediately)" : ""}. Adaptive Regime auto-toggles Supertrend based on ADX every 5 min.
             </div>
           </div>
 
@@ -3774,4 +3747,3 @@ export default function Dashboard() {
 import { Rocket } from "lucide-react";
 import { playEntrySound, playProfitSound, playLossSound } from "@/lib/sounds";
 import { pushTradeNotification } from "@/components/TradeToast";
-      // Note: Renko is NOT enabled by default — user must opt-in
