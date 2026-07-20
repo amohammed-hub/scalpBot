@@ -1274,3 +1274,9 @@
 - [x] Fixed: target now uses partial2Pct (60% gain) which is achievable and matches the partial booking ladder
 - [x] Added underlying-level cooldown: after 2 consecutive SLs on same underlying (any direction CE/PE), blocks ALL trades on that underlying for 15 min
 - [x] Counter resets on winning trade or after 15 min cooldown expires
+## Critical Fix (Jul 20, 2025) — Position Sizing: Capital-Based for Options
+- [x] BUG: Position sizing used risk-based formula (riskAmount / slPerUnit) which always gave 1 lot because rawQty < lotSize
+- [x] FIX: Options now use CAPITAL-BASED sizing — max lots that capital allows (floor(capital/premium/lotSize)*lotSize)
+- [x] SL tightening (already existing) automatically adjusts SL to keep actual risk within riskAmount budget
+- [x] Example: ₹50,000 capital, ₹556 premium, lot=30 → 2 lots (60 qty) instead of 1 lot (30 qty)
+- [x] Default SL changed from 50% to 20% of premium (SL at 80% of entry price) — tighter, more realistic for scalping

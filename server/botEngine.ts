@@ -4394,15 +4394,8 @@ async function tick(
   let quantity: number;
 
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
-    // Options quantity: risk ₹X, SL = 50% of premium, so loss per unit = 0.5 * premium
-    // quantity = riskAmount / (0.5 * premium), rounded to nearest lot
-    const slPerUnit = optionPremiumForSizing * 0.5; // 50% stop loss on premium
-    const rawQty = slPerUnit > 0 ? Math.floor(riskAmount / slPerUnit) : lotSize;
-    quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
-    // Safety cap: max quantity such that total premium outlay <= 2x risk amount
-    const maxQtyByCost = Math.floor((riskAmount * 2) / optionPremiumForSizing / lotSize) * lotSize;
-    quantity = Math.min(quantity, Math.max(lotSize, maxQtyByCost));
-    // Per-bot capital cap: total trade cost must NOT exceed bot's own capital
+    // Options sizing: CAPITAL-BASED — use max lots that capital allows
+    // SL tightening (below) will control actual risk per trade
     const maxQtyByCapital = Math.floor(state.capital / optionPremiumForSizing / lotSize) * lotSize;
     if (maxQtyByCapital < lotSize) {
       // Capital too low for even 1 lot — reject trade entirely
@@ -4412,7 +4405,7 @@ async function tick(
       emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
       return;
     } else {
-      quantity = Math.min(quantity, maxQtyByCapital);
+      quantity = maxQtyByCapital;
     }
   } else {
     const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
@@ -4504,7 +4497,7 @@ async function tick(
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  let tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.5 : signal.slPrice;
+  let tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.80 : signal.slPrice;
   // ── CRITICAL: Adjust SL when quantity exceeds what risk formula allows ──────
   // If the minimum lot size forces quantity above rawQty, the default SL (50% of premium)
   // would cause actual monetary loss > riskAmount. Fix: tighten SL proportionally.
@@ -4636,7 +4629,7 @@ async function tick(
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.5 : signal.slPrice;
+  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.80 : signal.slPrice;
   const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + p2Pct) : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
