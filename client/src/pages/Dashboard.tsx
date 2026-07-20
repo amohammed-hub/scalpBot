@@ -3031,7 +3031,7 @@ export default function Dashboard() {
             </div>
 
             {/* Featured New Strategies */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
               {/* 1H Candle Close Card */}
               <button
                 onClick={() => !isRunning && setConfig(c => ({
@@ -3124,6 +3124,36 @@ export default function Dashboard() {
                 </p>
                 <div className="mt-2 text-[10px] text-amber-400/70">Best for: Choppy markets, noise reduction</div>
               </button>
+              {/* SmartRenko Card */}
+              <button
+                onClick={() => !isRunning && setConfig(c => ({
+                  ...c,
+                  enabledLayers: c.enabledLayers.includes("SmartRenko")
+                    ? c.enabledLayers.filter((l: string) => l !== "SmartRenko")
+                    : [...c.enabledLayers, "SmartRenko"],
+                }))}
+                disabled={isRunning}
+                className={`relative p-4 rounded-xl border-2 text-left transition-all disabled:opacity-50 ${
+                  config.enabledLayers.includes("SmartRenko")
+                    ? "border-rose-500 bg-rose-500/10 shadow-lg shadow-rose-500/10"
+                    : "border-white/10 bg-white/5 hover:border-white/20"
+                }`}
+              >
+                {config.enabledLayers.includes("SmartRenko") && (
+                  <div className="absolute top-2 right-2 w-5 h-5 bg-rose-500 rounded-full flex items-center justify-center">
+                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">🎯</span>
+                  <span className="font-bold text-white text-sm">SmartRenko</span>
+                  <span className="text-[9px] bg-rose-500/20 text-rose-400 px-1.5 py-0.5 rounded font-bold">PRO</span>
+                </div>
+                <p className="text-[11px] text-white/50 leading-relaxed">
+                  EMA cloud + Renko trend filter. Waits for pullback to cloud before entry. Dr. Devendra's method.
+                </p>
+                <div className="mt-2 text-[10px] text-rose-400/70">Best for: Trend-following with noise filter</div>
+              </button>
             </div>
 
             {/* Other Layers - Compact Toggle Grid */}
@@ -3157,6 +3187,7 @@ export default function Dashboard() {
                   { id: "FailedBreakout", label: "Failed BO", on: "bg-orange-500/20 border-orange-500/40 text-orange-400", dot: "bg-orange-400" },
                   { id: "InstFootprint", label: "Institutional", on: "bg-rose-500/20 border-rose-500/40 text-rose-400", dot: "bg-rose-400" },
                   { id: "Renko", label: "Renko", on: "bg-amber-500/20 border-amber-500/40 text-amber-400", dot: "bg-amber-400" },
+                  { id: "SmartRenko", label: "SmartRenko", on: "bg-rose-500/20 border-rose-500/40 text-rose-400", dot: "bg-rose-400" },
                 ].map(layer => {
                   const isEnabled = config.enabledLayers.includes(layer.id);
                   return (
