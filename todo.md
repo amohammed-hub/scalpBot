@@ -1288,3 +1288,10 @@
 - [x] FIX: Added final safety check — verifies state.openTrade is null right before acquiring mutex
 - [x] Cross-bot duplicate guard (deployed earlier) prevents same instrument across different bot slots
 - [x] tickInProgress lock already prevents overlapping ticks on same bot (verified working)
+## Critical Fix (Jul 20, 2025) — Option Target/SL User Spec
+- [x] Target = Entry × 1.4 (+40%), SL = Entry × 0.7 (−30%), Partial1R = +20%, Partial2R = +40%
+- [x] R:R = 1.33:1, realistic for scalping within 20-min time window
+## Critical Fix (Jul 20, 2025) — Fake P&L on Bot Stop / Stale Trade Auto-Close
+- [x] routers.ts stop flow: now fetches real option quote FIRST (priority ordering), delta-approx as last resort with sanity check
+- [x] botRestart.ts stale trade close: for PAPER_OPT tokens, now tries resolveSpecificOptionToken / resolveAtmMcxOptionToken to get real token → fetchFullQuote → real exit price
+- [x] Fallback: if resolution fails, closes at entry price (0 P&L on remaining) — safe default, no fake inflated/deflated P&L

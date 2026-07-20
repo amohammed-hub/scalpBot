@@ -13,7 +13,7 @@
 import { getDb } from "./db";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc, gte } from "drizzle-orm";
-import { startBot, getBotState, fetchFullQuote, type OpenTrade, type BotState } from "./botEngine";
+import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import axios from "axios";
 
@@ -348,9 +348,38 @@ export async function restartRunningBots(): Promise<void> {
             const isIndexToken = t.instrumentToken.startsWith("NSE_INDEX|");
             const isOptionTrade = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE");
             if (isPaperToken || (isIndexToken && isOptionTrade)) {
-              // For paper/stale option trades, close at entry price (0 P&L on remaining)
-              // since we can't get the real option premium from a fake or index token
-              exitPrice = t.entryPrice;
+              // For paper/stale option trades: try to resolve real option token and fetch live quote
+              let resolved = false;
+              try {
+                const sym = ((t as any).symbolLabel ?? t.symbol ?? "").toUpperCase();
+                const ceOrPe: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
+                const isMcxTrade = sym.includes("CRUDE") || sym.includes("GOLD") || sym.includes("SILVER") || sym.includes("NATGAS");
+                const strikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)/);
+                const exactStrike = strikeMatch ? parseInt(strikeMatch[1], 10) : 0;
+                let resolvedToken: string | null = null;
+                if (exactStrike > 0 && isMcxTrade) {
+                  const underlying = t.instrumentToken.replace("PAPER_OPT|", "");
+                  const mcxResult = await resolveAtmMcxOptionToken(underlying, ceOrPe, token);
+                  resolvedToken = mcxResult?.token ?? null;
+                } else if (exactStrike > 0) {
+                  const underlying = sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : sym.includes("FIN") ? "NSE_INDEX|Nifty Fin Service" : "NSE_INDEX|Nifty 50";
+                  resolvedToken = await resolveSpecificOptionToken(underlying, ceOrPe, exactStrike, token);
+                }
+                if (resolvedToken) {
+                  const q = await fetchFullQuote(resolvedToken, token);
+                  if (q && q.ltp > 0) {
+                    exitPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                    resolved = true;
+                    console.log(`[BotRestart] Resolved paper trade #${t.id} ${t.symbol} → real token ${resolvedToken} → exit ₹${exitPrice.toFixed(2)}`);
+                  }
+                }
+              } catch (resolveErr) {
+                console.warn(`[BotRestart] Could not resolve paper trade #${t.id} ${t.symbol}:`, resolveErr);
+              }
+              if (!resolved) {
+                // Fallback: close at entry price (0 P&L on remaining) — safe default
+                exitPrice = t.entryPrice;
+              }
             } else {
               const quote = await fetchFullQuote(t.instrumentToken, token);
               if (quote && quote.ltp > 0) {

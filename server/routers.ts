@@ -851,21 +851,17 @@ export const appRouter = router({
           const now = new Date();
           for (const t of openTrades) {
             // For options trades: use option premium price, not underlying
-            const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
-            let exitPx = 0;
-            if (isOption) {
-              // Priority 1: in-memory optionPremiumPrice
-              if (optionPremium > 0) {
-                exitPx = optionPremium;
-              }
-              // Priority 2: fetch real quote using optionTradeToken
-              if (exitPx === 0 && accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
+           const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
+           let exitPx = 0;
+           if (isOption) {
+              // Priority 1: fetch real quote using optionTradeToken (most accurate)
+              if (accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
                 try {
                   const q = await fetchFullQuote(optionTradeToken, accessToken);
                   if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
                 } catch { /* non-fatal */ }
               }
-             // Priority 3: try to resolve token from trade symbol and fetch
+             // Priority 2: try to resolve token from trade symbol and fetch
              if (exitPx === 0 && accessToken) {
                try {
                  const sym = ((t as any).symbolLabel ?? t.symbol ?? "").toUpperCase();
@@ -899,6 +895,17 @@ export const appRouter = router({
                     if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
                   }
                 } catch { /* non-fatal */ }
+              }
+              // Priority 3 (LAST RESORT): use in-memory optionPremiumPrice
+              // WARNING: This may be delta-approximated and inaccurate. Only use if real quote fetch failed.
+              if (exitPx === 0 && optionPremium > 0) {
+                // Sanity check: if optionPremium is more than 50% away from entry, it's likely wrong
+                const deviationPct = Math.abs(optionPremium - t.entryPrice) / t.entryPrice;
+                if (deviationPct < 0.5) {
+                  exitPx = optionPremium;
+                } else {
+                  console.log(`[BotStop] Options trade ${t.symbol} #${t.id}: in-memory premium ₹${optionPremium.toFixed(2)} deviates ${(deviationPct * 100).toFixed(0)}% from entry ₹${t.entryPrice} — rejecting as unreliable`);
+                }
               }
               // If STILL no valid premium: DON'T close the trade. Keep it open.
               if (exitPx === 0) {
@@ -2620,16 +2627,17 @@ export const appRouter = router({
           const now = new Date();
           for (const t of openTrades) {
             // For options trades: use option premium price, not underlying
-            const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
-            let exitPx = 0;
-            if (isOption) {
-              if (optionPremium > 0) exitPx = optionPremium;
-              if (exitPx === 0 && accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
+           const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
+           let exitPx = 0;
+           if (isOption) {
+              // Priority 1: fetch real quote using optionTradeToken (most accurate)
+              if (accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
                 try {
                   const q = await fetchFullQuote(optionTradeToken, accessToken);
                   if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
                 } catch { /* non-fatal */ }
               }
+              // Priority 2: resolve token from symbol and fetch
               if (exitPx === 0 && accessToken) {
                try {
                   const sym = ((t as any).symbolLabel ?? t.symbol ?? "").toUpperCase();
@@ -2658,6 +2666,15 @@ export const appRouter = router({
                     if (resolved?.token) { const q = await fetchFullQuote(resolved.token, accessToken); if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp; }
                   }
                 } catch { /* non-fatal */ }
+              }
+              // Priority 3 (LAST RESORT): use in-memory optionPremiumPrice with sanity check
+              if (exitPx === 0 && optionPremium > 0) {
+                const deviationPct = Math.abs(optionPremium - t.entryPrice) / t.entryPrice;
+                if (deviationPct < 0.5) {
+                  exitPx = optionPremium;
+                } else {
+                  console.log(`[BotStop] Slot trade ${t.symbol} #${t.id}: in-memory premium ₹${optionPremium.toFixed(2)} deviates ${(deviationPct * 100).toFixed(0)}% from entry ₹${t.entryPrice} — rejecting as unreliable`);
+                }
               }
               if (exitPx === 0) {
                 console.log(`[BotStop] Slot trade ${t.symbol} #${t.id}: no valid premium — keeping trade OPEN`);
