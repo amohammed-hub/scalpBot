@@ -1295,3 +1295,6 @@
 - [x] routers.ts stop flow: now fetches real option quote FIRST (priority ordering), delta-approx as last resort with sanity check
 - [x] botRestart.ts stale trade close: for PAPER_OPT tokens, now tries resolveSpecificOptionToken / resolveAtmMcxOptionToken to get real token → fetchFullQuote → real exit price
 - [x] Fallback: if resolution fails, closes at entry price (0 P&L on remaining) — safe default, no fake inflated/deflated P&L
+## UI Fix — Activity Log Full Height
+- [x] Activity Log tab: log container now fills 100% of available viewport height (min-height: calc(100vh - 200px)) with flex-grow: 1 on scroll area
+- [x] No blank space below — log scrolls within its full-height container

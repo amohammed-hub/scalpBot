@@ -3590,7 +3590,7 @@ export default function Dashboard() {
         </>)}
         {activeTab === "log" && (<>
         {/* Bot Activity Log */}
-        <div className="mt-6 rounded-xl border border-white/10 bg-[oklch(0.14_0.02_240)] overflow-hidden">
+        <div className="mt-6 rounded-xl border border-white/10 bg-[oklch(0.14_0.02_240)] overflow-hidden flex flex-col" style={{ minHeight: "calc(100vh - 200px)" }}>
           <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-emerald-400" />
@@ -3605,7 +3605,7 @@ export default function Dashboard() {
           </div>
           <div
             ref={activityScrollRef}
-            className="h-64 overflow-y-auto p-3 font-mono text-xs space-y-0.5"
+            className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-0.5"
           >
             {activityEvents.length === 0 ? (
               <div className="text-white/20 text-center py-8">No activity yet — start the bot to see live events here.</div>
