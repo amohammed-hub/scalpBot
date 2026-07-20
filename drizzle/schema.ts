@@ -112,6 +112,7 @@ export const botSessions = mysqlTable("bot_sessions", {
   useV2Engine: boolean("useV2Engine").default(false),
   unlimitedTrades: boolean("unlimitedTrades").default(false),
   openingBurstEnabled: boolean("openingBurstEnabled").default(false),
+  crudeOilCorrelation: boolean("crudeOilCorrelation").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

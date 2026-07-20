@@ -7,7 +7,7 @@ import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, noti
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
@@ -349,8 +349,9 @@ export const appRouter = router({
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
-        unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
-        openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
+       unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
+       openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
+        crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
       }))
      .mutation(async ({ input, ctx }) => {
       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
@@ -602,6 +603,7 @@ export const appRouter = router({
              useV2Engine: input.useV2Engine,
              unlimitedTrades: input.unlimitedTrades,
              openingBurstEnabled: input.openingBurstEnabled,
+             crudeOilCorrelation: input.crudeOilCorrelation,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
            })
            .where(eq(botSessions.sessionToken, input.sessionToken));
@@ -638,6 +640,7 @@ export const appRouter = router({
               useV2Engine: input.useV2Engine,
               unlimitedTrades: input.unlimitedTrades,
               openingBurstEnabled: input.openingBurstEnabled,
+              crudeOilCorrelation: input.crudeOilCorrelation,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
@@ -793,6 +796,7 @@ export const appRouter = router({
             useV2Engine: input.useV2Engine,
             unlimitedTrades: input.unlimitedTrades,
             openingBurstEnabled: input.openingBurstEnabled,
+            crudeOilCorrelation: input.crudeOilCorrelation,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           },
           onTradeOpen,
@@ -1138,6 +1142,7 @@ export const appRouter = router({
            useV2Engine: row.useV2Engine ?? false,
            unlimitedTrades: row.unlimitedTrades ?? false,
            openingBurstEnabled: row.openingBurstEnabled ?? false,
+           crudeOilCorrelation: row.crudeOilCorrelation ?? false,
            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
          },
          onTradeOpen,
@@ -1384,7 +1389,22 @@ export const appRouter = router({
 
         return { success: true, pnl, orderId };
       }),
+
+    // Cross-Market Correlation: Get current Crude Oil bias for NIFTY
+    crudeOilBias: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input }) => {
+        const state = getBotState(input.sessionToken);
+        const accessToken = state?.accessToken ?? null;
+        try {
+          const result = await getCrudeOilBias(accessToken);
+          return result;
+        } catch {
+          return { bias: "Neutral" as const, changePct: 0, crudePrice: 0, crudeOpen: 0 };
+        }
+      }),
   }),
+
 
   // Trades
   trades: router({
@@ -2294,6 +2314,7 @@ export const appRouter = router({
         useV2Engine: z.boolean().default(false),
         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
         openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
+        crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
@@ -2490,6 +2511,7 @@ export const appRouter = router({
            useV2Engine: input.useV2Engine ?? false,
            unlimitedTrades: input.unlimitedTrades ?? false,
            openingBurstEnabled: input.openingBurstEnabled ?? false,
+           crudeOilCorrelation: input.crudeOilCorrelation,
            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
          }).where(eq(botSessions.sessionToken, slotToken));
        } else {
@@ -2515,6 +2537,7 @@ export const appRouter = router({
             useV2Engine: input.useV2Engine ?? false,
             unlimitedTrades: input.unlimitedTrades ?? false,
             openingBurstEnabled: input.openingBurstEnabled ?? false,
+            crudeOilCorrelation: input.crudeOilCorrelation,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
@@ -2583,6 +2606,7 @@ export const appRouter = router({
           useV2Engine: input.useV2Engine,
           unlimitedTrades: input.unlimitedTrades,
           openingBurstEnabled: input.openingBurstEnabled,
+          crudeOilCorrelation: input.crudeOilCorrelation,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();

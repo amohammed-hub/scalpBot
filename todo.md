@@ -1298,3 +1298,11 @@
 ## UI Fix — Activity Log Full Height
 - [x] Activity Log tab: log container now fills 100% of available viewport height (min-height: calc(100vh - 200px)) with flex-grow: 1 on scroll area
 - [x] No blank space below — log scrolls within its full-height container
+
+## Cross-Market Correlation Signal (Crude Oil → NIFTY)
+- [x] Add crudeOilCorrelation toggle to BotState and BotConfig (default OFF)
+- [x] Implement getCrudeOilBias() function: fetch crude oil intraday candles, compute % change from day open, return CrudeUp/CrudeDown/Neutral
+- [x] Apply soft bias filter in tick(): if NIFTY/BANKNIFTY instrument and crudeOilCorrelation enabled, adjust signal confidence based on crude direction
+- [x] Add dashboard display showing crude oil status ("Crude Oil: +1.2% ↑ (Nifty bearish bias active)")
+- [x] Add "Cross-Market Correlation: ON/OFF" toggle in dashboard (next to Opening Burst toggle)
+- [x] Fix Manus deployment build failure (Dockerfile with --no-frozen-lockfile)

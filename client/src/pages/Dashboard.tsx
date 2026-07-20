@@ -54,6 +54,7 @@ interface BotConfig {
   partial1Pct: number;  // Book 50% at this % profit (e.g., 30 = +30%)
   partial2Pct: number;  // Book 25% at this % profit (e.g., 60 = +60%)
   openingBurstEnabled: boolean;
+  crudeOilCorrelation: boolean;
 }
 
 interface PricePoint { time: string; price: number; }
@@ -265,6 +266,7 @@ export default function Dashboard() {
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
+      crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
     };
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(LS_CONFIG) ?? "null") }; }
     catch { return defaults; }
@@ -348,6 +350,7 @@ export default function Dashboard() {
         useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
         unlimitedTrades,
         openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
+      crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
       });
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
@@ -368,6 +371,7 @@ export default function Dashboard() {
         useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
         unlimitedTrades,
         openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
+      crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
       });
     }
   };
@@ -452,6 +456,7 @@ export default function Dashboard() {
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
           unlimitedTrades,
           openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
+      crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
         });
       } else {
         startSecondaryMutation.mutate({
@@ -471,6 +476,7 @@ export default function Dashboard() {
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
           unlimitedTrades,
           openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
+      crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
         });
       }
       toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
@@ -500,6 +506,11 @@ export default function Dashboard() {
   const { data: liveData } = trpc.bot.liveData.useQuery(
     { sessionToken },
     { refetchInterval: 3000, staleTime: 1000 }
+  );
+  // Cross-Market Correlation: Crude Oil bias (only fetched when toggle is ON)
+  const { data: crudeOilBias } = trpc.bot.crudeOilBias.useQuery(
+    { sessionToken },
+    { refetchInterval: 60000, staleTime: 30000, enabled: config.crudeOilCorrelation }
   );
 
   // Trades list — poll every 5s
@@ -978,6 +989,7 @@ export default function Dashboard() {
      unlimitedTrades,
      useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
      openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
+      crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
    });
  };
 
@@ -1464,6 +1476,50 @@ export default function Dashboard() {
               </button>
               <div className="ml-auto">
                 {stateLabel}
+              </div>
+            </div>
+          );
+        })()}
+        {/* Cross-Market Correlation: Crude Oil → NIFTY */}
+        <div className="text-[10px] text-white/30 mb-1 ml-1">Crude Oil correlation filter — adjusts NIFTY signal confidence based on crude momentum</div>
+        {(() => {
+          const enabled = config.crudeOilCorrelation;
+          const isMCXInstrument = config.instrumentToken.startsWith("MCX");
+          // Only show for NIFTY/BANKNIFTY instruments (not MCX)
+          if (isMCXInstrument) return null;
+          return (
+            <div className={`mb-4 flex items-center gap-3 ${enabled ? "bg-orange-500/5 border-orange-500/30" : "bg-white/5 border-white/10"} border rounded-xl px-4 py-2.5 transition-all duration-300`}>
+              <div className="flex items-center gap-2">
+                <span className={`text-base ${!enabled ? "opacity-30" : ""}`}>🛢️</span>
+                <span className={`text-sm font-medium ${!enabled ? "text-white/30" : "text-white/80"}`}>Crude Oil Correlation</span>
+              </div>
+              <button
+                onClick={() => {
+                  const current = localStorage.getItem("scalpbot_crude_correlation") === "true";
+                  localStorage.setItem("scalpbot_crude_correlation", current ? "false" : "true");
+                  setConfig(prev => ({ ...prev, crudeOilCorrelation: !current }));
+                }}
+                className={`relative w-10 h-5 rounded-full transition-all duration-200 ${
+                  enabled
+                    ? "bg-orange-500/60 border border-orange-400/50"
+                    : "bg-white/10 border border-white/20"
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-all duration-200 ${
+                  enabled
+                    ? "translate-x-5 bg-orange-300"
+                    : "translate-x-0 bg-white/40"
+                }`} />
+              </button>
+              <div className="ml-auto">
+                {enabled
+                  ? crudeOilBias && crudeOilBias.bias !== "Neutral"
+                    ? <span className={`text-xs ${crudeOilBias.bias === "CrudeUp" ? "text-red-400" : "text-emerald-400"}`}>
+                        Crude Oil: {crudeOilBias.changePct > 0 ? "+" : ""}{crudeOilBias.changePct.toFixed(1)}% {crudeOilBias.bias === "CrudeUp" ? "↑" : "↓"} ({crudeOilBias.bias === "CrudeUp" ? "Nifty bearish bias" : "Nifty bullish bias"})
+                      </span>
+                    : <span className="text-orange-400 text-xs">Active — Crude within ±1% (no bias)</span>
+                  : <span className="text-white/30 text-xs">Cross-Market Correlation: OFF</span>
+                }
               </div>
             </div>
           );

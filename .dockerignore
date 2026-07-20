@@ -1,0 +1,7 @@
+node_modules
+.manus-logs
+.git
+scripts/
+e2e_test.sh
+DEBUG_NOTES.md
+RAILWAY_DEPLOY.md

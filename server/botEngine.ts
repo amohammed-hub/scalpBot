@@ -216,6 +216,8 @@ export interface BotState {
   openingBurstMode?: boolean;
   openingBurstTradeTaken?: boolean; // true after burst trade taken today (reset daily)
   openingBurstEnabled?: boolean; // user toggle (default true for NSE)
+  // Cross-Market Correlation: Crude Oil → NIFTY soft bias filter
+  crudeOilCorrelation?: boolean; // user toggle (default OFF)
 }
 
 // Shadow mode log entry
@@ -2431,6 +2433,106 @@ export function generateOpeningBurstSignal(
 }
 
 // ── Fetch 1-min candles from Upstox ───────────────────────────────────────────
+// ── Cross-Market Correlation: Crude Oil → NIFTY ──────────────────────────────
+// Tracks Crude Oil intraday movement relative to day open.
+// If Crude moved +1% → "CrudeUp" (bearish for Nifty); -1% → "CrudeDown" (bullish for Nifty).
+// Applied as a SOFT BIAS (confidence adjustment) during NSE morning session only.
+export type CrudeBias = "CrudeUp" | "CrudeDown" | "Neutral";
+export interface CrudeBiasResult {
+  bias: CrudeBias;
+  changePct: number; // e.g. +1.2 or -0.8
+  crudePrice: number;
+  crudeOpen: number;
+}
+
+// Cache: avoid hitting Upstox API on every tick (refresh every 60s)
+let _crudeBiasCache: { result: CrudeBiasResult; fetchedAt: number } | null = null;
+const CRUDE_BIAS_CACHE_MS = 60_000; // 60 seconds
+
+// The crude oil futures token (front-month) — resolved dynamically at first call
+const CRUDE_OIL_FALLBACK_TOKEN = "MCX_FO|520702";
+
+export async function getCrudeOilBias(accessToken?: string | null): Promise<CrudeBiasResult> {
+  // Return cached if fresh
+  if (_crudeBiasCache && (Date.now() - _crudeBiasCache.fetchedAt) < CRUDE_BIAS_CACHE_MS) {
+    return _crudeBiasCache.result;
+  }
+  const neutral: CrudeBiasResult = { bias: "Neutral", changePct: 0, crudePrice: 0, crudeOpen: 0 };
+  try {
+    // Fetch intraday 1-min candles for crude oil futures
+    const candles = await fetchUpstoxCandles(CRUDE_OIL_FALLBACK_TOKEN, accessToken ?? undefined);
+    if (candles.length < 2) {
+      _crudeBiasCache = { result: neutral, fetchedAt: Date.now() };
+      return neutral;
+    }
+    const dayOpen = candles[0].open;
+    const currentPrice = candles[candles.length - 1].close;
+    const changePct = ((currentPrice - dayOpen) / dayOpen) * 100;
+    let bias: CrudeBias = "Neutral";
+    if (changePct >= 1.0) bias = "CrudeUp";
+    else if (changePct <= -1.0) bias = "CrudeDown";
+    const result: CrudeBiasResult = { bias, changePct, crudePrice: currentPrice, crudeOpen: dayOpen };
+    _crudeBiasCache = { result, fetchedAt: Date.now() };
+    return result;
+  } catch (err) {
+    console.warn("[CrudeCorrelation] Failed to fetch crude oil data:", err instanceof Error ? err.message : String(err));
+    _crudeBiasCache = { result: neutral, fetchedAt: Date.now() };
+    return neutral;
+  }
+}
+
+/**
+ * Apply crude oil correlation bias to a NIFTY/BANKNIFTY signal.
+ * Rules:
+ * - CrudeUp + BUY CE → REDUCE confidence by 15% (crude up = nifty likely weak)
+ * - CrudeUp + BUY PE → BOOST confidence by 10% (crude up confirms bearish nifty)
+ * - CrudeDown + BUY CE → BOOST confidence by 10% (crude down = nifty likely strong)
+ * - CrudeDown + BUY PE → REDUCE confidence by 15% (crude down contradicts bearish)
+ *
+ * For index options: BUY signal = CE, SELL signal = PE (auto mode).
+ * Returns the adjusted confidence and a reason suffix.
+ */
+export function applyCrudeCorrelationBias(
+  signal: Signal,
+  crudeBias: CrudeBiasResult,
+  optionType: "CE" | "PE" | "auto" | undefined,
+): { adjustedConfidence: number; reasonSuffix: string } {
+  if (crudeBias.bias === "Neutral") {
+    return { adjustedConfidence: signal.confidence, reasonSuffix: "" };
+  }
+  // Determine effective option type from signal direction
+  const effectiveType: "CE" | "PE" =
+    optionType === "CE" ? "CE" :
+    optionType === "PE" ? "PE" :
+    signal.direction === "BUY" ? "CE" : "PE"; // auto: BUY=CE, SELL=PE
+
+  let adjustment = 0;
+  let tag = "";
+
+  if (crudeBias.bias === "CrudeUp") {
+    if (effectiveType === "CE") {
+      adjustment = -0.15; // REDUCE — crude up contradicts bullish nifty
+      tag = `CrudeUp(+${crudeBias.changePct.toFixed(1)}%)→CE penalty -15%`;
+    } else {
+      adjustment = +0.10; // BOOST — crude up confirms bearish nifty
+      tag = `CrudeUp(+${crudeBias.changePct.toFixed(1)}%)→PE boost +10%`;
+    }
+  } else if (crudeBias.bias === "CrudeDown") {
+    if (effectiveType === "CE") {
+      adjustment = +0.10; // BOOST — crude down confirms bullish nifty
+      tag = `CrudeDown(${crudeBias.changePct.toFixed(1)}%)→CE boost +10%`;
+    } else {
+      adjustment = -0.15; // REDUCE — crude down contradicts bearish nifty
+      tag = `CrudeDown(${crudeBias.changePct.toFixed(1)}%)→PE penalty -15%`;
+    }
+  }
+
+  return {
+    adjustedConfidence: signal.confidence + adjustment,
+    reasonSuffix: ` | Crude:${tag}`,
+  };
+}
+
 export async function fetchUpstoxCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
@@ -4067,6 +4169,41 @@ async function tick(
       emitActivity(state.sessionToken, "error", `Shadow mode error: ${shadowErr instanceof Error ? shadowErr.message : String(shadowErr)}`);
     }
   }
+  // ── Cross-Market Correlation: Crude Oil → NIFTY soft bias ─────────────────
+  // Only applies to NIFTY/BANKNIFTY instruments during NSE session (not MCX evening).
+  // This is a SOFT BIAS — adjusts confidence, doesn't block trades.
+  const isNiftyInstrument = !isMCX && (
+    state.instrumentToken.includes("Nifty") ||
+    state.instrumentToken.includes("NIFTY") ||
+    state.instrumentToken.includes("BANKNIFTY") ||
+    state.instrumentSymbol === "NIFTY" ||
+    state.instrumentSymbol === "BANKNIFTY" ||
+    state.instrumentSymbol === "FINNIFTY" ||
+    (state.underlyingToken ?? "").includes("Nifty")
+  );
+  if (state.crudeOilCorrelation && isNiftyInstrument && signal.direction !== "HOLD") {
+    try {
+      const crudeBias = await getCrudeOilBias(state.accessToken);
+      if (crudeBias.bias !== "Neutral") {
+        const { adjustedConfidence, reasonSuffix } = applyCrudeCorrelationBias(
+          signal, crudeBias, state.optionType ?? "auto"
+        );
+        const oldConf = signal.confidence;
+        signal = { ...signal, confidence: adjustedConfidence, reason: signal.reason + reasonSuffix };
+        if (adjustedConfidence !== oldConf) {
+          emitActivity(state.sessionToken, "signal",
+            `\u{1F6E2} Crude Oil: ${crudeBias.changePct > 0 ? "+" : ""}${crudeBias.changePct.toFixed(1)}% | ` +
+            `${crudeBias.bias === "CrudeUp" ? "Nifty bearish" : "Nifty bullish"} bias active | ` +
+            `Conf: ${(oldConf * 100).toFixed(0)}% \u2192 ${(adjustedConfidence * 100).toFixed(0)}%`
+          );
+        }
+      }
+    } catch (err) {
+      // Non-critical — don't crash the tick
+      console.warn("[CrudeCorrelation] Error in tick:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
 
   // ── Heartbeat: emit periodic activity so user knows bot is alive ──────────
   state.tickCount = (state.tickCount ?? 0) + 1;
