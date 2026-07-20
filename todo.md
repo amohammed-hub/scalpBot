@@ -1269,3 +1269,8 @@
 ## Critical Fix (Jul 20, 2025) — Cross-Bot Duplicate Trade Guard
 - [x] CRITICAL: Added cross-bot duplicate instrument check before trade entry — prevents same option being bought by multiple bots simultaneously
 - [x] Guard iterates all running bot slots and blocks if ANY other slot already has an open position in the same instrumentToken + direction
+## Critical Fix (Jul 20, 2025) — Unreachable Option Targets + Underlying Cooldown
+- [x] CRITICAL: Option target was using broken formula (premium * 2.5 = 150% gain) — unreachable in 20 min, causing all trades to exit at time limit with loss
+- [x] Fixed: target now uses partial2Pct (60% gain) which is achievable and matches the partial booking ladder
+- [x] Added underlying-level cooldown: after 2 consecutive SLs on same underlying (any direction CE/PE), blocks ALL trades on that underlying for 15 min
+- [x] Counter resets on winning trade or after 15 min cooldown expires

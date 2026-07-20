@@ -602,6 +602,7 @@ export const appRouter = router({
              useV2Engine: input.useV2Engine,
              unlimitedTrades: input.unlimitedTrades,
              openingBurstEnabled: input.openingBurstEnabled,
+            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
            })
            .where(eq(botSessions.sessionToken, input.sessionToken));
        } else {
@@ -637,6 +638,7 @@ export const appRouter = router({
               useV2Engine: input.useV2Engine,
               unlimitedTrades: input.unlimitedTrades,
               openingBurstEnabled: input.openingBurstEnabled,
+            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -791,6 +793,7 @@ export const appRouter = router({
             useV2Engine: input.useV2Engine,
             unlimitedTrades: input.unlimitedTrades,
             openingBurstEnabled: input.openingBurstEnabled,
+            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           },
           onTradeOpen,
           onTradeClose,
@@ -1128,6 +1131,7 @@ export const appRouter = router({
            useV2Engine: row.useV2Engine ?? false,
            unlimitedTrades: row.unlimitedTrades ?? false,
            openingBurstEnabled: row.openingBurstEnabled ?? false,
+           consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
          },
          onTradeOpen,
          onTradeClose,
@@ -2479,6 +2483,7 @@ export const appRouter = router({
            useV2Engine: input.useV2Engine ?? false,
            unlimitedTrades: input.unlimitedTrades ?? false,
            openingBurstEnabled: input.openingBurstEnabled ?? false,
+           consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
          }).where(eq(botSessions.sessionToken, slotToken));
        } else {
           const result = await db.insert(botSessions).values({
@@ -2503,6 +2508,7 @@ export const appRouter = router({
             useV2Engine: input.useV2Engine ?? false,
             unlimitedTrades: input.unlimitedTrades ?? false,
             openingBurstEnabled: input.openingBurstEnabled ?? false,
+            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -2570,6 +2576,7 @@ export const appRouter = router({
           useV2Engine: input.useV2Engine,
           unlimitedTrades: input.unlimitedTrades,
           openingBurstEnabled: input.openingBurstEnabled,
+            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;

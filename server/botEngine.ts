@@ -145,6 +145,9 @@ export interface BotState {
   lastSlExitDirection: "BUY" | "SELL" | null;
   lastSlExitAt: number | null;
   consecutiveSameDirectionSLs: number;
+  // P2: Underlying-level cooldown — after 2 SLs on same underlying (any direction), block for 15 min
+  consecutiveUnderlyingSLs: number;
+  lastUnderlyingSLAt: number | null;
   isPowerHourMode: boolean;
   isMCXEveningMode: boolean;
   isMCXLateSessionMode: boolean;
@@ -3824,6 +3827,9 @@ async function tick(
         state.lastSlExitDirection = trade.direction;
         state.lastSlExitAt = Date.now();
       }
+      // P2: Underlying-level cooldown — track consecutive SLs regardless of direction (CE/PE)
+      state.consecutiveUnderlyingSLs += 1;
+      state.lastUnderlyingSLAt = Date.now();
       // If bookedPnl was already added to dailyPnl during partial booking in THIS session,
       // only add remainPnl. Otherwise (restart case), add totalPnl (includes bookedPnl).
       if (trade.bookedPnlAddedToDaily) {
@@ -3834,6 +3840,11 @@ async function tick(
       state.openTrade = null;
       recordTradeClose(state.sessionToken, state.scanIntervalSec);
       if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
+      // P2: Reset underlying cooldown on a winning trade
+      if (totalPnl >= 0) {
+        state.consecutiveUnderlyingSLs = 0;
+        state.lastUnderlyingSLAt = null;
+      }
       await onTradeClose(trade.dbId, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
       console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
       emitActivity(state.sessionToken, "trade_close", `${exitReason} ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)} | Day: ₹${state.dailyPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
@@ -4085,6 +4096,21 @@ async function tick(
   }
   if (signal.direction === "HOLD") return; // confidence already checked inside generateSignal (tod multiplier applied there)
 
+  // ── P2: Underlying-Level Cooldown (any direction) ───────────────────────────
+  // After 2+ consecutive SLs on this underlying (regardless of CE/PE direction), block for 15 min
+  if (state.consecutiveUnderlyingSLs >= 2 && state.lastUnderlyingSLAt) {
+    const elapsedSinceUnderlyingSL = Date.now() - state.lastUnderlyingSLAt;
+    if (elapsedSinceUnderlyingSL < 900_000) { // 15 minutes
+      const remainMin = Math.ceil((900_000 - elapsedSinceUnderlyingSL) / 60000);
+      emitActivity(state.sessionToken, "signal", `⊘ Underlying cooldown — ${state.consecutiveUnderlyingSLs} consecutive SLs on ${state.instrumentLabel} (${remainMin}min remaining)`);
+      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Underlying cooldown: ${state.consecutiveUnderlyingSLs} SLs in ${state.instrumentLabel}`);
+      return;
+    } else {
+      // Cooldown expired — reset counter
+      state.consecutiveUnderlyingSLs = 0;
+      state.lastUnderlyingSLAt = null;
+    }
+  }
   // ── P1: Direction-Aware Cooldown ─────────────────────────────────────────────
   // After SL, penalize same-direction signals:
   // - Within 3 minutes: BLOCK same direction entirely (market proved you wrong)
@@ -4497,7 +4523,7 @@ async function tick(
     }
   }
   const tradeTarget = isOptionsMode && optionPremiumForSizing
-    ? optionPremiumForSizing * (1 + (state.targetMultiplier * 0.5)) // target = premium * (1 + 0.5*targetMult)
+    ? optionPremiumForSizing * (1 + p2Pct) // target = premium * (1 + partial2Pct), e.g., 556 * 1.60 = ₹890 (60% gain)
     : signal.targetPrice;
 
   // Set mutex before async DB write to prevent concurrent duplicate opens
@@ -4611,7 +4637,7 @@ async function tick(
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
   const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.5 : signal.slPrice;
-  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + state.targetMultiplier * 0.5) : signal.targetPrice;
+  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + p2Pct) : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
   const capitalDeployed = displayEntry * quantity;
@@ -4696,7 +4722,7 @@ export function startBot(
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
     lastTickAt: 0,
     lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0,
-    lastSlExitDirection: null, lastSlExitAt: null, consecutiveSameDirectionSLs: 0,
+    lastSlExitDirection: null, lastSlExitAt: null, consecutiveSameDirectionSLs: 0, consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
     isPowerHourMode: false,
     isMCXEveningMode: false, isMCXLateSessionMode: false, heroZeroMode: false,
     openingBurstMode: false, openingBurstTradeTaken: false,
@@ -4855,6 +4881,7 @@ export function startBot(
            averagingEnabled: state.averagingEnabled,
            averagingLossThreshold: state.averagingLossThreshold,
            openingBurstEnabled: state.openingBurstEnabled,
+           consecutiveUnderlyingSLs: state.consecutiveUnderlyingSLs, lastUnderlyingSLAt: state.lastUnderlyingSLAt,
          }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
         }
       });
