@@ -116,7 +116,12 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "*"
+      "esbuild",
+      "@esbuild/linux-x64",
+      "@esbuild/darwin-arm64",
+      "@esbuild/darwin-x64",
+      "@esbuild/win32-x64"
     ]
-  }
+  },
+  "packageManager": "pnpm@10.4.1"
 }

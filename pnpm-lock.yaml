@@ -1,8 +1,6 @@
 lockfileVersion: '9.0'
 
 settings:
-  onlyBuiltDependencies:
-    - "*"
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
