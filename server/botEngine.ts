@@ -3232,9 +3232,26 @@ async function tick(
         } else {
         // Market is closed — force close the open trade at last known price
         const trade = state.openTrade;
-        const exitPx = trade.isIndexOptions
-          ? (state.optionPremiumPrice && state.optionPremiumPrice > 0 ? state.optionPremiumPrice : trade.entryPrice)
-          : (state.lastPrice > 0 ? state.lastPrice : trade.entryPrice);
+        let exitPx: number;
+        if (trade.isIndexOptions) {
+          if (state.optionPremiumPrice && state.optionPremiumPrice > 0) {
+            exitPx = state.optionPremiumPrice;
+          } else if (trade.entryUnderlyingPrice && trade.entryUnderlyingPrice > 0 && state.lastPrice > 0) {
+            // BUG-FIX: Delta approximation instead of using entryPrice (which gives fake P&L = 0)
+            const underlyingMove = state.lastPrice - trade.entryUnderlyingPrice;
+            const movePct = Math.abs(underlyingMove) / trade.entryUnderlyingPrice;
+            const delta = movePct < 0.005 ? 0.5 : movePct < 0.015 ? 0.4 : 0.3;
+            const isCall = (trade.symbol ?? "").includes("CE") || (trade.symbolLabel ?? "").includes("CE");
+            exitPx = Math.max(0.05, trade.entryPrice + (isCall ? underlyingMove * delta : -underlyingMove * delta));
+            console.log(`[BotEngine] ${state.sessionToken} — auto-close delta approx: entry=${trade.entryPrice}, underlying ${trade.entryUnderlyingPrice}→${state.lastPrice}, exitPx=${exitPx.toFixed(2)}`);
+          } else {
+            // Absolute last resort: use entryPrice (P&L = 0) — but log a warning
+            exitPx = trade.entryPrice;
+            console.warn(`[BotEngine] ${state.sessionToken} — auto-close FALLBACK to entryPrice (no premium, no underlying data)`);
+          }
+        } else {
+          exitPx = state.lastPrice > 0 ? state.lastPrice : trade.entryPrice;
+        }
         const noDataRemQty = trade.quantity - (trade.bookedQty ?? 0);
         const remainderPnl = trade.direction === "BUY" ? (exitPx - trade.entryPrice) * noDataRemQty : (trade.entryPrice - exitPx) * noDataRemQty;
         // Only add bookedPnl if it wasn't already added to dailyPnl during this session
@@ -4847,6 +4864,7 @@ export function startBot(
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   existingOpenTrade?: OpenTrade | null,
   onTick?: (state: BotState) => Promise<void>,
+  initialLastPrice?: number,
 ) {
   const existing = bots.get(config.sessionToken);
   if (existing?.intervalHandle) clearInterval(existing.intervalHandle);
@@ -4859,7 +4877,7 @@ export function startBot(
     candles: [],
     candles5m: [],
     candlesDay: [],
-    lastSignal: null, lastPrice: 0, bidPrice: 0, askPrice: 0,
+    lastSignal: null, lastPrice: initialLastPrice ?? 0, bidPrice: 0, askPrice: 0,
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
     lastTickAt: 0,

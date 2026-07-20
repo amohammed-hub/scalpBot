@@ -285,6 +285,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     onTradeClose,
     existingOpenTrade,
     onTick,
+    session.lastPrice ?? 0,
   );
 
   console.log(`[BotRestart] ✅ Restarted bot for session ${session.sessionToken.slice(0, 8)} — ${session.instrumentSymbol} ${session.mode} mode${existingOpenTrade ? ` — protecting open trade #${existingOpenTrade.dbId}` : " — scan mode"}`);
