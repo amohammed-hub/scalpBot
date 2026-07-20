@@ -1266,3 +1266,6 @@
 - [x] This caused: wrong RSI/ADX/EMA/VWAP calculations, "Skipping Opening Volatility" at 9:49 AM (using oldest candle timestamp), ADX=0 after restart
 - [x] Fixed 9:25-9:30 dead zone: Opening Volatility skip window reduced from 9:15-9:30 to 9:15-9:25 (matches Opening Burst end)
 - [x] Fixed position sizing capital overflow: now rejects trade if capital insufficient for 1 lot (instead of silently proceeding)
+## Critical Fix (Jul 20, 2025) — Cross-Bot Duplicate Trade Guard
+- [x] CRITICAL: Added cross-bot duplicate instrument check before trade entry — prevents same option being bought by multiple bots simultaneously
+- [x] Guard iterates all running bot slots and blocks if ANY other slot already has an open position in the same instrumentToken + direction

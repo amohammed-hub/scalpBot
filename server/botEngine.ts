@@ -4525,6 +4525,18 @@ async function tick(
     console.error(`[BotEngine] DB guard check failed:`, dbErr);
     // Continue anyway — the in-memory guard is still active
   }
+  // ── Cross-bot duplicate guard: prevent same instrument being traded by multiple bots simultaneously ──
+  for (const [otherKey, otherState] of Array.from(bots.entries())) {
+    if (otherKey === state.sessionToken) continue; // skip self
+    if (!otherState.openTrade) continue;
+    if (otherState.openTrade.instrumentToken === tradeInstrumentToken && otherState.openTrade.direction === (isOptionsMode ? "BUY" : signal.direction)) {
+      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${otherKey.slice(0, 8)} already has ${tradeInstrumentToken} ${otherState.openTrade.direction}`);
+      emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — slot ${otherState.botSlot} already has this position`);
+      pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Duplicate: slot ${otherState.botSlot} already in ${tradeInstrumentToken}`);
+      state.isOpeningTrade = false;
+      return;
+    }
+  }
   state.isOpeningTrade = true;
   let dbId: number;
   try {
