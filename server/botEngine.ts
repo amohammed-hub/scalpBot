@@ -726,8 +726,8 @@ export function calcDayMomentumScore(
 }
 
 function getTimeOfDayMultiplier(istMin: number): { multiplier: number; label: string; skip: boolean } {
-  if (istMin >= 555 && istMin < 570)  return { multiplier: 0,    label: "Opening Volatility",    skip: true  };
-  if (istMin >= 570 && istMin < 600)  return { multiplier: 0.90, label: "Settling",               skip: false };
+  if (istMin >= 555 && istMin < 565)  return { multiplier: 0,    label: "Opening Volatility",    skip: true  };
+  if (istMin >= 565 && istMin < 600)  return { multiplier: 0.90, label: "Settling",               skip: false };
   if (istMin >= 600 && istMin < 690)  return { multiplier: 1.10, label: "Prime Morning",          skip: false };
   if (istMin >= 690 && istMin < 780)  return { multiplier: 0.95, label: "Midday",            skip: false };
   if (istMin >= 780 && istMin < 840)  return { multiplier: 1.00, label: "Afternoon",              skip: false };
@@ -880,7 +880,7 @@ export function generateSignal(
   // Time-of-day filter
   const tod = getTimeOfDayMultiplier(istMin);
   if (tod.skip) {
-    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `Skipping ${tod.label} (9:15–9:30 AM opening volatility)`, layer: "None" };
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `Skipping ${tod.label} (9:15–9:25 AM opening volatility)`, layer: "None" };
   }
 
   // Multi-timeframe confirmation
@@ -1517,8 +1517,8 @@ export function generateSignalV2(
   }
 
   // ── Quality Filter 4: No entry in first 15 min (9:15–9:30 AM) ─────────────
-  if (istMin < 570) {
-    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: "Skipping first 15 min (opening volatility)", layer: "None" };
+  if (istMin < 565) {
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: "Skipping first 10 min (opening volatility)", layer: "None" };
   }
 
   // ── LAYER 1: Regime Detection ─────────────────────────────────────────────
@@ -2436,7 +2436,7 @@ export async function fetchUpstoxCandles(instrumentToken: string, accessToken?: 
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     const resp = await axios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
-    return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
+    return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending order — reverse to ascending
   } catch { return []; }
 }
 
@@ -2451,7 +2451,7 @@ async function fetchUpstoxDayCandles(instrumentToken: string, accessToken?: stri
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     const resp = await axios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
-    return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
+    return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
   } catch { return []; }
 }
 
@@ -2464,7 +2464,7 @@ export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     const resp = await axios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
-    return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
+    return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
   } catch { return []; }
 }
 
@@ -4378,7 +4378,14 @@ async function tick(
     quantity = Math.min(quantity, Math.max(lotSize, maxQtyByCost));
     // Per-bot capital cap: total trade cost must NOT exceed bot's own capital
     const maxQtyByCapital = Math.floor(state.capital / optionPremiumForSizing / lotSize) * lotSize;
-    if (maxQtyByCapital > 0) {
+    if (maxQtyByCapital < lotSize) {
+      // Capital too low for even 1 lot — reject trade entirely
+      const reason = `Insufficient capital for 1 lot (need ${(optionPremiumForSizing * lotSize).toFixed(0)}, have ${state.capital.toFixed(0)})`;
+      const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
+      state.lastSignal = rejectSignal;
+      emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+      return;
+    } else {
       quantity = Math.min(quantity, maxQtyByCapital);
     }
   } else {
@@ -4387,7 +4394,14 @@ async function tick(
     quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
     // Per-bot capital cap for non-options: total trade cost must NOT exceed bot's own capital
     const maxQtyByCapital = Math.floor(state.capital / signal.entryPrice / lotSize) * lotSize;
-    if (maxQtyByCapital > 0) {
+    if (maxQtyByCapital < lotSize) {
+      // Capital too low for even 1 lot — reject trade entirely
+      const reason = `Insufficient capital for 1 lot (need ${(signal.entryPrice * lotSize).toFixed(0)}, have ${state.capital.toFixed(0)})`;
+      const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
+      state.lastSignal = rejectSignal;
+      emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+      return;
+    } else {
       quantity = Math.min(quantity, maxQtyByCapital);
     }
   }

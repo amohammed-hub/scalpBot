@@ -1261,3 +1261,8 @@
 - [x] Bug #7: getSlotTokens always includes slot3
 - [x] Bug #8: restart mutation includes openingBurstEnabled in startBot config
 - [x] Schema: Added unlimitedTrades and openingBurstEnabled columns to bot_sessions
+## Critical Fix (Jul 20, 2025) — Candle Order Bug
+- [x] CRITICAL: Upstox API returns candles in DESCENDING order (newest first) but code assumed ASCENDING — added .reverse() to all 3 fetch functions (1m, 5m, day)
+- [x] This caused: wrong RSI/ADX/EMA/VWAP calculations, "Skipping Opening Volatility" at 9:49 AM (using oldest candle timestamp), ADX=0 after restart
+- [x] Fixed 9:25-9:30 dead zone: Opening Volatility skip window reduced from 9:15-9:30 to 9:15-9:25 (matches Opening Burst end)
+- [x] Fixed position sizing capital overflow: now rejects trade if capital insufficient for 1 lot (instead of silently proceeding)
