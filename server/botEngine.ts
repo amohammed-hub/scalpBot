@@ -44,7 +44,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "Renko" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -218,6 +218,9 @@ export interface BotState {
   openingBurstEnabled?: boolean; // user toggle (default true for NSE)
   // Cross-Market Correlation: Crude Oil → NIFTY soft bias filter
   crudeOilCorrelation?: boolean; // user toggle (default OFF)
+  // Renko layer state: tracks constructed bricks for signal generation
+  renkoBricks?: Array<{ open: number; close: number; color: "green" | "red" }>;
+  renkoLastPrice?: number; // last price used for brick construction
 }
 
 // Shadow mode log entry
@@ -2434,6 +2437,151 @@ export function generateOpeningBurstSignal(
 
 // ── Fetch 1-min candles from Upstox ───────────────────────────────────────────
 // ── Cross-Market Correlation: Crude Oil → NIFTY ──────────────────────────────
+// ── Renko Signal Layer ──────────────────────────────────────────────────────────
+// Constructs Renko bricks from 1-min candle closes using ATR(14) as adaptive brick size.
+// BUY: 3 consecutive green bricks. SELL: 3 consecutive red bricks.
+// EXIT: first opposite color brick after entry.
+
+interface RenkoBrick {
+  open: number;
+  close: number;
+  color: "green" | "red";
+}
+
+/**
+ * Build Renko bricks from candle close prices.
+ * Uses ATR(14) as the brick size (adaptive to volatility).
+ * Returns the array of bricks constructed from the price series.
+ */
+function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
+  if (candles.length < 2 || atr <= 0) return [];
+  const brickSize = atr; // ATR(14) adaptive brick size
+  const bricks: RenkoBrick[] = [];
+  let basePrice = candles[0].close;
+
+  for (let i = 1; i < candles.length; i++) {
+    const price = candles[i].close;
+    const diff = price - basePrice;
+
+    // Build as many bricks as the price movement allows
+    if (diff >= brickSize) {
+      const numBricks = Math.floor(diff / brickSize);
+      for (let j = 0; j < numBricks; j++) {
+        const brickOpen = basePrice + j * brickSize;
+        const brickClose = brickOpen + brickSize;
+        bricks.push({ open: brickOpen, close: brickClose, color: "green" });
+      }
+      basePrice = basePrice + numBricks * brickSize;
+    } else if (diff <= -brickSize) {
+      const numBricks = Math.floor(Math.abs(diff) / brickSize);
+      for (let j = 0; j < numBricks; j++) {
+        const brickOpen = basePrice - j * brickSize;
+        const brickClose = brickOpen - brickSize;
+        bricks.push({ open: brickOpen, close: brickClose, color: "red" });
+      }
+      basePrice = basePrice - numBricks * brickSize;
+    }
+    // If |diff| < brickSize, no new brick — price hasn't moved enough
+  }
+
+  return bricks;
+}
+
+/**
+ * Generate Renko signal from candle data.
+ * Entry: 3 consecutive same-color bricks.
+ * Confidence scales with brick count (3 = 70%, 4 = 80%, 5+ = 85%).
+ */
+export function generateRenkoSignal(
+  candles: Candle[],
+  slMultiplier = 1.5,
+  tpMultiplier = 3.0,
+): Signal {
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Renko: insufficient data", layer: "Renko" };
+  if (!candles || candles.length < 20) return hold;
+
+  const atr = calcATR(candles, 14);
+  if (atr <= 0) return { ...hold, reason: "Renko: ATR is 0" };
+
+  const bricks = buildRenkoBricks(candles, atr);
+  if (bricks.length < 3) return { ...hold, atr, reason: `Renko: only ${bricks.length} bricks (need 3)` };
+
+  // Check last N bricks for consecutive same color
+  const lastBricks = bricks.slice(-5); // look at last 5 bricks max
+  let consecutiveGreen = 0;
+  let consecutiveRed = 0;
+
+  // Count consecutive bricks from the end
+  for (let i = lastBricks.length - 1; i >= 0; i--) {
+    if (lastBricks[i].color === "green") {
+      if (consecutiveRed > 0) break; // mixed — stop counting
+      consecutiveGreen++;
+    } else {
+      if (consecutiveGreen > 0) break;
+      consecutiveRed++;
+    }
+  }
+
+  const price = candles[candles.length - 1].close;
+  const slPrice_buy = price - atr * slMultiplier;
+  const tpPrice_buy = price + atr * tpMultiplier;
+  const slPrice_sell = price + atr * slMultiplier;
+  const tpPrice_sell = price - atr * tpMultiplier;
+
+  if (consecutiveGreen >= 3) {
+    const confidence = Math.min(0.85, 0.65 + (consecutiveGreen - 3) * 0.10);
+    return {
+      direction: "BUY",
+      confidence,
+      entryPrice: price,
+      slPrice: slPrice_buy,
+      targetPrice: tpPrice_buy,
+      atr,
+      reason: `[Renko] ${consecutiveGreen} consecutive green bricks (brick size: ₹${atr.toFixed(1)}) | Strong uptrend`,
+      layer: "Renko",
+    };
+  }
+
+  if (consecutiveRed >= 3) {
+    const confidence = Math.min(0.85, 0.65 + (consecutiveRed - 3) * 0.10);
+    return {
+      direction: "SELL",
+      confidence,
+      entryPrice: price,
+      slPrice: slPrice_sell,
+      targetPrice: tpPrice_sell,
+      atr,
+      reason: `[Renko] ${consecutiveRed} consecutive red bricks (brick size: ₹${atr.toFixed(1)}) | Strong downtrend`,
+      layer: "Renko",
+    };
+  }
+
+  return { ...hold, atr, entryPrice: price, reason: `[Renko] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${atr.toFixed(1)}` };
+}
+
+/**
+ * Check if Renko exit condition is met: first opposite color brick after entry.
+ * Returns true if the trade should be exited based on Renko reversal.
+ */
+export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL", atr: number): { shouldExit: boolean; reason: string } {
+  if (!candles || candles.length < 10 || atr <= 0) return { shouldExit: false, reason: "" };
+
+  const bricks = buildRenkoBricks(candles, atr);
+  if (bricks.length === 0) return { shouldExit: false, reason: "" };
+
+  const lastBrick = bricks[bricks.length - 1];
+
+  // BUY trade exits on first RED brick; SELL trade exits on first GREEN brick
+  if (tradeDirection === "BUY" && lastBrick.color === "red") {
+    return { shouldExit: true, reason: `Renko Exit — first red brick after BUY entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
+  }
+  if (tradeDirection === "SELL" && lastBrick.color === "green") {
+    return { shouldExit: true, reason: `Renko Exit — first green brick after SELL entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
+  }
+
+  return { shouldExit: false, reason: "" };
+}
+
 // Tracks Crude Oil intraday movement relative to day open.
 // If Crude moved +1% → "CrudeUp" (bearish for Nifty); -1% → "CrudeDown" (bullish for Nifty).
 // Applied as a SOFT BIAS (confidence adjustment) during NSE morning session only.
@@ -3906,6 +4054,18 @@ async function tick(
       else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
     }
 
+    // ── RENKO EXIT: If trade was opened by Renko layer, exit on first opposite brick ──
+    if (!exitReason && trade.signalLayer === "Renko" && state.candles.length >= 10) {
+      const atrNow = calcATR(state.candles, 14);
+      if (atrNow > 0) {
+        const renkoExit = checkRenkoExit(state.candles, trade.direction, atrNow);
+        if (renkoExit.shouldExit) {
+          exitReason = renkoExit.reason;
+          emitActivity(state.sessionToken, "signal", `🧱 ${renkoExit.reason}`);
+        }
+      }
+    }
+
     if (exitReason) {
       // Use remaining quantity (after partial booking) for P&L on the remaining position
       const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
@@ -4110,6 +4270,13 @@ async function tick(
       );
     } else {
       signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
+    }
+    // Renko layer: if enabled and main signal is HOLD, try Renko
+    if (signal.direction === "HOLD" && state.enabledLayers?.includes("Renko")) {
+      const renkoSignal = generateRenkoSignal(state.candles, slMult, state.targetMultiplier);
+      if (renkoSignal.direction !== "HOLD") {
+        signal = renkoSignal;
+      }
     }
   }
 

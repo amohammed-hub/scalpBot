@@ -3103,8 +3103,8 @@ export default function Dashboard() {
                 onClick={() => !isRunning && setConfig(c => ({
                     ...c,
                     enabledLayers: c.enabledLayers.length === 12
-                      ? ["HourlyClose", "BoomingBulls"]
-                      : ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls"],
+                    ? ["HourlyClose", "BoomingBulls", "Renko"]
+                    : ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "Renko"],
                   }))}
                 disabled={isRunning}
                 className="text-[10px] text-teal-400 hover:text-teal-300 disabled:opacity-50"
@@ -3125,6 +3125,7 @@ export default function Dashboard() {
                   { id: "VWAPPullback", label: "VWAP Pull", on: "bg-sky-500/20 border-sky-500/40 text-sky-400", dot: "bg-sky-400" },
                   { id: "FailedBreakout", label: "Failed BO", on: "bg-orange-500/20 border-orange-500/40 text-orange-400", dot: "bg-orange-400" },
                   { id: "InstFootprint", label: "Institutional", on: "bg-rose-500/20 border-rose-500/40 text-rose-400", dot: "bg-rose-400" },
+                  { id: "Renko", label: "Renko", on: "bg-amber-500/20 border-amber-500/40 text-amber-400", dot: "bg-amber-400" },
                 ].map(layer => {
                   const isEnabled = config.enabledLayers.includes(layer.id);
                   return (
@@ -3711,3 +3712,4 @@ export default function Dashboard() {
 import { Rocket } from "lucide-react";
 import { playEntrySound, playProfitSound, playLossSound } from "@/lib/sounds";
 import { pushTradeNotification } from "@/components/TradeToast";
+      // Note: Renko is NOT enabled by default — user must opt-in
