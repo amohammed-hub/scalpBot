@@ -4486,20 +4486,20 @@ async function tick(
     ? optionPremiumForSizing * p1Pct  // Use configurable partial1Pct for options (e.g., 30% of ₹252 = ₹76)
     : Math.abs(signal.entryPrice - signal.slPrice);
   const optionEntry = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  // For options: book 50% at partial1Pct profit, book 25% at partial2Pct profit
-  // e.g., entry ₹252 with partial1Pct=30 → partial1R = ₹328, partial2Pct=60 → partial2R = ₹403
+  // For options: book 50% at +20% profit, book 25% at +40% profit (= target)
+  // e.g., entry ₹556 → partial1R = ₹667 (+20%), partial2R = ₹778 (+40% = target)
   const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode
-    ? optionEntry * (1 + p1Pct)  // e.g., ₹252 × 1.30 = ₹328
+    ? optionEntry * 1.20  // 20% gain — book 50% here
     : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
   const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode
-    ? optionEntry * (1 + p2Pct)  // e.g., ₹252 × 1.60 = ₹403
+    ? optionEntry * 1.40  // 40% gain — book 25% here (= target)
     : (signal.direction === "BUY" ? optionEntry + slDist * (p2Pct / p1Pct) : optionEntry - slDist * (p2Pct / p1Pct)));
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  let tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.80 : signal.slPrice;
+  let tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.70 : signal.slPrice;
   // ── CRITICAL: Adjust SL when quantity exceeds what risk formula allows ──────
-  // If the minimum lot size forces quantity above rawQty, the default SL (50% of premium)
+  // If the minimum lot size forces quantity above rawQty, the default SL (30% of premium)
   // would cause actual monetary loss > riskAmount. Fix: tighten SL proportionally.
   // Example: premium=₹59.40, default SL=₹29.70, qty=100, actual risk=₹2970 but riskAmount=₹1500
   // Fix: SL = entry - (riskAmount/qty) = 59.40 - 15 = ₹44.40, actual risk = ₹1500 ✓
@@ -4516,7 +4516,7 @@ async function tick(
     }
   }
   const tradeTarget = isOptionsMode && optionPremiumForSizing
-    ? optionPremiumForSizing * (1 + p2Pct) // target = premium * (1 + partial2Pct), e.g., 556 * 1.60 = ₹890 (60% gain)
+    ? optionPremiumForSizing * 1.40 // target = 40% gain on premium, e.g., ₹556 × 1.40 = ₹778
     : signal.targetPrice;
 
   // Set mutex before async DB write to prevent concurrent duplicate opens
@@ -4638,8 +4638,8 @@ async function tick(
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.80 : signal.slPrice;
-  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + p2Pct) : signal.targetPrice;
+  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.70 : signal.slPrice;
+  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 1.40 : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
   const capitalDeployed = displayEntry * quantity;
