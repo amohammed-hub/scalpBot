@@ -20,6 +20,7 @@ import { emitActivity } from "./activityLog";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import { evaluateStrategyGate, computeVRP, computeOIFlowBias, computeMaxPainGravity } from "./vrpRegimeFilter";
 import { fetchOptionsAnalytics, getCachedAnalytics } from "./optionsAnalytics";
+import { getCurrentSession, getSessionDefault, type TradingSession } from "../shared/sessionDefaults";
 import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
 import {
   getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
@@ -226,6 +227,7 @@ export interface BotState {
   currentADX?: number; // last ADX value
   lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
   regimeManualOverride?: boolean; // true if user manually toggled a layer since last regime check
+  userDisabledLayers?: string[]; // layers the user explicitly disabled — regime won't re-enable these
   // VRP Regime Filter state (updated every 5 min)
   vrpRegime?: "RICH" | "FAIR" | "CHEAP" | "INVERTED";
   vrpValue?: number;
@@ -863,6 +865,7 @@ export function generateSignal(
   prevDayLow = 0,
   prevDayClose = 0,
   skipOrbFreshnessGate = false, // Shadow mode: skip P0 ORB freshness gate to simulate old logic
+  enabledLayers: string[] = [],
 ): Signal {
   // Defensive: if candles is empty or undefined, return HOLD immediately
   if (!candles || candles.length === 0) {
@@ -949,12 +952,14 @@ export function generateSignal(
   const buyPenalty  = (candles5m.length >= 5 && trend5m === "bearish") ? against5mPenalty : 0;
   const sellPenalty = (candles5m.length >= 5 && trend5m === "bullish") ? against5mPenalty : 0;
 
-  if (breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi > 45 && rsi < 80 && strict5mBuy) {
+  const _v1LayerOk = (name: string) => enabledLayers.length === 0 || enabledLayers.includes(name);
+
+  if (_v1LayerOk("Breakout") && breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi > 45 && rsi < 80 && strict5mBuy) {
     direction = "BUY";
     confidence = Math.min(0.95, 0.65 + breakoutUpPct * 200 + (volRatio - 1.0) * 0.1);
     reason = `[Breakout] Above ${highestHigh.toFixed(1)} | Vol ${volRatio.toFixed(1)}x | RSI(${rsi.toFixed(0)}) | 5m:${trend5m} | thr:${(dynamicBreakoutThreshold * 100).toFixed(3)}%`;
     layer = "Breakout";
-  } else if (breakoutDnPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi < 55 && rsi > 20 && strict5mSell) {
+  } else if (_v1LayerOk("Breakout") && breakoutDnPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi < 55 && rsi > 20 && strict5mSell) {
     direction = "SELL";
     confidence = Math.min(0.95, 0.65 + breakoutDnPct * 200 + (volRatio - 1.0) * 0.1);
     reason = `[Breakout] Below ${lowestLow.toFixed(1)} | Vol ${volRatio.toFixed(1)}x | RSI(${rsi.toFixed(0)}) | 5m:${trend5m} | thr:${(dynamicBreakoutThreshold * 100).toFixed(3)}%`;
@@ -962,7 +967,7 @@ export function generateSignal(
   }
 
   // ── Layer 2: Candlestick Pattern ──────────────────────────────────────────
-  if (direction === "HOLD" && candles.length >= 3) {
+  if (_v1LayerOk("Pattern") && direction === "HOLD" && candles.length >= 3) {
     const c1 = candles[candles.length - 2];
     const c2 = candles[candles.length - 1];
     const body2 = Math.abs(c2.close - c2.open);
@@ -1008,7 +1013,7 @@ export function generateSignal(
   // RSI tightened: BUY only when RSI > 55 (confirmed uptrend) or RSI < 40 (oversold bounce)
   // No entries in RSI 40-55 no-man's land (choppy, no conviction)
   // Pullback requirement: price must be within 0.15% of EMA9 or VWAP (don't chase)
-  if (direction === "HOLD" && candles.length >= 21 && adx > 20) {
+  if (_v1LayerOk("Trend") && direction === "HOLD" && candles.length >= 21 && adx > 20) {
     const emaDiffPct = Math.abs(e9 - e21) / e21;
     const distFromEma9 = Math.abs(price - e9) / e9;
     const distFromVwap = Math.abs(price - vwap) / vwap;
@@ -1029,7 +1034,7 @@ export function generateSignal(
   // ── Layer 4: Momentum ─────────────────────────────────────────────────────
   // Momentum threshold raised from 0.03% to 0.1% — 0.03% is noise, not real momentum
   // Pullback requirement: price must be within 0.4% of EMA9 or VWAP (widened from 0.15%)
-  if (direction === "HOLD" && candles.length >= 5) {
+  if (_v1LayerOk("Momentum") && direction === "HOLD" && candles.length >= 5) {
     const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
     const distFromEma9_m = Math.abs(price - e9) / e9;
     const distFromVwap_m = Math.abs(price - vwap) / vwap;
@@ -1048,7 +1053,7 @@ export function generateSignal(
   }
 
   // ── Layer 5: MACD + Bollinger Band Squeeze ────────────────────────────────
-  if (direction === "HOLD" && candles.length >= 30) {
+  if (_v1LayerOk("MACD_BB") && direction === "HOLD" && candles.length >= 30) {
     const macd = calcMACD(closes);
     const bb = calcBollingerBands(closes, 20, 2);
     if (bb.squeeze) {
@@ -1070,7 +1075,7 @@ export function generateSignal(
   // Valid from 9:30 AM to 2:00 PM only (no new ORB entries after 2 PM — backtested result)
   // Volume threshold raised from 1.5x to 2.0x — research shows 2x+ needed for reliable breakouts
   // Added minimum range width filter: 0.2% of price (filters weak ORB days)
-  if (direction === "HOLD" && istMin >= 570 && istMin <= 840 && candles.length >= 17) {
+  if (_v1LayerOk("ORB") && direction === "HOLD" && istMin >= 570 && istMin <= 840 && candles.length >= 17) {
     const orbMinRangeWidth = price * 0.002; // 0.2% minimum range width
     const orb = calcORBSignal(candles, 15, 2.0);
     const orbRangeWidth = orb.orbHigh - orb.orbLow;
@@ -1140,7 +1145,7 @@ export function generateSignal(
 
   // ── Layer 7: VWAP Deviation Mean Reversion ───────────────────────────────────
   // Only valid in midday lull (10:30 AM–2:30 PM) when market is ranging (ADX < 25)
-  if (direction === "HOLD" && istMin >= 630 && istMin <= 870 && candles.length >= 20) {
+  if (_v1LayerOk("VWAPReversion") && direction === "HOLD" && istMin >= 630 && istMin <= 870 && candles.length >= 20) {
     const vwapDev = calcVWAPDeviation(candles);
     const regime = classifyMarketRegime(candles);
     // Mean reversion only works in ranging/low-vol regimes, NOT in strong trends
@@ -1157,7 +1162,7 @@ export function generateSignal(
 
   // ── Layer 8: Institutional Footprint ─────────────────────────────────────────
   // Valid all day — detects large institutional candles (vol >2×, body >70%)
-  if (direction === "HOLD" && candles.length >= 10) {
+  if (_v1LayerOk("InstFootprint") && direction === "HOLD" && candles.length >= 10) {
     const inst = calcInstitutionalFootprint(candles);
     if (inst.detected && inst.direction !== "HOLD") {
       if ((inst.direction === "BUY" && allow5mBuy) || (inst.direction === "SELL" && allow5mSell)) {
@@ -1173,7 +1178,7 @@ export function generateSignal(
   // Fires when price breaks a recent extreme, fails, and closes back inside the range.
   // Deliberately NOT gated on price-vs-VWAP: on rally-then-fade days VWAP stays below
   // price all afternoon, which previously made SELL signals impossible (all-CE bias).
-  if (direction === "HOLD" && candles.length >= 35) {
+  if (_v1LayerOk("FailedBreakout") && direction === "HOLD" && candles.length >= 35) {
     const fb = detectFailedBreakout(candles, 30);
     if (fb.detected && fb.direction !== "HOLD") {
       if ((fb.direction === "BUY" && allow5mBuy) || (fb.direction === "SELL" && allow5mSell)) {
@@ -1195,7 +1200,7 @@ export function generateSignal(
   // This is the #1 setup used by professional Indian options scalpers
   // EXHAUSTION VETO: skip BUY pullbacks when the rally shows exhaustion (lower highs,
   // deep retracement, or RSI bleed) — prevents buying every dip of a failing rally.
-  if (direction === "HOLD" && candles.length >= 10) {
+  if (_v1LayerOk("VWAPPullback") && direction === "HOLD" && candles.length >= 10) {
     const pullback = detectVWAPPullback(candles, vwap);
     if (pullback.detected && pullback.direction !== "HOLD") {
       if ((pullback.direction === "BUY" && allow5mBuy) || (pullback.direction === "SELL" && allow5mSell)) {
@@ -1217,7 +1222,7 @@ export function generateSignal(
   // Source: henilcalagiya/quantitative-trading-bot — BankNifty live trading
   // Supertrend(10, 3.0) on Heiken Ashi candles — smooths noise, reduces false signals
   // Only fires when Supertrend just flipped direction (fresh signal, not stale)
-  if (direction === "HOLD" && candles.length >= 15) {
+  if (_v1LayerOk("Trend") && direction === "HOLD" && candles.length >= 15) {
     const haCandles = toHeikenAshi(candles);
     const st = calcSupertrend(haCandles, 10, 3.0);
     if (st.flipped && st.direction !== ("HOLD" as any)) {
@@ -1239,7 +1244,7 @@ export function generateSignal(
   // Wait for the first 1-hour candle (9:15–10:15 AM IST) to close.
   // If body > 60% of total range → strong directional signal.
   // Fires ONCE per day. SL at opposite end of the hourly candle.
-  if (direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {
+  if (_v1LayerOk("HourlyClose") && direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {
     // Aggregate first ~60 one-minute candles to form the 1-hour candle (9:15–10:15)
     const firstHourCandles = candles.slice(0, Math.min(60, candles.length));
     const hourOpen = firstHourCandles[0].open;
@@ -1266,7 +1271,7 @@ export function generateSignal(
   // Source: Anish Singh Thakur / Booming Bulls
   // Triple confirmation: ADX > 20 (trending) + Supertrend direction + Pivot level breakout
   // This is the most popular retail intraday strategy in India.
-  if (direction === "HOLD" && candles.length >= 15 && srLevels.length > 0) {
+  if (_v1LayerOk("BoomingBulls") && direction === "HOLD" && candles.length >= 15 && srLevels.length > 0) {
     const haCandles = toHeikenAshi(candles);
     const st = calcSupertrend(haCandles, 10, 3.0);
     const stDir = st.direction as "BUY" | "SELL";
@@ -1572,6 +1577,7 @@ export function generateSignalV2(
   prevDayClose = 0,
   consecutiveSameDirectionSLs = 0,
   lastSlExitDirection: "BUY" | "SELL" | null = null,
+  enabledLayers: string[] = [],
 ): Signal {
   // ── Early returns ──────────────────────────────────────────────────────────
   if (!candles || candles.length === 0) {
@@ -1640,7 +1646,8 @@ export function generateSignalV2(
   // These fire regardless of regime because they are time-gated and high-confidence.
   // HourlyClose: fires at 10:15 AM when first hour candle has strong directional body
   // ORB: fires 9:30-14:00 when price breaks the 15-min opening range
-  if (direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {
+  const _layerOk = (name: string) => enabledLayers.length === 0 || enabledLayers.includes(name);
+  if (_layerOk("HourlyClose") && direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {
     const firstHourCandles = candles.slice(0, Math.min(60, candles.length));
     const hourOpen = firstHourCandles[0].open;
     const hourClose = firstHourCandles[firstHourCandles.length - 1].close;
@@ -1658,7 +1665,7 @@ export function generateSignalV2(
     }
   }
   // ORB: Opening Range Breakout — fresh breakout of 15-min range, no chasing
-  if (direction === "HOLD" && istMin >= 570 && istMin <= 840 && candles.length >= 17) {
+  if (_layerOk("ORB") && direction === "HOLD" && istMin >= 570 && istMin <= 840 && candles.length >= 17) {
     const orbMinRangeWidth = price * 0.002;
     const orb = calcORBSignal(candles, 15, 2.0);
     const orbRangeWidth = orb.orbHigh - orb.orbLow;
@@ -1689,7 +1696,7 @@ export function generateSignalV2(
     // ── TRENDING: Trend + Momentum + Supertrend ─────────────────────────────
 
     // Strategy A: EMA/VWAP Trend (same as old Layer 3)
-    if (direction === "HOLD" && candles.length >= 21 && adx > 20) {
+    if (_layerOk("Trend") && direction === "HOLD" && candles.length >= 21 && adx > 20) {
       const emaDiffPct = Math.abs(e9 - e21) / e21;
       const distFromEma9 = Math.abs(price - e9) / e9;
       const distFromVwap = Math.abs(price - vwap) / vwap;
@@ -1710,7 +1717,7 @@ export function generateSignalV2(
     }
 
     // Strategy B: Momentum (same as old Layer 4)
-    if (direction === "HOLD" && candles.length >= 5) {
+    if (_layerOk("Momentum") && direction === "HOLD" && candles.length >= 5) {
       const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
       const distFromEma9_m = Math.abs(price - e9) / e9;
       const distFromVwap_m = Math.abs(price - vwap) / vwap;
@@ -1730,7 +1737,7 @@ export function generateSignalV2(
     }
 
     // Strategy C: Supertrend on Heiken Ashi (same as old Layer 10)
-    if (direction === "HOLD" && candles.length >= 15) {
+    if (_layerOk("Trend") && direction === "HOLD" && candles.length >= 15) {
       const haCandles = toHeikenAshi(candles);
       const st = calcSupertrend(haCandles, 10, 3.0);
       if (st.flipped && st.direction !== ("HOLD" as any)) {
@@ -1751,7 +1758,7 @@ export function generateSignalV2(
     // FIX: Require price at range extreme (top 30% for SELL, bottom 30% for BUY)
     // FIX: Anti-chasing: last 5 candles must show price moving TOWARD extreme (retracement)
     // Strategy A: VWAP Deviation Mean Reversion — only at range extremes
-    if (direction === "HOLD" && candles.length >= 20) {
+    if (_layerOk("VWAPReversion") && direction === "HOLD" && candles.length >= 20) {
       const vwapDev = calcVWAPDeviation(candles);
       if (vwapDev.signal !== "HOLD") {
         // Anti-chasing: check if entry is at range extreme
@@ -1780,7 +1787,7 @@ export function generateSignalV2(
       }
     }
     // Strategy B: VWAP Pullback — only at range extremes with anti-chasing
-    if (direction === "HOLD" && candles.length >= 10) {
+    if (_layerOk("VWAPPullback") && direction === "HOLD" && candles.length >= 10) {
       const pullback = detectVWAPPullback(candles, vwap);
       if (pullback.detected && pullback.direction !== "HOLD") {
         const exhaustion = pullback.direction === "BUY" ? detectUptrendExhaustion(candles) : { exhausted: false, reason: "" };
@@ -1810,7 +1817,7 @@ export function generateSignalV2(
     // Strategy C: Breakout in RANGING (balanced)
     // Fires when: (1) before 14:00 IST, (2) real breakout of 20-candle range,
     // (3) strong candle body (>45%), (4) RSI confirms direction
-    if (direction === "HOLD" && candles.length >= 20 && istMin < 840) {
+    if (_layerOk("Breakout") && direction === "HOLD" && candles.length >= 20 && istMin < 840) {
       const lookback = candles.slice(-20);
       const highestHigh = Math.max(...lookback.slice(0, -1).map(c => c.high));
       const lowestLow = Math.min(...lookback.slice(0, -1).map(c => c.low));
@@ -1840,7 +1847,7 @@ export function generateSignalV2(
     // ── VOLATILE: Only Breakout with strong volume confirmation, 50% size ───
     sizeReduction = 0.5; // Half position size in volatile regime
 
-    if (direction === "HOLD" && candles.length >= 20) {
+    if (_layerOk("Breakout") && direction === "HOLD" && candles.length >= 20) {
       const lookback = candles.slice(-20);
       const highestHigh = Math.max(...lookback.slice(0, -1).map(c => c.high));
       const lowestLow = Math.min(...lookback.slice(0, -1).map(c => c.low));
@@ -1866,7 +1873,7 @@ export function generateSignalV2(
 
   // ── If no signal generated, return HOLD ───────────────────────────────────
   // ── CPR (Central Pivot Range) — also in V2 ─────────────────────────────────
-  if (direction === "HOLD" && prevDayHigh > 0 && prevDayLow > 0 && prevDayClose > 0 && candles.length >= 10) {
+  if (_layerOk("CPR") && direction === "HOLD" && prevDayHigh > 0 && prevDayLow > 0 && prevDayClose > 0 && candles.length >= 10) {
     const pivot = (prevDayHigh + prevDayLow + prevDayClose) / 3;
     const bc = (prevDayHigh + prevDayLow) / 2;
     const tc = 2 * pivot - bc;
@@ -3850,6 +3857,32 @@ async function tick(
   }
 
   // ── Options mode: determine which token to use for candle/signal vs which to trade ──
+  // ── FIX G: Server-side session auto-switch ──────────────────────────────────
+  // Check if the trading session has changed (morning → evening or vice versa).
+  // If user hasn't manually overridden the instrument, auto-switch to session defaults.
+  if (!state.openTrade) {
+    const currentSession = getCurrentSession();
+    const prevSession = (state as any)._lastSession as TradingSession | undefined;
+    if (prevSession && prevSession !== currentSession && currentSession !== "closed") {
+      if (!(state as any)._userManualInstrument) {
+        const defaultInst = getSessionDefault(state.botSlot, currentSession);
+        if (defaultInst && state.instrumentToken !== defaultInst.token) {
+          console.log(`[SessionSwitch] ${state.sessionToken.slice(0,8)} — Slot ${state.botSlot}: ${prevSession} → ${currentSession} | Switching to ${defaultInst.label}`);
+          state.instrumentToken = defaultInst.token;
+          state.instrumentSymbol = defaultInst.symbol;
+          state.instrumentLabel = defaultInst.label;
+          state.lotSize = defaultInst.lotSize;
+          state.isIndexOptions = defaultInst.isIndexOptions;
+          if (defaultInst.underlyingToken) state.underlyingToken = defaultInst.underlyingToken;
+          state.candles = [];
+          state.candles5m = [];
+          emitActivity(state.sessionToken, "signal", `🔄 Session changed → ${currentSession === "evening" ? "MCX" : "NSE"} defaults | ${defaultInst.label}`);
+        }
+      }
+    }
+    (state as any)._lastSession = currentSession;
+  }
+
   // isOptionsMode = true when user selected an index (NIFTY/BANKNIFTY) and wants to trade options.
   // In this mode:
   //   - Candles + signals come from underlyingToken (the futures/index)
@@ -4514,8 +4547,13 @@ async function tick(
           trade.averagedAt = Date.now();
 
           // New SL: tighter — new average - ATR * 0.8 (protect the larger position)
-          const newSlDist = atrNow * 0.8;
-          trade.slPrice = trade.direction === "BUY" ? newAvgEntry - newSlDist : newAvgEntry + newSlDist;
+          if (trade.isIndexOptions) {
+            // FIX C: Options — SL = 30% loss on premium (same rule as entry SL)
+            trade.slPrice = newAvgEntry * 0.70;
+          } else {
+            const newSlDist = atrNow * 0.8;
+            trade.slPrice = trade.direction === "BUY" ? newAvgEntry - newSlDist : newAvgEntry + newSlDist;
+          }
           trade.currentSl = trade.slPrice;
 
           // New Target: new average + ATR * 1.5 (realistic recovery target)
@@ -4820,9 +4858,10 @@ async function tick(
         state.candles, slMult, state.targetMultiplier, state.minConfidence / 100,
         state.candles5m, prevDayHigh, prevDayLow, prevDayClose,
         state.consecutiveSameDirectionSLs, state.lastSlExitDirection,
+        state.enabledLayers || [],
       );
     } else {
-      signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose);
+      signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, false, state.enabledLayers || []);
     }
 
     // ── Adaptive Regime Switching: auto-toggle Supertrend based on ADX ──────
@@ -4839,7 +4878,7 @@ async function tick(
         if (adxVal > 25) {
           state.currentRegime = "trending";
           // Enable Supertrend (layer "Trend") if not already enabled
-          if (state.enabledLayers && !state.enabledLayers.includes("Trend")) {
+          if (state.enabledLayers && !state.enabledLayers.includes("Trend") && !state.userDisabledLayers?.includes("Trend")) {
             state.enabledLayers.push("Trend");
             emitActivity(state.sessionToken, "signal", `📊 Regime → TRENDING (ADX ${adxVal.toFixed(0)}) — Supertrend ENABLED`);
           }
@@ -5677,9 +5716,20 @@ async function tick(
     const thisUnderlying = isOptionsMode ? (state.underlyingToken || state.instrumentToken) : tradeInstrumentToken;
     const exactTokenMatch = otherState.openTrade.instrumentToken === tradeInstrumentToken;
     const sameUnderlyingMatch = otherUnderlying === thisUnderlying;
-    const sameDirection = isOptionsMode
-      ? otherIsOptions // both buying options on same underlying = duplicate
-      : otherState.openTrade.direction === signal.direction;
+    // FIX D: For options, allow CE + PE on same underlying (opposite bets).
+    // Only block if BOTH are same option type (both CE or both PE).
+    let sameDirection: boolean;
+    if (isOptionsMode && otherIsOptions) {
+      const otherOptionType = otherState.openTrade.symbol?.includes("_CE_") ? "CE" : "PE";
+      const thisOptionType = state.optionType === "CE" ? "CE"
+        : state.optionType === "PE" ? "PE"
+        : signal.direction === "BUY" ? "CE" : "PE";
+      sameDirection = thisOptionType === otherOptionType; // block only same type
+    } else if (!isOptionsMode && !otherIsOptions) {
+      sameDirection = otherState.openTrade.direction === signal.direction;
+    } else {
+      sameDirection = false; // one is options, other is futures — never duplicate
+    }
     if ((exactTokenMatch || sameUnderlyingMatch) && sameDirection) {
       console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${otherKey.slice(0, 8)} already has ${otherState.openTrade.symbol || otherState.openTrade.instrumentToken} on same underlying`);
       emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — slot ${otherState.botSlot} already has position on same underlying (${otherState.openTrade.symbol || ""})`);

@@ -1181,6 +1181,22 @@ export const appRouter = router({
         const allBots = getAllRunningBotsForSession(input.sessionToken);
         let updated = 0;
         for (const bot of allBots) {
+          // FIX J: Track which layers the user explicitly disabled
+          // so adaptive regime won't re-enable them
+          // so adaptive regime won't re-enable them
+          if (bot.enabledLayers) {
+            const removedLayers = bot.enabledLayers.filter(l => !input.enabledLayers.includes(l));
+            if (removedLayers.length > 0) {
+              bot.userDisabledLayers = Array.from(
+                new Set([...(bot.userDisabledLayers || []), ...removedLayers])
+              );
+            }
+            // If user re-enables a layer, remove it from userDisabledLayers
+            const reenabledLayers = input.enabledLayers.filter(l => bot.userDisabledLayers?.includes(l));
+            if (reenabledLayers.length > 0) {
+              bot.userDisabledLayers = (bot.userDisabledLayers || []).filter(l => !reenabledLayers.includes(l));
+            }
+          }
           bot.enabledLayers = input.enabledLayers;
           updated++;
         }

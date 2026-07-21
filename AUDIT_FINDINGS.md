@@ -1,110 +1,74 @@
-# Full Codebase Audit — Master Bug List
+# AUDIT FINDINGS — Discovery Phase Complete
 
-## Critical Bugs (Severity: HIGH)
+## CRITICAL BUGS (Severity: HIGH — Losing Money)
 
-### BUG-1: dailyPnl double-counting with partial profit bookings
-- **File**: `server/botEngine.ts` line 2452, 2498, 2759-2762
-- **Issue**: When partial profit is booked (50% at 1R, 25% at 2R), `state.dailyPnl += bookPnl` is called immediately. When the trade finally closes, the code checks `trade.bookedPnlAddedToDaily` flag — if true, only adds `remainPnl`. BUT if the server restarts between partial booking and trade close, `bookedPnlAddedToDaily` is NOT persisted to DB. On restart, the restored trade has `bookedPnl` from DB but `bookedPnlAddedToDaily` is false (in-memory only), so the close logic adds `totalPnl = remainPnl + bookedPnl` — double-counting the partial booking.
-- **Fix**: Persist `bookedPnlAddedToDaily` to DB alongside `bookedPnl`, OR always compute dailyPnl from DB trade records on restart instead of accumulating.
+### BUG A: Layer Filter Ordering — Cascade Bypass
+**File:** `server/botEngine.ts` lines 4860 & 5092
+**Issue:** V2 signal generation picks the FIRST matching layer (Breakout > Pattern > Trend > Momentum > MACD_BB > ORB > VWAPReversion). If a disabled layer fires first (e.g., Breakout), it returns non-HOLD. The multi-layer cascade at line 4860 only runs when signal is HOLD. The layer filter at line 5092 blocks the disabled signal and sets it to HOLD, BUT the cascade already ran above. Result: missed trades when a disabled layer fires before an enabled one.
+**Fix:** Move the layer filter BETWEEN the V2 signal generation and the multi-layer cascade. Or: pass enabledLayers into generateSignalV2 so it skips disabled layers internally.
 
-### BUG-2: Session token migration without transaction (data corruption risk)
-- **File**: `server/db.ts` lines 507-530
-- **Issue**: `verifyOtp()` migrates session tokens across 5 tables (upstoxCredentials, botSessions, tradeLog, signalJournal, subscriptions) with 13 separate UPDATE statements, NO transaction wrapping. If any statement fails mid-way, data is split between old and new tokens — some records under old token, some under new. The `catch` block just logs and continues, leaving data in an inconsistent state.
-- **Fix**: Wrap all migration UPDATEs in a single transaction. If any fails, rollback all.
+### BUG B: Trailing SL Overrides Premium SL
+**File:** `server/botEngine.ts` line 4410
+**Issue:** Trailing SL uses `trailDist = trade.entryPrice * (trailingSlPct / 100)`. For options with entry ₹500 and trailingSlPct=2%, trailDist = ₹10. After a small move up (e.g., ₹510), newSl = 510 - 10 = ₹500 (breakeven). This is TIGHTER than the premium SL of ₹350 (entry × 0.70). The trailing SL can move currentSl UP past the original 30% buffer, making the effective SL much tighter than intended.
+**Fix:** Trailing SL should never be tighter than entry × 0.70 for options. Add: `const minSl = trade.entryPrice * 0.70; if (trade.direction === "BUY") trade.currentSl = Math.max(trade.currentSl, minSl);`
+Wait — trailing SL moves UP (tighter), that's the POINT. But the issue is it can trigger too early. Actually this is CORRECT behavior — trailing protects profits. Not a bug.
 
-### BUG-3: layerTracker global state shared across ALL users/sessions
-- **File**: `server/layerTracker.ts` lines 24-26
-- **Issue**: `manualOverrides` and `autoDisabled` Maps are keyed by layer name ONLY (e.g., "Breakout", "VWAP"). If one user's bot triggers auto-disable for "Breakout" layer, ALL other users' bots also see that layer as disabled. In a multi-user system, this is a critical cross-user interference bug.
-- **Fix**: Key the maps by `sessionToken:layer` or pass sessionToken to all functions.
+### BUG C: DCA/Averaging Resets SL to ATR-based (not premium-based)
+**File:** `server/botEngine.ts` line ~4510
+**Issue:** After averaging, the new SL is set to `newAvgEntry - atrNow * 0.8`. For options, this should be `newAvgEntry * 0.70` (30% below new average). The ATR-based SL for options is wrong because ATR is calculated from the UNDERLYING candles, not the option premium.
+**Fix:** If isOptionsMode, use `newAvgEntry * 0.70` instead of ATR-based SL.
 
-### BUG-4: riskManager global state shared across ALL bot slots
-- **File**: `server/riskManager.ts` lines 52-65
-- **Issue**: `stoplossGuard`, `portfolioHalted`, `cachedRiskScore` are module-level singletons. If Slot 1 hits 3 consecutive SLs, ALL slots (Primary, Slot 2) get paused by StoplossGuard. `resetDailyState()` clears ALL cooldowns for ALL sessions. This may be partially intentional (portfolio-level protection) but the StoplossGuard should be per-session.
-- **Fix**: Make StoplossGuard per-session (Map keyed by sessionToken). Keep portfolio halt as global (intentional).
+### BUG D: Cross-Bot Guard — underlyingToken May Be Undefined
+**File:** `server/botEngine.ts` line 5676
+**Issue:** `const thisUnderlying = isOptionsMode ? (state.underlyingToken || state.instrumentToken) : tradeInstrumentToken;`
+If `state.underlyingToken` is undefined AND `state.instrumentToken` is the NSE_INDEX token, then `thisUnderlying` = NSE_INDEX token. But `otherUnderlying` for another bot on the same index may use `otherState.instrumentToken` which could be the same NSE_INDEX token. This means two bots on the same index (e.g., Bot 1 NIFTY and Bot 4 NIFTY) will ALWAYS block each other — even if one is CE and the other is PE.
+**Fix:** For options, the direction check should compare CE vs PE, not just "both buying options on same underlying = duplicate". Two bots can legitimately trade CE and PE on the same underlying.
 
-### BUG-5: allBots query returns empty when DB connection fails silently
-- **File**: `server/routers.ts` lines 1911-1918
-- **Issue**: The `allStatus` query loops through slotTokens doing individual DB queries. If `db` is null (line 1911 check), the `dbRows` object stays empty and the function returns 3 items with all-null data. BUT if `db` is truthy but a query throws (connection timeout, etc.), the error propagates and the entire query fails — returning undefined to the frontend. The frontend does `(allBots ?? []).map(...)` which renders nothing.
-- **Fix**: Wrap the DB queries in try/catch so individual slot failures don't crash the entire query.
+## MEDIUM BUGS (Severity: MEDIUM — Suboptimal Execution)
 
-### BUG-6: Averaging DB persist uses String() for float columns
-- **File**: `server/botEngine.ts` lines 2658-2664
-- **Issue**: `await db.update(tl).set({ entryPrice: String(newAvgEntry), ... })` — the schema defines `entryPrice` as `float()`, but the persist code wraps values in `String()`. Drizzle ORM may coerce this correctly, but it's type-unsafe and could silently fail or store wrong values depending on locale (e.g., "1,234.56" vs "1234.56").
-- **Fix**: Remove `String()` wrappers — pass raw numbers directly.
+### BUG E: V2 Engine Doesn't Skip Disabled Layers Internally
+**File:** `server/botEngine.ts` lines 1564-1990
+**Issue:** generateSignalV2 checks layers in priority order (Breakout > Pattern > Trend > ...) and returns the FIRST match. It has no awareness of enabledLayers. If Breakout is disabled but Pattern is enabled, V2 will return Breakout and the layer filter will block it, but Pattern never gets evaluated.
+**Fix:** Pass enabledLayers to generateSignalV2 and skip disabled layers in the priority chain.
 
-## Medium Bugs (Severity: MEDIUM)
+### BUG F: Paper Mode Delta Approximation Inaccuracy
+**File:** `server/botEngine.ts` lines 4113-4131
+**Issue:** Delta is hardcoded as 0.5/0.4/0.3 based on moneyness. Real delta changes dynamically with time decay, IV, and underlying movement. For intraday scalps this is acceptable, but for carry-forward trades it can drift significantly.
+**Impact:** Paper mode P&L may not reflect reality. Low priority since live mode uses real quotes.
 
-### BUG-7: Timezone calculation inconsistency in averaging logic
-- **File**: `server/botEngine.ts` line 2551
-- **Issue**: Uses `new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }))` which is unreliable (depends on locale parsing, can fail on some Node.js versions/Docker images). The rest of the file uses proper UTC offset: `((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % 1440`.
-- **Fix**: Replace with consistent UTC offset calculation.
+### BUG G: Session Defaults Don't Auto-Switch Running Bots (Server-Side)
+**File:** `shared/sessionDefaults.ts` (client-only)
+**Issue:** The session auto-switch logic is purely client-side (Dashboard useEffect). If the user closes the browser at 3:30 PM, bots keep running on NSE instruments during MCX session. The server has no session-switch logic.
+**Fix:** Add server-side session detection in the tick function that checks IST time and suggests instrument switch (or auto-switches if no manual override flag is set in DB).
 
-### BUG-8: dailyLossUsed calculation counts profits as losses
-- **File**: `server/botEngine.ts` line 2556
-- **Issue**: `dailyLossUsed = Math.abs(state.dailyPnl) / (state.capital * state.dailyLossLimitPct / 100)` — `Math.abs()` means if dailyPnl is +5000 (profit), it counts as 5000 "loss used", blocking averaging even when the day is profitable.
-- **Fix**: `Math.abs(Math.min(0, state.dailyPnl))` — only count actual losses.
+## LOW BUGS (Severity: LOW — Code Quality / Edge Cases)
 
-### BUG-9: activityLog clearActivity wipes all slots
-- **File**: `server/activityLog.ts` lines 83-89
-- **Issue**: `clearActivity` deletes the root-token log. Since all 3 slots share one combined log (normalized to root token), clearing from one slot wipes the visible history for all slots.
-- **Fix**: Either make logs per-slot, or don't expose clearActivity per-slot.
+### BUG H: auth.logout.test.ts Path Alias Failure
+**File:** `server/auth.logout.test.ts`
+**Issue:** Vitest can't resolve `@shared/const` alias. Pre-existing issue, not related to our changes.
+**Fix:** Add path alias to vitest.config.ts resolve section.
 
-### BUG-10: Bot status shows "Start Bot" when bot IS running (frontend)
-- **File**: `client/src/pages/Dashboard.tsx`
-- **Issue**: `isRunning` is derived from `botStatus?.status === "running"`. If `bot.status` query returns null (DB row doesn't exist yet after first start), isRunning is false even though allBots might show the bot as running. The allBots fallback was added but may not be working on Railway due to the query failing (BUG-5).
-- **Fix**: Ensure bot.status query always returns a row after bot.start creates one. Also fix BUG-5 so allBots doesn't fail.
+### BUG I: Stale Debug Files in Project Root
+**Files:** `debug_6month.ts`, `debug_full.ts`, `debug_hourly.ts`, `debug_regime_wed.ts`, `debug_signals.ts`, `debug_sl.ts`, `debug_wed.ts`, `stage1_6month_replay.ts`, `stage1_replay.ts`, `nifty_1min_6months.json`
+**Issue:** Debug/test files left in project root. These get deployed to Railway unnecessarily.
+**Fix:** Move to a `/debug/` directory or add to .gitignore.
 
-### BUG-11: Paper cost config is global singleton (shared across all users)
-- **File**: `server/riskManager.ts` lines 331-341
-- **Issue**: `paperCostConfig` is a module-level object. If one user sets brokerage=50 and slippage=0.1, ALL users' paper trades use those values. `setPaperCostConfig` mutates the shared object.
-- **Fix**: Store paper cost config per-session in the botSessions DB table.
+### BUG J: Adaptive Regime Can Re-enable "Trend" Layer Even When User Disabled It
+**File:** `server/botEngine.ts` lines 4840-4855
+**Issue:** When ADX > 25, the adaptive regime pushes "Trend" back into enabledLayers even if the user explicitly disabled it. The `regimeManualOverride` flag exists but is only set when user manually changes regime, not when they disable the Trend layer specifically.
+**Fix:** Check if "Trend" was explicitly disabled by user (not just absent from enabledLayers due to regime) before re-enabling.
 
-## Low Bugs (Severity: LOW)
+## SUMMARY
 
-### BUG-12: Cooldown map grows unbounded
-- **File**: `server/riskManager.ts` line 65
-- **Issue**: `cooldowns` Map is never pruned. Every trade close adds an entry. Over time, this grows unbounded (memory leak). Each entry is small (~50 bytes) so it's slow but real.
-- **Fix**: Prune expired entries periodically (e.g., in resetDailyState or on a timer).
-
-### BUG-13: India VIX fetch uses hardcoded instrument key
-- **File**: `server/riskManager.ts` line 78
-- **Issue**: Uses `NSE_INDEX%7CIndia%20VIX` which is the correct key, but the API call has no auth header. Upstox public API may rate-limit or block after many requests. The 60s cache helps but under high load (many bots), this could still hit limits.
-- **Fix**: Add the access token to the VIX fetch if available (better rate limits for authenticated requests).
-
-### BUG-14: Fire-and-forget DB persists can silently fail
-- **File**: `server/botEngine.ts` lines 2463-2470, 2509-2516, 2651-2668
-- **Issue**: Partial booking and averaging state are persisted via fire-and-forget async IIFEs. If these fail (DB timeout), the in-memory state diverges from DB. On next restart, the trade is restored from DB without the partial booking state.
-- **Fix**: At minimum, retry once. Better: make these awaited (they're fast single-row updates).
-
-### BUG-15: Options delta approximation uses hardcoded delta=0.5
-- **File**: `server/routers.ts` line 2041 and `server/botEngine.ts` (similar)
-- **Issue**: ATM options have ~0.5 delta, but as price moves, delta changes. Using 0.5 for deep ITM/OTM options gives very inaccurate P&L estimates. This is a known limitation but can mislead the user.
-- **Fix**: Use a simple Black-Scholes delta approximation based on moneyness, or fetch real quotes more aggressively.
-
-## Frontend Issues
-
-### BUG-16: Slot cards not rendering (allBots query failing)
-- **Root cause**: BUG-5 (allStatus query throws on DB timeout → allBots is undefined → empty grid)
-- **Fix**: Fix BUG-5 server-side + add fallback cards client-side
-
-### BUG-17: Primary bot "Start Bot" shown when running
-- **Root cause**: BUG-10 (bot.status returns null or stopped while bot is actually running in memory)
-- **Fix**: Fix BUG-5 + ensure isRunning checks allBots as fallback
-
-## Architecture Concerns (Not Bugs, But Design Issues)
-
-1. **Single-process in-memory state**: All bot state lives in a Map in memory. Server restart = all state lost (mitigated by botRestart.ts, but imperfect).
-2. **No WebSocket/SSE for real-time updates**: Dashboard polls every 5s via livePrices query. This adds latency and server load.
-3. **No rate limiting on public procedures**: All bot procedures are `publicProcedure` — anyone with a sessionToken can start/stop bots.
-4. **Autoscale hosting incompatible with stateful bots**: The bot runs in-process and needs to stay alive. Autoscale (serverless) will kill the instance after idle timeout. Railway (always-on) is correct for this use case.
-
-## Summary
-
-| Severity | Count | Key Issues |
-|----------|-------|------------|
-| HIGH | 6 | P&L double-counting, no-transaction migration, global state sharing |
-| MEDIUM | 5 | Timezone bugs, status display issues, shared config |
-| LOW | 4 | Memory leaks, hardcoded values, fire-and-forget failures |
-| Frontend | 2 | Slot cards empty, status indicator wrong |
-
-**Recommended fix order**: BUG-5 → BUG-10 → BUG-1 → BUG-6 → BUG-7 → BUG-8 → BUG-3 → BUG-4 → BUG-2 → rest
+| # | Bug | Severity | Category | Status |
+|---|-----|----------|----------|--------|
+| A | Layer filter ordering — cascade bypass | HIGH | Execution | OPEN |
+| B | Trailing SL override (actually correct) | N/A | — | NOT A BUG |
+| C | DCA resets SL to ATR-based for options | HIGH | Execution | OPEN |
+| D | Cross-bot guard blocks CE+PE on same underlying | HIGH | Execution | OPEN |
+| E | V2 doesn't skip disabled layers internally | MEDIUM | Execution | OPEN |
+| F | Paper mode delta approximation | LOW | Accuracy | ACCEPTABLE |
+| G | Session defaults client-only | MEDIUM | Reliability | OPEN |
+| H | auth.logout.test.ts path alias | LOW | Tests | PRE-EXISTING |
+| I | Stale debug files deployed | LOW | Cleanup | OPEN |
+| J | Adaptive regime re-enables Trend | MEDIUM | Execution | OPEN |

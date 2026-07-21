@@ -1445,3 +1445,9 @@
 - [x] SESSION DEFAULTS: Evening (5:00-11:30) auto-assign MCX (Bot1=Gold, Bot2=CrudeOil, Bot3=Silver, Bot4=Gold)
 - [x] SESSION DEFAULTS: Auto-switch at session change (3:30→5:00), preserve user manual overrides
 - [x] SESSION DEFAULTS: Show notification "Session changed → Instruments updated to MCX defaults"
+- [x] AUDIT FIX E+A: V1/V2 signal generators now skip disabled layers internally (enabledLayers param)
+- [x] AUDIT FIX D: Cross-bot guard allows CE + PE on same underlying (only blocks same option type)
+- [x] AUDIT FIX C: DCA/averaging SL uses premium × 0.70 for options (not ATR from underlying)
+- [x] AUDIT FIX J: Adaptive regime respects userDisabledLayers (won't re-enable Trend if user disabled it)
+- [x] AUDIT FIX G: Server-side session auto-switch (morning→evening instrument change without browser)
+- [x] AUDIT FIX I: Removed debug/replay files from deployment, updated .gitignore
