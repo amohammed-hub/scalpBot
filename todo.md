@@ -1416,3 +1416,9 @@
 - [x] FIX: nearPullback threshold widened from 0.15% to 0.4% (V1 + V2 engines) — 0.15% was only ₹36 window for NIFTY, forcing entries at exact inflection points
 - [x] FIX: Key-level penalty reduced from -10% to -5% (no longer blocks signals alone)
 - [x] FIX: Corrupted context-menu.tsx regenerated (8284 null bytes)
+
+## MCX Midnight Wraparound Bug Fix (July 22, 2026)
+- [x] BUG: MCX bot entered trade at 12:00 AM IST (after market close at 11:30 PM) and did not auto-square off
+- [x] Root cause: At midnight IST, istMin2 = (18*60+30+330) % 1440 = 0. Zero is NOT >= stopScanMin (1400), so nearClose=false. Bot thought market was open.
+- [x] FIX: Added hard market-hours gate — MCX blocked when istMin2 < 540 OR > 1410. Force square-off if open trade exists outside hours.
+- [x] FIX: squareOff check now handles midnight wraparound — triggers when istMin2 >= 1408 OR istMin2 < 540 for MCX.

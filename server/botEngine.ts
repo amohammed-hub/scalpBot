@@ -4120,7 +4120,11 @@ async function tick(
   }
 
   // Auto square-off at market close
-  if (istMin2 >= squareOffMin && state.openTrade) {
+  // Fix: Also trigger square-off when time wraps past midnight (istMin2 < 540 for MCX means after 11:30 PM)
+  const shouldSquareOff = isMCX
+    ? (istMin2 >= squareOffMin || istMin2 < 540) // MCX: after 23:28 OR after midnight (0-540)
+    : (istMin2 >= squareOffMin); // NSE: after 15:25
+  if (shouldSquareOff && state.openTrade) {
     // If user selected carry-forward, skip auto square-off and keep trade open overnight
     if (state.carryForward) {
       if (!state.alertsSent.has("carry_forward_active")) {
@@ -4181,6 +4185,52 @@ async function tick(
   const nearClose = istMin2 >= stopScanMin;
   if (nearClose) {
     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Market closing soon — no new trades", layer: "None" };
+  }
+
+  // ── CRITICAL: MCX midnight wraparound fix ──────────────────────────────────
+  // At 12:00 AM IST, istMin2 wraps to 0 (modulo 1440). This means:
+  //   - nearClose (0 >= 1400) = FALSE — bot thinks market is open!
+  //   - inMCXSession (0 >= 540) = FALSE — but signal gen still runs in else branch
+  //   - squareOffMin (1408) — 0 < 1408 so auto square-off doesn't trigger
+  // Fix: For MCX, if istMin2 < 540 (before 9 AM), market is CLOSED. Block everything.
+  // For NSE, if istMin2 < 555 (before 9:15 AM) or istMin2 > 930 (after 3:30 PM), market is CLOSED.
+  const mcxMarketClosed = isMCX && (istMin2 < 540 || istMin2 > 1410);
+  const nseMarketClosed = !isMCX && (istMin2 < 555 || istMin2 > 930);
+  if ((mcxMarketClosed || nseMarketClosed) && !state.openTrade) {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Market closed — outside trading hours", layer: "None" };
+    return;
+  }
+  // If market is closed but there IS an open trade, force square-off (unless carry-forward)
+  if ((mcxMarketClosed || nseMarketClosed) && state.openTrade) {
+    if (state.carryForward) {
+      // Carry-forward: keep trade open, just skip signal generation
+      return;
+    }
+    // Force close the open trade — market is closed
+    const trade = state.openTrade;
+    const exitPx = state.optionPremiumPrice && state.optionPremiumPrice > 0
+      ? state.optionPremiumPrice
+      : (state.lastPrice > 0 ? state.lastPrice : trade.entryPrice);
+    const remQty = trade.quantity - (trade.bookedQty ?? 0);
+    const remainPnl = trade.direction === "BUY" ? (exitPx - trade.entryPrice) * remQty : (trade.entryPrice - exitPx) * remQty;
+    const bookedAdd = trade.bookedPnlAddedToDaily ? 0 : (trade.bookedPnl ?? 0);
+    const totalPnl = remainPnl + bookedAdd;
+    if (trade.bookedPnlAddedToDaily) {
+      state.dailyPnl += remainPnl;
+    } else {
+      state.dailyPnl += totalPnl;
+    }
+    state.openTrade = null;
+    if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
+    await onTradeClose(trade.dbId, exitPx, totalPnl, "Market Closed — Auto Square-Off (midnight wraparound fix)");
+    emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: exitPx, pnl: totalPnl });
+    sendTelegramAlert(state,
+      `⏰ <b>AUTO SQUARE-OFF</b> (market closed)\n` +
+      `📊 <b>${trade.symbolLabel}</b> | Exit: ₹${exitPx.toFixed(2)}\n` +
+      `💰 P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`,
+      "tradeExit",
+    );
+    return;
   }
 
   // Monitor open trade SL/Target
