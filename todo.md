@@ -1430,3 +1430,9 @@
 - [x] Combined Strategy Gate: VRP + OI + MaxPain evaluated as pre-trade confidence adjuster (±20% max)
 - [x] Hard block: VRP INVERTED + OI divergence blocks trade entirely (no edge scenario)
 - [x] Tests: 18 unit tests for VRP computation, OI flow bias, max pain gravity, and combined gate
+- [x] CRITICAL BUG 1: Premium SL not deployed — all trades still use ATR-based SL (1.7% from entry). Need: SL = entry × 0.70 for options
+- [x] CRITICAL BUG 2: Disabled strategies still trading — ORB, Breakout, Pattern, InstFootprint took trades despite being disabled in UI. enabledLayers check must happen BEFORE signal generation
+- [x] CRITICAL BUG 3: Premium floor not working — 13 NaturalGas trades at ₹4-6 premium passed despite ₹10 floor. Must check premium AFTER strike selection
+- [x] CRITICAL BUG 4: Anti-duplicate broken — BankNifty 57800 CE and 57900 CE both taken by Bot 1 AND Bot 2 at exact same time. Cross-bot guard not working
+- [x] CRITICAL BUG 5: Position sizing — 58 lots on ₹13 option is gambling. Hard cap MAX 5 LOTS per trade, no exceptions
+- [x] CRITICAL BUG 6: Red Bar minimum — 2-brick signals at 55% confidence are noise. Require 3+ bricks (65% confidence) for entry

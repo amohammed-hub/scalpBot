@@ -2647,7 +2647,8 @@ export function generateRenkoSignal(
   const slPrice_sell = price + atr * slMultiplier;
   const tpPrice_sell = price - atr * tpMultiplier;
 
-  if (consecutiveGreen >= 2) { // DEFAULT: 3
+  // BUG FIX 6: Require 3+ bricks (was 2). 2-brick at 55% = noise.
+  if (consecutiveGreen >= 3) {
     const confidence = Math.min(0.85, 0.65 + (consecutiveGreen - 3) * 0.10);
     return {
       direction: "BUY",
@@ -2661,7 +2662,8 @@ export function generateRenkoSignal(
     };
   }
 
-  if (consecutiveRed >= 2) { // DEFAULT: 3
+  // BUG FIX 6: Require 3+ bricks for SELL too.
+  if (consecutiveRed >= 3) {
     const confidence = Math.min(0.85, 0.65 + (consecutiveRed - 3) * 0.10);
     return {
       direction: "SELL",
@@ -5083,6 +5085,20 @@ async function tick(
     emitActivity(state.sessionToken, "signal", heartbeatMsg);
   }
   state.lastSignal = signal;
+  // ── BUG FIX 2: Layer filter BEFORE any further processing ─────────────────
+  // MUST check enabledLayers IMMEDIATELY after signal generation, before anti-chasing,
+  // before VRP gate, before options resolution. Previously this was checked too late,
+  // allowing disabled layers (ORB, Breakout, Pattern, InstFootprint) to reach trade execution.
+  const timeWindowLayers = new Set(["PowerHour", "MCXEvening", "MCXLateSession", "HeroZero", "OpeningBurst"]);
+  if (signal.direction !== "HOLD" && state.enabledLayers && state.enabledLayers.length > 0 && signal.layer !== "None" && !timeWindowLayers.has(signal.layer)) {
+    if (!state.enabledLayers.includes(signal.layer)) {
+      emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal from ${signal.layer} skipped (layer disabled)`);
+      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Layer ${signal.layer} disabled`);
+      // Don't return — set signal to HOLD so multi-layer cascade can try enabled layers
+      signal = { direction: "HOLD", confidence: 0, entryPrice: signal.entryPrice, slPrice: signal.slPrice, targetPrice: signal.targetPrice, atr: signal.atr, reason: `[Blocked] ${signal.layer} disabled`, layer: "None" };
+    }
+  }
+
   // Emit tick signal to activity log
   if (signal.direction !== "HOLD") {
     const slPct = signal.entryPrice > 0 ? (Math.abs(signal.entryPrice - signal.slPrice) / signal.entryPrice * 100).toFixed(1) : "?";
@@ -5188,17 +5204,7 @@ async function tick(
     }
   }
 
-  // ── Layer filter: skip signals from disabled layers ─────────────────────────
-  // Time-window strategies (PowerHour, MCXEvening, MCXLateSession, HeroZero) bypass this filter
-  // because they are activated by TIME, not user selection. The filter only applies to generic signal layers.
-  const timeWindowLayers = new Set(["PowerHour", "MCXEvening", "MCXLateSession", "HeroZero", "OpeningBurst"]);
-  if (state.enabledLayers && state.enabledLayers.length > 0 && signal.layer !== "None" && !timeWindowLayers.has(signal.layer)) {
-    if (!state.enabledLayers.includes(signal.layer)) {
-      emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal from ${signal.layer} skipped (layer disabled)`);
-      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Layer ${signal.layer} disabled`);
-      return;
-    }
-  }
+  // (Layer filter moved to immediately after signal generation — see BUG FIX 2 above)
 
   // ── HourlyClose one-shot guard: only fire once per day ─────────────────────
   // ── Same-direction loss-streak guard: block direction after 2 consecutive losses ─
@@ -5436,10 +5442,10 @@ async function tick(
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
     // ── FIX 2: Minimum Premium Floor ─────────────────────────────────────────────
     // Options with very low premium are illiquid — wide spreads eat you alive on exit.
-    // MCX instruments (Natural Gas, Crude Oil) have naturally lower premiums, so use ₹3 floor.
+    // BUG FIX 3: MCX floor raised from ₹3 to ₹10. NaturalGas at ₹4-6 was passing — that's noise.
     // NSE instruments (NIFTY, BANKNIFTY) use ₹30 floor — cheap options (₹10-₹29) amplify
     // losses via massive qty and have poor liquidity. ₹13 option × 58 lots = guaranteed loss.
-    const premiumFloor = isMCX ? 3 : 30;
+    const premiumFloor = isMCX ? 10 : 30;
     if (optionPremiumForSizing < premiumFloor) {
       const reason = `Entry blocked — premium too low (₹${optionPremiumForSizing.toFixed(1)} < ₹${premiumFloor} floor). Illiquid option.`;
       console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
@@ -5530,7 +5536,8 @@ async function tick(
     const maxQtyByCapital = Math.floor(state.capital / optionPremiumForSizing / lotSize) * lotSize;
     // ── MAX LOT CAP: Never buy more than 10 lots per trade ──────────────────
     // Prevents catastrophic losses from cheap options (e.g., ₹13 × 3770 qty = ₹49K all-in)
-    const MAX_LOTS_PER_TRADE = 10;
+    // BUG FIX 5: Hard cap at 5 lots. No exceptions.
+    const MAX_LOTS_PER_TRADE = 5;
     const maxQtyByLotCap = MAX_LOTS_PER_TRADE * lotSize;
     const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital, maxQtyByLotCap);
     
@@ -5643,26 +5650,10 @@ async function tick(
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  let tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.70 : signal.slPrice;
-  // ── CRITICAL: Adjust SL when quantity exceeds what risk formula allows ──────
-  // Safety net: If 1-lot minimum forces quantity above what risk allows,
-  // tighten SL proportionally. With risk-based sizing this should rarely trigger.
-  // Minimum SL floor: never tighter than 15% below entry (enough breathing room).
-  if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
-    const defaultSlDist = tradeEntryPrice - tradeSl; // e.g., 59.40 - 29.70 = 29.70
-    const actualMaxLoss = defaultSlDist * quantity;  // e.g., 29.70 * 100 = 2970
-    if (actualMaxLoss > riskAmount * 1.05) { // 5% tolerance
-      const adjustedSlDist = riskAmount / quantity; // e.g., 1500 / 100 = 15
-      tradeSl = tradeEntryPrice - adjustedSlDist;   // e.g., 59.40 - 15 = ₹44.40
-      // Ensure SL never tighter than 15% below entry (minimum breathing room for options)
-      const minSlPrice = tradeEntryPrice * 0.85; // Floor: 15% below entry
-      if (tradeSl > minSlPrice) {
-        // SL is too tight (less than 15% buffer) — keep at 15% minimum
-        tradeSl = minSlPrice;
-      }
-      emitActivity(state.sessionToken, "signal", `⚠ SL tightened: ₹${tradeSl.toFixed(2)} (keeps risk ≤ ₹${riskAmount.toFixed(0)}, qty=${quantity})`);
-    }
-  }
+  // ── BUG FIX 1: ABSOLUTE Premium SL = entry × 0.70 (30% max loss). NO OVERRIDES. ──
+  // Previously: risk formula could override this to entry × 0.85 (only 15% buffer).
+  // Now: SL is ALWAYS 30% below entry for options. Position sizing handles risk, not SL.
+  const tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.70 : signal.slPrice;
   const tradeTarget = isOptionsMode && optionPremiumForSizing
     ? optionPremiumForSizing * 1.40 // target = 40% gain on premium, e.g., ₹556 × 1.40 = ₹778
     : signal.targetPrice;
@@ -5696,10 +5687,20 @@ async function tick(
   for (const [otherKey, otherState] of Array.from(bots.entries())) {
     if (otherKey === state.sessionToken) continue; // skip self
     if (!otherState.openTrade) continue;
-    if (otherState.openTrade.instrumentToken === tradeInstrumentToken && otherState.openTrade.direction === (isOptionsMode ? "BUY" : signal.direction)) {
-      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${otherKey.slice(0, 8)} already has ${tradeInstrumentToken} ${otherState.openTrade.direction}`);
-      emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — slot ${otherState.botSlot} already has this position`);
-      pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Duplicate: slot ${otherState.botSlot} already in ${tradeInstrumentToken}`);
+    // BUG FIX 4: Check UNDERLYING instrument (not just exact option token).
+    // BankNifty 57800 CE and 57900 CE have different tokens but same underlying.
+    const otherIsOptions = !!otherState.openTrade.isIndexOptions;
+    const otherUnderlying = otherIsOptions ? (otherState.instrumentToken || otherState.openTrade.instrumentToken) : otherState.openTrade.instrumentToken;
+    const thisUnderlying = isOptionsMode ? (state.underlyingToken || state.instrumentToken) : tradeInstrumentToken;
+    const exactTokenMatch = otherState.openTrade.instrumentToken === tradeInstrumentToken;
+    const sameUnderlyingMatch = otherUnderlying === thisUnderlying;
+    const sameDirection = isOptionsMode
+      ? otherIsOptions // both buying options on same underlying = duplicate
+      : otherState.openTrade.direction === signal.direction;
+    if ((exactTokenMatch || sameUnderlyingMatch) && sameDirection) {
+      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${otherKey.slice(0, 8)} already has ${otherState.openTrade.symbol || otherState.openTrade.instrumentToken} on same underlying`);
+      emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — slot ${otherState.botSlot} already has position on same underlying (${otherState.openTrade.symbol || ""})`);
+      pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Duplicate: slot ${otherState.botSlot} on same underlying`);
       state.isOpeningTrade = false;
       return;
     }
