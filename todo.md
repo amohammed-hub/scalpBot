@@ -1395,3 +1395,8 @@
 - [x] Add comprehensive confidence scoring (0-100%) to each option candidate
 - [x] Score factors: premium sweet spot, OTM distance, delta range, OI/volume, IV, bid-ask spread
 - [x] Display confidence prominently in scanner table and detail panel
+
+## Critical Bot Trading Bugs (July 21, 2026)
+- [x] BUG 1: SL Calculation — Root cause: SL tightening kicks in because qty is too large (58 lots × 30% SL = ₹549K loss >> risk budget). FIX: By capping lots to 10, the SL stays at entry×0.70 without tightening.
+- [x] BUG 2: Position Sizing — Added MAX LOT CAP of 10 lots per trade. Also raised premium floor from ₹10 to ₹30 for NSE options (blocks cheap ₹13 options entirely).
+- [x] BUG 3: Entry Timing — Added GLOBAL ANTI-CHASING GATE: if 3 consecutive same-direction candles moved >0.3%, signal is rejected (wait for pullback). This catches BoomingBulls, RedBarTheory, CPR which lacked individual anti-chase logic.

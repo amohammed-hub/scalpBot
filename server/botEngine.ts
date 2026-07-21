@@ -4960,6 +4960,41 @@ async function tick(
   }
   if (signal.direction === "HOLD") return; // confidence already checked inside generateSignal (tod multiplier applied there)
 
+  // ── GLOBAL ANTI-CHASING GATE ──────────────────────────────────────────────────
+  // Reject signals where the current price has already moved significantly past the
+  // signal's entry price. This prevents entering at local highs/lows (chasing).
+  // All 4 trades on July 21 hit SL within 1-5 min because they entered at extremes.
+  // Layers with built-in anti-chasing (ORB, Trend, Momentum, Adeeb) already check this
+  // internally, but BoomingBulls, RedBarTheory, CPR, FailedBreakout do NOT.
+  // This gate catches those cases universally.
+  if (signal.entryPrice > 0 && state.candles.length >= 3) {
+    const lastCandle = state.candles[state.candles.length - 1];
+    const prevCandle = state.candles[state.candles.length - 2];
+    const prev2Candle = state.candles[state.candles.length - 3];
+    // Check if last 3 candles all moved in signal direction (momentum exhaustion risk)
+    const allSameDir = signal.direction === "BUY"
+      ? (lastCandle.close > lastCandle.open && prevCandle.close > prevCandle.open && prev2Candle.close > prev2Candle.open)
+      : (lastCandle.close < lastCandle.open && prevCandle.close < prevCandle.open && prev2Candle.close < prev2Candle.open);
+    // Calculate how far price moved in signal direction over last 3 candles
+    const moveFrom3CandlesAgo = signal.direction === "BUY"
+      ? (lastCandle.close - prev2Candle.open) / prev2Candle.open
+      : (prev2Candle.open - lastCandle.close) / prev2Candle.open;
+    // If 3 consecutive same-direction candles AND moved > 0.3% → chasing
+    const CHASE_THRESHOLD = 0.003; // 0.3% move in 3 candles = likely at local extreme
+    if (allSameDir && moveFrom3CandlesAgo > CHASE_THRESHOLD) {
+      const movePct = (moveFrom3CandlesAgo * 100).toFixed(2);
+      emitActivity(state.sessionToken, "signal", `⊘ ANTI-CHASE: ${signal.direction} from ${signal.layer} rejected — 3 consecutive ${signal.direction === "BUY" ? "green" : "red"} candles moved ${movePct}% (>${(CHASE_THRESHOLD*100).toFixed(1)}%). Wait for pullback.`);
+      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Anti-chase: 3 same-dir candles moved ${movePct}%`);
+      logSignalToJournal({
+        sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+        direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+        entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+        atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `Anti-chase: ${movePct}% in 3 candles`,
+      });
+      return;
+    }
+  }
+
   // ── P2: Underlying-Level Cooldown (any direction) ───────────────────────────
   // After 2+ consecutive SLs on this underlying (regardless of CE/PE direction), block for 15 min
   if (state.consecutiveUnderlyingSLs >= 2 && state.lastUnderlyingSLAt) {
@@ -5178,8 +5213,9 @@ async function tick(
     // ── FIX 2: Minimum Premium Floor ─────────────────────────────────────────────
     // Options with very low premium are illiquid — wide spreads eat you alive on exit.
     // MCX instruments (Natural Gas, Crude Oil) have naturally lower premiums, so use ₹3 floor.
-    // NSE instruments (NIFTY, BANKNIFTY) use ₹10 floor.
-    const premiumFloor = isMCX ? 3 : 10;
+    // NSE instruments (NIFTY, BANKNIFTY) use ₹30 floor — cheap options (₹10-₹29) amplify
+    // losses via massive qty and have poor liquidity. ₹13 option × 58 lots = guaranteed loss.
+    const premiumFloor = isMCX ? 3 : 30;
     if (optionPremiumForSizing < premiumFloor) {
       const reason = `Entry blocked — premium too low (₹${optionPremiumForSizing.toFixed(1)} < ₹${premiumFloor} floor). Illiquid option.`;
       console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
@@ -5268,7 +5304,11 @@ async function tick(
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
     const maxQtyByCapital = Math.floor(state.capital / optionPremiumForSizing / lotSize) * lotSize;
-    const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital);
+    // ── MAX LOT CAP: Never buy more than 10 lots per trade ──────────────────
+    // Prevents catastrophic losses from cheap options (e.g., ₹13 × 3770 qty = ₹49K all-in)
+    const MAX_LOTS_PER_TRADE = 10;
+    const maxQtyByLotCap = MAX_LOTS_PER_TRADE * lotSize;
+    const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital, maxQtyByLotCap);
     
     if (riskBasedQty < lotSize) {
       // Even 1 lot exceeds risk budget — still allow 1 lot if capital permits
@@ -5285,6 +5325,10 @@ async function tick(
       quantity = riskBasedQty;
     }
     emitActivity(state.sessionToken, "signal", `📐 Position size: ${quantity} qty (${quantity/lotSize} lots) | Risk: ₹${(quantity * slDist).toFixed(0)} ≤ ₹${riskAmount.toFixed(0)} budget | SL: ₹${(optionPremiumForSizing - slDist).toFixed(2)} (30% below ₹${optionPremiumForSizing.toFixed(2)})`);
+    // Log if lot cap was the binding constraint
+    if (quantity >= maxQtyByLotCap && rawQtyByRisk > maxQtyByLotCap) {
+      emitActivity(state.sessionToken, "signal", `⚠ MAX LOT CAP applied: capped at ${MAX_LOTS_PER_TRADE} lots (risk formula wanted ${Math.floor(rawQtyByRisk/lotSize)} lots)`);
+    }
   } else {
     const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
     const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
