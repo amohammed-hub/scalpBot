@@ -2812,23 +2812,30 @@ export const appRouter = router({
 
         // Get weekly option chain
         try {
-          const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}`, {
+          const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=current_week`, {
             headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
             signal: AbortSignal.timeout(10000),
           });
-          // Upstox option chain endpoint returns nearest expiry by default
-          if (!chainRes.ok) return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now(), error: "Option chain fetch failed" };
+          if (!chainRes.ok) {
+            const errText = await chainRes.text().catch(() => "");
+            console.error("[HeroZero] Option chain fetch failed:", chainRes.status, errText);
+            return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now(), error: `Option chain fetch failed (${chainRes.status})` };
+          }
           const chainJson = await chainRes.json() as {
-            data?: {
+            data?: Array<{
               expiry?: string;
-              put_options?: Array<{ market_data?: { ltp?: number }; option_greeks?: { delta?: number }; instrument_key?: string; strike_price?: number }>;
-              call_options?: Array<{ market_data?: { ltp?: number }; option_greeks?: { delta?: number }; instrument_key?: string; strike_price?: number }>;
-            }[];
+              pcr?: number;
+              strike_price?: number;
+              underlying_key?: string;
+              underlying_spot_price?: number;
+              call_options?: { instrument_key?: string; market_data?: { ltp?: number }; option_greeks?: { delta?: number } };
+              put_options?: { instrument_key?: string; market_data?: { ltp?: number }; option_greeks?: { delta?: number } };
+            }>;
           };
-          const chain = chainJson.data?.[0];
-          if (!chain) return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now() };
+          const chainData = chainJson.data;
+          if (!chainData || chainData.length === 0) return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now() };
 
-          const expiryDate = chain.expiry ?? null;
+          const expiryDate = chainData[0]?.expiry ?? null;
           const candidates: Array<{
             instrumentKey: string; strikePrice: number; optionType: "CE" | "PE";
             premium: number; strikeDistancePct: number; delta: number;
@@ -2836,38 +2843,65 @@ export const appRouter = router({
             directionScore: number; directionBias: "BUY" | "SELL" | "NEUTRAL";
           }> = [];
 
-          const allOptions = [
-            ...(chain.call_options ?? []).map(o => ({ ...o, optionType: "CE" as const })),
-            ...(chain.put_options ?? []).map(o => ({ ...o, optionType: "PE" as const })),
-          ];
-
-          for (const opt of allOptions) {
-            const premium = opt.market_data?.ltp ?? 0;
-            if (premium < 1 || premium > 100) continue; // wider range for scanning
-            const strike = opt.strike_price ?? 0;
-            const distPct = Math.abs(strike - underlyingPrice) / underlyingPrice * 100;
-            if (distPct < 0.3 || distPct > 6) continue; // OTM range
-            const delta = Math.abs(opt.option_greeks?.delta ?? 0);
-            // Direction score: CE = bullish, PE = bearish
-            // Higher score = better Hero Zero candidate
-            let dirScore = 0;
-            if (premium >= 2 && premium <= 50) dirScore += 3; // sweet spot
-            if (distPct >= 1 && distPct <= 4) dirScore += 2; // ideal OTM distance
-            if (delta >= 0.05 && delta <= 0.25) dirScore += 2; // good delta range
-            if (premium <= 20) dirScore += 1; // cheaper = more upside
-            candidates.push({
-              instrumentKey: opt.instrument_key ?? "",
-              strikePrice: strike,
-              optionType: opt.optionType,
-              premium,
-              strikeDistancePct: Math.round(distPct * 100) / 100,
-              delta,
-              isHeroZeroRange: premium >= 2 && premium <= 50,
-              target5x: Math.round(premium * 5 * 10) / 10,
-              cut50pct: Math.round(premium * 0.5 * 10) / 10,
-              directionScore: dirScore,
-              directionBias: opt.optionType === "CE" ? "BUY" : "SELL",
-            });
+          // Upstox returns one entry per strike, each with call_options and put_options objects
+          for (const row of chainData) {
+            const strike = row.strike_price ?? 0;
+            // Process call option
+            if (row.call_options) {
+              const premium = row.call_options.market_data?.ltp ?? 0;
+              if (premium >= 1 && premium <= 100) {
+                const distPct = Math.abs(strike - underlyingPrice) / underlyingPrice * 100;
+                if (distPct >= 0.3 && distPct <= 6) {
+                  const delta = Math.abs(row.call_options.option_greeks?.delta ?? 0);
+                  let dirScore = 0;
+                  if (premium >= 2 && premium <= 50) dirScore += 3;
+                  if (distPct >= 1 && distPct <= 4) dirScore += 2;
+                  if (delta >= 0.05 && delta <= 0.25) dirScore += 2;
+                  if (premium <= 20) dirScore += 1;
+                  candidates.push({
+                    instrumentKey: row.call_options.instrument_key ?? "",
+                    strikePrice: strike,
+                    optionType: "CE",
+                    premium,
+                    strikeDistancePct: Math.round(distPct * 100) / 100,
+                    delta,
+                    isHeroZeroRange: premium >= 2 && premium <= 50,
+                    target5x: Math.round(premium * 5 * 10) / 10,
+                    cut50pct: Math.round(premium * 0.5 * 10) / 10,
+                    directionScore: dirScore,
+                    directionBias: "BUY",
+                  });
+                }
+              }
+            }
+            // Process put option
+            if (row.put_options) {
+              const premium = row.put_options.market_data?.ltp ?? 0;
+              if (premium >= 1 && premium <= 100) {
+                const distPct = Math.abs(strike - underlyingPrice) / underlyingPrice * 100;
+                if (distPct >= 0.3 && distPct <= 6) {
+                  const delta = Math.abs(row.put_options.option_greeks?.delta ?? 0);
+                  let dirScore = 0;
+                  if (premium >= 2 && premium <= 50) dirScore += 3;
+                  if (distPct >= 1 && distPct <= 4) dirScore += 2;
+                  if (delta >= 0.05 && delta <= 0.25) dirScore += 2;
+                  if (premium <= 20) dirScore += 1;
+                  candidates.push({
+                    instrumentKey: row.put_options.instrument_key ?? "",
+                    strikePrice: strike,
+                    optionType: "PE",
+                    premium,
+                    strikeDistancePct: Math.round(distPct * 100) / 100,
+                    delta,
+                    isHeroZeroRange: premium >= 2 && premium <= 50,
+                    target5x: Math.round(premium * 5 * 10) / 10,
+                    cut50pct: Math.round(premium * 0.5 * 10) / 10,
+                    directionScore: dirScore,
+                    directionBias: "SELL",
+                  });
+                }
+              }
+            }
           }
 
           // Sort by direction score descending, return top 10

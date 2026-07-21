@@ -1379,3 +1379,12 @@
 - [x] SL stays at entry × 0.70 (30% below) — no more tightening to 1-2%
 - [x] Safety net: if 1-lot minimum exceeds risk, tighten SL but floor at 15% below entry
 - [x] Verified math: NIFTY ₹13 option → 3 lots (was 50), BANKNIFTY ₹391 → 1 lot (was 4)
+
+## FIX — Hero Zero Scanner Expiry Day + Option Chain
+- [x] Bug: "Expiry Day: ❌ Not Today" showing on actual Nifty 50 expiry (Monday July 21, 2026)
+- [x] Root cause: isThursdayOrWednesday() hardcoded day-of-week check (Thu=4, Wed=3) — NSE changed Nifty expiry to Monday
+- [x] Fix: replaced with isTodayExpiry() that compares today's IST date against API-returned expiry date string
+- [x] Bug: "Option chain fetch failed" error
+- [x] Root cause: Upstox API requires expiry_date parameter (was missing from URL)
+- [x] Fix: added expiry_date=current_week to option chain API URL
+- [x] Fix: corrected response parsing — Upstox returns one object per strike (not arrays of call/put)

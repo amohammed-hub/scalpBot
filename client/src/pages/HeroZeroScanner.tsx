@@ -28,12 +28,14 @@ function isExpiryWindow(): boolean {
   return h >= 11 && h < 13.5; // 11 AM – 1:30 PM IST
 }
 
-function isThursdayOrWednesday(): boolean {
+/** Check if today (IST) matches the expiry date returned by the API */
+function isTodayExpiry(expiryDateStr: string | null | undefined): boolean {
+  if (!expiryDateStr) return false;
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
   const ist = new Date(now.getTime() + istOffset);
-  const day = ist.getUTCDay();
-  return day === 4 || day === 3; // Thu = NIFTY expiry, Wed = BANKNIFTY expiry
+  const todayIST = ist.toISOString().slice(0, 10); // YYYY-MM-DD
+  return todayIST === expiryDateStr;
 }
 
 function formatTime(ts: number): string {
@@ -88,15 +90,13 @@ export default function HeroZeroScanner() {
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
 
   const inWindow = isExpiryWindow();
-  const isExpiry = isThursdayOrWednesday();
-
-  // Gate auto-refresh strictly to expiry day + trading window
-  const shouldAutoRefresh = autoRefresh && isExpiry && inWindow;
 
   const { data, isLoading, refetch } = trpc.heroZero.scanStrikes.useQuery(
     { sessionToken, underlying },
-    { enabled: true, refetchInterval: shouldAutoRefresh ? 60000 : false },
+    { enabled: true, refetchInterval: autoRefresh && inWindow ? 60000 : false },
   );
+
+  const isExpiry = isTodayExpiry(data?.expiryDate);
 
   const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
     onSuccess: (res) => {
