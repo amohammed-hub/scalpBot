@@ -4982,7 +4982,9 @@ async function tick(
       ? (lastCandle.close - prev2Candle.open) / prev2Candle.open
       : (prev2Candle.open - lastCandle.close) / prev2Candle.open;
     // If 3 consecutive same-direction candles AND moved > 0.3% → chasing
-    const CHASE_THRESHOLD = 0.003; // 0.3% move in 3 candles = likely at local extreme
+    // MCX instruments (CrudeOil, NatGas) trend strongly — 3 same-direction candles is NORMAL.
+    // Use 1.0% threshold for MCX vs 0.3% for NSE to avoid blocking valid trend entries.
+    const CHASE_THRESHOLD = isMCX ? 0.010 : 0.003; // MCX: 1.0%, NSE: 0.3%
     if (allSameDir && moveFrom3CandlesAgo > CHASE_THRESHOLD) {
       const movePct = (moveFrom3CandlesAgo * 100).toFixed(2);
       emitActivity(state.sessionToken, "signal", `⊘ ANTI-CHASE: ${signal.direction} from ${signal.layer} rejected — 3 consecutive ${signal.direction === "BUY" ? "green" : "red"} candles moved ${movePct}% (>${(CHASE_THRESHOLD*100).toFixed(1)}%). Wait for pullback.`);

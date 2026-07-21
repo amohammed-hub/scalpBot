@@ -677,6 +677,8 @@ export default function Settings() {
       targetMultiplier: 2.5,
       minConfidence: 60,
       scanIntervalSec: 30,
+      useV2Engine: true,
+      enabledLayers: ["Supertrend", "Momentum", "VWAP Pull", "ORB", "Adeeb"],
       telegramBotToken: tg.botToken ?? "",
       telegramChatId: tg.chatId ?? "",
       telegramEnabled: tg.enabled ?? false,

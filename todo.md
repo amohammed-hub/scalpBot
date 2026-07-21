@@ -1406,3 +1406,8 @@
 - [x] FIX: Portfolio MaxDrawdown Halt bypassed when user has `unlimitedTrades` or `dailyLossAcknowledged`
 - [x] FIX: P2 Underlying-Level Cooldown (15min after 2 SLs) — cleared immediately when user manually restarts or has unlimited trades
 - [x] FIX: P1 Direction-Aware Cooldown (3-10min same-direction block) — bypassed when user manually restarts or has unlimited trades
+
+## MCX CrudeOil Not Trading During Day (July 21, 2026)
+- [x] Root cause 1: Anti-chasing gate threshold 0.3% too tight for MCX (CrudeOil trends hard, 3 same-dir candles is normal). FIX: Raised to 1.0% for MCX instruments.
+- [x] Root cause 2: MCX Quick Launch was NOT passing useV2Engine=true — defaulted to V1 engine which has higher confidence bars and fewer strategies. FIX: Now passes useV2Engine=true.
+- [x] Root cause 3: MCX Quick Launch was NOT passing enabledLayers — so the V2 engine had no layers to fire. FIX: Now passes ["Supertrend", "Momentum", "VWAP Pull", "ORB", "Adeeb"].
