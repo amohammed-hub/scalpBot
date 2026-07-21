@@ -1332,12 +1332,12 @@
 - [x] CPR enabled by default in enabledLayers
 - [x] Adaptive regime enabled by default when bot starts
 
-## SmartRenko Strategy Card + Deployment Fix (Jul 21, 2026)
-- [x] SmartRenko code restored from git history and inserted into botEngine.ts
-- [x] SmartRenko added to Signal layer type union
-- [x] SmartRenko added to enabledLayers default in Dashboard
-- [x] SmartRenko featured card added to Dashboard (violet, brain emoji)
-- [x] SmartRenko added to allLayers array (Enable All button)
-- [x] Renko card preserved (not removed)
+## Red Bar Theory + Trikal Strategy Cards + Deployment Fix (Jul 21, 2026)
+- [x] Trikal Strategy (formerly SmartRenko) code restored from git history and inserted into botEngine.ts
+- [x] Trikal Strategy added to Signal layer type union
+- [x] Trikal Strategy added to enabledLayers default in Dashboard
+- [x] Trikal Strategy featured card added to Dashboard (violet, brain emoji)
+- [x] Trikal Strategy added to allLayers array (Enable All button)
+- [x] Red Bar Theory (formerly Renko) card preserved
 - [x] Fixed pnpm .tools directory corruption via tmpfs mount
 - [x] Dev server running cleanly with 0 TypeScript errors

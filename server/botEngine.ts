@@ -44,7 +44,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "Renko" | "SmartRenko" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -218,7 +218,7 @@ export interface BotState {
   openingBurstEnabled?: boolean; // user toggle (default true for NSE)
   // Cross-Market Correlation: Crude Oil → NIFTY soft bias filter
   crudeOilCorrelation?: boolean; // user toggle (default OFF)
-  // Adaptive Regime Switching: auto-toggle Supertrend vs SmartRenko based on ADX
+  // Adaptive Regime Switching: auto-toggle Supertrend vs Trikal Strategy based on ADX
   adaptiveRegimeEnabled?: boolean; // user toggle (default ON)
   currentRegime?: "trending" | "choppy"; // last detected regime
   currentADX?: number; // last ADX value
@@ -2547,7 +2547,7 @@ export function generateOpeningBurstSignal(
   };
 }
 
-// ── Renko Signal Layer ──────────────────────────────────────────────────────────
+// ── Red Bar Theory Signal Layer ──────────────────────────────────────────────────────────
 // Constructs Renko bricks from 1-min candle closes using ATR(14) as adaptive brick size.
 // BUY: 3 consecutive green bricks. SELL: 3 consecutive red bricks.
 // EXIT: first opposite color brick after entry.
@@ -2598,7 +2598,7 @@ function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
 }
 
 /**
- * Generate Renko signal from candle data.
+ * Generate Red Bar Theory signal from candle data.
  * Entry: 3 consecutive same-color bricks.
  * Confidence scales with brick count (3 = 70%, 4 = 80%, 5+ = 85%).
  */
@@ -2607,14 +2607,14 @@ export function generateRenkoSignal(
   slMultiplier = 1.5,
   tpMultiplier = 3.0,
 ): Signal {
-  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Renko: insufficient data", layer: "Renko" };
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Red Bar Theory: insufficient data", layer: "RedBarTheory" };
   if (!candles || candles.length < 20) return hold;
 
   const atr = calcATR(candles, 14);
-  if (atr <= 0) return { ...hold, reason: "Renko: ATR is 0" };
+  if (atr <= 0) return { ...hold, reason: "Red Bar Theory: ATR is 0" };
 
   const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length < 3) return { ...hold, atr, reason: `Renko: only ${bricks.length} bricks (need 3)` };
+  if (bricks.length < 3) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 3)` };
 
   // Check last N bricks for consecutive same color
   const lastBricks = bricks.slice(-5); // look at last 5 bricks max
@@ -2647,8 +2647,8 @@ export function generateRenkoSignal(
       slPrice: slPrice_buy,
       targetPrice: tpPrice_buy,
       atr,
-      reason: `[Renko] ${consecutiveGreen} consecutive green bricks (brick size: ₹${atr.toFixed(1)}) | Strong uptrend`,
-      layer: "Renko",
+      reason: `[Red Bar Theory] ${consecutiveGreen} consecutive green bricks (brick size: ₹${atr.toFixed(1)}) | Strong uptrend`,
+      layer: "RedBarTheory",
     };
   }
 
@@ -2661,17 +2661,17 @@ export function generateRenkoSignal(
       slPrice: slPrice_sell,
       targetPrice: tpPrice_sell,
       atr,
-      reason: `[Renko] ${consecutiveRed} consecutive red bricks (brick size: ₹${atr.toFixed(1)}) | Strong downtrend`,
-      layer: "Renko",
+      reason: `[Red Bar Theory] ${consecutiveRed} consecutive red bricks (brick size: ₹${atr.toFixed(1)}) | Strong downtrend`,
+      layer: "RedBarTheory",
     };
   }
 
-  return { ...hold, atr, entryPrice: price, reason: `[Renko] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${atr.toFixed(1)}` };
+  return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${atr.toFixed(1)}` };
 }
 
 /**
- * Check if Renko exit condition is met: first opposite color brick after entry.
- * Returns true if the trade should be exited based on Renko reversal.
+ * Check if Red Bar Theory exit condition is met: first opposite color brick after entry.
+ * Returns true if the trade should be exited based on Red Bar Theory reversal.
  */
 export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL", atr: number): { shouldExit: boolean; reason: string } {
   if (!candles || candles.length < 10 || atr <= 0) return { shouldExit: false, reason: "" };
@@ -2683,21 +2683,21 @@ export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL"
 
   // BUY trade exits on first RED brick; SELL trade exits on first GREEN brick
   if (tradeDirection === "BUY" && lastBrick.color === "red") {
-    return { shouldExit: true, reason: `Renko Exit — first red brick after BUY entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
+    return { shouldExit: true, reason: `Red Bar Theory Exit — first red brick after BUY entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
   }
   if (tradeDirection === "SELL" && lastBrick.color === "green") {
-    return { shouldExit: true, reason: `Renko Exit — first green brick after SELL entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
+    return { shouldExit: true, reason: `Red Bar Theory Exit — first green brick after SELL entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
   }
 
   return { shouldExit: false, reason: "" };
 }
 
-// ── SmartRenko Signal Layer (Dr. Devendra's Renko Engine Strategy) ─────────────
+// ── Trikal Strategy Signal Layer (Dr. Devendra's Renko Engine Strategy) ─────────────
 // Uses EMA(9)/EMA(21) cloud + virtual Renko bricks + pullback-to-cloud entry.
 // Only trades WITH the Renko trend, waits for pullback to EMA cloud before entry.
 
 /**
- * SmartRenko: Advanced Renko strategy with EMA cloud filter.
+ * Trikal Strategy: Advanced Renko-based strategy with EMA cloud filter.
  * BUY: 3+ green bricks (uptrend) + price above cloud + pullback to cloud + close above cloud
  * SELL: 3+ red bricks (downtrend) + price below cloud + rally to cloud + close below cloud
  * SL: below EMA cloud (buys) or above cloud (sells)
@@ -2708,17 +2708,17 @@ export function generateSmartRenkoSignal(
   slMultiplier = 1.5,
   tpMultiplier = 2.5,
 ): Signal {
-  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "SmartRenko: insufficient data", layer: "SmartRenko" };
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Trikal Strategy: insufficient data", layer: "TrikalStrategy" };
   if (!candles || candles.length < 30) return hold;
 
   const closes = candles.map(c => c.close);
   const atr = calcATR(candles, 14);
-  if (atr <= 0) return { ...hold, reason: "SmartRenko: ATR is 0" };
+  if (atr <= 0) return { ...hold, reason: "Trikal Strategy: ATR is 0" };
 
   // ── EMA Cloud: EMA(9) and EMA(21) ──
   const ema9arr = ema(closes, 9);
   const ema21arr = ema(closes, 21);
-  if (ema9arr.length === 0 || ema21arr.length === 0) return { ...hold, atr, reason: "SmartRenko: EMA calc failed" };
+  if (ema9arr.length === 0 || ema21arr.length === 0) return { ...hold, atr, reason: "Trikal Strategy: EMA calc failed" };
 
   const ema9 = ema9arr[ema9arr.length - 1];
   const ema21 = ema21arr[ema21arr.length - 1];
@@ -2732,7 +2732,7 @@ export function generateSmartRenkoSignal(
 
   // ── Virtual Renko Bricks ──
   const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length < 3) return { ...hold, atr, reason: `SmartRenko: only ${bricks.length} bricks (need 3)` };
+  if (bricks.length < 3) return { ...hold, atr, reason: `Trikal Strategy: only ${bricks.length} bricks (need 3)` };
 
   // Count consecutive bricks from the end (trend determination / master filter)
   let consecutiveGreen = 0;
@@ -2751,7 +2751,7 @@ export function generateSmartRenkoSignal(
   const isUptrend = consecutiveGreen >= 3;
   const isDowntrend = consecutiveRed >= 3;
   if (!isUptrend && !isDowntrend) {
-    return { ...hold, atr, entryPrice: closes[closes.length - 1], reason: `[SmartRenko] No trend (G:${consecutiveGreen} R:${consecutiveRed}) — mixed, no trade` };
+    return { ...hold, atr, entryPrice: closes[closes.length - 1], reason: `[Trikal Strategy] No trend (G:${consecutiveGreen} R:${consecutiveRed}) — mixed, no trade` };
   }
 
   const price = candles[candles.length - 1].close;
@@ -2782,13 +2782,13 @@ export function generateSmartRenkoSignal(
 
       const confidence = Math.min(0.90, 0.60 + (consecutiveGreen - 3) * 0.05 + (hadPullback ? 0.10 : 0) + (breakoutAboveResistance ? 0.05 : 0));
       const reason = breakoutAboveResistance
-        ? `[SmartRenko] BUY — ${consecutiveGreen} green bricks + breakout above ₹${resistance.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
-        : `[SmartRenko] BUY — ${consecutiveGreen} green bricks + pullback to cloud + close above | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
+        ? `[Trikal Strategy] BUY — ${consecutiveGreen} green bricks + breakout above ₹${resistance.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
+        : `[Trikal Strategy] BUY — ${consecutiveGreen} green bricks + pullback to cloud + close above | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
 
-      return { direction: "BUY", confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "SmartRenko" };
+      return { direction: "BUY", confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "TrikalStrategy" };
     }
 
-    return { ...hold, atr, entryPrice: price, reason: `[SmartRenko] Uptrend (${consecutiveGreen}G) + bullish cloud — waiting for pullback` };
+    return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Uptrend (${consecutiveGreen}G) + bullish cloud — waiting for pullback` };
   }
 
   // ── SELL SIGNAL ──
@@ -2816,21 +2816,21 @@ export function generateSmartRenkoSignal(
 
       const confidence = Math.min(0.90, 0.60 + (consecutiveRed - 3) * 0.05 + (hadRally ? 0.10 : 0) + (breakdownBelowSupport ? 0.05 : 0));
       const reason = breakdownBelowSupport
-        ? `[SmartRenko] SELL — ${consecutiveRed} red bricks + breakdown below ₹${support.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
-        : `[SmartRenko] SELL — ${consecutiveRed} red bricks + rally to cloud + close below | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
+        ? `[Trikal Strategy] SELL — ${consecutiveRed} red bricks + breakdown below ₹${support.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
+        : `[Trikal Strategy] SELL — ${consecutiveRed} red bricks + rally to cloud + close below | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
 
-      return { direction: "SELL", confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "SmartRenko" };
+      return { direction: "SELL", confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "TrikalStrategy" };
     }
 
-    return { ...hold, atr, entryPrice: price, reason: `[SmartRenko] Downtrend (${consecutiveRed}R) + bearish cloud — waiting for rally to cloud` };
+    return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Downtrend (${consecutiveRed}R) + bearish cloud — waiting for rally to cloud` };
   }
 
   // Trend and cloud disagree — no trade (master filter prevents choppy trades)
-  return { ...hold, atr, entryPrice: price, reason: `[SmartRenko] Trend/cloud mismatch (${isUptrend ? "UP" : "DOWN"} trend vs ${cloudBullish ? "bullish" : "bearish"} cloud) — no trade` };
+  return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Trend/cloud mismatch (${isUptrend ? "UP" : "DOWN"} trend vs ${cloudBullish ? "bullish" : "bearish"} cloud) — no trade` };
 }
 
 /**
- * SmartRenko exit check:
+ * Trikal Strategy exit check:
  * 1. First opposite-color Renko brick (trend weakening)
  * 2. Price closes on wrong side of EMA cloud
  */
@@ -2853,19 +2853,19 @@ export function checkSmartRenkoExit(candles: Candle[], tradeDirection: "BUY" | "
   if (bricks.length > 0) {
     const lastBrick = bricks[bricks.length - 1];
     if (tradeDirection === "BUY" && lastBrick.color === "red") {
-      return { shouldExit: true, reason: `SmartRenko Exit — red brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
+      return { shouldExit: true, reason: `SmartRed Bar Theory Exit — red brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
     }
     if (tradeDirection === "SELL" && lastBrick.color === "green") {
-      return { shouldExit: true, reason: `SmartRenko Exit — green brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
+      return { shouldExit: true, reason: `SmartRed Bar Theory Exit — green brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
     }
   }
 
   // Exit condition 2: price closes on wrong side of cloud
   if (tradeDirection === "BUY" && price < cloudBottom) {
-    return { shouldExit: true, reason: `SmartRenko Exit — price below cloud (₹${price.toFixed(0)} < ₹${cloudBottom.toFixed(0)})` };
+    return { shouldExit: true, reason: `SmartRed Bar Theory Exit — price below cloud (₹${price.toFixed(0)} < ₹${cloudBottom.toFixed(0)})` };
   }
   if (tradeDirection === "SELL" && price > cloudTop) {
-    return { shouldExit: true, reason: `SmartRenko Exit — price above cloud (₹${price.toFixed(0)} > ₹${cloudTop.toFixed(0)})` };
+    return { shouldExit: true, reason: `SmartRed Bar Theory Exit — price above cloud (₹${price.toFixed(0)} > ₹${cloudTop.toFixed(0)})` };
   }
   return { shouldExit: false, reason: "" };
 }
