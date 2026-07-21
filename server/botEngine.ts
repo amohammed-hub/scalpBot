@@ -2614,7 +2614,7 @@ export function generateRenkoSignal(
   if (atr <= 0) return { ...hold, reason: "Red Bar Theory: ATR is 0" };
 
   const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length < 3) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 3)` };
+  if (bricks.length < 2) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 2)` }; // DEFAULT: 3
 
   // Check last N bricks for consecutive same color
   const lastBricks = bricks.slice(-5); // look at last 5 bricks max
@@ -2638,7 +2638,7 @@ export function generateRenkoSignal(
   const slPrice_sell = price + atr * slMultiplier;
   const tpPrice_sell = price - atr * tpMultiplier;
 
-  if (consecutiveGreen >= 3) {
+  if (consecutiveGreen >= 2) { // DEFAULT: 3
     const confidence = Math.min(0.85, 0.65 + (consecutiveGreen - 3) * 0.10);
     return {
       direction: "BUY",
@@ -2652,7 +2652,7 @@ export function generateRenkoSignal(
     };
   }
 
-  if (consecutiveRed >= 3) {
+  if (consecutiveRed >= 2) { // DEFAULT: 3
     const confidence = Math.min(0.85, 0.65 + (consecutiveRed - 3) * 0.10);
     return {
       direction: "SELL",
@@ -2732,7 +2732,7 @@ export function generateSmartRenkoSignal(
 
   // ── Virtual Renko Bricks ──
   const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length < 3) return { ...hold, atr, reason: `Trikal Strategy: only ${bricks.length} bricks (need 3)` };
+  if (bricks.length < 2) return { ...hold, atr, reason: `Trikal Strategy: only ${bricks.length} bricks (need 2)` }; // DEFAULT: 3
 
   // Count consecutive bricks from the end (trend determination / master filter)
   let consecutiveGreen = 0;
@@ -2748,8 +2748,8 @@ export function generateSmartRenkoSignal(
   }
 
   // Master Filter: need 3+ same-color bricks for trend confirmation
-  const isUptrend = consecutiveGreen >= 3;
-  const isDowntrend = consecutiveRed >= 3;
+  const isUptrend = consecutiveGreen >= 2; // DEFAULT: 3
+  const isDowntrend = consecutiveRed >= 2; // DEFAULT: 3
   if (!isUptrend && !isDowntrend) {
     return { ...hold, atr, entryPrice: closes[closes.length - 1], reason: `[Trikal Strategy] No trend (G:${consecutiveGreen} R:${consecutiveRed}) — mixed, no trade` };
   }
@@ -2901,8 +2901,8 @@ export function generateAdeebSignal(
   // ── STEP 1: ADX Regime Check ──
   const adx = calcADX(candles, 14);
   // Asymmetric ADX: BUY needs 22+, SELL needs 27+ (from Bank Nifty 15m backtest)
-  const adxMinBuy = 22;
-  const adxMinSell = 27;
+  const adxMinBuy = 18; // DEFAULT: 22
+  const adxMinSell = 22; // DEFAULT: 27
   if (adx < adxMinBuy) return { ...hold, atr, entryPrice: price, reason: `[Adeeb] ADX too low (${adx.toFixed(0)} < ${adxMinBuy}) — no trade in choppy market` };
 
   // ── STEP 2: CPR Daily Bias ──
@@ -2976,8 +2976,8 @@ export function generateAdeebSignal(
       return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko UP but EMA cloud bearish (EMA9 < EMA21) — conflict` };
     }
     // Price must be close to cloud (pullback) — not chasing far above
-    if (distFromCloud > 0.003) { // 0.3% for Bank Nifty volatility
-      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% above cloud (max 0.3%) — too far, skip` };
+    if (distFromCloud > 0.005) { // DEFAULT: 0.003 (0.3%) — loosened to 0.5% for more trades
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% above cloud (max 0.5%) — too far, skip` };
     }
     // Price must be above cloud bottom (not broken below)
     if (price < cloudBottom) {
@@ -2985,9 +2985,9 @@ export function generateAdeebSignal(
     }
     // Bounce confirmation: current candle closes above cloud after touching it
     const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-    const touchedCloud = prevClose <= cloudTop * 1.001; // prev candle was near/at cloud
+    const touchedCloud = prevClose <= cloudTop * 1.003; // DEFAULT: 1.001 — loosened for more trades
     const bouncedUp = price > prevClose && price > cloudTop;
-    if (!touchedCloud && distFromCloud > 0.001) {
+    if (!touchedCloud && distFromCloud > 0.003) { // DEFAULT: 0.001 — loosened for more trades
       return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Waiting for pullback to cloud (EMA9: ₹${ema9.toFixed(0)})` };
     }
 
@@ -3022,8 +3022,8 @@ export function generateAdeebSignal(
       return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko DOWN but EMA cloud bullish (EMA9 > EMA21) — conflict` };
     }
     // Price must be close to cloud (rally back) — not chasing far below
-    if (distFromCloud > 0.003) {
-      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% below cloud (max 0.3%) — too far, skip` };
+    if (distFromCloud > 0.005) { // DEFAULT: 0.003 (0.3%) — loosened to 0.5% for more trades
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% below cloud (max 0.5%) — too far, skip` };
     }
     // Price must be below cloud top (not broken above)
     if (price > cloudTop) {
@@ -3031,16 +3031,16 @@ export function generateAdeebSignal(
     }
     // Bounce confirmation: current candle closes below cloud after touching it
     const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-    const touchedCloud = prevClose >= cloudBottom * 0.999;
+    const touchedCloud = prevClose >= cloudBottom * 0.997; // DEFAULT: 0.999 — loosened for more trades
     const bouncedDown = price < prevClose && price < cloudBottom;
-    if (!touchedCloud && distFromCloud > 0.001) {
+    if (!touchedCloud && distFromCloud > 0.003) { // DEFAULT: 0.001 — loosened for more trades
       return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Waiting for rally to cloud (EMA21: ₹${ema21.toFixed(0)})` };
     }
 
     // ── ALL CONDITIONS MET: SELL ──
     // Asymmetric: SELL requires ADX > 27
     if (adx < adxMinSell) {
-      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] ADX too low for SELL (${adx.toFixed(0)} < ${adxMinSell}) — need stronger trend` };
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] ADX too low for SELL (${adx.toFixed(0)} < ${adxMinSell}) — need stronger trend (DEFAULT: 27)` };
     }
     let confidence = 0.70;
     if (adx > 35) confidence += 0.08;
@@ -4791,6 +4791,34 @@ async function tick(
         if (prevRegime && prevRegime !== state.currentRegime) {
           console.log(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched from ${prevRegime} to ${state.currentRegime} (ADX=${adxVal.toFixed(1)})`);
         }
+      }
+    }
+  }
+
+  // ── Multi-Layer Strategy Cascade: if main signal is HOLD, try Red Bar Theory, Trikal, Adeeb ──
+  if (signal.direction === "HOLD" && state.enabledLayers && state.candles.length >= 28) {
+    // Try Red Bar Theory
+    if (state.enabledLayers.includes("RedBarTheory")) {
+      const rbtSignal = generateRenkoSignal(state.candles);
+      if (rbtSignal.direction !== "HOLD") {
+        signal = rbtSignal;
+        console.log(`[tick] RedBarTheory override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
+      }
+    }
+    // Try Trikal Strategy (only if still HOLD)
+    if (signal.direction === "HOLD" && state.enabledLayers.includes("TrikalStrategy")) {
+      const trikalSignal = generateSmartRenkoSignal(state.candles);
+      if (trikalSignal.direction !== "HOLD") {
+        signal = trikalSignal;
+        console.log(`[tick] TrikalStrategy override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
+      }
+    }
+    // Try Adeeb Strategy (only if still HOLD)
+    if (signal.direction === "HOLD" && state.enabledLayers.includes("Adeeb")) {
+      const adeebSignal = generateAdeebSignal(state.candles, prevDayHigh, prevDayLow, prevDayClose, 0);
+      if (adeebSignal.direction !== "HOLD") {
+        signal = adeebSignal;
+        console.log(`[tick] Adeeb override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
       }
     }
   }
