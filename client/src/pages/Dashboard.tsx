@@ -19,6 +19,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, 
 import { trpc } from "@/lib/trpc";
 import { MCX_INSTRUMENTS } from "@shared/mcxInstruments";
 import { getTierLimits, FEATURE_MIN_PLAN, type TierLimits } from "@shared/tierLimits";
+import { getCurrentSession, getAllSessionDefaults, hasSessionChanged, type TradingSession } from "@shared/sessionDefaults";
 // ── Session Token ─────────────────────────────────────────────────────────────
 // A UUID stored in localStorage — no Manus login needed. Used as the user identity key.
 const LS_SESSION = "scalpbot_session";
@@ -294,8 +295,79 @@ export default function Dashboard() {
 
   // Per-slot Quick Start state for the Parallel Bots panel
   const [slotQS, setSlotQS] = useState<Record<number, { symbol: string; capital: number }>>(
-    { 0: { symbol: "NIFTY", capital: 50000 }, 1: { symbol: "BANKNIFTY", capital: 50000 }, 2: { symbol: "CRUDEOIL", capital: 50000 }, 3: { symbol: "FINNIFTY", capital: 50000 } }
+    () => {
+      // Load saved overrides from localStorage
+      const saved = localStorage.getItem("scalpbot_slot_qs");
+      if (saved) {
+        try { return JSON.parse(saved); } catch {}
+      }
+      // Otherwise, use session-based defaults
+      const session = getCurrentSession();
+      const defaults = getAllSessionDefaults(session);
+      const symbolMap: Record<string, string> = {
+        "MCX_GOLD": "MCX_GOLD", "MCX_CRUDE": "MCX_CRUDE", "MCX_SILVER": "MCX_SILVER",
+        "NIFTY": "NIFTY", "BANKNIFTY": "BANKNIFTY", "FINNIFTY": "FINNIFTY",
+      };
+      return {
+        0: { symbol: defaults[0]?.symbol ?? "NIFTY", capital: 50000 },
+        1: { symbol: defaults[1]?.symbol ?? "BANKNIFTY", capital: 50000 },
+        2: { symbol: defaults[2]?.symbol ?? "FINNIFTY", capital: 50000 },
+        3: { symbol: defaults[3]?.symbol ?? "BANKNIFTY", capital: 50000 },
+      };
+    }
   );
+
+  // ── Session Auto-Switch ─────────────────────────────────────────────────────
+  const [lastSession, setLastSession] = useState<TradingSession>(getCurrentSession());
+  const [userOverride, setUserOverride] = useState<Record<number, boolean>>({});
+
+  // Track user manual instrument changes
+  const handleManualInstrumentChange = (slot: number, newSymbol: string, newCapital: number) => {
+    setUserOverride(prev => ({ ...prev, [slot]: true }));
+    setSlotQS(s => ({ ...s, [slot]: { symbol: newSymbol, capital: newCapital } }));
+    localStorage.setItem("scalpbot_user_override", JSON.stringify({ ...userOverride, [slot]: true }));
+  };
+
+  // Check for session change every 30 seconds
+  useEffect(() => {
+    const checkSession = () => {
+      const current = getCurrentSession();
+      if (hasSessionChanged(lastSession, current)) {
+        // Session changed! Auto-switch non-overridden bots
+        const defaults = getAllSessionDefaults(current);
+        const savedOverrides = JSON.parse(localStorage.getItem("scalpbot_user_override") ?? "{}");
+        const newSlotQS: Record<number, { symbol: string; capital: number }> = {};
+        let switched = false;
+        for (let i = 0; i < 4; i++) {
+          if (savedOverrides[i]) {
+            // User manually set this slot — keep their choice
+            newSlotQS[i] = slotQS[i];
+          } else {
+            // Auto-switch to session default
+            newSlotQS[i] = { symbol: defaults[i]?.symbol ?? "NIFTY", capital: slotQS[i]?.capital ?? 50000 };
+            switched = true;
+          }
+        }
+        if (switched) {
+          setSlotQS(newSlotQS);
+          localStorage.setItem("scalpbot_slot_qs", JSON.stringify(newSlotQS));
+          toast.info(`Session changed → Instruments updated to ${current === "evening" ? "MCX" : "NSE"} defaults`, { duration: 5000 });
+        }
+        setLastSession(current);
+        // Reset user overrides on session change (they can override again)
+        setUserOverride({});
+        localStorage.removeItem("scalpbot_user_override");
+      }
+    };
+    const interval = setInterval(checkSession, 30_000);
+    return () => clearInterval(interval);
+  }, [lastSession, slotQS, userOverride]);
+
+  // Persist slotQS changes
+  useEffect(() => {
+    localStorage.setItem("scalpbot_slot_qs", JSON.stringify(slotQS));
+  }, [slotQS]);
+
   const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
     onSuccess: (_, vars) => {
       toast.success(`🤖 Bot ${(vars.slot ?? 0) + 1} started in ${config.mode.toUpperCase()} mode!`);
@@ -415,6 +487,9 @@ export default function Dashboard() {
     }
     setSwitchingSlot(slot);
     toast.info(`Switching Bot ${slot + 1} to ${newSymbol}...`);
+    // Mark as user override so session auto-switch won't override this choice
+    setUserOverride(prev => ({ ...prev, [slot]: true }));
+    localStorage.setItem("scalpbot_user_override", JSON.stringify({ ...userOverride, [slot]: true }));
     try {
       // Step 1: Stop the bot
       if (slot === 0) {

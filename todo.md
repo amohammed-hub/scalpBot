@@ -1441,3 +1441,7 @@
 - [x] AUTO-ASSIGN: Created shared/backtestLayerMap.ts — instrument-specific profitable layer mapping
 - [x] AUTO-ASSIGN: Bot start now auto-assigns backtest-proven layers when user doesn't specify enabledLayers
 - [x] DEFAULT LAYERS: Dashboard defaults updated to only backtest-proven strategies (removed Breakout, ORB)
+- [x] SESSION DEFAULTS: Morning (9:15-3:30) auto-assign NSE indices (Bot1=NIFTY, Bot2=BankNifty, Bot3=FinNifty, Bot4=BankNifty)
+- [x] SESSION DEFAULTS: Evening (5:00-11:30) auto-assign MCX (Bot1=Gold, Bot2=CrudeOil, Bot3=Silver, Bot4=Gold)
+- [x] SESSION DEFAULTS: Auto-switch at session change (3:30→5:00), preserve user manual overrides
+- [x] SESSION DEFAULTS: Show notification "Session changed → Instruments updated to MCX defaults"
