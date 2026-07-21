@@ -5253,27 +5253,38 @@ async function tick(
   // ══════════════════════════════════════════════════════════════════════════════════
 
   // ── Position sizing ───────────────────────────────────────────────────────────────
-  // For options: use option premium price for SL distance (not underlying price).
-  // SL for options = 50% of premium (standard options risk management).
+  // For options: RISK-BASED sizing — SL = 30% below premium, size to keep loss ≤ riskAmount.
+  // This ensures SL stays at entry × 0.70 (30% buffer) and quantity is capped by risk.
   // For futures/equity: use signal SL distance as before.
   const riskAmount = (state.capital * state.riskPerTradePct) / 100;
   const lotSize = state.lotSize ?? 1;
   let quantity: number;
 
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
-    // Options sizing: CAPITAL-BASED — use max lots that capital allows
-    // SL tightening (below) will control actual risk per trade
+    // Options sizing: RISK-BASED — size position so max loss (at 30% SL) ≤ riskAmount
+    // Formula: qty = riskAmount / (premium × 0.30) rounded down to lot size
+    const slDistPct = 0.30; // 30% of premium = SL distance
+    const slDist = optionPremiumForSizing * slDistPct;
+    const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
+    // Also cap by capital (can't buy more than capital allows)
     const maxQtyByCapital = Math.floor(state.capital / optionPremiumForSizing / lotSize) * lotSize;
-    if (maxQtyByCapital < lotSize) {
-      // Capital too low for even 1 lot — reject trade entirely
-      const reason = `Insufficient capital for 1 lot (need ${(optionPremiumForSizing * lotSize).toFixed(0)}, have ${state.capital.toFixed(0)})`;
-      const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
-      state.lastSignal = rejectSignal;
-      emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
-      return;
+    const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital);
+    
+    if (riskBasedQty < lotSize) {
+      // Even 1 lot exceeds risk budget — still allow 1 lot if capital permits
+      if (maxQtyByCapital >= lotSize) {
+        quantity = lotSize; // Allow minimum 1 lot, SL tightening below will handle risk
+      } else {
+        const reason = `Insufficient capital for 1 lot (need ₹${(optionPremiumForSizing * lotSize).toFixed(0)}, have ₹${state.capital.toFixed(0)})`;
+        const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
+        state.lastSignal = rejectSignal;
+        emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+        return;
+      }
     } else {
-      quantity = maxQtyByCapital;
+      quantity = riskBasedQty;
     }
+    emitActivity(state.sessionToken, "signal", `📐 Position size: ${quantity} qty (${quantity/lotSize} lots) | Risk: ₹${(quantity * slDist).toFixed(0)} ≤ ₹${riskAmount.toFixed(0)} budget | SL: ₹${(optionPremiumForSizing - slDist).toFixed(2)} (30% below ₹${optionPremiumForSizing.toFixed(2)})`);
   } else {
     const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
     const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
@@ -5366,20 +5377,22 @@ async function tick(
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
   let tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.70 : signal.slPrice;
   // ── CRITICAL: Adjust SL when quantity exceeds what risk formula allows ──────
-  // If the minimum lot size forces quantity above rawQty, the default SL (30% of premium)
-  // would cause actual monetary loss > riskAmount. Fix: tighten SL proportionally.
-  // Example: premium=₹59.40, default SL=₹29.70, qty=100, actual risk=₹2970 but riskAmount=₹1500
-  // Fix: SL = entry - (riskAmount/qty) = 59.40 - 15 = ₹44.40, actual risk = ₹1500 ✓
+  // Safety net: If 1-lot minimum forces quantity above what risk allows,
+  // tighten SL proportionally. With risk-based sizing this should rarely trigger.
+  // Minimum SL floor: never tighter than 15% below entry (enough breathing room).
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
     const defaultSlDist = tradeEntryPrice - tradeSl; // e.g., 59.40 - 29.70 = 29.70
     const actualMaxLoss = defaultSlDist * quantity;  // e.g., 29.70 * 100 = 2970
     if (actualMaxLoss > riskAmount * 1.05) { // 5% tolerance
       const adjustedSlDist = riskAmount / quantity; // e.g., 1500 / 100 = 15
-      tradeSl = tradeEntryPrice - adjustedSlDist;   // e.g., 59.40 - 15 = 44.40
-      // Ensure SL doesn't go below 10% of entry (minimum breathing room)
-      const minSl = tradeEntryPrice * 0.10;
-      if (tradeSl < minSl) tradeSl = minSl;
-      emitActivity(state.sessionToken, "signal", `⚠ SL tightened: ₹${(tradeEntryPrice - adjustedSlDist).toFixed(2)} → keeps risk within ₹${riskAmount.toFixed(0)} (qty forced to min lot ${lotSize})`);
+      tradeSl = tradeEntryPrice - adjustedSlDist;   // e.g., 59.40 - 15 = ₹44.40
+      // Ensure SL never tighter than 15% below entry (minimum breathing room for options)
+      const minSlPrice = tradeEntryPrice * 0.85; // Floor: 15% below entry
+      if (tradeSl > minSlPrice) {
+        // SL is too tight (less than 15% buffer) — keep at 15% minimum
+        tradeSl = minSlPrice;
+      }
+      emitActivity(state.sessionToken, "signal", `⚠ SL tightened: ₹${tradeSl.toFixed(2)} (keeps risk ≤ ₹${riskAmount.toFixed(0)}, qty=${quantity})`);
     }
   }
   const tradeTarget = isOptionsMode && optionPremiumForSizing

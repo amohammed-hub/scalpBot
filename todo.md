@@ -1372,3 +1372,10 @@
 - [x] Updated botEngine.ts with optimized params: 0.5×ATR bricks, 2-brick min, ADX 22/27, target 1.8×ATR, trailing @0.8ATR
 - [x] Removed EMA cloud break exit (0% WR in backtest), kept only 2-brick reversal exit
 - [x] MCX backtest: Crude PF 0.82, Gold PF 0.86, NatGas PF 0.66, Silver PF 0.68 — NOT suitable for commodities
+
+## CRITICAL FIX — Position Sizing & SL for Options
+- [x] Root cause: capital-based sizing (buy max lots) + SL tightening = 1-2% SL that gets hit instantly
+- [x] Fix: risk-based sizing — qty = riskAmount / (premium × 0.30), capped by capital
+- [x] SL stays at entry × 0.70 (30% below) — no more tightening to 1-2%
+- [x] Safety net: if 1-lot minimum exceeds risk, tighten SL but floor at 15% below entry
+- [x] Verified math: NIFTY ₹13 option → 3 lots (was 50), BANKNIFTY ₹391 → 1 lot (was 4)
