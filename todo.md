@@ -1341,3 +1341,16 @@
 - [x] Red Bar Theory (formerly Renko) card preserved
 - [x] Fixed pnpm .tools directory corruption via tmpfs mount
 - [x] Dev server running cleanly with 0 TypeScript errors
+
+## Adeeb Strategy Implementation (Jul 21, 2026)
+- [x] Adeeb added to Signal layer type union in botEngine.ts
+- [x] generateAdeebSignal() function implemented (CPR + Renko + EMA cloud + ADX + Crude correlation)
+- [x] checkAdeebExit() function implemented (opposite Renko brick, EMA cloud break)
+- [x] Anti-chase logic: skip if price > 0.3% from EMA cloud
+- [x] Min confidence 70%, volume boost, crude oil boost
+- [x] Adeeb card added to Dashboard (⚡ emoji, amber/gold, PREMIUM badge)
+- [x] Adeeb added to enabledLayers default and allLayers array
+- [x] Marketing PDF regenerated with "⚡ The Adeeb Engine — Our Proprietary Trading Brain" section
+- [x] PDF highlights 5 proven methods combined, premium positioning
+- [ ] Backtest Adeeb strategy on 56-day data (target: PF > 1.5)
+- [ ] Show backtest results in marketing PDF once available

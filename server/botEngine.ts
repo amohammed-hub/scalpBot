@@ -44,7 +44,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -2867,6 +2867,235 @@ export function checkSmartRenkoExit(candles: Candle[], tradeDirection: "BUY" | "
   if (tradeDirection === "SELL" && price > cloudTop) {
     return { shouldExit: true, reason: `SmartRed Bar Theory Exit — price above cloud (₹${price.toFixed(0)} > ₹${cloudTop.toFixed(0)})` };
   }
+  return { shouldExit: false, reason: "" };
+}
+
+// ── Adeeb Strategy (Proprietary Multi-Layer Engine) ────────────────────────────
+// Combines: CPR daily bias + Renko trend confirmation + EMA(9/21) cloud pullback
+// + ADX regime filter + Crude Oil correlation boost.
+// Higher bar: min 70% confidence, anti-chase (pullback only), max 20-min hold.
+// Target: PF > 1.5, fewer but higher-quality trades.
+
+/**
+ * Generate Adeeb strategy signal.
+ * ALL conditions must align: Renko direction + CPR bias + EMA cloud pullback + ADX strength.
+ */
+export function generateAdeebSignal(
+  candles: Candle[],
+  prevDayHigh: number,
+  prevDayLow: number,
+  prevDayClose: number,
+  crudeBiasChangePct = 0, // crude oil % change for optional boost
+): Signal {
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Adeeb: insufficient data", layer: "Adeeb" };
+  if (!candles || candles.length < 30) return hold;
+
+  const closes = candles.map(c => c.close);
+  const price = closes[closes.length - 1];
+  const atr = calcATR(candles, 14);
+  if (atr <= 0) return { ...hold, reason: "Adeeb: ATR is 0" };
+
+  // ── STEP 1: ADX Regime Check ──
+  const adx = calcADX(candles, 14);
+  if (adx < 20) return { ...hold, atr, entryPrice: price, reason: `[Adeeb] ADX too low (${adx.toFixed(0)}) — no trade in choppy market` };
+
+  // ── STEP 2: CPR Daily Bias ──
+  if (prevDayHigh <= 0 || prevDayLow <= 0 || prevDayClose <= 0) {
+    return { ...hold, atr, entryPrice: price, reason: "[Adeeb] No previous day data for CPR" };
+  }
+  const pivot = (prevDayHigh + prevDayLow + prevDayClose) / 3;
+  const bc = (prevDayHigh + prevDayLow) / 2;
+  const tc = 2 * pivot - bc;
+  // Daily bias: price > TC = bullish, price < BC = bearish, between = neutral
+  const isBullishBias = price > tc;
+  const isBearishBias = price < bc;
+  if (!isBullishBias && !isBearishBias) {
+    return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price inside CPR range (₹${bc.toFixed(0)}-₹${tc.toFixed(0)}) — no clear bias` };
+  }
+
+  // ── STEP 3: Renko Trend Confirmation ──
+  const bricks = buildRenkoBricks(candles, atr);
+  if (bricks.length < 3) return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Only ${bricks.length} Renko bricks (need 3)` };
+
+  // Count consecutive same-color bricks from the end
+  const lastBrick = bricks[bricks.length - 1];
+  let consecutiveGreen = 0;
+  let consecutiveRed = 0;
+  for (let i = bricks.length - 1; i >= 0; i--) {
+    if (bricks[i].color === "green") { consecutiveGreen++; if (i < bricks.length - 1 && bricks[i + 1]?.color !== "green") break; }
+    else { consecutiveRed++; if (i < bricks.length - 1 && bricks[i + 1]?.color !== "red") break; }
+  }
+  // Recalculate properly
+  consecutiveGreen = 0;
+  consecutiveRed = 0;
+  for (let i = bricks.length - 1; i >= 0; i--) {
+    if (bricks[i].color === lastBrick.color) {
+      if (lastBrick.color === "green") consecutiveGreen++;
+      else consecutiveRed++;
+    } else break;
+  }
+
+  const renkoUptrend = consecutiveGreen >= 3;
+  const renkoDowntrend = consecutiveRed >= 3;
+  if (!renkoUptrend && !renkoDowntrend) {
+    return { ...hold, atr, entryPrice: price, reason: `[Adeeb] No 3-brick Renko streak (G:${consecutiveGreen} R:${consecutiveRed}) — waiting` };
+  }
+
+  // ── STEP 4: Renko direction must agree with CPR bias ──
+  if (renkoUptrend && !isBullishBias) {
+    return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko UP but CPR bearish (price < BC ₹${bc.toFixed(0)}) — conflict, no trade` };
+  }
+  if (renkoDowntrend && !isBearishBias) {
+    return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko DOWN but CPR bullish (price > TC ₹${tc.toFixed(0)}) — conflict, no trade` };
+  }
+
+  // ── STEP 5: EMA Cloud (9/21) — price must have pulled back to cloud ──
+  const ema9arr = ema(closes, 9);
+  const ema21arr = ema(closes, 21);
+  if (ema9arr.length === 0 || ema21arr.length === 0) return { ...hold, atr, reason: "[Adeeb] EMA calc failed" };
+  const ema9 = ema9arr[ema9arr.length - 1];
+  const ema21 = ema21arr[ema21arr.length - 1];
+  const cloudTop = Math.max(ema9, ema21);
+  const cloudBottom = Math.min(ema9, ema21);
+
+  // Anti-chase: price must be within 0.3% of EMA cloud (pullback zone)
+  const distFromCloud = renkoUptrend
+    ? (price - cloudTop) / price
+    : (cloudBottom - price) / price;
+
+  if (renkoUptrend) {
+    // For BUY: price should be near or touching cloud from above (pullback)
+    // Cloud bullish = EMA9 > EMA21
+    if (ema9 < ema21) {
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko UP but EMA cloud bearish (EMA9 < EMA21) — conflict` };
+    }
+    // Price must be close to cloud (pullback) — not chasing far above
+    if (distFromCloud > 0.003) {
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% above cloud (max 0.3%) — too far, skip` };
+    }
+    // Price must be above cloud bottom (not broken below)
+    if (price < cloudBottom) {
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price below EMA cloud — trend broken, no BUY` };
+    }
+    // Bounce confirmation: current candle closes above cloud after touching it
+    const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
+    const touchedCloud = prevClose <= cloudTop * 1.001; // prev candle was near/at cloud
+    const bouncedUp = price > prevClose && price > cloudTop;
+    if (!touchedCloud && distFromCloud > 0.001) {
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Waiting for pullback to cloud (EMA9: ₹${ema9.toFixed(0)})` };
+    }
+
+    // ── ALL CONDITIONS MET: BUY ──
+    let confidence = 0.72; // base (above 70% min)
+    if (adx > 25) confidence += 0.05;
+    if (adx > 30) confidence += 0.03;
+    if (consecutiveGreen >= 4) confidence += 0.03;
+    // Crude Oil boost
+    if (crudeBiasChangePct < -1) confidence += 0.10; // Crude down = bullish for Nifty
+    // Volume boost
+    const volumes = candles.map(c => c.volume);
+    const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+    const lastVol = volumes[volumes.length - 1];
+    if (lastVol > avgVol * 1.5) confidence += 0.10;
+    confidence = Math.min(0.95, confidence);
+
+    const slPrice = cloudBottom - atr * 0.3; // SL below cloud
+    const targetPrice = price + atr * 2.5; // ~40% premium target equivalent
+    return {
+      direction: "BUY", confidence, entryPrice: price, slPrice, targetPrice, atr,
+      reason: `[Adeeb] BUY — ${consecutiveGreen}G Renko + CPR bullish (>TC ₹${tc.toFixed(0)}) + pullback to cloud (₹${cloudBottom.toFixed(0)}-₹${cloudTop.toFixed(0)}) + ADX(${adx.toFixed(0)})`,
+      layer: "Adeeb",
+    };
+  }
+
+  if (renkoDowntrend) {
+    // For SELL: price should be near or touching cloud from below (pullback/rally)
+    if (ema9 > ema21) {
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko DOWN but EMA cloud bullish (EMA9 > EMA21) — conflict` };
+    }
+    // Price must be close to cloud (rally back) — not chasing far below
+    if (distFromCloud > 0.003) {
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% below cloud (max 0.3%) — too far, skip` };
+    }
+    // Price must be below cloud top (not broken above)
+    if (price > cloudTop) {
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price above EMA cloud — trend broken, no SELL` };
+    }
+    // Bounce confirmation: current candle closes below cloud after touching it
+    const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
+    const touchedCloud = prevClose >= cloudBottom * 0.999;
+    const bouncedDown = price < prevClose && price < cloudBottom;
+    if (!touchedCloud && distFromCloud > 0.001) {
+      return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Waiting for rally to cloud (EMA21: ₹${ema21.toFixed(0)})` };
+    }
+
+    // ── ALL CONDITIONS MET: SELL ──
+    let confidence = 0.72;
+    if (adx > 25) confidence += 0.05;
+    if (adx > 30) confidence += 0.03;
+    if (consecutiveRed >= 4) confidence += 0.03;
+    // Crude Oil boost
+    if (crudeBiasChangePct > 1) confidence += 0.10; // Crude up = bearish for Nifty
+    // Volume boost
+    const volumes = candles.map(c => c.volume);
+    const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+    const lastVol = volumes[volumes.length - 1];
+    if (lastVol > avgVol * 1.5) confidence += 0.10;
+    confidence = Math.min(0.95, confidence);
+
+    const slPrice = cloudTop + atr * 0.3; // SL above cloud
+    const targetPrice = price - atr * 2.5;
+    return {
+      direction: "SELL", confidence, entryPrice: price, slPrice, targetPrice, atr,
+      reason: `[Adeeb] SELL — ${consecutiveRed}R Renko + CPR bearish (<BC ₹${bc.toFixed(0)}) + rally to cloud (₹${cloudBottom.toFixed(0)}-₹${cloudTop.toFixed(0)}) + ADX(${adx.toFixed(0)})`,
+      layer: "Adeeb",
+    };
+  }
+
+  return { ...hold, atr, entryPrice: price, reason: "[Adeeb] No valid setup" };
+}
+
+/**
+ * Adeeb exit check:
+ * 1. Opposite Renko brick forms → EXIT immediately
+ * 2. Price closes on wrong side of EMA cloud → EXIT
+ * 3. Max hold 20 minutes (checked in tick loop, not here)
+ */
+export function checkAdeebExit(candles: Candle[], tradeDirection: "BUY" | "SELL", atr: number): { shouldExit: boolean; reason: string } {
+  if (!candles || candles.length < 10 || atr <= 0) return { shouldExit: false, reason: "" };
+
+  const closes = candles.map(c => c.close);
+  const price = closes[closes.length - 1];
+
+  // EMA cloud check
+  const ema9arr = ema(closes, 9);
+  const ema21arr = ema(closes, 21);
+  if (ema9arr.length > 0 && ema21arr.length > 0) {
+    const ema9 = ema9arr[ema9arr.length - 1];
+    const ema21 = ema21arr[ema21arr.length - 1];
+    const cloudTop = Math.max(ema9, ema21);
+    const cloudBottom = Math.min(ema9, ema21);
+
+    if (tradeDirection === "BUY" && price < cloudBottom) {
+      return { shouldExit: true, reason: `Adeeb Exit — price below EMA cloud (₹${price.toFixed(0)} < ₹${cloudBottom.toFixed(0)})` };
+    }
+    if (tradeDirection === "SELL" && price > cloudTop) {
+      return { shouldExit: true, reason: `Adeeb Exit — price above EMA cloud (₹${price.toFixed(0)} > ₹${cloudTop.toFixed(0)})` };
+    }
+  }
+
+  // Opposite Renko brick check
+  const bricks = buildRenkoBricks(candles, atr);
+  if (bricks.length >= 1) {
+    const lastBrick = bricks[bricks.length - 1];
+    if (tradeDirection === "BUY" && lastBrick.color === "red") {
+      return { shouldExit: true, reason: `Adeeb Exit — opposite (red) Renko brick formed (close: ₹${lastBrick.close.toFixed(0)})` };
+    }
+    if (tradeDirection === "SELL" && lastBrick.color === "green") {
+      return { shouldExit: true, reason: `Adeeb Exit — opposite (green) Renko brick formed (close: ₹${lastBrick.close.toFixed(0)})` };
+    }
+  }
+
   return { shouldExit: false, reason: "" };
 }
 
