@@ -10,6 +10,7 @@ import { ENV } from "./_core/env";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
+import { getRecommendedLayers } from "../shared/backtestLayerMap";
 import { createHeartbeatJob, deleteHeartbeatJob } from "./_core/heartbeat";
 import {
   computeMarketRiskScore, getCachedRiskScore, getStoplossGuardState,
@@ -596,7 +597,7 @@ export const appRouter = router({
               isIndexOptions: input.isIndexOptions,
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
-              enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+              enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
              partial1Pct: input.partial1Pct,
              partial2Pct: input.partial2Pct,
              averagingEnabled: input.averagingEnabled,
@@ -2559,7 +2560,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions ?? false,
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(), stoppedAt: null, lastError: null,
-           enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+           enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
            partial1Pct: input.partial1Pct,
            partial2Pct: input.partial2Pct,
            averagingEnabled: input.averagingEnabled ?? true,
@@ -2586,7 +2587,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions ?? false,
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(),
-            enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+            enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
             partial1Pct: input.partial1Pct,
             partial2Pct: input.partial2Pct,
             averagingEnabled: input.averagingEnabled ?? true,

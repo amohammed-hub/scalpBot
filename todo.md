@@ -1436,3 +1436,8 @@
 - [x] CRITICAL BUG 4: Anti-duplicate broken — BankNifty 57800 CE and 57900 CE both taken by Bot 1 AND Bot 2 at exact same time. Cross-bot guard not working
 - [x] CRITICAL BUG 5: Position sizing — 58 lots on ₹13 option is gambling. Hard cap MAX 5 LOTS per trade, no exceptions
 - [x] CRITICAL BUG 6: Red Bar minimum — 2-brick signals at 55% confidence are noise. Require 3+ bricks (65% confidence) for entry
+- [x] BACKTEST MATRIX: 6 instruments × 10 strategies × 6 months (Jan-Jul 2026) using Upstox 1-min historical API
+- [x] BACKTEST RESULTS: VWAPReversion #1 on MCX (PF 2.97-3.85), TrikalStrategy #2 (PF 2.17-2.73), ORB/Breakout NEGATIVE everywhere
+- [x] AUTO-ASSIGN: Created shared/backtestLayerMap.ts — instrument-specific profitable layer mapping
+- [x] AUTO-ASSIGN: Bot start now auto-assigns backtest-proven layers when user doesn't specify enabledLayers
+- [x] DEFAULT LAYERS: Dashboard defaults updated to only backtest-proven strategies (removed Breakout, ORB)

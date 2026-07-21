@@ -262,7 +262,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
-      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "RedBarTheory", "TrikalStrategy", "Adeeb", "OIFlow", "MaxPainGravity"],
+      enabledLayers: ["Pattern", "Trend", "Momentum", "MACD_BB", "VWAPReversion", "RedBarTheory", "TrikalStrategy", "Adeeb"],
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",

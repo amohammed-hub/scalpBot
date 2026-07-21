@@ -1,0 +1,683 @@
+{
+  "results": {
+    "NIFTY": {
+      "Breakout": {
+        "totalTrades": 0,
+        "wins": 0,
+        "losses": 0,
+        "totalPnl": 0,
+        "winRate": 0,
+        "avgPnl": 0,
+        "maxDrawdown": 0,
+        "profitFactor": 0
+      },
+      "Pattern": {
+        "totalTrades": 3336,
+        "wins": 1328,
+        "losses": 2008,
+        "totalPnl": 246527,
+        "winRate": 39.8,
+        "avgPnl": 74,
+        "maxDrawdown": 33706,
+        "profitFactor": 1.12
+      },
+      "Trend": {
+        "totalTrades": 3052,
+        "wins": 1020,
+        "losses": 2032,
+        "totalPnl": 32500,
+        "winRate": 33.4,
+        "avgPnl": 11,
+        "maxDrawdown": 57320,
+        "profitFactor": 1.02
+      },
+      "Momentum": {
+        "totalTrades": 2362,
+        "wins": 936,
+        "losses": 1426,
+        "totalPnl": 150972,
+        "winRate": 39.6,
+        "avgPnl": 64,
+        "maxDrawdown": 40437,
+        "profitFactor": 1.11
+      },
+      "MACD_BB": {
+        "totalTrades": 1456,
+        "wins": 542,
+        "losses": 914,
+        "totalPnl": -8837,
+        "winRate": 37.2,
+        "avgPnl": -6,
+        "maxDrawdown": 55038,
+        "profitFactor": 0.99
+      },
+      "ORB": {
+        "totalTrades": 116,
+        "wins": 56,
+        "losses": 60,
+        "totalPnl": -4806,
+        "winRate": 48.3,
+        "avgPnl": -41,
+        "maxDrawdown": 8471,
+        "profitFactor": 0.85
+      },
+      "VWAPReversion": {
+        "totalTrades": 3028,
+        "wins": 772,
+        "losses": 2256,
+        "totalPnl": 90558,
+        "winRate": 25.5,
+        "avgPnl": 30,
+        "maxDrawdown": 62173,
+        "profitFactor": 1.04
+      },
+      "RedBarTheory": {
+        "totalTrades": 3235,
+        "wins": 1119,
+        "losses": 2116,
+        "totalPnl": 134516,
+        "winRate": 34.6,
+        "avgPnl": 42,
+        "maxDrawdown": 52273,
+        "profitFactor": 1.06
+      },
+      "TrikalStrategy": {
+        "totalTrades": 4199,
+        "wins": 1590,
+        "losses": 2609,
+        "totalPnl": 66296,
+        "winRate": 37.9,
+        "avgPnl": 16,
+        "maxDrawdown": 73157,
+        "profitFactor": 1.03
+      },
+      "Adeeb": {
+        "totalTrades": 126,
+        "wins": 89,
+        "losses": 37,
+        "totalPnl": 11733,
+        "winRate": 70.6,
+        "avgPnl": 93,
+        "maxDrawdown": 6918,
+        "profitFactor": 1.57
+      }
+    },
+    "BANKNIFTY": {
+      "Breakout": {
+        "totalTrades": 0,
+        "wins": 0,
+        "losses": 0,
+        "totalPnl": 0,
+        "winRate": 0,
+        "avgPnl": 0,
+        "maxDrawdown": 0,
+        "profitFactor": 0
+      },
+      "Pattern": {
+        "totalTrades": 3209,
+        "wins": 1192,
+        "losses": 2017,
+        "totalPnl": -12184,
+        "winRate": 37.1,
+        "avgPnl": -4,
+        "maxDrawdown": 110499,
+        "profitFactor": 0.99
+      },
+      "Trend": {
+        "totalTrades": 2972,
+        "wins": 1007,
+        "losses": 1965,
+        "totalPnl": 34730,
+        "winRate": 33.9,
+        "avgPnl": 12,
+        "maxDrawdown": 53272,
+        "profitFactor": 1.02
+      },
+      "Momentum": {
+        "totalTrades": 2311,
+        "wins": 903,
+        "losses": 1408,
+        "totalPnl": 96900,
+        "winRate": 39.1,
+        "avgPnl": 42,
+        "maxDrawdown": 31743,
+        "profitFactor": 1.07
+      },
+      "MACD_BB": {
+        "totalTrades": 1433,
+        "wins": 542,
+        "losses": 891,
+        "totalPnl": 22881,
+        "winRate": 37.8,
+        "avgPnl": 16,
+        "maxDrawdown": 44149,
+        "profitFactor": 1.03
+      },
+      "ORB": {
+        "totalTrades": 97,
+        "wins": 45,
+        "losses": 52,
+        "totalPnl": -836,
+        "winRate": 46.4,
+        "avgPnl": -9,
+        "maxDrawdown": 5418,
+        "profitFactor": 0.96
+      },
+      "VWAPReversion": {
+        "totalTrades": 2964,
+        "wins": 773,
+        "losses": 2191,
+        "totalPnl": 46336,
+        "winRate": 26.1,
+        "avgPnl": 16,
+        "maxDrawdown": 172555,
+        "profitFactor": 1.02
+      },
+      "RedBarTheory": {
+        "totalTrades": 3059,
+        "wins": 1051,
+        "losses": 2008,
+        "totalPnl": 80255,
+        "winRate": 34.4,
+        "avgPnl": 26,
+        "maxDrawdown": 68532,
+        "profitFactor": 1.04
+      },
+      "TrikalStrategy": {
+        "totalTrades": 4054,
+        "wins": 1545,
+        "losses": 2509,
+        "totalPnl": 67923,
+        "winRate": 38.1,
+        "avgPnl": 17,
+        "maxDrawdown": 62651,
+        "profitFactor": 1.03
+      },
+      "Adeeb": {
+        "totalTrades": 208,
+        "wins": 118,
+        "losses": 90,
+        "totalPnl": -4701,
+        "winRate": 56.7,
+        "avgPnl": -23,
+        "maxDrawdown": 11665,
+        "profitFactor": 0.94
+      }
+    },
+    "FINNIFTY": {
+      "Breakout": {
+        "totalTrades": 0,
+        "wins": 0,
+        "losses": 0,
+        "totalPnl": 0,
+        "winRate": 0,
+        "avgPnl": 0,
+        "maxDrawdown": 0,
+        "profitFactor": 0
+      },
+      "Pattern": {
+        "totalTrades": 3267,
+        "wins": 1267,
+        "losses": 2000,
+        "totalPnl": 158668,
+        "winRate": 38.8,
+        "avgPnl": 49,
+        "maxDrawdown": 48181,
+        "profitFactor": 1.08
+      },
+      "Trend": {
+        "totalTrades": 3023,
+        "wins": 1025,
+        "losses": 1998,
+        "totalPnl": 62443,
+        "winRate": 33.9,
+        "avgPnl": 21,
+        "maxDrawdown": 60147,
+        "profitFactor": 1.03
+      },
+      "Momentum": {
+        "totalTrades": 2335,
+        "wins": 871,
+        "losses": 1464,
+        "totalPnl": 6006,
+        "winRate": 37.3,
+        "avgPnl": 3,
+        "maxDrawdown": 51782,
+        "profitFactor": 1
+      },
+      "MACD_BB": {
+        "totalTrades": 1466,
+        "wins": 575,
+        "losses": 891,
+        "totalPnl": 61527,
+        "winRate": 39.2,
+        "avgPnl": 42,
+        "maxDrawdown": 26021,
+        "profitFactor": 1.07
+      },
+      "ORB": {
+        "totalTrades": 108,
+        "wins": 47,
+        "losses": 61,
+        "totalPnl": -9688,
+        "winRate": 43.5,
+        "avgPnl": -90,
+        "maxDrawdown": 13084,
+        "profitFactor": 0.71
+      },
+      "VWAPReversion": {
+        "totalTrades": 3014,
+        "wins": 767,
+        "losses": 2247,
+        "totalPnl": 49911,
+        "winRate": 25.4,
+        "avgPnl": 17,
+        "maxDrawdown": 107135,
+        "profitFactor": 1.02
+      },
+      "RedBarTheory": {
+        "totalTrades": 3146,
+        "wins": 1099,
+        "losses": 2047,
+        "totalPnl": 150395,
+        "winRate": 34.9,
+        "avgPnl": 48,
+        "maxDrawdown": 60879,
+        "profitFactor": 1.07
+      },
+      "TrikalStrategy": {
+        "totalTrades": 4089,
+        "wins": 1595,
+        "losses": 2494,
+        "totalPnl": 164075,
+        "winRate": 39,
+        "avgPnl": 40,
+        "maxDrawdown": 61454,
+        "profitFactor": 1.07
+      },
+      "Adeeb": {
+        "totalTrades": 175,
+        "wins": 100,
+        "losses": 75,
+        "totalPnl": 5432,
+        "winRate": 57.1,
+        "avgPnl": 31,
+        "maxDrawdown": 9051,
+        "profitFactor": 1.09
+      }
+    },
+    "GOLD": {
+      "Breakout": {
+        "totalTrades": 0,
+        "wins": 0,
+        "losses": 0,
+        "totalPnl": 0,
+        "winRate": 0,
+        "avgPnl": 0,
+        "maxDrawdown": 0,
+        "profitFactor": 0
+      },
+      "Pattern": {
+        "totalTrades": 1784,
+        "wins": 698,
+        "losses": 1086,
+        "totalPnl": 584569,
+        "winRate": 39.1,
+        "avgPnl": 328,
+        "maxDrawdown": 27510,
+        "profitFactor": 1.61
+      },
+      "Trend": {
+        "totalTrades": 3925,
+        "wins": 1225,
+        "losses": 2700,
+        "totalPnl": 3140801,
+        "winRate": 31.2,
+        "avgPnl": 800,
+        "maxDrawdown": 62641,
+        "profitFactor": 2.34
+      },
+      "Momentum": {
+        "totalTrades": 4815,
+        "wins": 1780,
+        "losses": 3035,
+        "totalPnl": 2794892,
+        "winRate": 37,
+        "avgPnl": 580,
+        "maxDrawdown": 58825,
+        "profitFactor": 2.07
+      },
+      "MACD_BB": {
+        "totalTrades": 2623,
+        "wins": 1231,
+        "losses": 1392,
+        "totalPnl": 1357990,
+        "winRate": 46.9,
+        "avgPnl": 518,
+        "maxDrawdown": 25753,
+        "profitFactor": 2.17
+      },
+      "ORB": {
+        "totalTrades": 111,
+        "wins": 60,
+        "losses": 51,
+        "totalPnl": -13345,
+        "winRate": 54.1,
+        "avgPnl": -120,
+        "maxDrawdown": 17945,
+        "profitFactor": 0.6
+      },
+      "VWAPReversion": {
+        "totalTrades": 5320,
+        "wins": 1864,
+        "losses": 3456,
+        "totalPnl": 8203368,
+        "winRate": 35,
+        "avgPnl": 1542,
+        "maxDrawdown": 21859,
+        "profitFactor": 3.85
+      },
+      "RedBarTheory": {
+        "totalTrades": 8561,
+        "wins": 2834,
+        "losses": 5727,
+        "totalPnl": 5798568,
+        "winRate": 33.1,
+        "avgPnl": 677,
+        "maxDrawdown": 35899,
+        "profitFactor": 2.18
+      },
+      "TrikalStrategy": {
+        "totalTrades": 8449,
+        "wins": 3113,
+        "losses": 5336,
+        "totalPnl": 8020670,
+        "winRate": 36.8,
+        "avgPnl": 949,
+        "maxDrawdown": 45148,
+        "profitFactor": 2.73
+      },
+      "Adeeb": {
+        "totalTrades": 185,
+        "wins": 125,
+        "losses": 60,
+        "totalPnl": 39843,
+        "winRate": 67.6,
+        "avgPnl": 215,
+        "maxDrawdown": 5570,
+        "profitFactor": 2.37
+      }
+    },
+    "SILVER": {
+      "Breakout": {
+        "totalTrades": 0,
+        "wins": 0,
+        "losses": 0,
+        "totalPnl": 0,
+        "winRate": 0,
+        "avgPnl": 0,
+        "maxDrawdown": 0,
+        "profitFactor": 0
+      },
+      "Pattern": {
+        "totalTrades": 1328,
+        "wins": 546,
+        "losses": 782,
+        "totalPnl": 1116162,
+        "winRate": 41.1,
+        "avgPnl": 840,
+        "maxDrawdown": 17045,
+        "profitFactor": 2.69
+      },
+      "Trend": {
+        "totalTrades": 2514,
+        "wins": 880,
+        "losses": 1634,
+        "totalPnl": 816305,
+        "winRate": 35,
+        "avgPnl": 325,
+        "maxDrawdown": 31555,
+        "profitFactor": 1.6
+      },
+      "Momentum": {
+        "totalTrades": 2790,
+        "wins": 1172,
+        "losses": 1618,
+        "totalPnl": 1289581,
+        "winRate": 42,
+        "avgPnl": 462,
+        "maxDrawdown": 25302,
+        "profitFactor": 1.94
+      },
+      "MACD_BB": {
+        "totalTrades": 1605,
+        "wins": 746,
+        "losses": 859,
+        "totalPnl": 882584,
+        "winRate": 46.5,
+        "avgPnl": 550,
+        "maxDrawdown": 16927,
+        "profitFactor": 2.25
+      },
+      "ORB": {
+        "totalTrades": 98,
+        "wins": 66,
+        "losses": 32,
+        "totalPnl": -8330,
+        "winRate": 67.3,
+        "avgPnl": -85,
+        "maxDrawdown": 24824,
+        "profitFactor": 0.8
+      },
+      "VWAPReversion": {
+        "totalTrades": 3245,
+        "wins": 954,
+        "losses": 2291,
+        "totalPnl": 5120134,
+        "winRate": 29.4,
+        "avgPnl": 1578,
+        "maxDrawdown": 28731,
+        "profitFactor": 3.78
+      },
+      "RedBarTheory": {
+        "totalTrades": 5393,
+        "wins": 2117,
+        "losses": 3276,
+        "totalPnl": 3270816,
+        "winRate": 39.3,
+        "avgPnl": 606,
+        "maxDrawdown": 33151,
+        "profitFactor": 2.21
+      },
+      "TrikalStrategy": {
+        "totalTrades": 5495,
+        "wins": 2285,
+        "losses": 3210,
+        "totalPnl": 3124460,
+        "winRate": 41.6,
+        "avgPnl": 569,
+        "maxDrawdown": 27968,
+        "profitFactor": 2.17
+      },
+      "Adeeb": {
+        "totalTrades": 118,
+        "wins": 82,
+        "losses": 36,
+        "totalPnl": -6915,
+        "winRate": 69.5,
+        "avgPnl": -59,
+        "maxDrawdown": 19899,
+        "profitFactor": 0.87
+      }
+    },
+    "CRUDEOIL": {
+      "Breakout": {
+        "totalTrades": 0,
+        "wins": 0,
+        "losses": 0,
+        "totalPnl": 0,
+        "winRate": 0,
+        "avgPnl": 0,
+        "maxDrawdown": 0,
+        "profitFactor": 0
+      },
+      "Pattern": {
+        "totalTrades": 686,
+        "wins": 276,
+        "losses": 410,
+        "totalPnl": 449642,
+        "winRate": 40.2,
+        "avgPnl": 655,
+        "maxDrawdown": 32853,
+        "profitFactor": 2.15
+      },
+      "Trend": {
+        "totalTrades": 2148,
+        "wins": 724,
+        "losses": 1424,
+        "totalPnl": 567543,
+        "winRate": 33.7,
+        "avgPnl": 264,
+        "maxDrawdown": 30588,
+        "profitFactor": 1.44
+      },
+      "Momentum": {
+        "totalTrades": 2287,
+        "wins": 900,
+        "losses": 1387,
+        "totalPnl": 916109,
+        "winRate": 39.4,
+        "avgPnl": 401,
+        "maxDrawdown": 36311,
+        "profitFactor": 1.74
+      },
+      "MACD_BB": {
+        "totalTrades": 1236,
+        "wins": 543,
+        "losses": 693,
+        "totalPnl": 796495,
+        "winRate": 43.9,
+        "avgPnl": 644,
+        "maxDrawdown": 36198,
+        "profitFactor": 2.3
+      },
+      "ORB": {
+        "totalTrades": 52,
+        "wins": 34,
+        "losses": 18,
+        "totalPnl": 4218,
+        "winRate": 65.4,
+        "avgPnl": 81,
+        "maxDrawdown": 5114,
+        "profitFactor": 1.25
+      },
+      "VWAPReversion": {
+        "totalTrades": 2788,
+        "wins": 861,
+        "losses": 1927,
+        "totalPnl": 3288227,
+        "winRate": 30.9,
+        "avgPnl": 1179,
+        "maxDrawdown": 45160,
+        "profitFactor": 2.97
+      },
+      "RedBarTheory": {
+        "totalTrades": 4316,
+        "wins": 1559,
+        "losses": 2757,
+        "totalPnl": 1509078,
+        "winRate": 36.1,
+        "avgPnl": 350,
+        "maxDrawdown": 25244,
+        "profitFactor": 1.61
+      },
+      "TrikalStrategy": {
+        "totalTrades": 4382,
+        "wins": 1746,
+        "losses": 2636,
+        "totalPnl": 1858061,
+        "winRate": 39.8,
+        "avgPnl": 424,
+        "maxDrawdown": 28850,
+        "profitFactor": 1.79
+      },
+      "Adeeb": {
+        "totalTrades": 68,
+        "wins": 46,
+        "losses": 22,
+        "totalPnl": -6277,
+        "winRate": 67.6,
+        "avgPnl": -92,
+        "maxDrawdown": 9087,
+        "profitFactor": 0.46
+      }
+    }
+  },
+  "profitableCombos": {
+    "NIFTY": [
+      {
+        "strategy": "Adeeb",
+        "totalTrades": 126,
+        "wins": 89,
+        "losses": 37,
+        "totalPnl": 11733,
+        "winRate": 70.6,
+        "avgPnl": 93,
+        "maxDrawdown": 6918,
+        "profitFactor": 1.57
+      }
+    ],
+    "BANKNIFTY": [],
+    "FINNIFTY": [],
+    "GOLD": [
+      {
+        "strategy": "Adeeb",
+        "totalTrades": 185,
+        "wins": 125,
+        "losses": 60,
+        "totalPnl": 39843,
+        "winRate": 67.6,
+        "avgPnl": 215,
+        "maxDrawdown": 5570,
+        "profitFactor": 2.37
+      }
+    ],
+    "SILVER": [],
+    "CRUDEOIL": [
+      {
+        "strategy": "ORB",
+        "totalTrades": 52,
+        "wins": 34,
+        "losses": 18,
+        "totalPnl": 4218,
+        "winRate": 65.4,
+        "avgPnl": 81,
+        "maxDrawdown": 5114,
+        "profitFactor": 1.25
+      }
+    ]
+  },
+  "meta": {
+    "period": "2026-01-01 to 2026-07-21",
+    "instruments": [
+      "NIFTY",
+      "BANKNIFTY",
+      "FINNIFTY",
+      "GOLD",
+      "SILVER",
+      "CRUDEOIL"
+    ],
+    "strategies": [
+      "Breakout",
+      "Pattern",
+      "Trend",
+      "Momentum",
+      "MACD_BB",
+      "ORB",
+      "VWAPReversion",
+      "RedBarTheory",
+      "TrikalStrategy",
+      "Adeeb"
+    ]
+  }
+}
