@@ -1365,3 +1365,10 @@
 - [ ] Show toast on kicked device: "Logged out — session active on another device"
 - [ ] Show on new device: "You've been logged in. Previous session ended."
 - [ ] Track device by: session token + user agent fingerprint
+- [ ] Track device by: session token + user agent fingerprint
+
+## Adeeb Strategy — Bank Nifty 15-min Optimization
+- [x] Backtest Bank Nifty 15-min: PF 1.50, WR 54.2%, +1388 pts, 59 trades
+- [x] Updated botEngine.ts with optimized params: 0.5×ATR bricks, 2-brick min, ADX 22/27, target 1.8×ATR, trailing @0.8ATR
+- [x] Removed EMA cloud break exit (0% WR in backtest), kept only 2-brick reversal exit
+- [x] MCX backtest: Crude PF 0.82, Gold PF 0.86, NatGas PF 0.66, Silver PF 0.68 — NOT suitable for commodities
