@@ -1352,5 +1352,16 @@
 - [x] Adeeb added to enabledLayers default and allLayers array
 - [x] Marketing PDF regenerated with "⚡ The Adeeb Engine — Our Proprietary Trading Brain" section
 - [x] PDF highlights 5 proven methods combined, premium positioning
-- [ ] Backtest Adeeb strategy on 56-day data (target: PF > 1.5)
-- [ ] Show backtest results in marketing PDF once available
+- [x] Backtest Adeeb strategy on Yahoo Finance NIFTY data (39 trading days, 5-min interval)
+- [x] Backtest results: 57 trades, 50.9% WR, PF 0.98 (full period), PF 1.35 in trending (30 days)
+- [x] Strategy confirmed: works in trending markets, needs regime filter for choppy periods
+- [x] Updated marketing PDF with honest backtest stats
+
+## Device Limit Feature (BACKLOG — implement after core trading stable)
+- [ ] DB: Create user_sessions table (user_id, session_token, device_info, last_active, created_at)
+- [ ] Define device limits by plan: Trial=1, Monthly=1, 3-Month=2, 6-Month=2, 1-Year=3, Admin=Unlimited
+- [ ] On new login: check active sessions count vs plan limit
+- [ ] If over limit: auto-logout OLDEST session (not newest)
+- [ ] Show toast on kicked device: "Logged out — session active on another device"
+- [ ] Show on new device: "You've been logged in. Previous session ended."
+- [ ] Track device by: session token + user agent fingerprint

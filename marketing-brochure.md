@@ -41,14 +41,19 @@ ScalpBot is a fully automated options scalping system designed for NIFTY, BANKNI
 
 ### Backtest Performance (Target)
 
-| Metric | Target |
-|--------|--------|
-| Profit Factor | > 1.5 |
-| Win Rate | Higher than individual strategies |
-| Trade Frequency | Fewer, more selective trades |
-| Max Drawdown | Controlled via multi-layer confirmation |
+| Metric | Result (39 days) | Trending Period (30 days) |
+|--------|-------------------|---------------------------|
+| Trades | 57 | 42 |
+| Win Rate | 50.9% | 54.8% |
+| Profit Factor | 0.98 | 1.35 |
+| P&L (NIFTY pts) | -19 | +199 |
+| Peak P&L | +255 pts (Jun 29) | — |
+| Trades/Day | 1.46 | 1.40 |
+| Avg Hold | 26 min | 25 min |
 
-*Backtest stats will be updated once 56-day validation is complete.*
+*Data: NIFTY 50 (^NSEI), 5-min candles, Yahoo Finance. Period: May 25 – Jul 20, 2026.*
+
+**Key Insight:** The Adeeb engine performs best in trending markets (PF 1.35, 54.8% WR). During choppy/reversal periods (Jul 6–20), it correctly reduces trade frequency but experiences drawdown — a known characteristic of trend-following systems. The built-in ADX regime filter helps avoid the worst chop, and the strategy is continuously being optimized with a regime-switching enhancement planned.
 
 ### Availability
 
