@@ -4651,7 +4651,8 @@ async function tick(
   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
   // 1. StoplossGuard: pause after 3 consecutive SLs in last 20 trades (checked globally)
   const slGuard = getStoplossGuardState(state.sessionToken);
-  if (slGuard.isPaused) {
+  if (slGuard.isPaused && !state.dailyLossAcknowledged && !state.unlimitedTrades) {
+    // Only block if user hasn't manually restarted (acknowledged) and isn't admin with unlimited trades
     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: slGuard.reason ?? "StoplossGuard active", layer: "None" };
     return;
   }
@@ -4659,8 +4660,9 @@ async function tick(
   const baseToken = state.sessionToken.replace(/-slot\d+$/, "");
   const portfolioBots = getAllRunningBotsForSession(baseToken);
   const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct, baseToken);
-  if (ddCheck.halted && !state.openTrade) {
-    // Never pause — just block new trade entries. Bot continues monitoring & managing open trades.
+  if (ddCheck.halted && !state.openTrade && !state.dailyLossAcknowledged && !state.unlimitedTrades) {
+    // Only block if user hasn't manually restarted (acknowledged) and isn't admin with unlimited trades.
+    // When user explicitly restarts after loss, they've accepted the risk — don't block again.
     if ((state.tickCount ?? 0) % 20 === 1) {
       console.warn(`[tick] ⚠ Portfolio drawdown active — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} — blocking new trades only`);
     }
@@ -4998,6 +5000,12 @@ async function tick(
   // ── P2: Underlying-Level Cooldown (any direction) ───────────────────────────
   // After 2+ consecutive SLs on this underlying (regardless of CE/PE direction), block for 15 min
   if (state.consecutiveUnderlyingSLs >= 2 && state.lastUnderlyingSLAt) {
+    // Skip cooldown if user manually restarted (acknowledged losses) or has unlimited trades
+    if (state.dailyLossAcknowledged || state.unlimitedTrades) {
+      // User explicitly restarted — clear the cooldown and proceed
+      state.consecutiveUnderlyingSLs = 0;
+      state.lastUnderlyingSLAt = null;
+    } else {
     const elapsedSinceUnderlyingSL = Date.now() - state.lastUnderlyingSLAt;
     if (elapsedSinceUnderlyingSL < 900_000) { // 15 minutes
       const remainMin = Math.ceil((900_000 - elapsedSinceUnderlyingSL) / 60000);
@@ -5009,13 +5017,15 @@ async function tick(
       state.consecutiveUnderlyingSLs = 0;
       state.lastUnderlyingSLAt = null;
     }
+    }
   }
   // ── P1: Direction-Aware Cooldown ─────────────────────────────────────────────
   // After SL, penalize same-direction signals:
   // - Within 3 minutes: BLOCK same direction entirely (market proved you wrong)
   // - 3-5 minutes: require 75% confidence for same direction (higher bar)
   // - After 2+ consecutive same-direction SLs: BLOCK that direction for 10 minutes
-  if (state.lastSlExitAt && state.lastSlExitDirection) {
+  if (state.lastSlExitAt && state.lastSlExitDirection && !state.dailyLossAcknowledged && !state.unlimitedTrades) {
+    // Skip P1 cooldown if user manually restarted (acknowledged) or has unlimited trades
     const elapsedSinceSl = Date.now() - state.lastSlExitAt;
     const signalMatchesSLDirection = signal.direction === state.lastSlExitDirection;
 

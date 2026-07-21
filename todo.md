@@ -1400,3 +1400,9 @@
 - [x] BUG 1: SL Calculation — Root cause: SL tightening kicks in because qty is too large (58 lots × 30% SL = ₹549K loss >> risk budget). FIX: By capping lots to 10, the SL stays at entry×0.70 without tightening.
 - [x] BUG 2: Position Sizing — Added MAX LOT CAP of 10 lots per trade. Also raised premium floor from ₹10 to ₹30 for NSE options (blocks cheap ₹13 options entirely).
 - [x] BUG 3: Entry Timing — Added GLOBAL ANTI-CHASING GATE: if 3 consecutive same-direction candles moved >0.3%, signal is rejected (wait for pullback). This catches BoomingBulls, RedBarTheory, CPR which lacked individual anti-chase logic.
+
+## Fix: Bot Blocked After Manual Restart (July 21, 2026)
+- [x] FIX: StoplossGuard bypassed when user has `unlimitedTrades` (admin) or `dailyLossAcknowledged` (manual restart after loss)
+- [x] FIX: Portfolio MaxDrawdown Halt bypassed when user has `unlimitedTrades` or `dailyLossAcknowledged`
+- [x] FIX: P2 Underlying-Level Cooldown (15min after 2 SLs) — cleared immediately when user manually restarts or has unlimited trades
+- [x] FIX: P1 Direction-Aware Cooldown (3-10min same-direction block) — bypassed when user manually restarts or has unlimited trades
