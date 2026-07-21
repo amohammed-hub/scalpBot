@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RefreshCw, Zap, Target, TrendingUp, TrendingDown, Clock, AlertCircle, CheckCircle2 } from "lucide-react";
+import { RefreshCw, Zap, Target, TrendingUp, TrendingDown, Clock, AlertCircle, CheckCircle2, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
 const SESSION_KEY = "scalpbot_session";
@@ -156,7 +156,15 @@ export default function HeroZeroScanner() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-3 mb-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate("/dashboard")}
+              className="border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white h-8 w-8 p-0"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
             <span className="text-2xl">🦸</span>
             <h1 className="text-2xl font-bold text-white">Hero Zero Scanner</h1>
             <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/30 text-xs">
