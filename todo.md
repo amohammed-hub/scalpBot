@@ -1388,3 +1388,10 @@
 - [x] Root cause: Upstox API requires expiry_date parameter (was missing from URL)
 - [x] Fix: added expiry_date=current_week to option chain API URL
 - [x] Fix: corrected response parsing — Upstox returns one object per strike (not arrays of call/put)
+- [x] Fix: corrected response parsing — Upstox returns one object per strike (not arrays of call/put)
+- [x] Added back navigation button (ArrowLeft) to Hero Zero Scanner header
+
+## Hero Zero Scanner — Confidence Level Scoring
+- [x] Add comprehensive confidence scoring (0-100%) to each option candidate
+- [x] Score factors: premium sweet spot, OTM distance, delta range, OI/volume, IV, bid-ask spread
+- [x] Display confidence prominently in scanner table and detail panel

@@ -2828,24 +2828,87 @@ export const appRouter = router({
               strike_price?: number;
               underlying_key?: string;
               underlying_spot_price?: number;
-              call_options?: { instrument_key?: string; market_data?: { ltp?: number }; option_greeks?: { delta?: number } };
-              put_options?: { instrument_key?: string; market_data?: { ltp?: number }; option_greeks?: { delta?: number } };
+              call_options?: { instrument_key?: string; market_data?: { ltp?: number; volume?: number; oi?: number; bid_price?: number; ask_price?: number }; option_greeks?: { delta?: number; theta?: number; vega?: number; iv?: number } };
+              put_options?: { instrument_key?: string; market_data?: { ltp?: number; volume?: number; oi?: number; bid_price?: number; ask_price?: number }; option_greeks?: { delta?: number; theta?: number; vega?: number; iv?: number } };
             }>;
           };
           const chainData = chainJson.data;
           if (!chainData || chainData.length === 0) return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now() };
 
           const expiryDate = chainData[0]?.expiry ?? null;
+
+          // ── Confidence Scoring Function ──────────────────────────────────
+          // Computes a 0-100% confidence based on multiple factors
+          const computeConfidence = (opts: {
+            premium: number; distPct: number; delta: number;
+            iv: number; volume: number; oi: number;
+            bid: number; ask: number; pcr: number;
+            optionType: "CE" | "PE";
+          }): { confidence: number; factors: Record<string, number> } => {
+            const factors: Record<string, number> = {};
+
+            // 1. Premium Sweet Spot (0-25 pts) — ₹5-30 is ideal for hero zero
+            if (opts.premium >= 5 && opts.premium <= 30) factors.premiumSweet = 25;
+            else if (opts.premium >= 2 && opts.premium <= 50) factors.premiumSweet = 18;
+            else if (opts.premium >= 1 && opts.premium <= 70) factors.premiumSweet = 10;
+            else factors.premiumSweet = 3;
+
+            // 2. OTM Distance (0-20 pts) — 1-3% OTM is ideal
+            if (opts.distPct >= 1 && opts.distPct <= 3) factors.otmDistance = 20;
+            else if (opts.distPct >= 0.5 && opts.distPct <= 4) factors.otmDistance = 14;
+            else if (opts.distPct >= 0.3 && opts.distPct <= 5) factors.otmDistance = 8;
+            else factors.otmDistance = 3;
+
+            // 3. Delta Range (0-15 pts) — 0.08-0.20 is ideal for hero zero
+            if (opts.delta >= 0.08 && opts.delta <= 0.20) factors.deltaRange = 15;
+            else if (opts.delta >= 0.05 && opts.delta <= 0.30) factors.deltaRange = 10;
+            else if (opts.delta >= 0.02 && opts.delta <= 0.40) factors.deltaRange = 5;
+            else factors.deltaRange = 1;
+
+            // 4. IV (0-15 pts) — higher IV = more movement potential
+            if (opts.iv >= 30 && opts.iv <= 80) factors.ivScore = 15;
+            else if (opts.iv >= 20 && opts.iv <= 100) factors.ivScore = 10;
+            else if (opts.iv > 0) factors.ivScore = 5;
+            else factors.ivScore = 0;
+
+            // 5. Volume & OI (0-15 pts) — liquidity matters
+            const hasVolume = opts.volume > 0;
+            const hasOI = opts.oi > 0;
+            if (hasVolume && opts.volume >= 10000 && hasOI && opts.oi >= 50000) factors.liquidity = 15;
+            else if (hasVolume && opts.volume >= 1000 && hasOI && opts.oi >= 5000) factors.liquidity = 10;
+            else if (hasVolume || hasOI) factors.liquidity = 5;
+            else factors.liquidity = 0;
+
+            // 6. Bid-Ask Spread (0-10 pts) — tight spread = easier execution
+            if (opts.bid > 0 && opts.ask > 0) {
+              const spreadPct = (opts.ask - opts.bid) / opts.premium * 100;
+              if (spreadPct <= 5) factors.spreadScore = 10;
+              else if (spreadPct <= 15) factors.spreadScore = 7;
+              else if (spreadPct <= 30) factors.spreadScore = 4;
+              else factors.spreadScore = 1;
+            } else {
+              factors.spreadScore = 0;
+            }
+
+            const total = Object.values(factors).reduce((s, v) => s + v, 0);
+            // Max possible = 100
+            const confidence = Math.min(100, Math.round(total));
+            return { confidence, factors };
+          }
+
           const candidates: Array<{
             instrumentKey: string; strikePrice: number; optionType: "CE" | "PE";
             premium: number; strikeDistancePct: number; delta: number;
             isHeroZeroRange: boolean; target5x: number; cut50pct: number;
             directionScore: number; directionBias: "BUY" | "SELL" | "NEUTRAL";
+            confidence: number; confidenceLabel: string;
+            iv: number; volume: number; oi: number;
           }> = [];
 
           // Upstox returns one entry per strike, each with call_options and put_options objects
           for (const row of chainData) {
             const strike = row.strike_price ?? 0;
+            const pcr = row.pcr ?? 1;
             // Process call option
             if (row.call_options) {
               const premium = row.call_options.market_data?.ltp ?? 0;
@@ -2853,11 +2916,21 @@ export const appRouter = router({
                 const distPct = Math.abs(strike - underlyingPrice) / underlyingPrice * 100;
                 if (distPct >= 0.3 && distPct <= 6) {
                   const delta = Math.abs(row.call_options.option_greeks?.delta ?? 0);
+                  const iv = row.call_options.option_greeks?.iv ?? 0;
+                  const volume = row.call_options.market_data?.volume ?? 0;
+                  const oi = row.call_options.market_data?.oi ?? 0;
+                  const bid = row.call_options.market_data?.bid_price ?? 0;
+                  const ask = row.call_options.market_data?.ask_price ?? 0;
+
                   let dirScore = 0;
                   if (premium >= 2 && premium <= 50) dirScore += 3;
                   if (distPct >= 1 && distPct <= 4) dirScore += 2;
                   if (delta >= 0.05 && delta <= 0.25) dirScore += 2;
                   if (premium <= 20) dirScore += 1;
+
+                  const { confidence } = computeConfidence({ premium, distPct, delta, iv, volume, oi, bid, ask, pcr, optionType: "CE" });
+                  const confidenceLabel = confidence >= 75 ? "HIGH" : confidence >= 50 ? "MEDIUM" : confidence >= 30 ? "LOW" : "VERY LOW";
+
                   candidates.push({
                     instrumentKey: row.call_options.instrument_key ?? "",
                     strikePrice: strike,
@@ -2870,6 +2943,11 @@ export const appRouter = router({
                     cut50pct: Math.round(premium * 0.5 * 10) / 10,
                     directionScore: dirScore,
                     directionBias: "BUY",
+                    confidence,
+                    confidenceLabel,
+                    iv: Math.round(iv * 100) / 100,
+                    volume,
+                    oi,
                   });
                 }
               }
@@ -2881,11 +2959,21 @@ export const appRouter = router({
                 const distPct = Math.abs(strike - underlyingPrice) / underlyingPrice * 100;
                 if (distPct >= 0.3 && distPct <= 6) {
                   const delta = Math.abs(row.put_options.option_greeks?.delta ?? 0);
+                  const iv = row.put_options.option_greeks?.iv ?? 0;
+                  const volume = row.put_options.market_data?.volume ?? 0;
+                  const oi = row.put_options.market_data?.oi ?? 0;
+                  const bid = row.put_options.market_data?.bid_price ?? 0;
+                  const ask = row.put_options.market_data?.ask_price ?? 0;
+
                   let dirScore = 0;
                   if (premium >= 2 && premium <= 50) dirScore += 3;
                   if (distPct >= 1 && distPct <= 4) dirScore += 2;
                   if (delta >= 0.05 && delta <= 0.25) dirScore += 2;
                   if (premium <= 20) dirScore += 1;
+
+                  const { confidence } = computeConfidence({ premium, distPct, delta, iv, volume, oi, bid, ask, pcr, optionType: "PE" });
+                  const confidenceLabel = confidence >= 75 ? "HIGH" : confidence >= 50 ? "MEDIUM" : confidence >= 30 ? "LOW" : "VERY LOW";
+
                   candidates.push({
                     instrumentKey: row.put_options.instrument_key ?? "",
                     strikePrice: strike,
@@ -2898,14 +2986,19 @@ export const appRouter = router({
                     cut50pct: Math.round(premium * 0.5 * 10) / 10,
                     directionScore: dirScore,
                     directionBias: "SELL",
+                    confidence,
+                    confidenceLabel,
+                    iv: Math.round(iv * 100) / 100,
+                    volume,
+                    oi,
                   });
                 }
               }
             }
           }
 
-          // Sort by direction score descending, return top 10
-          candidates.sort((a, b) => b.directionScore - a.directionScore);
+          // Sort by confidence descending (primary), then direction score (secondary)
+          candidates.sort((a, b) => b.confidence - a.confidence || b.directionScore - a.directionScore);
           return { candidates: candidates.slice(0, 10), expiryDate, underlyingPrice, scanTime: Date.now() };
         } catch (e) {
           return { candidates: [], expiryDate: null, underlyingPrice, scanTime: Date.now(), error: String(e) };

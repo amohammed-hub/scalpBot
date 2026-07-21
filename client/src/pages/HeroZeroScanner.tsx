@@ -66,7 +66,33 @@ type Candidate = {
   cut50pct: number;
   directionScore: number;
   directionBias: "BUY" | "SELL" | "NEUTRAL";
+  confidence: number;
+  confidenceLabel: string;
+  iv: number;
+  volume: number;
+  oi: number;
 };
+
+function confidenceColor(conf: number): string {
+  if (conf >= 75) return "text-emerald-400";
+  if (conf >= 50) return "text-amber-300";
+  if (conf >= 30) return "text-orange-400";
+  return "text-red-400";
+}
+
+function confidenceBadgeClass(conf: number): string {
+  if (conf >= 75) return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+  if (conf >= 50) return "bg-amber-500/20 text-amber-300 border-amber-500/30";
+  if (conf >= 30) return "bg-orange-500/20 text-orange-400 border-orange-500/30";
+  return "bg-red-500/20 text-red-400 border-red-500/30";
+}
+
+function confidenceBarColor(conf: number): string {
+  if (conf >= 75) return "bg-emerald-500";
+  if (conf >= 50) return "bg-amber-400";
+  if (conf >= 30) return "bg-orange-500";
+  return "bg-red-500";
+}
 
 export default function HeroZeroScanner() {
   const sessionToken = getSessionToken();
@@ -278,10 +304,10 @@ export default function HeroZeroScanner() {
                     <th className="text-left px-4 py-2 text-slate-400 font-medium text-xs">Strike</th>
                     <th className="text-left px-4 py-2 text-slate-400 font-medium text-xs">Type</th>
                     <th className="text-right px-4 py-2 text-slate-400 font-medium text-xs">Premium</th>
+                    <th className="text-right px-4 py-2 text-slate-400 font-medium text-xs">Confidence</th>
                     <th className="text-right px-4 py-2 text-slate-400 font-medium text-xs">OTM%</th>
                     <th className="text-right px-4 py-2 text-slate-400 font-medium text-xs">5× Target</th>
                     <th className="text-right px-4 py-2 text-slate-400 font-medium text-xs">50% Cut</th>
-                    <th className="text-right px-4 py-2 text-slate-400 font-medium text-xs">Score</th>
                     <th className="text-right px-4 py-2 text-slate-400 font-medium text-xs">Action</th>
                   </tr>
                 </thead>
@@ -300,12 +326,17 @@ export default function HeroZeroScanner() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right font-mono font-bold text-amber-300">₹{c.premium.toFixed(1)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-16 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${confidenceBarColor(c.confidence)}`} style={{ width: `${c.confidence}%` }} />
+                          </div>
+                          <Badge className={`${confidenceBadgeClass(c.confidence)} text-xs font-mono`}>{c.confidence}%</Badge>
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-right text-slate-300">{c.strikeDistancePct.toFixed(2)}%</td>
                       <td className="px-4 py-3 text-right font-mono text-emerald-400 font-semibold">₹{c.target5x.toFixed(1)}</td>
                       <td className="px-4 py-3 text-right font-mono text-red-400">₹{c.cut50pct.toFixed(1)}</td>
-                      <td className="px-4 py-3 text-right">
-                        <Badge className={`${scoreBadge(c.directionScore)} text-xs`}>{c.directionScore}/8</Badge>
-                      </td>
                       <td className="px-4 py-3 text-right">
                         <Button
                           size="sm"
@@ -330,9 +361,21 @@ export default function HeroZeroScanner() {
       {selectedCandidate && (
         <Card className="bg-slate-900/60 border-purple-500/30 mb-4">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-purple-300 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4" />
-              Selected: {underlying} {selectedCandidate.strikePrice} {selectedCandidate.optionType}
+            <CardTitle className="text-sm text-purple-300 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4" />
+                Selected: {underlying} {selectedCandidate.strikePrice} {selectedCandidate.optionType}
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">Confidence:</span>
+                  <div className="w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all ${confidenceBarColor(selectedCandidate.confidence)}`} style={{ width: `${selectedCandidate.confidence}%` }} />
+                  </div>
+                  <span className={`text-sm font-bold font-mono ${confidenceColor(selectedCandidate.confidence)}`}>{selectedCandidate.confidence}%</span>
+                  <Badge className={`${confidenceBadgeClass(selectedCandidate.confidence)} text-xs`}>{selectedCandidate.confidenceLabel}</Badge>
+                </div>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -345,7 +388,11 @@ export default function HeroZeroScanner() {
                 { label: "50% Cut", value: `₹${selectedCandidate.cut50pct.toFixed(1)}`, color: "text-red-400" },
                 { label: "OTM Distance", value: `${selectedCandidate.strikeDistancePct.toFixed(2)}%`, color: "text-slate-300" },
                 { label: "Delta", value: selectedCandidate.delta.toFixed(3), color: "text-slate-300" },
+                { label: "IV", value: selectedCandidate.iv ? `${selectedCandidate.iv.toFixed(1)}%` : "—", color: "text-cyan-300" },
+                { label: "Volume", value: selectedCandidate.volume ? selectedCandidate.volume.toLocaleString("en-IN") : "—", color: "text-slate-300" },
+                { label: "Open Interest", value: selectedCandidate.oi ? selectedCandidate.oi.toLocaleString("en-IN") : "—", color: "text-slate-300" },
                 { label: "Direction Score", value: `${selectedCandidate.directionScore}/8`, color: scoreColor(selectedCandidate.directionScore) },
+                { label: "Confidence", value: `${selectedCandidate.confidence}%`, color: confidenceColor(selectedCandidate.confidence) },
               ].map(({ label, value, color }) => (
                 <div key={label} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/40">
                   <div className="text-xs text-slate-400 mb-1">{label}</div>
@@ -394,7 +441,7 @@ export default function HeroZeroScanner() {
                     <th className="text-left px-4 py-2 text-slate-500 font-medium text-xs">Type</th>
                     <th className="text-right px-4 py-2 text-slate-500 font-medium text-xs">Premium</th>
                     <th className="text-right px-4 py-2 text-slate-500 font-medium text-xs">OTM%</th>
-                    <th className="text-right px-4 py-2 text-slate-500 font-medium text-xs">Score</th>
+                    <th className="text-right px-4 py-2 text-slate-500 font-medium text-xs">Confidence</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -409,7 +456,7 @@ export default function HeroZeroScanner() {
                       <td className="px-4 py-2 text-right font-mono text-slate-400">₹{c.premium.toFixed(1)}</td>
                       <td className="px-4 py-2 text-right text-slate-500">{c.strikeDistancePct.toFixed(2)}%</td>
                       <td className="px-4 py-2 text-right">
-                        <Badge className={`${scoreBadge(c.directionScore)} text-xs`}>{c.directionScore}/8</Badge>
+                        <span className={`text-xs font-mono ${confidenceColor(c.confidence)}`}>{c.confidence}%</span>
                       </td>
                     </tr>
                   ))}
