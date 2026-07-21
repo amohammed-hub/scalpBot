@@ -1411,3 +1411,8 @@
 - [x] Root cause 1: Anti-chasing gate threshold 0.3% too tight for MCX (CrudeOil trends hard, 3 same-dir candles is normal). FIX: Raised to 1.0% for MCX instruments.
 - [x] Root cause 2: MCX Quick Launch was NOT passing useV2Engine=true — defaulted to V1 engine which has higher confidence bars and fewer strategies. FIX: Now passes useV2Engine=true.
 - [x] Root cause 3: MCX Quick Launch was NOT passing enabledLayers — so the V2 engine had no layers to fire. FIX: Now passes ["Supertrend", "Momentum", "VWAP Pull", "ORB", "Adeeb"].
+
+## NSE Trade Quality Improvement (July 21, 2026)
+- [x] FIX: nearPullback threshold widened from 0.15% to 0.4% (V1 + V2 engines) — 0.15% was only ₹36 window for NIFTY, forcing entries at exact inflection points
+- [x] FIX: Key-level penalty reduced from -10% to -5% (no longer blocks signals alone)
+- [x] FIX: Corrupted context-menu.tsx regenerated (8284 null bytes)

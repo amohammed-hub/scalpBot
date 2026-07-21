@@ -999,7 +999,7 @@ export function generateSignal(
     const emaDiffPct = Math.abs(e9 - e21) / e21;
     const distFromEma9 = Math.abs(price - e9) / e9;
     const distFromVwap = Math.abs(price - vwap) / vwap;
-    const nearPullback = distFromEma9 < 0.0015 || distFromVwap < 0.0015; // within 0.15% of EMA9 or VWAP
+    const nearPullback = distFromEma9 < 0.004 || distFromVwap < 0.004; // within 0.4% of EMA9 or VWAP (widened from 0.15%)
     if (e9 > e21 && price > vwap && (rsi > 55 || rsi < 40) && allow5mBuy && nearPullback) {
       direction = "BUY";
       confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 20) * 0.005);
@@ -1015,12 +1015,12 @@ export function generateSignal(
 
   // ── Layer 4: Momentum ─────────────────────────────────────────────────────
   // Momentum threshold raised from 0.03% to 0.1% — 0.03% is noise, not real momentum
-  // Pullback requirement: price must be within 0.15% of EMA9 or VWAP (don't chase)
+  // Pullback requirement: price must be within 0.4% of EMA9 or VWAP (widened from 0.15%)
   if (direction === "HOLD" && candles.length >= 5) {
     const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
     const distFromEma9_m = Math.abs(price - e9) / e9;
     const distFromVwap_m = Math.abs(price - vwap) / vwap;
-    const nearPullback_m = distFromEma9_m < 0.0015 || distFromVwap_m < 0.0015;
+    const nearPullback_m = distFromEma9_m < 0.004 || distFromVwap_m < 0.004;
     if (rsi > 55 && roc3 > 0.001 && price > vwap && allow5mBuy && nearPullback_m) {
       direction = "BUY";
       confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 55) * 0.005);
@@ -1680,7 +1680,9 @@ export function generateSignalV2(
       const emaDiffPct = Math.abs(e9 - e21) / e21;
       const distFromEma9 = Math.abs(price - e9) / e9;
       const distFromVwap = Math.abs(price - vwap) / vwap;
-      const nearPullback = distFromEma9 < 0.0015 || distFromVwap < 0.0015;
+      // Widened from 0.15% to 0.4% — 0.15% was too tight for NIFTY (only ₹36 window),
+      // forcing entries at exact inflection points that often reverse immediately.
+      const nearPullback = distFromEma9 < 0.004 || distFromVwap < 0.004;
       if (e9 > e21 && price > vwap && (rsi > 55 || rsi < 40) && nearPullback) {
         direction = "BUY";
         confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 20) * 0.005);
@@ -1699,7 +1701,8 @@ export function generateSignalV2(
       const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
       const distFromEma9_m = Math.abs(price - e9) / e9;
       const distFromVwap_m = Math.abs(price - vwap) / vwap;
-      const nearPullback_m = distFromEma9_m < 0.0015 || distFromVwap_m < 0.0015;
+      // Widened from 0.15% to 0.4% — same fix as Trend layer
+      const nearPullback_m = distFromEma9_m < 0.004 || distFromVwap_m < 0.004;
       if (rsi > 55 && roc3 > 0.001 && price > vwap && nearPullback_m) {
         direction = "BUY";
         confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 55) * 0.005);
@@ -1926,17 +1929,10 @@ export function generateSignalV2(
   // Filter 2: Price should be near a key level (entry at support/resistance = better R:R)
   const nearKey = isNearKeyLevelV2(price, vwap, prevDayHigh, prevDayLow, prevDayClose, 0.003);
   if (!nearKey) {
-    // Not near key level — reduce confidence by 10% (soft filter, not hard block)
-    confidence -= 0.10;
-    reason += ` | not-near-key-level:-10%`;
-    if (confidence < minConf) {
-      return {
-        direction: "HOLD", confidence, entryPrice: price,
-        slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
-        reason: `[V2] Rejected: not near key level | conf ${(confidence * 100).toFixed(0)}% < ${(minConf * 100).toFixed(0)}%`,
-        layer: "None", regimeV2: regime.regime,
-      };
-    }
+    // Not near key level — reduce confidence by 5% (soft penalty, never blocks alone)
+    // Reduced from 10% because MCX Evening doesn't use this filter at all and performs better.
+    confidence -= 0.05;
+    reason += ` | not-near-key-level:-5%`;
   }
 
   // Filter 3: R:R must be >= 1:2
