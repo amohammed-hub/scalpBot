@@ -5440,24 +5440,13 @@ async function tick(
   // Three pre-entry filters to eliminate trades with guaranteed slippage loss.
   // ══════════════════════════════════════════════════════════════════════════════════
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
-    // ── FIX 2: Minimum Premium Floor ─────────────────────────────────────────────
-    // Options with very low premium are illiquid — wide spreads eat you alive on exit.
-    // BUG FIX 3: MCX floor raised from ₹3 to ₹10. NaturalGas at ₹4-6 was passing — that's noise.
-    // NSE instruments (NIFTY, BANKNIFTY) use ₹30 floor — cheap options (₹10-₹29) amplify
-    // losses via massive qty and have poor liquidity. ₹13 option × 58 lots = guaranteed loss.
-    const premiumFloor = isMCX ? 10 : 30;
-    if (optionPremiumForSizing < premiumFloor) {
-      const reason = `Entry blocked — premium too low (₹${optionPremiumForSizing.toFixed(1)} < ₹${premiumFloor} floor). Illiquid option.`;
-      console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
-      emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
-      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Premium < ₹${premiumFloor}`);
-      logSignalToJournal({
-        sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
-        direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
-        entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-        atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `Premium < ₹${premiumFloor}`,
-      });
-      return;
+    // Premium floor REMOVED per user request — if signal has confidence and good R:R,
+    // low premium options are valid trades. The real guards are:
+    // 1. Disabled layer filter (Bug Fix 2) prevents unwanted strategies from firing
+    // 2. Risk-based position sizing limits max loss regardless of premium
+    // Log a warning for awareness but DO NOT block the trade.
+    if (optionPremiumForSizing < 10) {
+      emitActivity(state.sessionToken, "signal", `⚠ Low premium: ₹${optionPremiumForSizing.toFixed(1)} — proceeding (confidence ${(signal.confidence*100).toFixed(0)}%)`);
     }
 
     // ── FIX 3: Expiry-Day ATM Only (no OTM on 0DTE) ─────────────────────────────
@@ -5534,12 +5523,10 @@ async function tick(
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
     const maxQtyByCapital = Math.floor(state.capital / optionPremiumForSizing / lotSize) * lotSize;
-    // ── MAX LOT CAP: Never buy more than 10 lots per trade ──────────────────
-    // Prevents catastrophic losses from cheap options (e.g., ₹13 × 3770 qty = ₹49K all-in)
-    // BUG FIX 5: Hard cap at 5 lots. No exceptions.
-    const MAX_LOTS_PER_TRADE = 5;
-    const maxQtyByLotCap = MAX_LOTS_PER_TRADE * lotSize;
-    const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital, maxQtyByLotCap);
+    // MAX LOT CAP REMOVED per user request — risk-based sizing formula handles quantity.
+    // The formula: qty = riskAmount / (premium × 0.30) already limits max loss.
+    // Capital cap still applies (can't buy more than capital allows).
+    const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital);
     
     if (riskBasedQty < lotSize) {
       // Even 1 lot exceeds risk budget — still allow 1 lot if capital permits
@@ -5556,10 +5543,6 @@ async function tick(
       quantity = riskBasedQty;
     }
     emitActivity(state.sessionToken, "signal", `📐 Position size: ${quantity} qty (${quantity/lotSize} lots) | Risk: ₹${(quantity * slDist).toFixed(0)} ≤ ₹${riskAmount.toFixed(0)} budget | SL: ₹${(optionPremiumForSizing - slDist).toFixed(2)} (30% below ₹${optionPremiumForSizing.toFixed(2)})`);
-    // Log if lot cap was the binding constraint
-    if (quantity >= maxQtyByLotCap && rawQtyByRisk > maxQtyByLotCap) {
-      emitActivity(state.sessionToken, "signal", `⚠ MAX LOT CAP applied: capped at ${MAX_LOTS_PER_TRADE} lots (risk formula wanted ${Math.floor(rawQtyByRisk/lotSize)} lots)`);
-    }
   } else {
     const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
     const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
