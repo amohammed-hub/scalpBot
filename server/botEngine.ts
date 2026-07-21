@@ -18,6 +18,8 @@
 import axios from "axios";
 import { emitActivity } from "./activityLog";
 import { getNseIndexLotSize } from "../shared/lotSizes";
+import { evaluateStrategyGate, computeVRP, computeOIFlowBias, computeMaxPainGravity } from "./vrpRegimeFilter";
+import { fetchOptionsAnalytics, getCachedAnalytics } from "./optionsAnalytics";
 import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
 import {
   getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
@@ -44,7 +46,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -224,6 +226,17 @@ export interface BotState {
   currentADX?: number; // last ADX value
   lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
   regimeManualOverride?: boolean; // true if user manually toggled a layer since last regime check
+  // VRP Regime Filter state (updated every 5 min)
+  vrpRegime?: "RICH" | "FAIR" | "CHEAP" | "INVERTED";
+  vrpValue?: number;
+  lastVrpCheckAt?: number;
+  // OI Flow Bias state (updated every 2 min via option chain cache)
+  oiFlowDirection?: "BUY" | "SELL" | "NEUTRAL";
+  oiFlowStrength?: number;
+  lastOiFlowCheckAt?: number;
+  // Max Pain state
+  maxPainStrike?: number;
+  maxPainBias?: "UP" | "DOWN" | "NEUTRAL";
 }
 
 // Shadow mode log entry
@@ -4869,6 +4882,75 @@ async function tick(
         console.log(`[tick] Adeeb override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
       }
     }
+    // Try OI Flow Directional Bias (only if still HOLD and in options mode with access token)
+    if (signal.direction === "HOLD" && state.enabledLayers.includes("OIFlow") && isOptionsMode && state.accessToken) {
+      try {
+        const underlyingForOI = state.underlyingToken || state.instrumentToken;
+        let oiAnalytics = getCachedAnalytics(underlyingForOI);
+        if (!oiAnalytics && state.accessToken) {
+          oiAnalytics = await fetchOptionsAnalytics(underlyingForOI, state.accessToken);
+        }
+        if (oiAnalytics) {
+          const todayForOI = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+          const isExpOI = oiAnalytics.expiry === todayForOI;
+          const oiBias = computeOIFlowBias(oiAnalytics, price, isExpOI);
+          if (oiBias.direction !== "NEUTRAL" && oiBias.strength >= 40) {
+            // Strong OI bias — generate a signal
+            const atr = state.candles.length >= 14 ? calcATR(state.candles.slice(-14)) : price * 0.005;
+            const slDist = atr * slMult;
+            const targetDist = slDist * state.targetMultiplier;
+            signal = {
+              direction: oiBias.direction,
+              confidence: Math.min(0.80, 0.55 + oiBias.strength / 200),
+              entryPrice: price,
+              slPrice: oiBias.direction === "BUY" ? price - slDist : price + slDist,
+              targetPrice: oiBias.direction === "BUY" ? price + targetDist : price - targetDist,
+              atr,
+              reason: `[OIFlow] ${oiBias.reason}`,
+              layer: "OIFlow" as Signal["layer"],
+            };
+            console.log(`[tick] OIFlow override — ${signal.direction} conf=${signal.confidence.toFixed(2)} strength=${oiBias.strength}`);
+          }
+        }
+      } catch (oiErr) {
+        console.warn(`[tick] OIFlow layer error:`, oiErr instanceof Error ? oiErr.message : String(oiErr));
+      }
+    }
+    // Try Max Pain Gravity (only if still HOLD, expiry day, options mode)
+    if (signal.direction === "HOLD" && state.enabledLayers.includes("MaxPainGravity") && isOptionsMode && state.accessToken) {
+      try {
+        const underlyingForMP = state.underlyingToken || state.instrumentToken;
+        let mpAnalytics = getCachedAnalytics(underlyingForMP);
+        if (!mpAnalytics && state.accessToken) {
+          mpAnalytics = await fetchOptionsAnalytics(underlyingForMP, state.accessToken);
+        }
+        if (mpAnalytics) {
+          const todayForMP = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+          const isExpMP = mpAnalytics.expiry === todayForMP;
+          if (isExpMP) {
+            const mpSignal = computeMaxPainGravity(mpAnalytics, price, istMin2);
+            if (mpSignal.direction !== "HOLD" && mpSignal.confidence >= 0.55) {
+              const atr = state.candles.length >= 14 ? calcATR(state.candles.slice(-14)) : price * 0.005;
+              const slDist = atr * slMult;
+              const targetDist = slDist * state.targetMultiplier;
+              signal = {
+                direction: mpSignal.direction,
+                confidence: mpSignal.confidence,
+                entryPrice: price,
+                slPrice: mpSignal.direction === "BUY" ? price - slDist : price + slDist,
+                targetPrice: mpSignal.direction === "BUY" ? price + targetDist : price - targetDist,
+                atr,
+                reason: mpSignal.reason,
+                layer: "MaxPainGravity" as Signal["layer"],
+              };
+              console.log(`[tick] MaxPainGravity override — ${signal.direction} conf=${signal.confidence.toFixed(2)} dist=${mpSignal.distancePct.toFixed(1)}%`);
+            }
+          }
+        }
+      } catch (mpErr) {
+        console.warn(`[tick] MaxPainGravity layer error:`, mpErr instanceof Error ? mpErr.message : String(mpErr));
+      }
+    }
   }
 
   console.log(`[tick] SIGNAL OK — ${state.sessionToken.slice(0,8)} | dir=${signal.direction} | conf=${signal.confidence.toFixed(2)} | layer=${signal.layer}`);
@@ -5135,6 +5217,90 @@ async function tick(
     pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "HourlyClose already fired today");
     return;
   }
+
+  // ── VRP REGIME FILTER + OI FLOW + MAX PAIN GRAVITY GATE ─────────────────────
+  // Evaluates three strategy layers to boost/penalize signal confidence:
+  // 1. VRP: IV vs Realized Vol — blocks buying when no premium edge exists
+  // 2. OI Flow: Option chain directional bias — boosts/penalizes based on OI agreement
+  // 3. Max Pain Gravity: On expiry day, biases toward max pain strike
+  if (isOptionsMode && state.accessToken) {
+    try {
+      // Fetch or use cached option chain analytics (2-min TTL)
+      const underlyingForAnalytics = state.underlyingToken || state.instrumentToken;
+      let analytics = getCachedAnalytics(underlyingForAnalytics);
+      // Refresh if stale (every 2 min)
+      if (!analytics && state.accessToken) {
+        analytics = await fetchOptionsAnalytics(underlyingForAnalytics, state.accessToken);
+      }
+
+      // Determine if today is expiry day for this underlying
+      const todayISO = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+      const isExpiryDayForGate = analytics?.expiry === todayISO;
+
+      // Run the combined strategy gate
+      const gateResult = evaluateStrategyGate(
+        state.candlesDay,           // daily candles for VRP
+        analytics,                  // option chain analytics
+        signal.direction as "BUY" | "SELL",
+        price,                      // current underlying price
+        isExpiryDayForGate,
+        istMin2,
+        isMCX,
+      );
+
+      // Update state for dashboard display
+      if (gateResult.vrp) {
+        state.vrpRegime = gateResult.vrp.regime;
+        state.vrpValue = gateResult.vrp.vrp;
+        state.lastVrpCheckAt = Date.now();
+      }
+      if (gateResult.oiBias) {
+        state.oiFlowDirection = gateResult.oiBias.direction;
+        state.oiFlowStrength = gateResult.oiBias.strength;
+        state.lastOiFlowCheckAt = Date.now();
+      }
+      if (gateResult.maxPainSignal && analytics) {
+        state.maxPainStrike = analytics.maxPain;
+        state.maxPainBias = gateResult.maxPainSignal.direction === "BUY" ? "UP" : gateResult.maxPainSignal.direction === "SELL" ? "DOWN" : "NEUTRAL";
+      }
+
+      // Apply confidence adjustment
+      if (gateResult.confidenceBoost !== 0) {
+        const oldConf = signal.confidence;
+        signal.confidence = Math.max(0.30, Math.min(0.98, signal.confidence + gateResult.confidenceBoost));
+        const boostPct = (gateResult.confidenceBoost * 100).toFixed(0);
+        const arrow = gateResult.confidenceBoost > 0 ? "↑" : "↓";
+        emitActivity(state.sessionToken, "signal",
+          `📊 VRP/OI Gate: ${arrow}${Math.abs(Number(boostPct))}% conf (${(oldConf*100).toFixed(0)}→${(signal.confidence*100).toFixed(0)}%) | ${gateResult.reason}`
+        );
+      }
+
+      // Hard block if gate says not allowed
+      if (!gateResult.allowed) {
+        emitActivity(state.sessionToken, "signal", `⊘ VRP/OI GATE BLOCKED: ${gateResult.reason}`);
+        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `VRP/OI Gate: ${gateResult.reason}`);
+        logSignalToJournal({
+          sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+          direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+          entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+          atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `VRP/OI Gate blocked`,
+        });
+        return;
+      }
+
+      // Check if adjusted confidence still meets minimum threshold
+      const minConfThreshold = state.minConfidence / 100;
+      if (signal.confidence < minConfThreshold) {
+        emitActivity(state.sessionToken, "signal", `⊘ VRP/OI penalty dropped confidence below threshold (${(signal.confidence*100).toFixed(0)}% < ${state.minConfidence}%)`);
+        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `VRP/OI penalty: conf ${(signal.confidence*100).toFixed(0)}% < min ${state.minConfidence}%`);
+        return;
+      }
+    } catch (vrpErr) {
+      // Fail-open: if VRP/OI check fails, proceed with original signal
+      console.warn(`[BotEngine] VRP/OI gate error (fail-open):`, vrpErr instanceof Error ? vrpErr.message : String(vrpErr));
+    }
+  }
+
 
   // ── Options mode: resolve ATM option token based on signal direction ──────────────────────
   // When isOptionsMode=true, the bot reads the underlying (Nifty/BankNifty futures) for signals

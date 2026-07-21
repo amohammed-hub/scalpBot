@@ -262,7 +262,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
-      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "RedBarTheory", "TrikalStrategy", "Adeeb"],
+      enabledLayers: ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "RedBarTheory", "TrikalStrategy", "Adeeb", "OIFlow", "MaxPainGravity"],
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -839,6 +839,14 @@ export default function Dashboard() {
   const currentRegime = (liveData as any)?.currentRegime as "trending" | "choppy" | null;
   const currentADX = (liveData as any)?.currentADX as number | null;
 
+  // VRP / OI Flow / Max Pain state
+  const vrpRegime = (liveData as any)?.vrpRegime as "RICH" | "FAIR" | "CHEAP" | "INVERTED" | null;
+  const vrpValue = (liveData as any)?.vrpValue as number | null;
+  const oiFlowDirection = (liveData as any)?.oiFlowDirection as "BUY" | "SELL" | "NEUTRAL" | null;
+  const oiFlowStrength = (liveData as any)?.oiFlowStrength as number | null;
+  const maxPainStrike = (liveData as any)?.maxPainStrike as number | null;
+  const maxPainBias = (liveData as any)?.maxPainBias as "UP" | "DOWN" | "NEUTRAL" | null;
+
   // Staleness: track how many seconds since last tick
   const [secondsSinceLastTick, setSecondsSinceLastTick] = useState(0);
   useEffect(() => {
@@ -1335,6 +1343,40 @@ export default function Dashboard() {
             }`}>
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
               {currentRegime === "trending" ? "Trending" : "Choppy"} (ADX {currentADX?.toFixed(0) ?? "?"})
+            </div>
+          )}
+          {/* VRP Regime Badge */}
+          {isRunning && vrpRegime && (
+            <div className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg ${
+              vrpRegime === "RICH" ? "bg-green-500/15 border border-green-500/30 text-green-400"
+              : vrpRegime === "FAIR" ? "bg-blue-500/15 border border-blue-500/30 text-blue-400"
+              : vrpRegime === "CHEAP" ? "bg-amber-500/15 border border-amber-500/30 text-amber-400"
+              : "bg-red-500/15 border border-red-500/30 text-red-400"
+            }`}>
+              <span className="text-[10px] font-bold">VRP</span>
+              {vrpRegime} ({vrpValue?.toFixed(1) ?? "?"}%)
+            </div>
+          )}
+          {/* OI Flow Badge */}
+          {isRunning && oiFlowDirection && oiFlowDirection !== "NEUTRAL" && (
+            <div className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg ${
+              oiFlowDirection === "BUY"
+                ? "bg-green-500/15 border border-green-500/30 text-green-400"
+                : "bg-red-500/15 border border-red-500/30 text-red-400"
+            }`}>
+              <span className="text-[10px] font-bold">OI</span>
+              {oiFlowDirection} ({oiFlowStrength ?? 0}%)
+            </div>
+          )}
+          {/* Max Pain Badge */}
+          {isRunning && maxPainStrike && maxPainStrike > 0 && (
+            <div className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg ${
+              maxPainBias === "UP" ? "bg-green-500/15 border border-green-500/30 text-green-400"
+              : maxPainBias === "DOWN" ? "bg-red-500/15 border border-red-500/30 text-red-400"
+              : "bg-white/5 border border-white/10 text-white/50"
+            }`}>
+              <span className="text-[10px] font-bold">MP</span>
+              {maxPainStrike.toLocaleString()} {maxPainBias === "UP" ? "↑" : maxPainBias === "DOWN" ? "↓" : "—"}
             </div>
           )}
         </div>
@@ -3209,7 +3251,57 @@ export default function Dashboard() {
                 <p className="text-[11px] text-white/50 leading-relaxed">
                   Proprietary multi-layer system combining Renko, CPR, EMA cloud, and regime detection. ScalpBot's highest-accuracy engine.
                 </p>
-                <div className="mt-2 text-[10px] text-amber-400/70">Best for: High-conviction trades, premium accuracy</div>
+              <div className="mt-2 text-[10px] text-amber-400/70">Best for: High-conviction trades, premium accuracy</div>
+              </button>
+
+              {/* 📊 OI Flow Strategy Card */}
+              <button
+                onClick={() => toggleLayer("OIFlow")}
+                className={`relative p-4 rounded-xl border-2 text-left transition-all ${
+                  config.enabledLayers.includes("OIFlow")
+                    ? "border-cyan-400 bg-cyan-400/10 shadow-lg shadow-cyan-400/20"
+                    : "border-white/10 bg-white/5 hover:border-white/20"
+                }`}
+              >
+                {config.enabledLayers.includes("OIFlow") && (
+                  <div className="absolute top-2 right-2 w-5 h-5 bg-cyan-400 rounded-full flex items-center justify-center">
+                    <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">📊</span>
+                  <span className="font-bold text-white text-sm">OI Flow Bias</span>
+                  <span className="text-[9px] bg-gradient-to-r from-cyan-400 to-blue-400 text-black px-1.5 py-0.5 rounded font-bold">NEW</span>
+                </div>
+                <p className="text-[11px] text-white/50 leading-relaxed">
+                  Reads option chain OI buildup/unwinding to determine directional bias. PCR, OI walls, and max pain confluence.
+                </p>
+                <div className="mt-2 text-[10px] text-cyan-400/70">Best for: Options mode, NIFTY/BANKNIFTY directional</div>
+              </button>
+
+              {/* 🧲 Max Pain Gravity Card */}
+              <button
+                onClick={() => toggleLayer("MaxPainGravity")}
+                className={`relative p-4 rounded-xl border-2 text-left transition-all ${
+                  config.enabledLayers.includes("MaxPainGravity")
+                    ? "border-purple-400 bg-purple-400/10 shadow-lg shadow-purple-400/20"
+                    : "border-white/10 bg-white/5 hover:border-white/20"
+                }`}
+              >
+                {config.enabledLayers.includes("MaxPainGravity") && (
+                  <div className="absolute top-2 right-2 w-5 h-5 bg-purple-400 rounded-full flex items-center justify-center">
+                    <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">🧲</span>
+                  <span className="font-bold text-white text-sm">Max Pain Gravity</span>
+                  <span className="text-[9px] bg-gradient-to-r from-purple-400 to-pink-400 text-black px-1.5 py-0.5 rounded font-bold">EXPIRY</span>
+                </div>
+                <p className="text-[11px] text-white/50 leading-relaxed">
+                  On expiry day, price gravitates toward max pain strike. Trades in the direction of max pain with time-decay boost.
+                </p>
+                <div className="mt-2 text-[10px] text-purple-400/70">Best for: Expiry day only, high gamma scalping</div>
               </button>
            </div>
 
@@ -3219,7 +3311,7 @@ export default function Dashboard() {
                 <span className="text-[11px] text-white/40 uppercase tracking-wider">Other Strategies</span>
                <button
                onClick={() => {
-                  const allLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "RedBarTheory", "TrikalStrategy", "Adeeb"];
+                  const allLayers = ["Breakout", "Pattern", "Trend", "Momentum", "MACD_BB", "ORB", "VWAPReversion", "VWAPPullback", "FailedBreakout", "InstFootprint", "HourlyClose", "BoomingBulls", "CPR", "RedBarTheory", "TrikalStrategy", "Adeeb", "OIFlow", "MaxPainGravity"];
                   const newLayers = config.enabledLayers.length >= 12 ? ["HourlyClose", "BoomingBulls"] : allLayers;
                   setConfig(c => ({ ...c, enabledLayers: newLayers }));
                   if (isRunning) updateLayersMutation.mutate({ sessionToken, enabledLayers: newLayers });

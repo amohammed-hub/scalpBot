@@ -1296,6 +1296,15 @@ export const appRouter = router({
           currentRegime: state.currentRegime ?? null,
           currentADX: state.currentADX ?? null,
           adaptiveRegimeEnabled: state.adaptiveRegimeEnabled !== false,
+          // VRP Regime Filter state
+          vrpRegime: state.vrpRegime ?? null,
+          vrpValue: state.vrpValue ?? null,
+          // OI Flow Bias state
+          oiFlowDirection: state.oiFlowDirection ?? null,
+          oiFlowStrength: state.oiFlowStrength ?? null,
+          // Max Pain state
+          maxPainStrike: state.maxPainStrike ?? null,
+          maxPainBias: state.maxPainBias ?? null,
         };
       }),
 
@@ -2189,6 +2198,12 @@ export const appRouter = router({
             currentRegime: inMem?.currentRegime ?? null,
             currentADX: inMem?.currentADX ?? null,
             // Health indicator fields
+            vrpRegime: inMem?.vrpRegime ?? null,
+            vrpValue: inMem?.vrpValue ?? null,
+            oiFlowDirection: inMem?.oiFlowDirection ?? null,
+            oiFlowStrength: inMem?.oiFlowStrength ?? null,
+            maxPainStrike: inMem?.maxPainStrike ?? null,
+            maxPainBias: inMem?.maxPainBias ?? null,
             lastTickAt: inMem?.lastTickAt ?? (dbRow?.lastTickAt ? Number(dbRow.lastTickAt) : 0),
             scanIntervalSec: inMem?.scanIntervalSec ?? dbRow?.scanIntervalSec ?? 60,
             lastError: inMem?.lastError ?? dbRow?.lastError ?? null,

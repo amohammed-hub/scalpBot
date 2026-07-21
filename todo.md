@@ -1422,3 +1422,11 @@
 - [x] Root cause: At midnight IST, istMin2 = (18*60+30+330) % 1440 = 0. Zero is NOT >= stopScanMin (1400), so nearClose=false. Bot thought market was open.
 - [x] FIX: Added hard market-hours gate — MCX blocked when istMin2 < 540 OR > 1410. Force square-off if open trade exists outside hours.
 - [x] FIX: squareOff check now handles midnight wraparound — triggers when istMin2 >= 1408 OR istMin2 < 540 for MCX.
+- [x] NEW STRATEGY: VRP Regime Filter — computes IV vs Realized Volatility from daily candles, blocks option buying when VRP < 0 (no premium edge)
+- [x] NEW STRATEGY: OI Flow Directional Bias — reads option chain OI buildup/unwinding for directional signals (PCR, OI walls, max pain confluence)
+- [x] NEW STRATEGY: Max Pain Gravity — on expiry day, trades toward max pain strike with time-decay confidence boost
+- [x] Dashboard: VRP/OI/MaxPain badges added to sidebar (shows regime, OI direction, max pain strike)
+- [x] Dashboard: OI Flow and Max Pain Gravity strategy cards added to layer selection grid
+- [x] Combined Strategy Gate: VRP + OI + MaxPain evaluated as pre-trade confidence adjuster (±20% max)
+- [x] Hard block: VRP INVERTED + OI divergence blocks trade entirely (no edge scenario)
+- [x] Tests: 18 unit tests for VRP computation, OI flow bias, max pain gravity, and combined gate
