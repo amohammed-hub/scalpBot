@@ -2452,7 +2452,7 @@ export function generateOpeningBurstSignal(
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Opening Burst: waiting", layer: "OpeningBurst" };
 
-  if (!candles || candles.length < 2 || prevDayClose <= 0) {
+  if (!candles || candles.length < 1 || prevDayClose <= 0) {
     return { ...hold, reason: "Opening Burst: insufficient data" };
   }
 
@@ -2481,22 +2481,16 @@ export function generateOpeningBurstSignal(
 
   const gapDirection: "BUY" | "SELL" = gapPct > 0 ? "BUY" : "SELL";
 
-  // Candle contradiction filter: first 2 candles must agree on direction
-  // If candle 1 is green and candle 2 is red (or vice versa), skip — confusion signal
-  if (candles.length >= 2) {
-    const c1Bullish = candles[0].close > candles[0].open;
-    const c2Bullish = candles[1].close > candles[1].open;
-    if (c1Bullish !== c2Bullish) {
-      return { ...hold, reason: "Opening Burst: candle contradiction (1 green + 1 red = confusion)" };
-    }
-  }
-
-  // Look for confirmation candle (2nd or 3rd candle — don't trade candle 1)
-  // Confirmation: body > 70% of range AND cumulative move > 0.3% from day open AND gap-aligned
+  // AGGRESSIVE ENTRY: Look for confirmation candle starting from candle 1 itself
+  // For strong gaps (>0.3%), even candle 1 can be the entry if it's gap-aligned
+  // Confirmation: body > 50% of range AND cumulative move > 0.15% from prev close AND gap-aligned
+  // Reduced from 70%/0.3% — opening candles have wicks due to volatility, 50% body is still directional
   let confirmationCandle: Candle | null = null;
   let bodyRatio = 0;
 
-  for (let i = 1; i < Math.min(candles.length, 5); i++) {
+  // Start from candle 0 (first candle) for strong gaps, candle 1 otherwise
+  const startIdx = absGap >= 0.003 ? 0 : (candles.length >= 2 ? 1 : 0);
+  for (let i = startIdx; i < Math.min(candles.length, 5); i++) {
     const c = candles[i];
     const body = Math.abs(c.close - c.open);
     const range = c.high - c.low;
@@ -2505,7 +2499,12 @@ export function generateOpeningBurstSignal(
     const ratio = body / range;
     const cumMove = Math.abs(c.close - dayOpen) / dayOpen;
 
-    if (ratio >= 0.70 && cumMove >= 0.003) {
+    // Relaxed thresholds: body > 50% (was 70%), move > 0.15% (was 0.3%)
+    // For candle 0 with strong gap: just need body > 40% and any positive move in gap direction
+    const bodyThreshold = (i === 0 && absGap >= 0.003) ? 0.40 : 0.50;
+    const moveThreshold = (i === 0 && absGap >= 0.003) ? 0.001 : 0.0015;
+
+    if (ratio >= bodyThreshold && cumMove >= moveThreshold) {
       // Check direction alignment with gap
       const candleBullish = c.close > c.open;
       const gapAligned = (gapDirection === "BUY" && candleBullish) || (gapDirection === "SELL" && !candleBullish);
@@ -2519,7 +2518,7 @@ export function generateOpeningBurstSignal(
   }
 
   if (!confirmationCandle) {
-    return { ...hold, reason: "Opening Burst: no confirmation candle (body<70% or move<0.3% or not gap-aligned)" };
+    return { ...hold, reason: "Opening Burst: no confirmation candle (body<50% or move<0.15% or not gap-aligned)" };
   }
 
   // Entry on close of confirmation candle
@@ -2527,9 +2526,9 @@ export function generateOpeningBurstSignal(
   const isBullish = confirmationCandle.close > confirmationCandle.open;
   const direction: "BUY" | "SELL" = isBullish ? "BUY" : "SELL";
 
-  // Confidence: map body ratio (0.70-1.0) to confidence (0.80-0.95)
-  // Require 80%+ confidence threshold (only strong bursts)
-  const confidence = Math.min(0.80 + (bodyRatio - 0.70) * 0.67, 1.0);
+  // Confidence: map body ratio (0.40-1.0) to confidence (0.75-0.95)
+  // Lower base confidence since we're entering earlier/more aggressively
+  const confidence = Math.min(0.75 + (bodyRatio - 0.40) * 0.33, 0.95);
 
   // PREMIUM-BASED exits (NOT ATR-based — options move differently at open):
   // Target: 80-100% premium gain → index move ~0.4-0.5% (gamma amplifies at open)
@@ -4093,8 +4092,8 @@ async function tick(
       `🚀 <b>OPENING BURST ACTIVATED</b> 🚀\n` +
       `📊 <b>${state.instrumentLabel}</b> | ₹${price.toFixed(2)}\n` +
       `📈 Gap: ${gapPct}% from prev close\n` +
-      `⏰ Window: 9:15–9:25 AM IST | Waiting for confirmation candle\n` +
-      `🎯 Rules: Body>70% + Move>0.3% + Gap-aligned`,
+      `⏰ Window: 9:15–9:25 AM IST | Scanning for entry\n` +
+      `🎯 Rules: Body>50% + Move>0.15% + Gap-aligned (instant on gap>0.3%)`,
     );
   }
 

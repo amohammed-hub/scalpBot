@@ -14,11 +14,17 @@ describe("Opening Burst Strategy — generateOpeningBurstSignal", () => {
     expect(signal.reason).toContain("insufficient data");
   });
 
-  it("returns HOLD when only 1 candle (waiting for confirmation)", () => {
-    const candles = [makeCandle(24600, 24650, 24580, 24640)];
+  it("enters on candle 1 itself when gap is strong (>0.3%)", () => {
+    // Gap = (24600 - 24500) / 24500 = 0.41% > 0.3% → can enter on candle 1
+    // Candle 1: open=24600, close=24640, high=24650, low=24590
+    // Body = 40, Range = 60, Ratio = 66.7% > 40% (threshold for candle 0 with strong gap)
+    // CumMove from dayOpen: (24640-24600)/24600 = 0.16% > 0.1%
+    // Direction: bullish, gap: BUY → aligned
+    const candles = [makeCandle(24600, 24650, 24590, 24640)];
     const signal = generateOpeningBurstSignal(candles, 24500);
-    expect(signal.direction).toBe("HOLD");
-    expect(signal.reason).toContain("insufficient data");
+    expect(signal.direction).toBe("BUY");
+    expect(signal.layer).toBe("OpeningBurst");
+    expect(signal.entryPrice).toBe(24640);
   });
 
   it("returns HOLD for flat open (gap < 0.1%)", () => {
@@ -43,21 +49,21 @@ describe("Opening Burst Strategy — generateOpeningBurstSignal", () => {
     expect(signal.reason).toContain("gap too small");
   });
 
-  it("returns BUY when bullish gap + strong bullish confirmation candle", () => {
+  it("returns BUY when bullish gap + confirmation candle with 50%+ body", () => {
     // Gap = (24600 - 24500) / 24500 = 0.41% (gap UP)
-    // Candle 2: open=24610, close=24700, high=24710, low=24605
-    // Body = 90, Range = 105, Ratio = 85.7% > 70%
-    // Cumulative move from dayOpen: (24700 - 24600) / 24600 = 0.41% > 0.3%
+    // Candle 2: open=24610, close=24660, high=24670, low=24600
+    // Body = 50, Range = 70, Ratio = 71.4% > 50%
+    // Cumulative move from dayOpen: (24660 - 24600) / 24600 = 0.24% > 0.15%
     // Direction: bullish (close > open), gap direction: BUY → aligned ✓
     const candles = [
       makeCandle(24600, 24620, 24590, 24610), // First candle (day open = 24600)
-      makeCandle(24610, 24710, 24605, 24700), // Confirmation candle
+      makeCandle(24610, 24670, 24600, 24660), // Confirmation candle (50%+ body)
     ];
     const signal = generateOpeningBurstSignal(candles, 24500);
     expect(signal.direction).toBe("BUY");
     expect(signal.layer).toBe("OpeningBurst");
-    expect(signal.confidence).toBeGreaterThanOrEqual(0.80);
-    expect(signal.entryPrice).toBe(24700);
+    expect(signal.confidence).toBeGreaterThanOrEqual(0.75);
+    expect(signal.entryPrice).toBe(24660);
     expect(signal.targetPrice).toBeGreaterThan(signal.entryPrice);
     expect(signal.slPrice).toBeLessThan(signal.entryPrice);
     expect(signal.reason).toContain("Opening Burst");
@@ -67,8 +73,8 @@ describe("Opening Burst Strategy — generateOpeningBurstSignal", () => {
   it("returns SELL when bearish gap + strong bearish confirmation candle", () => {
     // Gap = (24400 - 24500) / 24500 = -0.41% (gap DOWN)
     // Candle 2: open=24390, close=24300, high=24395, low=24295
-    // Body = 90, Range = 100, Ratio = 90% > 70%
-    // Cumulative move from dayOpen: (24300 - 24400) / 24400 = -0.41% → abs > 0.3%
+    // Body = 90, Range = 100, Ratio = 90% > 50%
+    // Cumulative move from dayOpen: (24300 - 24400) / 24400 = -0.41% → abs > 0.15%
     // Direction: bearish (close < open), gap direction: SELL → aligned ✓
     const candles = [
       makeCandle(24400, 24410, 24380, 24390), // First candle (day open = 24400)
@@ -77,88 +83,74 @@ describe("Opening Burst Strategy — generateOpeningBurstSignal", () => {
     const signal = generateOpeningBurstSignal(candles, 24500);
     expect(signal.direction).toBe("SELL");
     expect(signal.layer).toBe("OpeningBurst");
-    expect(signal.confidence).toBeGreaterThanOrEqual(0.80);
+    expect(signal.confidence).toBeGreaterThanOrEqual(0.75);
     expect(signal.entryPrice).toBe(24300);
     expect(signal.targetPrice).toBeLessThan(signal.entryPrice);
     expect(signal.slPrice).toBeGreaterThan(signal.entryPrice);
     expect(signal.reason).toContain("↓");
   });
 
-  it("returns HOLD when candle is NOT gap-aligned (bullish candle on gap-down day)", () => {
-    // Gap DOWN but candle is bullish → not aligned → HOLD
+  it("candle contradiction no longer blocks entry (removed filter)", () => {
+    // Gap UP, candle 1 bullish, candle 2 bearish — previously blocked, now allowed if candle 1 qualifies
+    // Gap = (24600-24500)/24500 = 0.41% > 0.3% → candle 0 eligible
+    // Candle 1 (idx 0): open=24600, close=24650, high=24660, low=24590
+    // Body=50, Range=70, Ratio=71% > 40%, Move=(24650-24600)/24600=0.20% > 0.1%
+    // Bullish + gap BUY → aligned
     const candles = [
-      makeCandle(24400, 24410, 24380, 24390), // Day open = 24400, gap down from 24500
-      makeCandle(24390, 24500, 24385, 24490), // Bullish candle (close > open) — NOT aligned with gap DOWN
+      makeCandle(24600, 24660, 24590, 24650), // bullish (close > open)
+      makeCandle(24650, 24660, 24600, 24610), // bearish (close < open) — contradiction
     ];
     const signal = generateOpeningBurstSignal(candles, 24500);
-    expect(signal.direction).toBe("HOLD");
-    // Now caught by candle contradiction filter (candle 1 bearish, candle 2 bullish)
-    expect(signal.reason).toContain("contradiction");
+    // Should now enter on candle 0 since gap > 0.3% and candle 0 qualifies
+    expect(signal.direction).toBe("BUY");
+    expect(signal.entryPrice).toBe(24650);
   });
 
-  it("returns HOLD when body ratio is too low (< 70%)", () => {
-    // Gap UP 0.4%, but candle has big wicks (doji-like)
-    // Candle 2: open=24610, close=24640, high=24700, low=24580
-    // Body = 30, Range = 120, Ratio = 25% < 70%
+  it("returns HOLD when body ratio is too low (< 50% for normal, < 40% for strong gap candle 0)", () => {
+    // Gap UP 0.25% (not strong enough for candle 0 entry), so starts from candle 1
+    // Candle 2: open=24560, close=24570, high=24620, low=24540
+    // Body = 10, Range = 80, Ratio = 12.5% < 50%
     const candles = [
-      makeCandle(24600, 24620, 24590, 24610),
-      makeCandle(24610, 24700, 24580, 24640), // Weak body (doji)
+      makeCandle(24550, 24570, 24540, 24560), // day open = 24550, gap = 0.2%
+      makeCandle(24560, 24620, 24540, 24570), // Weak body (doji-like, ratio=12.5%)
     ];
     const signal = generateOpeningBurstSignal(candles, 24500);
     expect(signal.direction).toBe("HOLD");
     expect(signal.reason).toContain("no confirmation candle");
   });
 
-  it("returns HOLD when cumulative move < 0.3% even with strong body", () => {
-    // Gap UP 0.3%, but candle move from day open is tiny
-    // Day open = 24575 (gap = 0.3% from 24500)
-    // Candle 2: open=24575, close=24580, high=24582, low=24573
-    // Body = 5, Range = 9, Ratio = 55% < 70% — also fails body ratio
-    // Even if body were strong: move = (24580 - 24575) / 24575 = 0.02% < 0.3%
+  it("finds confirmation in candle 3-5 if earlier candles are weak", () => {
+    // Gap UP 0.25% (not strong gap, starts from candle 1)
+    // Candle 2 weak, candle 4 strong
     const candles = [
-      makeCandle(24575, 24580, 24570, 24575),
-      makeCandle(24575, 24582, 24573, 24580),
-    ];
-    const signal = generateOpeningBurstSignal(candles, 24500);
-    expect(signal.direction).toBe("HOLD");
-  });
-
-  it("finds confirmation in candle 3-5 if candle 2 is weak", () => {
-    // Gap UP 0.4%. Candle 2 is weak, candle 4 is strong confirmation
-    const candles = [
-      makeCandle(24600, 24620, 24590, 24610), // Candle 1 (day open = 24600)
-      makeCandle(24610, 24620, 24600, 24615), // Candle 2: weak (body=5, range=20, ratio=25%)
-      makeCandle(24615, 24625, 24610, 24620), // Candle 3: still weak
-      makeCandle(24620, 24710, 24618, 24700), // Candle 4: STRONG (body=80, range=92, ratio=87%, move=0.41%)
+      makeCandle(24550, 24570, 24540, 24560), // Candle 1 (day open = 24550, gap=0.2%)
+      makeCandle(24560, 24570, 24550, 24555), // Candle 2: weak (body=5, range=20, ratio=25%)
+      makeCandle(24555, 24565, 24550, 24560), // Candle 3: still weak
+      makeCandle(24560, 24620, 24558, 24610), // Candle 4: STRONG (body=50, range=62, ratio=80%, move=(24610-24550)/24550=0.24%)
     ];
     const signal = generateOpeningBurstSignal(candles, 24500);
     expect(signal.direction).toBe("BUY");
     expect(signal.layer).toBe("OpeningBurst");
-    expect(signal.entryPrice).toBe(24700);
+    expect(signal.entryPrice).toBe(24610);
   });
 
   it("confidence scales with body ratio (higher body = higher confidence)", () => {
-    // 70% body ratio → 0.80 confidence
-    const candles70 = [
+    // 50% body ratio → lower confidence
+    const candles50 = [
       makeCandle(24600, 24620, 24590, 24610),
-      makeCandle(24610, 24710, 24580, 24700), // body=90, range=130, ratio=69.2% — just below
+      makeCandle(24610, 24670, 24590, 24650), // body=40, range=80, ratio=50%, move=(24650-24600)/24600=0.20%
     ];
-    // Actually need exactly 70%: body=70, range=100
-    const candles70b = [
-      makeCandle(24600, 24620, 24590, 24610),
-      makeCandle(24610, 24710, 24610, 24680), // body=70, range=100, ratio=70%, move=(24680-24600)/24600=0.33%
-    ];
-    const signal70 = generateOpeningBurstSignal(candles70b, 24500);
+    const signal50 = generateOpeningBurstSignal(candles50, 24500);
 
-    // 95% body ratio → higher confidence
-    const candles95 = [
+    // 90% body ratio → higher confidence
+    const candles90 = [
       makeCandle(24600, 24620, 24590, 24610),
       makeCandle(24610, 24705, 24608, 24700), // body=90, range=97, ratio=92.8%, move=0.41%
     ];
-    const signal95 = generateOpeningBurstSignal(candles95, 24500);
+    const signal90 = generateOpeningBurstSignal(candles90, 24500);
 
-    if (signal70.direction !== "HOLD" && signal95.direction !== "HOLD") {
-      expect(signal95.confidence).toBeGreaterThan(signal70.confidence);
+    if (signal50.direction !== "HOLD" && signal90.direction !== "HOLD") {
+      expect(signal90.confidence).toBeGreaterThan(signal50.confidence);
     }
   });
 
@@ -192,17 +184,6 @@ describe("Opening Burst Strategy — generateOpeningBurstSignal", () => {
     expect(signal.reason).toContain("VIX too high");
   });
 
-  it("candle contradiction filter: 1 green + 1 red = HOLD", () => {
-    // Gap UP, candle 1 bullish, candle 2 bearish → contradiction
-    const candles = [
-      makeCandle(24600, 24650, 24590, 24640), // bullish (close > open)
-      makeCandle(24640, 24650, 24590, 24600), // bearish (close < open)
-    ];
-    const signal = generateOpeningBurstSignal(candles, 24500);
-    expect(signal.direction).toBe("HOLD");
-    expect(signal.reason).toContain("contradiction");
-  });
-
   it("does not trade when prevDayClose is 0 or invalid", () => {
     const candles = [
       makeCandle(24600, 24620, 24590, 24610),
@@ -210,5 +191,16 @@ describe("Opening Burst Strategy — generateOpeningBurstSignal", () => {
     ];
     const signal = generateOpeningBurstSignal(candles, 0);
     expect(signal.direction).toBe("HOLD");
+  });
+
+  it("enters immediately on first candle for strong gap (>0.3%) even with only 1 candle", () => {
+    // Gap = (24600 - 24500) / 24500 = 0.41% > 0.3%
+    // Single candle: open=24600, close=24630, high=24640, low=24595
+    // Body=30, Range=45, Ratio=66.7% > 40%, Move=(24630-24600)/24600=0.12% > 0.1%
+    // Bullish + gap BUY → aligned
+    const candles = [makeCandle(24600, 24640, 24595, 24630)];
+    const signal = generateOpeningBurstSignal(candles, 24500);
+    expect(signal.direction).toBe("BUY");
+    expect(signal.entryPrice).toBe(24630);
   });
 });

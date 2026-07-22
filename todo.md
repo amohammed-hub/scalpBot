@@ -1,5 +1,13 @@
 # Upstox Trading Dashboard — TODO
 
+## Fix — Opening Burst Too Strict (Missing Entries)
+- [x] Reduce confirmation candle body ratio from 70% to 50% (too many candles have wicks at open)
+- [x] Reduce cumulative move threshold from 0.3% to 0.15% (0.3% is already a big move, bot misses it)
+- [x] Allow first candle as confirmation when gap > 0.3% (strong gap = immediate entry)
+- [x] Remove candle contradiction filter (contradictions are normal at open, not a disqualifier)
+- [x] Update tests to match new thresholds
+- [x] Deploy fix (checkpoint)
+
 ## Dashboard Redesign — Neon Terminal (Option 2)
 - [x] Top Metrics Strip: 5 cards (Realized P&L, Unrealized P&L, Win Rate, Avg Win, Profit Factor)
 - [x] Two-column middle: Equity Curve (left) + Open Positions panel (right)
