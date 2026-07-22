@@ -3888,21 +3888,33 @@ async function tick(
 
   // ── MCX Token Auto-Resolution ──────────────────────────────────────────────
   // MCX futures tokens are monthly contracts that expire. If the hardcoded token is stale,
-  // auto-resolve the current front-month token on the first tick (when candles are empty).
-  if (signalToken.startsWith("MCX_FO|") && state.candles.length === 0 && !(state as any)._mcxTokenResolved) {
+  // auto-resolve the current front-month token on the first tick (when candles are empty)
+  // OR when the token has never successfully fetched candles (expired token scenario).
+  const shouldAutoResolve = signalToken.startsWith("MCX_FO|") && !(state as any)._mcxTokenResolved && (
+    state.candles.length === 0 || // first tick — no candles yet
+    (state.tickCount ?? 0) <= 3   // first 3 ticks — give resolution a chance even if candles were stale
+  );
+  if (shouldAutoResolve) {
     (state as any)._mcxTokenResolved = true; // prevent repeated resolution attempts
     const symbol = state.instrumentSymbol ?? "";
     if (symbol) {
       const resolved = await resolveMcxFuturesToken(symbol, state.accessToken);
-      if (resolved && resolved !== signalToken) {
+      if (resolved) {
         devLog(`[BotEngine] MCX auto-resolve: ${symbol} token updated ${signalToken} → ${resolved}`);
-        emitActivity(state.sessionToken, "signal", `🔄 MCX token auto-resolved: ${symbol} → ${resolved.split("|")[1]}`);
+        if (resolved !== signalToken) {
+          emitActivity(state.sessionToken, "signal", `🔄 MCX token auto-resolved: ${symbol} → ${resolved.split("|")[1]}`);
+        }
         if (isOptionsMode && state.underlyingToken) {
           state.underlyingToken = resolved;
         } else {
           state.instrumentToken = resolved;
         }
         signalToken = resolved;
+      } else {
+        // Resolution failed — allow retry on next bot restart
+        (state as any)._mcxTokenResolved = false;
+        console.warn(`[BotEngine] MCX auto-resolve FAILED for ${symbol} — will retry on next restart`);
+        emitActivity(state.sessionToken, "signal", `⚠ MCX token resolution failed for ${symbol} — check if market is open`);
       }
     }
   }
@@ -3928,6 +3940,19 @@ async function tick(
     // Real candle fetch returned empty — market closed, token error, or outside trading hours.
     // DO NOT generate fake/mock candles. Set HOLD signal and return early.
     // The bot will retry on the next tick interval.
+    // ── MCX Token Retry: If candles are empty during market hours, the token might be expired ──
+    if (signalToken.startsWith("MCX_FO|") && (state as any)._mcxTokenResolved) {
+      const nowRetry = new Date();
+      const istMinRetry = ((nowRetry.getUTCHours() * 60 + nowRetry.getUTCMinutes()) + 330) % 1440;
+      const mcxOpen = 9 * 60; // 9:00 AM IST
+      const mcxClose = 23 * 60 + 30; // 11:30 PM IST
+      if (istMinRetry >= mcxOpen && istMinRetry <= mcxClose) {
+        // Market should be open but no candles — likely expired token. Reset flag to retry.
+        (state as any)._mcxTokenResolved = false;
+        console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — MCX candles empty during market hours. Token ${signalToken} may be expired. Will re-resolve on next tick.`);
+        emitActivity(state.sessionToken, "signal", `⚠ No candle data during MCX hours — will re-resolve token on next tick`);
+      }
+    }
     state.lastSignal = {
       direction: "HOLD", confidence: 0,
       entryPrice: state.lastPrice, slPrice: state.lastPrice, targetPrice: state.lastPrice, atr: 0,
@@ -5491,13 +5516,20 @@ async function tick(
   // Three pre-entry filters to eliminate trades with guaranteed slippage loss.
   // ══════════════════════════════════════════════════════════════════════════════════
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
-    // Premium floor REMOVED per user request — if signal has confidence and good R:R,
-    // low premium options are valid trades. The real guards are:
-    // 1. Disabled layer filter (Bug Fix 2) prevents unwanted strategies from firing
-    // 2. Risk-based position sizing limits max loss regardless of premium
-    // Log a warning for awareness but DO NOT block the trade.
-    if (optionPremiumForSizing < 10) {
-      emitActivity(state.sessionToken, "signal", `⚠ Low premium: ₹${optionPremiumForSizing.toFixed(1)} — proceeding (confidence ${(signal.confidence*100).toFixed(0)}%)`);
+    // ── MCX Premium Floor: Block trades below ₹30 ──
+    // NatGas ₹4.28, Copper ₹9.43 etc. are illiquid OTM options with huge spreads.
+    // These consistently lose money (₹-1,939 net on Jul 22 from 12 such trades).
+    const isMcxInstrument = state.instrumentToken.startsWith("MCX");
+    const MCX_PREMIUM_FLOOR = 30; // ₹30 minimum for MCX options
+    const NSE_PREMIUM_FLOOR = 50; // ₹50 minimum for NSE/NFO options (avoid penny options)
+    const premiumFloor = isMcxInstrument ? MCX_PREMIUM_FLOOR : NSE_PREMIUM_FLOOR;
+    if (optionPremiumForSizing < premiumFloor) {
+      const reason = `Premium ₹${optionPremiumForSizing.toFixed(1)} below floor ₹${premiumFloor} — illiquid/OTM, skipping`;
+      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ${reason}`);
+      emitActivity(state.sessionToken, "signal", `⊘ ${reason}`);
+      pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, reason);
+      state.isOpeningTrade = false;
+      return;
     }
 
     // ── FIX 3: Expiry-Day ATM Only (no OTM on 0DTE) ─────────────────────────────
@@ -5717,6 +5749,11 @@ async function tick(
     console.error(`[BotEngine] DB guard check failed:`, dbErr);
     // Continue anyway — the in-memory guard is still active
   }
+  // ── CRITICAL FIX: Set mutex BEFORE cross-bot check ──
+  // Without this, two bots processing the same tick simultaneously both pass the cross-bot
+  // guard because neither has isOpeningTrade=true yet. This caused Bot 1+2 to both buy
+  // GOLD 147000 CE at same time on Jul 22.
+  state.isOpeningTrade = true;
   // ── Cross-bot duplicate guard: prevent same instrument being traded by multiple bots simultaneously ──
   for (const [otherKey, otherState] of Array.from(bots.entries())) {
     if (otherKey === state.sessionToken) continue; // skip self
@@ -5751,11 +5788,13 @@ async function tick(
     const thisUnderlying = isOptionsMode ? (state.underlyingToken || state.instrumentToken) : tradeInstrumentToken;
     const exactTokenMatch = otherState.openTrade!.instrumentToken === tradeInstrumentToken;
     const sameUnderlyingMatch = otherUnderlying === thisUnderlying;
-    // FIX D: For options, allow CE + PE on same underlying (opposite bets).
+    // For options, allow CE + PE on same underlying (opposite bets).
     // Only block if BOTH are same option type (both CE or both PE).
     let sameDirection: boolean;
     if (isOptionsMode && otherIsOptions) {
-      const otherOptionType = otherState.openTrade!.symbol?.includes("_CE_") ? "CE" : "PE";
+      // FIX: Check for " CE" or "_CE" in symbol (trade symbols use space: "GOLD 29JUL26 148500 CE")
+      const otherSym = (otherState.openTrade!.symbol ?? "").toUpperCase();
+      const otherOptionType = (otherSym.includes(" CE") || otherSym.includes("_CE")) ? "CE" : "PE";
       const thisOptionType = state.optionType === "CE" ? "CE"
         : state.optionType === "PE" ? "PE"
         : signal.direction === "BUY" ? "CE" : "PE";
@@ -5776,9 +5815,9 @@ async function tick(
   // FINAL SAFETY: Double-check no open trade exists (guards against any code path that might skip the early return)
   if (state.openTrade) {
     emitActivity(state.sessionToken, "signal", `⊘ Trade blocked — already has open position`);
+    state.isOpeningTrade = false;
     return;
   }
-  state.isOpeningTrade = true;
   // CRITICAL: Increment trade counter IMMEDIATELY when mutex is acquired
   // This prevents race conditions where another tick could pass the maxTradesPerDay check
   state.tradesCount += 1;
