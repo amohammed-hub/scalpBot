@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.scalpbot.twa",
+    "sha256_cert_fingerprints": [
+      "D7:34:4A:98:AB:B4:10:A4:C7:7E:76:45:EE:9D:03:6A:E5:62:C4:5B:8A:AC:EF:A2:ED:29:C9:6C:56:51:07:E5"
+    ]
+  }
+}]
