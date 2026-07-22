@@ -23,7 +23,7 @@ const rules = [
   {
     icon: FileCheck,
     title: "Algo Classification",
-    items: ["White-Box: logic visible to user (VWAP, TWAP)", "Black-Box: requires SEBI RA registration", "All algos need exchange-assigned unique IDs", "Audit trail maintained for 5 years"],
+    items: ["White-Box: logic visible to user", "Black-Box: requires SEBI RA registration", "All algos need exchange-assigned unique IDs", "Audit trail maintained for 5 years"],
   },
   {
     icon: Scale,

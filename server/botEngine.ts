@@ -1,18 +1,6 @@
 /**
  * Bot Engine — runs in-process on the Node.js server.
- * Manages per-session bot instances, generates candle-based signals,
- * monitors open trade SL/Target, and places paper or live orders via Upstox API.
- *
- * Keyed by sessionToken (browser-generated UUID) — no Manus login required.
- *
- * === v2 Improvements ===
- * 1. Multi-timeframe confirmation (5-min trend before 1-min entry)
- * 2. Dynamic breakout threshold (ATR-relative, not fixed 0.03%)
- * 3. MACD + Bollinger Band squeeze as Layer 5
- * 4. Support/Resistance proximity filter (daily pivot points)
- * 5. Time-of-day bias filter (avoid 9:15–9:30, boost 10:00–11:30 and 14:00–15:00)
- * 6. Re-entry logic after stop loss (if signal still valid 2 candles later)
- * 7. Power Hour strategy (3:00–3:20 PM) — reads whole-day candles for institutional-level trades
+ * Manages per-session bot instances and automated trading.
  */
 
 import axios from "axios";
@@ -28,6 +16,10 @@ import {
   recordDirectionalLoss, recordDirectionalWin, isDirectionBlocked, resetDirectionStreak,
 } from "./riskManager";
 import { fetchIndiaVix } from "./riskManager";
+
+// Production log suppression — hide strategy details in production logs
+const IS_DEV = process.env.NODE_ENV !== "production";
+const devLog = (...args: any[]) => { if (IS_DEV) console.log(...args); };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface Candle {
@@ -4823,7 +4815,7 @@ async function tick(
   const inHeroZeroWindow = isExpiryDay && istMin2 >= heroZeroWindowStart && istMin2 < heroZeroWindowEnd;
   state.heroZeroMode = inHeroZeroWindow;
 
-  console.log(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | openingBurst=${inOpeningBurst} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
+  devLog(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | openingBurst=${inOpeningBurst} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
   if (inOpeningBurst && state.candles.length >= 2) {
     // Fetch VIX for Opening Burst filter (cached 60s, fail-open returns 0)
     const vixNow = await fetchIndiaVix(state.accessToken ?? undefined);
@@ -4890,7 +4882,7 @@ async function tick(
           }
         }
         if (prevRegime && prevRegime !== state.currentRegime) {
-          console.log(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched from ${prevRegime} to ${state.currentRegime} (ADX=${adxVal.toFixed(1)})`);
+          devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched from ${prevRegime} to ${state.currentRegime} (ADX=${adxVal.toFixed(1)})`);
         }
       }
     }
@@ -4903,7 +4895,7 @@ async function tick(
       const rbtSignal = generateRenkoSignal(state.candles);
       if (rbtSignal.direction !== "HOLD") {
         signal = rbtSignal;
-        console.log(`[tick] RedBarTheory override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
+        devLog(`[tick] RedBarTheory override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
       }
     }
     // Try Trikal Strategy (only if still HOLD)
@@ -4911,7 +4903,7 @@ async function tick(
       const trikalSignal = generateSmartRenkoSignal(state.candles);
       if (trikalSignal.direction !== "HOLD") {
         signal = trikalSignal;
-        console.log(`[tick] TrikalStrategy override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
+        devLog(`[tick] TrikalStrategy override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
       }
     }
     // Try Adeeb Strategy (only if still HOLD)
@@ -4919,7 +4911,7 @@ async function tick(
       const adeebSignal = generateAdeebSignal(state.candles, prevDayHigh, prevDayLow, prevDayClose, 0);
       if (adeebSignal.direction !== "HOLD") {
         signal = adeebSignal;
-        console.log(`[tick] Adeeb override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
+        devLog(`[tick] Adeeb override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
       }
     }
     // Try OI Flow Directional Bias (only if still HOLD and in options mode with access token)
@@ -4949,7 +4941,7 @@ async function tick(
               reason: `[OIFlow] ${oiBias.reason}`,
               layer: "OIFlow" as Signal["layer"],
             };
-            console.log(`[tick] OIFlow override — ${signal.direction} conf=${signal.confidence.toFixed(2)} strength=${oiBias.strength}`);
+            devLog(`[tick] OIFlow override — ${signal.direction} conf=${signal.confidence.toFixed(2)} strength=${oiBias.strength}`);
           }
         }
       } catch (oiErr) {
@@ -4983,7 +4975,7 @@ async function tick(
                 reason: mpSignal.reason,
                 layer: "MaxPainGravity" as Signal["layer"],
               };
-              console.log(`[tick] MaxPainGravity override — ${signal.direction} conf=${signal.confidence.toFixed(2)} dist=${mpSignal.distancePct.toFixed(1)}%`);
+              devLog(`[tick] MaxPainGravity override — ${signal.direction} conf=${signal.confidence.toFixed(2)} dist=${mpSignal.distancePct.toFixed(1)}%`);
             }
           }
         }
@@ -4993,7 +4985,7 @@ async function tick(
     }
   }
 
-  console.log(`[tick] SIGNAL OK — ${state.sessionToken.slice(0,8)} | dir=${signal.direction} | conf=${signal.confidence.toFixed(2)} | layer=${signal.layer}`);
+  devLog(`[tick] SIGNAL OK — ${state.sessionToken.slice(0,8)} | dir=${signal.direction} | conf=${signal.confidence.toFixed(2)} | layer=${signal.layer}`);
 
   // ── Shadow Mode: compare old logic vs new logic ───────────────────────────
   // When shadowMode=true: OLD logic (no P0, no P1) executes trades.
@@ -5604,7 +5596,7 @@ async function tick(
   if (signal.sizeReduction && signal.sizeReduction > 0 && signal.sizeReduction < 1) {
     const reducedQty = Math.max(lotSize, Math.floor((quantity * signal.sizeReduction) / lotSize) * lotSize);
     if (reducedQty < quantity) {
-      console.log(`[tick] SIZE REDUCTION — ${state.sessionToken.slice(0,8)} | regime=${signal.regimeV2} | qty ${quantity} → ${reducedQty} (${(signal.sizeReduction * 100).toFixed(0)}% reduction)`);
+      devLog(`[tick] SIZE REDUCTION — ${state.sessionToken.slice(0,8)} | regime=${signal.regimeV2} | qty ${quantity} → ${reducedQty} (${(signal.sizeReduction * 100).toFixed(0)}% reduction)`);
       quantity = reducedQty;
     }
   }
@@ -5822,7 +5814,7 @@ async function tick(
   const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.70 : signal.slPrice;
   const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 1.40 : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
-  console.log(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
+  devLog(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
   const capitalDeployed = displayEntry * quantity;
   emitActivity(state.sessionToken, "trade_open", `${tradeType} ${signal.direction} ${displayLabel} @ ₹${displayEntry.toFixed(2)} | SL: ₹${displaySl.toFixed(2)} | Target: ₹${displayTarget.toFixed(2)} | Qty: ${quantity} (${Math.floor(quantity / lotSize)} lot${Math.floor(quantity / lotSize) > 1 ? "s" : ""}) | 💰 Capital: ₹${capitalDeployed.toLocaleString("en-IN", { maximumFractionDigits: 0 })} | Risk: ₹${riskAmount.toFixed(0)} | ${(signal.confidence * 100).toFixed(0)}% conf | ${signal.layer}`, { price: displayEntry, confidence: signal.confidence });
 

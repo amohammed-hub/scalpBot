@@ -1484,7 +1484,7 @@ export default function Dashboard() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6 pb-3 sm:pb-4 border-b border-white/5 gap-2">
           <div className="min-w-0">
             <h1 className="text-lg sm:text-2xl font-bold text-white truncate">Trading Dashboard</h1>
-            <p className="text-white/50 text-xs sm:text-sm truncate">Automated scalping — EMA + VWAP + RSI</p>
+            <p className="text-white/50 text-xs sm:text-sm truncate">Automated scalping — AI Signal Engine</p>
           </div>
          <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
          <button onClick={() => navigate("/settings")}

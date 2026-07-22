@@ -717,13 +717,14 @@ export async function sendOtp(mobile: string, clientIp?: string): Promise<{ succ
   }
 
   // Generate 6-digit code (or use fixed 000000 for admin bypass)
-  const code = isAdminBypass ? "000000" : String(Math.floor(100000 + Math.random() * 900000));
+  // Generate 6-digit code (or use fixed code for admin bypass)
+  const code = isAdminBypass ? "270290" : String(Math.floor(100000 + Math.random() * 900000));
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
   // Admin bypass: skip Twilio entirely
   if (isAdminBypass) {
     await db.insert(otpCodes).values({ mobile, code, expiresAt });
-    console.log(`[OTP] Admin bypass for ${mobile} — code is 000000`);
+    console.log(`[OTP] Admin bypass for ${mobile}`);
     return { success: true, message: "OTP sent successfully (admin bypass)" };
   }
 

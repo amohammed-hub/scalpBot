@@ -1514,3 +1514,9 @@
 - [x] Add deep-link to Upstox when user taps on open/active trade card
 - [x] Android intent: upstox://instrument/{instrument_key} (if Upstox app installed)
 - [x] Web fallback: https://pro.upstox.com/chart/{instrument_key} (if app not installed)
+
+## Security Hardening & Anti-Piracy (Jul 2026)
+- [x] Remove strategy-revealing labels from UI (EMA + VWAP + ADX, Opening Burst, etc.)
+- [x] Strip production console.log statements that reveal strategy details
+- [x] Add API rate limiting to prevent signal reverse-engineering
+- [x] Change admin OTP bypass code from 000000 to 270290

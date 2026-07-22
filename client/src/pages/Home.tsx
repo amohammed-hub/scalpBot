@@ -149,7 +149,7 @@ export default function Home() {
       <div className="max-w-6xl mx-auto px-6 pt-20 pb-16 text-center">
         <div className="inline-flex items-center gap-2 bg-teal-500/10 border border-teal-500/30 rounded-full px-4 py-1.5 text-teal-400 text-sm mb-6">
           <span className="w-2 h-2 bg-teal-400 rounded-full animate-pulse" />
-          Fully Automated Scalping Bot — Powered by EMA + VWAP + ADX
+          Fully Automated Scalping Bot — Powered by AI Signal Engine
         </div>
         <h1 className="text-5xl md:text-6xl font-bold text-white mb-6 leading-tight">
           Let the Bot Trade.<br />
@@ -200,7 +200,7 @@ export default function Home() {
             {[
               { step: "01", title: "Enter API Keys", desc: "Go to Settings, enter your Upstox API Key and Secret. Stored only in your browser — never on any server." },
               { step: "02", title: "Configure & Start", desc: "Choose your instrument (NIFTY, RELIANCE, etc.), set capital and risk %, then click Start Bot." },
-              { step: "03", title: "Bot Trades Automatically", desc: "The bot scans every minute, generates EMA+VWAP+ADX signals, and places orders. You watch the live dashboard." },
+              { step: "03", title: "Bot Trades Automatically", desc: "The bot scans every minute, generates AI-powered signals, and places orders. You watch the live dashboard." },
             ].map((s) => (
               <div key={s.step} className="relative bg-white/5 border border-white/10 rounded-2xl p-6">
                 <div className="text-5xl font-black text-teal-500/20 mb-3">{s.step}</div>

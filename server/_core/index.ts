@@ -67,12 +67,24 @@ async function startServer() {
   // ── Rate Limiting (API endpoints) ─────────────────────────────────────────
   const apiLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
-    max: 120, // 120 requests per minute per IP
+    max: 60, // 60 requests per minute per IP (tightened for anti-scraping)
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later." },
   });
   app.use("/api/", apiLimiter);
+
+  // Aggressive OTP brute-force protection (5 attempts per 15 min)
+  const otpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // only 5 OTP requests per 15 min per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many OTP attempts. Please wait 15 minutes." },
+  });
+  // Apply to OTP-related tRPC calls via path matching
+  app.use("/api/trpc/mobileAuth.sendOtp", otpLimiter);
+  app.use("/api/trpc/mobileAuth.verifyOtp", otpLimiter);
 
 
   // ── tRPC Auth Gate ────────────────────────────────────────────────────────
