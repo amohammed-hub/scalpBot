@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, Play, BarChart2, TrendingUp, TrendingDown,
@@ -51,6 +51,16 @@ type BacktestResult = {
 export default function Backtest() {
   const [, navigate] = useLocation();
   const sessionToken = getSessionToken();
+
+  // ── Auth Gate ──────────────────────────────────────────────────────────────
+  const mobileAuthMe = trpc.mobileAuth.me.useQuery(undefined, { staleTime: 5_000, retry: 2 });
+  useEffect(() => {
+    if (mobileAuthMe.isFetched && !mobileAuthMe.data) {
+      localStorage.removeItem("scalpbot_auth_token");
+      navigate("/login");
+    }
+  }, [mobileAuthMe.isFetched, mobileAuthMe.data, navigate]);
+
   // Access control
   const accessQuery = trpc.subscription.checkAccess.useQuery(
     { sessionToken },

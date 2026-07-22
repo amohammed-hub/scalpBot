@@ -105,7 +105,8 @@ export default function HeroZeroScanner() {
     retryDelay: 500,
   });
   useEffect(() => {
-    if (meQuery.isFetched && !meQuery.data && !localStorage.getItem("scalpbot_auth_token")) {
+    if (meQuery.isFetched && !meQuery.data) {
+      localStorage.removeItem("scalpbot_auth_token");
       navigate("/login");
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
@@ -164,7 +165,7 @@ export default function HeroZeroScanner() {
   const otherCandidates = candidates.filter(c => !c.isHeroZeroRange);
 
   // ── Auth Loading Gate (MUST be after all hooks) ────────────────────────────
-  if (!meQuery.isFetched || (meQuery.isLoading && !localStorage.getItem("scalpbot_auth_token"))) {
+  if (!meQuery.isFetched || meQuery.isLoading) {
     return (
       <div className="min-h-screen bg-[oklch(0.10_0.02_240)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">

@@ -208,9 +208,11 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    // Only redirect to login if me query returned null AND there's no auth token in localStorage.
-    // This prevents the race condition where the cookie was just set but the query cached null.
-    if (meQuery.isFetched && !meQuery.data && !localStorage.getItem("scalpbot_auth_token")) {
+    // SECURITY FIX: Always redirect to login if server confirms no valid session.
+    // The server is the source of truth — localStorage tokens can be stale/forged.
+    if (meQuery.isFetched && !meQuery.data) {
+      // Clear stale localStorage token to prevent loops
+      localStorage.removeItem("scalpbot_auth_token");
       navigate("/login");
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
@@ -1184,7 +1186,7 @@ export default function Dashboard() {
   // ── Auth Loading Gate ─────────────────────────────────────────────────────
   // Show loading screen while auth is being checked to prevent flash of dashboard content
   // This MUST be after all hooks to comply with React Rules of Hooks
-  if (!meQuery.isFetched || (meQuery.isLoading && !localStorage.getItem("scalpbot_auth_token"))) {
+  if (!meQuery.isFetched || meQuery.isLoading) {
     return (
       <div className="min-h-screen bg-[oklch(0.10_0.02_240)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">

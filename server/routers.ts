@@ -427,18 +427,24 @@ export const appRouter = router({
           accessToken = creds[0].accessToken;
         }
 
-        // FALLBACK: If no credentials found by sessionToken, search ALL credentials directly.
-        // Single-user system — no need to verify identity via appUsers.
+        // FALLBACK: Only allow credential migration for verified admin sessions.
+        // This prevents unauthorized users from hijacking the owner's Upstox credentials.
         if (!accessToken) {
-          const allCreds = await db.select().from(upstoxCredentials).limit(10);
-          const credWithToken = allCreds.find((c: any) => !!c.accessToken);
-          if (credWithToken) {
-            accessToken = credWithToken.accessToken;
-            // Auto-migrate the credential to the current sessionToken
-            await db.update(upstoxCredentials).set({ sessionToken: input.sessionToken }).where(eq(upstoxCredentials.id, credWithToken.id));
-            console.log(`[bot.start] FALLBACK: Migrated credentials from ${credWithToken.sessionToken?.slice(0, 8) ?? "null"}... to ${input.sessionToken.slice(0, 8)}...`);
+          // Only admin can use the fallback credential lookup
+          const isAdminForFallback = await verifyAdminAccess(ctx);
+          if (isAdminForFallback) {
+            const allCreds = await db.select().from(upstoxCredentials).limit(10);
+            const credWithToken = allCreds.find((c: any) => !!c.accessToken);
+            if (credWithToken) {
+              accessToken = credWithToken.accessToken;
+              // Auto-migrate the credential to the current sessionToken (admin only)
+              await db.update(upstoxCredentials).set({ sessionToken: input.sessionToken }).where(eq(upstoxCredentials.id, credWithToken.id));
+              console.log(`[bot.start] ADMIN FALLBACK: Migrated credentials from ${credWithToken.sessionToken?.slice(0, 8) ?? "null"}... to ${input.sessionToken.slice(0, 8)}...`);
+            } else {
+              console.log(`[bot.start] No credentials with valid accessToken found in DB at all.`);
+            }
           } else {
-            console.log(`[bot.start] No credentials with valid accessToken found in DB at all.`);
+            console.log(`[bot.start] No credentials found for sessionToken ${input.sessionToken.slice(0, 8)}... and user is not admin — cannot use fallback.`);
           }
         }
 
@@ -2475,14 +2481,17 @@ export const appRouter = router({
           if (creds.length > 0 && creds[0].accessToken) {
             accessToken = creds[0].accessToken;
           }
-          // FALLBACK: same as primary bot — find credentials under any token
+          // FALLBACK: Only admin can use the fallback credential lookup
           if (!accessToken) {
-            const allCreds = await db.select().from(upstoxCredentials).limit(10);
-            const credWithToken = allCreds.find((c: any) => !!c.accessToken);
-            if (credWithToken) {
-              accessToken = credWithToken.accessToken;
-              await db.update(upstoxCredentials).set({ sessionToken: baseTokenForCreds }).where(eq(upstoxCredentials.id, credWithToken.id));
-              console.log(`[bot.startSecondary] FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${baseTokenForCreds.slice(0, 8)}...`);
+            const isAdminForSlotFallback = await verifyAdminAccess(ctx);
+            if (isAdminForSlotFallback) {
+              const allCreds = await db.select().from(upstoxCredentials).limit(10);
+              const credWithToken = allCreds.find((c: any) => !!c.accessToken);
+              if (credWithToken) {
+                accessToken = credWithToken.accessToken;
+                await db.update(upstoxCredentials).set({ sessionToken: baseTokenForCreds }).where(eq(upstoxCredentials.id, credWithToken.id));
+                console.log(`[bot.startSecondary] ADMIN FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${baseTokenForCreds.slice(0, 8)}...`);
+              }
             }
           }
           if (!accessToken) {

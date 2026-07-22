@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import PullToRefresh from "@/components/PullToRefresh";
@@ -71,6 +71,16 @@ function StatCard({ label, value, sub, positive }: { label: string; value: strin
 export default function PnLAnalytics() {
   const [, navigate] = useLocation();
   const sessionToken = getSessionToken();
+
+  // ── Auth Gate ──────────────────────────────────────────────────────────────
+  const meQuery = trpc.mobileAuth.me.useQuery(undefined, { staleTime: 5_000, retry: 2 });
+  useEffect(() => {
+    if (meQuery.isFetched && !meQuery.data) {
+      localStorage.removeItem("scalpbot_auth_token");
+      navigate("/login");
+    }
+  }, [meQuery.isFetched, meQuery.data, navigate]);
+
   const [chartView, setChartView] = useState<ChartView>("per-trade");
   const [botFilter, setBotFilter] = useState<string>("all");
   const [instrumentFilter, setInstrumentFilter] = useState<string>("all");

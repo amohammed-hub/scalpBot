@@ -14,19 +14,14 @@ export default function Login() {
 
   // ── Auth check: redirect to dashboard if already logged in ──────────────
   useEffect(() => {
-    // Immediate redirect if localStorage token exists (no network round-trip)
-    const token = localStorage.getItem("scalpbot_auth_token");
-    if (token) {
-      navigate(intent === "subscribe" ? "/#pricing" : "/dashboard");
-    }
-  }, [navigate, intent]);
-
+    // Only redirect after server confirms valid session — localStorage alone is not trustworthy
+  }, []);
   const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
     staleTime: 5_000,
     retry: 1,
   });
   useEffect(() => {
-    // If user already has valid auth (either server confirms via cookie/header, or localStorage token exists and me query returns data)
+    // Redirect to dashboard only if server confirms valid session
     if (meQuery.data) {
       navigate(intent === "subscribe" ? "/#pricing" : "/dashboard");
     }

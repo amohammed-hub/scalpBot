@@ -1494,3 +1494,11 @@
 - [x] Add pull-to-refresh on P&L Analytics (refreshes trade history)
 - [x] Add pull-to-refresh on Activity Log (fetches latest events)
 - [x] Show loading spinner while refreshing
+
+## Critical Security Fix — Auth Gate (Jul 2026)
+- [x] Add Express-level auth middleware blocking ALL tRPC calls without valid JWT (except whitelisted public endpoints)
+- [x] Fix frontend auth gate: remove localStorage bypass — always trust server response for auth
+- [x] Fix auth loading gate: always show loading until meQuery resolves (no localStorage shortcut)
+- [x] Gate FALLBACK credential lookup behind admin verification (prevent credential hijacking)
+- [x] Add auth gates to PnLAnalytics and Backtest pages
+- [x] Fix Login.tsx: only redirect to dashboard if server confirms valid session
