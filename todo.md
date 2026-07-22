@@ -1509,3 +1509,8 @@
 - [x] Fix Hero Zero Scanner expiry day logic to use IST timezone correctly (Intl/Asia/Kolkata)
 - [x] Improve mobile layout spacing between sections (less cramped)
 - [x] Move Configuration/Settings tab content into Settings page (redirect /dashboard/config to /settings)
+
+## Upstox Deep-Link on Trade Cards (Jul 2026)
+- [x] Add deep-link to Upstox when user taps on open/active trade card
+- [x] Android intent: upstox://instrument/{instrument_key} (if Upstox app installed)
+- [x] Web fallback: https://pro.upstox.com/chart/{instrument_key} (if app not installed)

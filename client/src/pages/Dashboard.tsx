@@ -1965,7 +1965,7 @@ export default function Dashboard() {
             </div>
             {(() => {
               // Collect all open positions across all slots
-              type OpenPos = { symbol: string; direction: string; entry: number; current: number; pnl: number; qty: number; slot: number; isOptions: boolean; openedAt?: number };
+              type OpenPos = { symbol: string; direction: string; entry: number; current: number; pnl: number; qty: number; slot: number; isOptions: boolean; openedAt?: number; instrumentToken?: string; optionTradeToken?: string };
              const positions: OpenPos[] = [];
              // Primary slot
               if (activeTrade) {
@@ -1981,6 +1981,8 @@ export default function Dashboard() {
                   slot: 0,
                   isOptions: isIndexOptions,
                   openedAt: activeTrade.openedAt ?? activeTrade.entryTime,
+                  instrumentToken: (activeTrade as any).instrumentToken ?? config.instrumentToken,
+                  optionTradeToken: (inMemOpenTrade as any)?.optionTradeToken ?? null,
                 });
               }
               // Secondary slots
@@ -2014,6 +2016,8 @@ export default function Dashboard() {
                     slot: bot.slot,
                     isOptions: isOpts,
                     openedAt: ot.openedAt ?? ot.entryTime,
+                    instrumentToken: ot.instrumentToken ?? bot.instrumentToken ?? "",
+                    optionTradeToken: bot.optionTradeToken ?? null,
                   });
                 }
               });
@@ -2056,9 +2060,35 @@ export default function Dashboard() {
                           else durationStr = `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`;
                         }
                         return (
-                          <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                          <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors cursor-pointer active:scale-[0.98]"
+                            onClick={() => {
+                              // Deep-link to Upstox: try app first, fallback to web
+                              const token = pos.optionTradeToken || pos.instrumentToken || "";
+                              if (!token) return;
+                              // Upstox Pro web chart URL format: https://pro.upstox.com/chart/{encoded_instrument_key}
+                              const encodedToken = encodeURIComponent(token);
+                              const webUrl = `https://pro.upstox.com/chart/${encodedToken}`;
+                              // Try Android intent first (will silently fail on iOS/web)
+                              const intentUrl = `upstox://instrument/${encodedToken}`;
+                              // Use a hidden iframe to try the intent, fallback to web after timeout
+                              const iframe = document.createElement("iframe");
+                              iframe.style.display = "none";
+                              iframe.src = intentUrl;
+                              document.body.appendChild(iframe);
+                              setTimeout(() => {
+                                document.body.removeChild(iframe);
+                                // If we're still here, the app didn't open — use web
+                                window.open(webUrl, "_blank");
+                              }, 1500);
+                            }}
+                          >
                             <td className="py-1.5 px-1 text-white/70">Bot {pos.slot + 1}</td>
-                            <td className="py-1.5 px-1 text-white font-medium truncate max-w-[100px]">{pos.symbol}</td>
+                            <td className="py-1.5 px-1 text-white font-medium truncate max-w-[100px]">
+                              <span className="flex items-center gap-1">
+                                {pos.symbol}
+                                <svg className="w-3 h-3 text-teal-400 opacity-60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                              </span>
+                            </td>
                             <td className="py-1.5 px-1">
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${pos.direction === "BUY" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
                                 {pos.direction}
@@ -2274,6 +2304,25 @@ export default function Dashboard() {
                           <div className={`text-sm font-bold mt-1 tabular-nums ${unrealised >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                             {unrealised >= 0 ? "+" : ""}₹{unrealised.toFixed(0)}
                           </div>
+                          <button
+                            className="mt-1.5 text-[9px] text-teal-400/70 hover:text-teal-300 flex items-center gap-0.5 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const token = bot.optionTradeToken || ot.instrumentToken || bot.instrumentToken || "";
+                              if (!token) return;
+                              const encoded = encodeURIComponent(token);
+                              const webUrl = `https://pro.upstox.com/chart/${encoded}`;
+                              const intentUrl = `upstox://instrument/${encoded}`;
+                              const iframe = document.createElement("iframe");
+                              iframe.style.display = "none";
+                              iframe.src = intentUrl;
+                              document.body.appendChild(iframe);
+                              setTimeout(() => { document.body.removeChild(iframe); window.open(webUrl, "_blank"); }, 1500);
+                            }}
+                          >
+                            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                            View in Upstox
+                          </button>
                         </>
                       );
                     })()}
@@ -2749,6 +2798,26 @@ export default function Dashboard() {
                     {unrealizedPnl >= 0 ? "+" : ""}₹{unrealizedPnl.toFixed(0)}
                   </span>
                 )}
+                {/* Deep-link to Upstox chart — works for both paper and live */}
+                <button
+                  onClick={() => {
+                    const token = (inMemOpenTrade as any)?.optionTradeToken || (activeTrade as any).instrumentToken || config.instrumentToken || "";
+                    if (!token) return;
+                    const encoded = encodeURIComponent(token);
+                    const webUrl = `https://pro.upstox.com/chart/${encoded}`;
+                    const intentUrl = `upstox://instrument/${encoded}`;
+                    const iframe = document.createElement("iframe");
+                    iframe.style.display = "none";
+                    iframe.src = intentUrl;
+                    document.body.appendChild(iframe);
+                    setTimeout(() => { document.body.removeChild(iframe); window.open(webUrl, "_blank"); }, 1500);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 transition-colors"
+                  title="Open chart in Upstox app or web"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Chart
+                </button>
                 {/* Upstox order link — only shown for live trades */}
                 {activeTrade.mode === "live" && (
                   <a
@@ -3789,17 +3858,25 @@ export default function Dashboard() {
                         <td className="py-2.5 pr-4 font-medium text-white text-xs">
                           {/* Symbol — clickable link to Upstox order if live, or portfolio if paper */}
                          <a
-                           href={(() => {
-                              const token = t.instrumentToken ?? "";
-                              if (t.mode === "live" && t.upstoxOrderId) {
-                                return `https://upstox.com/orders/${t.upstoxOrderId}`;
+                           href="#"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              const token = (t as any).instrumentToken || "";
+                              if (!token) {
+                                window.open("https://pro.upstox.com/trading-charts", "_blank");
+                                return;
                               }
-                              return "https://pro.upstox.com/trading-charts";
-                            })()}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1 hover:text-emerald-400 transition-colors group cursor-pointer"
-                            title={`Open chart — search for: ${t.symbolLabel ?? t.symbol}`}
+                              const encoded = encodeURIComponent(token);
+                              const webUrl = `https://pro.upstox.com/chart/${encoded}`;
+                              const intentUrl = `upstox://instrument/${encoded}`;
+                              const iframe = document.createElement("iframe");
+                              iframe.style.display = "none";
+                              iframe.src = intentUrl;
+                              document.body.appendChild(iframe);
+                              setTimeout(() => { document.body.removeChild(iframe); window.open(webUrl, "_blank"); }, 1500);
+                            }}
+                            className="flex items-center gap-1 hover:text-teal-400 transition-colors group cursor-pointer"
+                            title={`View ${t.symbolLabel ?? t.symbol} chart in Upstox`}
                           >
                             {t.symbolLabel ?? t.symbol}
                             <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-70 transition-opacity" />
