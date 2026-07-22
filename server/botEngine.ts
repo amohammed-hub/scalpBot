@@ -3126,7 +3126,7 @@ let _crudeBiasCache: { result: CrudeBiasResult; fetchedAt: number } | null = nul
 const CRUDE_BIAS_CACHE_MS = 60_000; // 60 seconds
 
 // The crude oil futures token (front-month) — resolved dynamically at first call
-const CRUDE_OIL_FALLBACK_TOKEN = "MCX_FO|520702";
+const CRUDE_OIL_FALLBACK_TOKEN = "MCX_FO|560977"; // CRUDE OIL Aug 2026 front-month
 
 export async function getCrudeOilBias(accessToken?: string | null): Promise<CrudeBiasResult> {
   // Return cached if fresh
@@ -3884,7 +3884,28 @@ async function tick(
   // When isIndexOptions=true, the instrument IS the underlying (NSE_INDEX|...) and we must
   // use it for signals while trading the ATM CE/PE option.
   const isOptionsMode = state.isIndexOptions || !!(state.underlyingToken);
-  const signalToken = isOptionsMode && state.underlyingToken ? state.underlyingToken : state.instrumentToken;
+  let signalToken = isOptionsMode && state.underlyingToken ? state.underlyingToken : state.instrumentToken;
+
+  // ── MCX Token Auto-Resolution ──────────────────────────────────────────────
+  // MCX futures tokens are monthly contracts that expire. If the hardcoded token is stale,
+  // auto-resolve the current front-month token on the first tick (when candles are empty).
+  if (signalToken.startsWith("MCX_FO|") && state.candles.length === 0 && !(state as any)._mcxTokenResolved) {
+    (state as any)._mcxTokenResolved = true; // prevent repeated resolution attempts
+    const symbol = state.instrumentSymbol ?? "";
+    if (symbol) {
+      const resolved = await resolveMcxFuturesToken(symbol, state.accessToken);
+      if (resolved && resolved !== signalToken) {
+        devLog(`[BotEngine] MCX auto-resolve: ${symbol} token updated ${signalToken} → ${resolved}`);
+        emitActivity(state.sessionToken, "signal", `🔄 MCX token auto-resolved: ${symbol} → ${resolved.split("|")[1]}`);
+        if (isOptionsMode && state.underlyingToken) {
+          state.underlyingToken = resolved;
+        } else {
+          state.instrumentToken = resolved;
+        }
+        signalToken = resolved;
+      }
+    }
+  }
 
   // Fetch candles + quote
   // The Upstox intraday candle API works WITHOUT authentication for NSE_INDEX and MCX_FO tokens.
@@ -5699,31 +5720,54 @@ async function tick(
   // ── Cross-bot duplicate guard: prevent same instrument being traded by multiple bots simultaneously ──
   for (const [otherKey, otherState] of Array.from(bots.entries())) {
     if (otherKey === state.sessionToken) continue; // skip self
-    if (!otherState.openTrade) continue;
+    // RACE CONDITION FIX: Also block if other bot has mutex acquired (isOpeningTrade=true)
+    // even if openTrade is not yet set. This prevents two bots from opening the same trade simultaneously.
+    if (!otherState.openTrade && !otherState.isOpeningTrade) continue;
+    // If the other bot is in the process of opening (no openTrade yet), compare underlying tokens directly
+    if (!otherState.openTrade && otherState.isOpeningTrade) {
+      // Compare the underlying instrument token — if same underlying and same option type, block
+      const otherUnderlying = otherState.underlyingToken || otherState.instrumentToken;
+      const thisUnderlying = isOptionsMode ? (state.underlyingToken || state.instrumentToken) : tradeInstrumentToken;
+      if (otherUnderlying === thisUnderlying) {
+        // Check option type direction
+        const otherOptType = otherState.optionType || "CE"; // default to CE if unknown — safer to block
+        const thisOptType = state.optionType === "CE" ? "CE"
+          : state.optionType === "PE" ? "PE"
+          : signal.direction === "BUY" ? "CE" : "PE";
+        if (otherOptType === thisOptType || (!isOptionsMode && !otherState.optionType)) {
+          console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — RACE GUARD: slot ${otherState.botSlot} is already opening trade on same underlying ${otherUnderlying}`);
+          emitActivity(state.sessionToken, "signal", `⊘ Race guard — slot ${otherState.botSlot} is already opening same instrument`);
+          pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Race guard: slot ${otherState.botSlot} opening same`);
+          state.isOpeningTrade = false;
+          return;
+        }
+      }
+      continue; // different underlying, allow
+    }
     // BUG FIX 4: Check UNDERLYING instrument (not just exact option token).
     // BankNifty 57800 CE and 57900 CE have different tokens but same underlying.
-    const otherIsOptions = !!otherState.openTrade.isIndexOptions;
-    const otherUnderlying = otherIsOptions ? (otherState.instrumentToken || otherState.openTrade.instrumentToken) : otherState.openTrade.instrumentToken;
+    const otherIsOptions = !!otherState.openTrade!.isIndexOptions;
+    const otherUnderlying = otherIsOptions ? (otherState.instrumentToken || otherState.openTrade!.instrumentToken) : otherState.openTrade!.instrumentToken;
     const thisUnderlying = isOptionsMode ? (state.underlyingToken || state.instrumentToken) : tradeInstrumentToken;
-    const exactTokenMatch = otherState.openTrade.instrumentToken === tradeInstrumentToken;
+    const exactTokenMatch = otherState.openTrade!.instrumentToken === tradeInstrumentToken;
     const sameUnderlyingMatch = otherUnderlying === thisUnderlying;
     // FIX D: For options, allow CE + PE on same underlying (opposite bets).
     // Only block if BOTH are same option type (both CE or both PE).
     let sameDirection: boolean;
     if (isOptionsMode && otherIsOptions) {
-      const otherOptionType = otherState.openTrade.symbol?.includes("_CE_") ? "CE" : "PE";
+      const otherOptionType = otherState.openTrade!.symbol?.includes("_CE_") ? "CE" : "PE";
       const thisOptionType = state.optionType === "CE" ? "CE"
         : state.optionType === "PE" ? "PE"
         : signal.direction === "BUY" ? "CE" : "PE";
       sameDirection = thisOptionType === otherOptionType; // block only same type
     } else if (!isOptionsMode && !otherIsOptions) {
-      sameDirection = otherState.openTrade.direction === signal.direction;
+      sameDirection = otherState.openTrade!.direction === signal.direction;
     } else {
       sameDirection = false; // one is options, other is futures — never duplicate
     }
     if ((exactTokenMatch || sameUnderlyingMatch) && sameDirection) {
-      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${otherKey.slice(0, 8)} already has ${otherState.openTrade.symbol || otherState.openTrade.instrumentToken} on same underlying`);
-      emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — slot ${otherState.botSlot} already has position on same underlying (${otherState.openTrade.symbol || ""})`);
+      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${otherKey.slice(0, 8)} already has ${otherState.openTrade!.symbol || otherState.openTrade!.instrumentToken} on same underlying`);
+      emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — slot ${otherState.botSlot} already has position on same underlying (${otherState.openTrade!.symbol || ""})`);
       pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Duplicate: slot ${otherState.botSlot} on same underlying`);
       state.isOpeningTrade = false;
       return;

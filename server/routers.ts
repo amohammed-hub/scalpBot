@@ -2460,8 +2460,12 @@ export const appRouter = router({
         const runningBots = getAllRunningBotsForSession(input.sessionToken);
         const duplicate = runningBots.find(b => b.instrumentToken === input.instrumentToken);
         if (duplicate) {
-          // Log warning but DO NOT block — user may legitimately want to run same instrument in multiple slots
-          console.log(`[StartSecondary] Warning: ${input.instrumentLabel} also running in ${duplicate.botSlot === 0 ? "Primary" : `Slot ${duplicate.botSlot}`}`);
+          // BLOCK: Do not allow same instrument in multiple slots — causes duplicate trades
+          const { TRPCError } = await import("@trpc/server");
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `${input.instrumentLabel} is already running in ${duplicate.botSlot === 0 ? "Primary Bot" : `Bot ${duplicate.botSlot}`}. Cannot run same instrument in multiple slots.`,
+          });
         }
         // Server-side safety guard: NSE_INDEX and MCX_FO tokens are ALWAYS options mode.
         // This prevents accidental direct futures/spot trading regardless of what the frontend sends.

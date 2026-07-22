@@ -1520,3 +1520,9 @@
 - [x] Strip production console.log statements that reveal strategy details
 - [x] Add API rate limiting to prevent signal reverse-engineering
 - [x] Change admin OTP bypass code from 000000 to 270290
+
+## Urgent Live-Session Bug Fixes (Jul 2026)
+- [x] Fix anti-duplicate cross-bot guard race condition (Bot 1 and Bot 2 both bought Gold CE simultaneously)
+- [x] Fix Crude Oil instrument token expired (July contract MCX_FO|520702 → August MCX_FO|560977)
+- [x] Add MCX token auto-resolution at bot start (resolve front-month dynamically on first tick)
+- [x] Block starting two bots on same instrument (change warning to hard error in routers.ts)

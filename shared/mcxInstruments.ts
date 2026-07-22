@@ -48,7 +48,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Crude Oil",
     symbol: "CRUDEOIL",
-    instrumentToken: "MCX_FO|520702",   // CRUDE OIL front-month Jul 2026
+    instrumentToken: "MCX_FO|560977",   // CRUDE OIL front-month Aug 2026
     upstoxName: "CRUDE OIL",
     lotSize: 100,      // 100 barrels
     tickSize: 1,       // ₹1 per barrel
