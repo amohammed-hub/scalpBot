@@ -1461,7 +1461,17 @@ export default function Dashboard() {
       {showAdminPanel && meQuery.data?.role === "admin" ? (
         <AdminPanel onClose={() => setShowAdminPanel(false)} />
       ) : (
-      <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-6 pb-20 md:pb-6">
+      <PullToRefresh
+        onRefresh={async () => {
+          await Promise.all([
+            utils.multiBots.allStatus.invalidate(),
+            utils.multiBots.livePrices.invalidate(),
+            utils.trades.list.invalidate(),
+            utils.activity.log.invalidate(),
+          ]);
+        }}
+        className="flex-1 p-3 sm:p-4 md:p-6 pb-20 md:pb-6"
+      >
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6 pb-3 sm:pb-4 border-b border-white/5 gap-2">
           <div className="min-w-0">
@@ -3979,7 +3989,7 @@ export default function Dashboard() {
           </div>
         </div>
         </>)}
-      </main>
+      </PullToRefresh>
       )}
 
       {/* QR Modal */}
@@ -4016,3 +4026,5 @@ export default function Dashboard() {
 import { Rocket } from "lucide-react";
 import { playEntrySound, playProfitSound, playLossSound } from "@/lib/sounds";
 import { pushTradeNotification } from "@/components/TradeToast";
+import AppFooter from "@/components/AppFooter";
+import PullToRefresh from "@/components/PullToRefresh";

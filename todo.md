@@ -1473,3 +1473,24 @@
 - [x] HeroZero: bottom padding for nav bar
 - [x] RiskCalculator: bottom padding for nav bar
 - [x] All pages have pb-24 on mobile for bottom nav clearance
+
+## Footer, Legal Pages & Trademark
+- [x] Create shared AppFooter component: "© 2026 ScalpBot. All rights reserved." with Terms & Privacy links
+- [x] Add AppFooter to all pages (Dashboard, Settings, P&L, HeroZero, Backtest, RiskCalc, Home)
+- [x] Create /terms route with Terms of Service page content
+- [x] Create /privacy route with Privacy Policy page content
+- [x] Add LICENSE file (proprietary, all rights reserved)
+- [x] Update landing page brand to "ScalpBot™" with trademark symbol
+
+## Security Hardening
+- [x] Verify GitHub repo is PRIVATE (make private if public)
+- [x] Verify all Upstox API keys are in env variables only (not in code)
+- [x] Add security headers middleware (HSTS, X-Content-Type-Options, X-Frame-Options)
+- [x] Add CORS restriction to own domain only
+- [x] Add rate limiting on API endpoints
+
+## Pull-to-Refresh (Mobile)
+- [x] Add pull-to-refresh on Dashboard (refreshes bot status, P&L, open positions)
+- [x] Add pull-to-refresh on P&L Analytics (refreshes trade history)
+- [x] Add pull-to-refresh on Activity Log (fetches latest events)
+- [x] Show loading spinner while refreshing

@@ -14,12 +14,16 @@ import HeroZeroScanner from "./pages/HeroZeroScanner";
 import PnLAnalytics from "./pages/PnLAnalytics";
 import Backtest from "./pages/Backtest";
 import Login from "./pages/Login";
+import Terms from "./pages/Terms";
+import Privacy from "./pages/Privacy";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
+      <Route path="/terms" component={Terms} />
+      <Route path="/privacy" component={Privacy} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/dashboard/trades" component={Dashboard} />
       <Route path="/dashboard/config" component={Dashboard} />

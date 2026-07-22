@@ -4,6 +4,7 @@ import { Bot, TrendingUp, Shield, Zap, BarChart2, Check, Crown, Loader2 } from "
 import { useState, useCallback, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import AppFooter from "@/components/AppFooter";
 
 export default function Home() {
   const [, navigate] = useLocation();
@@ -117,14 +118,14 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white">
+    <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col">
       {/* Navbar */}
       <nav className="border-b border-white/10 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-teal-500 rounded-lg flex items-center justify-center">
             <Zap className="w-5 h-5 text-white" />
           </div>
-          <span className="font-bold text-lg text-white">ScalpBot</span>
+          <span className="font-bold text-lg text-white">ScalpBot&trade;</span>
           <span className="text-xs bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded-full border border-teal-500/30">Upstox</span>
         </div>
         <div className="flex items-center gap-3">
@@ -308,6 +309,7 @@ export default function Home() {
           </p>
         </div>
       </div>
+      <AppFooter />
     </div>
   );
 }

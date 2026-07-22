@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
+import PullToRefresh from "@/components/PullToRefresh";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine, CartesianGrid,
@@ -229,7 +230,18 @@ export default function PnLAnalytics() {
   const isLoading = dayLoading || weekLoading || monthLoading || exportLoading;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <PullToRefresh
+      onRefresh={async () => {
+        const utils = trpc.useUtils();
+        await Promise.all([
+          utils.trades.pnlByDay.invalidate(),
+          utils.trades.pnlByWeek.invalidate(),
+          utils.trades.pnlByMonth.invalidate(),
+          utils.trades.exportData.invalidate(),
+        ]);
+      }}
+      className="min-h-screen bg-zinc-950 text-white"
+    >
       {/* Header with Back Button */}
       <div className="border-b border-zinc-800 px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
@@ -627,6 +639,6 @@ export default function PnLAnalytics() {
           All times in IST (UTC+5:30). Only closed trades are included. Open trades are excluded from P&amp;L calculations.
         </p>
       </div>
-    </div>
+    </PullToRefresh>
   );
 }
