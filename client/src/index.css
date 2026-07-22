@@ -289,3 +289,17 @@
 ::-webkit-scrollbar-thumb:hover {
   background: oklch(1 0 0 / 0.25);
 }
+
+/* Safe area for bottom nav on phones with home indicator */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Mobile-specific: prevent text overflow */
+@media (max-width: 640px) {
+  .truncate-mobile {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

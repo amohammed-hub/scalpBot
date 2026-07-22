@@ -760,7 +760,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
+    <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col md:flex-row">
       {/* Sidebar */}
       <aside className="w-64 border-r border-white/10 flex flex-col p-4 gap-2 shrink-0 hidden md:flex">
         <div className="flex items-center gap-2 mb-6 px-2">
@@ -786,7 +786,7 @@ export default function Settings() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 p-4 md:p-6 max-w-2xl overflow-y-auto">
+      <main className="flex-1 p-3 sm:p-4 md:p-6 max-w-2xl overflow-y-auto pb-20 md:pb-6">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-white mb-1">Settings</h1>
           <p className="text-white/50 text-sm">Your credentials are stored securely on the server for bot operation.</p>
@@ -1501,6 +1501,31 @@ export default function Settings() {
           </div>
         </div>
       </main>
+      {/* ── Mobile Bottom Tab Navigation ─────────────────────────────────── */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[oklch(0.12_0.02_240)] border-t border-white/10 backdrop-blur-lg">
+        <div className="flex items-stretch justify-around">
+          {[
+            { icon: "🎯", label: "Dashboard", path: "/dashboard" },
+            { icon: "⚙️", label: "Settings", path: "/settings", active: true },
+            { icon: "🦸", label: "Hero Zero", path: "/hero-zero" },
+            { icon: "📊", label: "P&L", path: "/pnl-analytics" },
+            { icon: "🔬", label: "Backtest", path: "/backtest" },
+          ].map((tab) => (
+            <button
+              key={tab.path}
+              onClick={() => navigate(tab.path)}
+              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 px-2 min-h-[56px] min-w-[56px] transition-colors ${
+                tab.active
+                  ? "text-teal-400"
+                  : "text-white/40 active:text-white/70"
+              }`}
+            >
+              <span className="text-lg">{tab.icon}</span>
+              <span className="text-[10px] font-medium leading-tight">{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }

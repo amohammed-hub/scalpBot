@@ -1198,7 +1198,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex">
+    <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col md:flex-row">
       {/* ── Subscription Paywall Overlay ─────────────────────────────────────── */}
       {accessQuery.data && !accessQuery.data.hasAccess && meQuery.data?.role !== "admin" && !accessQuery.data?.plan?.includes("yearly") && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1258,7 +1258,7 @@ export default function Dashboard() {
         </div>
       )}
       {accessQuery.data?.hasAccess && accessQuery.data.plan && accessQuery.data.plan !== "trial" && !isAdmin && (
-        <div className="fixed top-0 left-64 right-0 z-40 flex items-center gap-2 px-4 py-1.5 bg-emerald-600/80 text-white text-xs font-medium">
+        <div className="fixed top-0 left-0 md:left-64 right-0 z-40 flex items-center gap-2 px-4 py-1.5 bg-emerald-600/80 text-white text-xs font-medium">
           <Award className="w-3.5 h-3.5" />
           <span>{accessQuery.data.plan.replace("_", " ").replace(/^\w/, (c: string) => c.toUpperCase())} Plan — {accessQuery.data.daysLeft} days left</span>
         </div>
@@ -1285,7 +1285,7 @@ export default function Dashboard() {
       )}
 
       {/* Sidebar */}
-      <aside className="w-64 border-r border-white/10 flex flex-col p-4 gap-1.5 shrink-0 bg-gradient-to-b from-white/[0.02] to-transparent">
+      <aside className="hidden md:flex w-64 border-r border-white/10 flex-col p-4 gap-1.5 shrink-0 bg-gradient-to-b from-white/[0.02] to-transparent">
         <div className="flex items-center gap-2 mb-6 px-2">
           <div className="w-8 h-8 bg-teal-500 rounded-lg flex items-center justify-center">
             <Zap className="w-5 h-5 text-white" />
@@ -1461,14 +1461,14 @@ export default function Dashboard() {
       {showAdminPanel && meQuery.data?.role === "admin" ? (
         <AdminPanel onClose={() => setShowAdminPanel(false)} />
       ) : (
-      <main className="flex-1 overflow-auto p-6">
+      <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-6 pb-20 md:pb-6">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
-          <div>
-            <h1 className="text-2xl font-bold text-white">Trading Dashboard</h1>
-            <p className="text-white/50 text-sm">Automated scalping — Candle breakout + EMA + VWAP + RSI</p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6 pb-3 sm:pb-4 border-b border-white/5 gap-2">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-2xl font-bold text-white truncate">Trading Dashboard</h1>
+            <p className="text-white/50 text-xs sm:text-sm truncate">Automated scalping — EMA + VWAP + RSI</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
           <button onClick={() => navigate("/settings")}
               title={tokenHealthMessage ?? (tokenStatus === "valid" ? "Access Token: OK" : tokenStatus === "missing" ? "No Access Token" : "Token looks incomplete")}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
@@ -1493,7 +1493,7 @@ export default function Dashboard() {
           </div>
         </div>
         {/* ── Sticky Sub-Bar: Status + Kill Switch ────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-3 mb-3 px-3 py-2 bg-white/[0.03] border border-white/10 rounded-xl text-xs">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 px-2 sm:px-3 py-2 bg-white/[0.03] border border-white/10 rounded-xl text-xs">
           {/* Bot Status */}
           <div className="flex items-center gap-1.5">
             <span className={`w-2 h-2 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
@@ -1530,7 +1530,7 @@ export default function Dashboard() {
           </button>
         </div>
         {/* ── Tab Navigation ──────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-1 mb-4 p-1 bg-white/5 rounded-xl border border-white/10 sticky top-0 z-20">
+        <div className="flex items-center gap-1 mb-4 p-1 bg-white/5 rounded-xl border border-white/10 sticky top-0 z-20 overflow-x-auto">
           {([
             { id: "command" as const, label: "Command Center", icon: "🎯", path: "/dashboard" },
             { id: "trades" as const, label: "Trade Log", icon: "📊", path: "/dashboard/trades" },
@@ -1604,7 +1604,7 @@ export default function Dashboard() {
           }
 
           return (
-            <div className={`mb-4 flex items-center gap-3 ${bgColor} border ${borderColor} rounded-xl px-4 py-2.5 transition-all duration-300`}>
+            <div className={`mb-4 flex flex-wrap items-center gap-2 sm:gap-3 ${bgColor} border ${borderColor} rounded-xl px-3 sm:px-4 py-2.5 transition-all duration-300`}>
               <div className="flex items-center gap-2">
                 <span className={`text-base ${!enabled || isAfterWindow ? "opacity-30" : ""}`}>🚀</span>
                 <span className={`text-sm font-medium ${!enabled || isAfterWindow ? "text-white/30" : "text-white/80"}`}>Opening Burst</span>
@@ -1641,7 +1641,7 @@ export default function Dashboard() {
           // Only show for NIFTY/BANKNIFTY instruments (not MCX)
           if (isMCXInstrument) return null;
           return (
-            <div className={`mb-4 flex items-center gap-3 ${enabled ? "bg-orange-500/5 border-orange-500/30" : "bg-white/5 border-white/10"} border rounded-xl px-4 py-2.5 transition-all duration-300`}>
+            <div className={`mb-4 flex flex-wrap items-center gap-2 sm:gap-3 ${enabled ? "bg-orange-500/5 border-orange-500/30" : "bg-white/5 border-white/10"} border rounded-xl px-3 sm:px-4 py-2.5 transition-all duration-300`}>
               <div className="flex items-center gap-2">
                 <span className={`text-base ${!enabled ? "opacity-30" : ""}`}>🛢️</span>
                 <span className={`text-sm font-medium ${!enabled ? "text-white/30" : "text-white/80"}`}>Crude Oil Correlation</span>
@@ -1787,7 +1787,7 @@ export default function Dashboard() {
           const bestTrade = closedToday2.length > 0 ? closedToday2.reduce((best: any, t: any) => (t.pnl ?? 0) > (best.pnl ?? 0) ? t : best, closedToday2[0]) : null;
           const worstTrade = closedToday2.length > 0 ? closedToday2.reduce((worst: any, t: any) => (t.pnl ?? 0) < (worst.pnl ?? 0) ? t : worst, closedToday2[0]) : null;
           return (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-4">
               <div className="bg-white/5 border border-white/10 rounded-xl p-3">
                 <div className="flex items-center gap-2 mb-2">
                   <Timer className="w-3.5 h-3.5 text-cyan-400" />
@@ -1882,7 +1882,7 @@ export default function Dashboard() {
           });
 
           return (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6 animate-in fade-in duration-500">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 mb-6 animate-in fade-in duration-500">
               {/* Realized P&L (Today) */}
               <div className="bg-white/5 border border-white/10 rounded-2xl p-4 hover:border-teal-500/30 transition-all duration-200 hover:shadow-[0_0_20px_oklch(0.78_0.18_195/0.08)]">
                 <div className="flex items-center justify-between mb-1">
@@ -2084,7 +2084,7 @@ export default function Dashboard() {
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
         <div className="text-[10px] text-white/30 mb-1.5 ml-1">Each bot slot runs independently on a different instrument — start/stop individually</div>
-        <div className={`grid gap-2 sm:gap-3 mb-6 ${meQuery.data?.role === "admin" ? "grid-cols-4" : "grid-cols-3"}`}>
+        <div className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${meQuery.data?.role === "admin" ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
           {((allBots && allBots.length > 0) ? allBots : [
             { sessionToken, slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0 },
             { sessionToken: `${sessionToken}-slot1`, slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0 },
@@ -3984,6 +3984,32 @@ export default function Dashboard() {
 
       {/* QR Modal */}
       <QRModal open={qrOpen} onClose={() => setQrOpen(false)} />
+
+      {/* ── Mobile Bottom Tab Navigation ─────────────────────────────────── */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[oklch(0.12_0.02_240)] border-t border-white/10 backdrop-blur-lg safe-area-bottom">
+        <div className="flex items-stretch justify-around">
+          {[
+            { icon: "🎯", label: "Dashboard", path: "/dashboard", active: location.startsWith("/dashboard") },
+            { icon: "⚙️", label: "Settings", path: "/settings", active: false },
+            { icon: "🦸", label: "Hero Zero", path: "/hero-zero", active: false },
+            { icon: "📊", label: "P&L", path: "/pnl-analytics", active: false },
+            { icon: "🔬", label: "Backtest", path: "/backtest", active: false },
+          ].map((tab) => (
+            <button
+              key={tab.path}
+              onClick={() => navigate(tab.path)}
+              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 px-2 min-h-[56px] min-w-[56px] transition-colors ${
+                tab.active
+                  ? "text-teal-400"
+                  : "text-white/40 active:text-white/70"
+              }`}
+            >
+              <span className="text-lg">{tab.icon}</span>
+              <span className="text-[10px] font-medium leading-tight">{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }

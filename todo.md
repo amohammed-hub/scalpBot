@@ -1459,3 +1459,12 @@
 - [x] AUDIT FIX J: Adaptive regime respects userDisabledLayers (won't re-enable Trend if user disabled it)
 - [x] AUDIT FIX G: Server-side session auto-switch (morning→evening instrument change without browser)
 - [x] AUDIT FIX I: Removed debug/replay files from deployment, updated .gitignore
+## Mobile Responsive Dashboard
+- [x] Convert sidebar to bottom tab bar on mobile (< 768px)
+- [x] Bot cards stack vertically on mobile (not side by side)
+- [x] All buttons minimum 44px touch target
+- [x] Fix text overflow on mobile (truncate/wrap properly)
+- [x] Dashboard content fills mobile width without horizontal scroll
+- [x] Bottom tab bar shows: Dashboard, Settings, Hero Zero, P&L, Backtest
+- [x] Hide sidebar completely on mobile, show bottom nav instead
+- [x] Take 375px mobile screenshot to verify
