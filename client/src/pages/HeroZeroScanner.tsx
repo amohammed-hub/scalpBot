@@ -31,10 +31,8 @@ function isExpiryWindow(): boolean {
 /** Check if today (IST) matches the expiry date returned by the API */
 function isTodayExpiry(expiryDateStr: string | null | undefined): boolean {
   if (!expiryDateStr) return false;
-  const now = new Date();
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  const ist = new Date(now.getTime() + istOffset);
-  const todayIST = ist.toISOString().slice(0, 10); // YYYY-MM-DD
+  // Get today's date in IST using Intl (avoids UTC conversion bug)
+  const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
   return todayIST === expiryDateStr;
 }
 
@@ -179,7 +177,7 @@ export default function HeroZeroScanner() {
   }
 
   return (
-    <div className="min-h-screen bg-[oklch(0.11_0.025_240)] text-white p-3 sm:p-4 md:p-6 pb-24 md:pb-6">
+    <div className="min-h-screen bg-[oklch(0.11_0.025_240)] text-white p-4 sm:p-5 md:p-6 pb-24 md:pb-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
@@ -235,8 +233,8 @@ export default function HeroZeroScanner() {
       </div>
 
       {/* Status banners */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-        <div className={`rounded-lg p-3 border flex items-center gap-3 ${isExpiry ? "bg-purple-500/10 border-purple-500/30" : "bg-slate-800/40 border-slate-700/50"}`}>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className={`rounded-lg p-4 border flex items-center gap-3 ${isExpiry ? "bg-purple-500/10 border-purple-500/30" : "bg-slate-800/40 border-slate-700/50"}`}>
           <Clock className={`w-5 h-5 ${isExpiry ? "text-purple-400" : "text-slate-500"}`} />
           <div>
             <div className="text-xs text-slate-400">Expiry Day</div>
@@ -245,7 +243,7 @@ export default function HeroZeroScanner() {
             </div>
           </div>
         </div>
-        <div className={`rounded-lg p-3 border flex items-center gap-3 ${inWindow ? "bg-emerald-500/10 border-emerald-500/30" : "bg-slate-800/40 border-slate-700/50"}`}>
+        <div className={`rounded-lg p-4 border flex items-center gap-3 ${inWindow ? "bg-emerald-500/10 border-emerald-500/30" : "bg-slate-800/40 border-slate-700/50"}`}>
           <Zap className={`w-5 h-5 ${inWindow ? "text-emerald-400" : "text-slate-500"}`} />
           <div>
             <div className="text-xs text-slate-400">Trading Window</div>
@@ -254,7 +252,7 @@ export default function HeroZeroScanner() {
             </div>
           </div>
         </div>
-        <div className="rounded-lg p-3 border bg-slate-800/40 border-slate-700/50 flex items-center gap-3">
+        <div className="rounded-lg p-4 border bg-slate-800/40 border-slate-700/50 flex items-center gap-3">
           <Target className="w-5 h-5 text-amber-400" />
           <div>
             <div className="text-xs text-slate-400">Underlying Price</div>

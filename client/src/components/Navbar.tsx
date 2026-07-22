@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { TrendingUp, Menu, X, Zap, QrCode } from "lucide-react";
-import QRModal from "./QRModal";
+import { TrendingUp, Menu, X, Zap } from "lucide-react";
 
 const navLinks = [
   { label: "Scalper Tool", href: "#scalper" },
@@ -13,7 +12,6 @@ const navLinks = [
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [qrOpen, setQrOpen] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
@@ -67,15 +65,6 @@ export default function Navbar() {
 
           {/* CTA */}
           <div className="hidden md:flex items-center gap-2">
-            {/* QR / Get on Phone button */}
-            <button
-              onClick={() => setQrOpen(true)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[oklch(0.78_0.18_195/0.35)] bg-[oklch(0.78_0.18_195/0.08)] text-[oklch(0.78_0.18_195)] text-xs font-semibold hover:bg-[oklch(0.78_0.18_195/0.18)] hover:border-[oklch(0.78_0.18_195/0.55)] transition-all duration-200"
-            >
-              <QrCode className="w-3.5 h-3.5" />
-              Get on Phone
-            </button>
-
             <a
               href="https://upstox.com/scalper/"
               target="_blank"
@@ -89,12 +78,6 @@ export default function Navbar() {
 
           {/* Mobile Menu Toggle */}
           <div className="md:hidden flex items-center gap-2">
-            <button
-              onClick={() => setQrOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[oklch(0.78_0.18_195/0.35)] bg-[oklch(0.78_0.18_195/0.08)] text-[oklch(0.78_0.18_195)] text-xs font-semibold"
-            >
-              <QrCode className="w-3.5 h-3.5" />
-            </button>
             <button
               className="text-white/70 hover:text-white"
               onClick={() => setMobileOpen(!mobileOpen)}
@@ -116,13 +99,6 @@ export default function Navbar() {
                 {link.label}
               </button>
             ))}
-            <button
-              onClick={() => { setQrOpen(true); setMobileOpen(false); }}
-              className="mt-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-[oklch(0.78_0.18_195/0.4)] text-[oklch(0.78_0.18_195)] text-sm font-semibold"
-            >
-              <QrCode className="w-4 h-4" />
-              Get on Phone / Scan QR
-            </button>
             <a
               href="https://upstox.com/scalper/"
               target="_blank"
@@ -136,8 +112,6 @@ export default function Navbar() {
         )}
       </header>
 
-      {/* QR Modal */}
-      <QRModal open={qrOpen} onClose={() => setQrOpen(false)} />
     </>
   );
 }

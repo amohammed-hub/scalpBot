@@ -1,13 +1,12 @@
 import { Badge } from "@/components/ui/badge";
 import { AdminPanel } from "@/components/AdminPanel";
 import { useLocation, Link } from "wouter";
-import QRModal from "@/components/QRModal";
 import CandlestickChart from "@/components/CandlestickChart";
 import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
-  Download, QrCode, LogOut, User, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
+  Download, LogOut, User, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
 import { Pencil } from "lucide-react";
@@ -194,9 +193,9 @@ export default function Dashboard() {
   type DashTab = "command" | "trades" | "config" | "log";
   const activeTab: DashTab = location.startsWith("/dashboard/trades") ? "trades"
     : location.startsWith("/dashboard/config") ? "config"
+    // Note: config tab removed from UI, but keep the mapping for redirect below
     : location.startsWith("/dashboard/log") ? "log"
     : "command";
-  const [qrOpen, setQrOpen] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const sessionToken = getSessionToken();
 
@@ -216,6 +215,13 @@ export default function Dashboard() {
       navigate("/login");
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
+
+  // Redirect /dashboard/config to /settings (config tab removed from Dashboard)
+  useEffect(() => {
+    if (location.startsWith("/dashboard/config")) {
+      navigate("/settings", { replace: true });
+    }
+  }, [location, navigate]);
 
 
   const logoutMutation = trpc.mobileAuth.logout.useMutation({
@@ -1480,53 +1486,37 @@ export default function Dashboard() {
             <h1 className="text-lg sm:text-2xl font-bold text-white truncate">Trading Dashboard</h1>
             <p className="text-white/50 text-xs sm:text-sm truncate">Automated scalping — EMA + VWAP + RSI</p>
           </div>
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
-          <button onClick={() => navigate("/settings")}
-              title={tokenHealthMessage ?? (tokenStatus === "valid" ? "Access Token: OK" : tokenStatus === "missing" ? "No Access Token" : "Token looks incomplete")}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                (tokenStatus === "valid" && tokenHealthStatus !== "expired") ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-                : tokenStatus === "missing" ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 animate-pulse"
-                : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
-              }`}>
-              {(tokenStatus === "valid" && tokenHealthStatus === "valid") ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK ✓</span></>
-               : (tokenHealthStatus === "expired") ? <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token Expired!</span></>
-               : tokenStatus === "valid" ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK</span></>
-               : tokenStatus === "missing" ? <><ShieldOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">No Token</span></>
-               : <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token?</span></>}
-            </button>
-            <button onClick={() => setQrOpen(true)}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-teal-500/15 border border-teal-500/30 text-teal-400 hover:bg-teal-500/25 transition-all">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>
-              <span className="hidden sm:inline">Get on Phone</span>
-            </button>
-            <Badge variant="outline" className={`border-none text-sm px-3 py-1 ${config.mode === "paper" ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>
-              {config.mode === "paper" ? "Paper Trade" : "⚠ Live Trade"}
+         <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
+         <button onClick={() => navigate("/settings")}
+             title={tokenHealthMessage ?? (tokenStatus === "valid" ? "Access Token: OK" : tokenStatus === "missing" ? "No Access Token" : "Token looks incomplete")}
+             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+               (tokenStatus === "valid" && tokenHealthStatus !== "expired") ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+               : tokenStatus === "missing" ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 animate-pulse"
+               : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
+             }`}>
+             {(tokenStatus === "valid" && tokenHealthStatus === "valid") ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK ✓</span></>
+              : (tokenHealthStatus === "expired") ? <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token Expired!</span></>
+              : tokenStatus === "valid" ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK</span></>
+              : tokenStatus === "missing" ? <><ShieldOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">No Token</span></>
+              : <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token?</span></>}
+           </button>
+            <Badge variant="outline" className={`border-none text-sm px-3 py-1.5 font-bold ${config.mode === "paper" ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"}`}>
+              {config.mode === "paper" ? "🟡 PAPER MODE" : "🟢 LIVE"}
             </Badge>
           </div>
         </div>
-        {/* ── Sticky Sub-Bar: Status + Kill Switch ────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 px-2 sm:px-3 py-2 bg-white/[0.03] border border-white/10 rounded-xl text-xs">
-          {/* Bot Status */}
-          <div className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
-            <span className={isRunning ? "text-emerald-400 font-medium" : "text-white/40"}>Bot {isRunning ? "Live" : "Stopped"}</span>
+        {/* ── Sticky Sub-Bar: Bot Status + Kill Switch ────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-4 px-3 sm:px-4 py-3 bg-white/[0.03] border border-white/10 rounded-xl text-xs">
+          {/* Bot Running Status */}
+          <div className="flex items-center gap-2">
+            <span className={`w-2.5 h-2.5 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
+            <span className={`font-semibold ${isRunning ? "text-emerald-400" : "text-white/40"}`}>Bot {isRunning ? "Running" : "Stopped"}</span>
           </div>
           <div className="w-px h-4 bg-white/10" />
-          {/* Token Status */}
-          <div className="flex items-center gap-1.5">
-            {tokenStatus === "valid" ? (
-              <><ShieldCheck className="w-3 h-3 text-emerald-400" /><span className="text-emerald-400">Token OK</span></>
-            ) : (
-              <><ShieldOff className="w-3 h-3 text-red-400" /><span className="text-red-400">Token {tokenStatus === "short" ? "Short" : "Missing"}</span></>
-            )}
-          </div>
-          <div className="w-px h-4 bg-white/10" />
-          {/* Trading Mode */}
-          <div className="flex items-center gap-1.5">
-            <span className={config.mode === "paper" ? "text-amber-400" : "text-red-400"}>
-              {config.mode === "paper" ? "📝 Paper" : "⚡ Live"}
-            </span>
-          </div>
+          {/* Mode indicator */}
+          <span className={`font-bold ${config.mode === "paper" ? "text-amber-400" : "text-emerald-400"}`}>
+            {config.mode === "paper" ? "PAPER MODE — No real money" : "⚡ LIVE — Real trades"}
+          </span>
           <div className="flex-1" />
           {/* KILL SWITCH — always visible, big red button */}
           <button
@@ -1542,11 +1532,10 @@ export default function Dashboard() {
           </button>
         </div>
         {/* ── Tab Navigation ──────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-1 mb-4 p-1 bg-white/5 rounded-xl border border-white/10 sticky top-0 z-20 overflow-x-auto">
+        <div className="flex items-center gap-1 mb-5 p-1 bg-white/5 rounded-xl border border-white/10 sticky top-0 z-20 overflow-x-auto">
           {([
             { id: "command" as const, label: "Command Center", icon: "🎯", path: "/dashboard" },
             { id: "trades" as const, label: "Trade Log", icon: "📊", path: "/dashboard/trades" },
-            { id: "config" as const, label: "Configuration", icon: "⚙️", path: "/dashboard/config" },
             { id: "log" as const, label: "Activity Log", icon: "📜", path: "/dashboard/log" },
           ]).map((tab) => (
             <button
@@ -3993,9 +3982,6 @@ export default function Dashboard() {
         </>)}
       </PullToRefresh>
       )}
-
-      {/* QR Modal */}
-      <QRModal open={qrOpen} onClose={() => setQrOpen(false)} />
 
       {/* ── Mobile Bottom Tab Navigation ─────────────────────────────────── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[oklch(0.12_0.02_240)] border-t border-white/10 backdrop-blur-lg safe-area-bottom">

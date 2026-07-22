@@ -1502,3 +1502,10 @@
 - [x] Gate FALLBACK credential lookup behind admin verification (prevent credential hijacking)
 - [x] Add auth gates to PnLAnalytics and Backtest pages
 - [x] Fix Login.tsx: only redirect to dashboard if server confirms valid session
+
+## Mobile App UI Fixes (Jul 2026)
+- [x] Remove QR barcode / "Get on Phone" buttons from Dashboard and Navbar (users are already in the app)
+- [x] Fix Paper vs Live mode display: single clear indicator (PAPER MODE yellow or LIVE green), remove confusing dual "Bot Live" + "Paper" display
+- [x] Fix Hero Zero Scanner expiry day logic to use IST timezone correctly (Intl/Asia/Kolkata)
+- [x] Improve mobile layout spacing between sections (less cramped)
+- [x] Move Configuration/Settings tab content into Settings page (redirect /dashboard/config to /settings)
