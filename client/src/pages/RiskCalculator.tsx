@@ -394,7 +394,7 @@ export default function RiskCalculator() {
         </div>
       </header>
 
-      <div className="container py-6">
+      <div className="container py-4 sm:py-6 pb-24 md:pb-6">
         {/* Page Title */}
         <div className="mb-6">
           <h1 className="text-2xl sm:text-3xl font-black text-white mb-1" style={{ fontFamily: "'Syne', sans-serif" }}>

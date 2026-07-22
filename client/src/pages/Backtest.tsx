@@ -155,20 +155,20 @@ export default function Backtest() {
         </div>
       )}
       {/* Header */}
-      <div className="border-b border-white/10 px-6 py-4 flex items-center gap-4">
+      <div className="border-b border-white/10 px-4 sm:px-6 py-4 flex flex-wrap items-center gap-3 sm:gap-4">
         <button onClick={() => navigate("/dashboard")}
-          className="flex items-center gap-2 text-white/50 hover:text-white transition-colors text-sm">
+          className="flex items-center gap-2 text-white/50 hover:text-white transition-colors text-sm min-h-[44px]">
           <ArrowLeft className="w-4 h-4" /> Dashboard
         </button>
-        <div className="w-px h-4 bg-white/20" />
+        <div className="w-px h-4 bg-white/20 hidden sm:block" />
         <div className="flex items-center gap-2">
           <BarChart2 className="w-5 h-5 text-teal-400" />
           <span className="font-bold text-white">Strategy Backtester</span>
         </div>
-        <span className="text-xs text-white/30 ml-auto">Replay 1-min candles through the ScalpBot signal engine</span>
+        <span className="text-xs text-white/30 ml-auto hidden sm:block">Replay 1-min candles through the ScalpBot signal engine</span>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-4 sm:gap-6 pb-24 md:pb-6">
         {/* Config Panel */}
         <div className="space-y-4">
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5">

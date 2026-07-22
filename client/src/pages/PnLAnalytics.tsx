@@ -231,43 +231,43 @@ export default function PnLAnalytics() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       {/* Header with Back Button */}
-      <div className="border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="border-b border-zinc-800 px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
           <button
             onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors w-fit"
           >
             <span>←</span> Back to Dashboard
           </button>
           <div>
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
+            <h1 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
               <span className="text-2xl">📊</span> P&amp;L Analytics
             </h1>
             <p className="text-xs text-zinc-500 mt-0.5">Complete trade journal with per-trade breakdown</p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className={`flex gap-2 ${!exportRows.length ? 'hidden' : ''}`}>
           <button
             onClick={exportCSV}
             disabled={!exportRows.length}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg disabled:opacity-40 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg disabled:opacity-40 transition-colors"
           >
             <span>📄</span> CSV
           </button>
           <button
             onClick={exportExcel}
             disabled={!exportRows.length}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 rounded-lg disabled:opacity-40 transition-colors font-medium"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 rounded-lg disabled:opacity-40 transition-colors font-medium"
           >
             <span>📊</span> Excel (2 sheets)
           </button>
         </div>
       </div>
 
-      <div className="px-6 py-6 space-y-6 max-w-7xl mx-auto">
+      <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto pb-24 md:pb-6">
         {/* Summary Cards */}
         {summary ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 sm:gap-3">
             <StatCard label="Total P&L" value={fmt(summary.totalPnl)} positive={summary.totalPnl >= 0} />
             <StatCard label="Total Trades" value={String(summary.totalTrades)} sub={`${summary.wins}W / ${summary.losses}L`} />
             <StatCard label="Win Rate" value={pct(summary.winRate)} positive={summary.winRate >= 50} />

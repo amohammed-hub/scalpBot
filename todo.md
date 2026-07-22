@@ -1468,3 +1468,8 @@
 - [x] Bottom tab bar shows: Dashboard, Settings, Hero Zero, P&L, Backtest
 - [x] Hide sidebar completely on mobile, show bottom nav instead
 - [x] Take 375px mobile screenshot to verify
+- [x] P&L Analytics: header stacks vertically on mobile, export buttons hidden when no data
+- [x] Backtest: header wraps on mobile, description hidden on small screens
+- [x] HeroZero: bottom padding for nav bar
+- [x] RiskCalculator: bottom padding for nav bar
+- [x] All pages have pb-24 on mobile for bottom nav clearance
