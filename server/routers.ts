@@ -396,7 +396,9 @@ export const appRouter = router({
          const db = await getDb();
          if (!db) return false;
           try {
-            const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            // Strip slot suffix (e.g. "-slot1", "-slot2") to find the base session in DB
+            const baseSessionToken = input.sessionToken.replace(/-slot\d+$/, "");
+            const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${baseSessionToken} LIMIT 1`);
             const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
             return !!row && (row.role === "admin" || row.mobile === ENV.adminMobile);
           } catch { return false; }
@@ -442,10 +444,11 @@ export const appRouter = router({
         // Paper mode uses it for real market data (candles, quotes) but skips actual order placement.
         // This ensures paper trades reflect real prices — not fake mock values.
         let accessToken: string | null = null;
+        const baseTokenForCreds2 = input.sessionToken.replace(/-slot\d+$/, "");
         const creds = await db
           .select()
           .from(upstoxCredentials)
-          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .where(eq(upstoxCredentials.sessionToken, baseTokenForCreds2))
           .limit(1);
         if (creds.length > 0 && creds[0].accessToken) {
           accessToken = creds[0].accessToken;
@@ -491,18 +494,23 @@ export const appRouter = router({
           // Paper-trade safety gate: require at least 3 closed paper trades before going live
           // Admin bypass: admin account can skip this gate
           if (!isAdminSession) {
+            // Count paper trades across ALL slots for this user (base session + any slot suffix)
+            const baseSession = input.sessionToken.replace(/-slot\d+$/, "");
             const paperTradeRows = await db
               .select({ count: count() })
               .from(tradeLog)
               .where(and(
-                eq(tradeLog.sessionToken, input.sessionToken),
+                or(
+                  eq(tradeLog.sessionToken, baseSession),
+                  like(tradeLog.sessionToken, `${baseSession}-slot%`),
+                ),
                 eq(tradeLog.mode, "paper"),
                 eq(tradeLog.status, "closed"),
               ));
             const paperTradeCount = paperTradeRows[0]?.count ?? 0;
             if (paperTradeCount < 3) {
               throw new Error(
-                `Safety gate: Complete at least 3 paper trades before going live. You have ${paperTradeCount} closed paper trade(s). This protects you from going live without verifying the bot works correctly.`
+                `Safety gate: Complete at least 3 paper trades before going live. You have ${paperTradeCount} closed paper trade(s) across all slots. This protects you from going live without verifying the bot works correctly.`
               );
             }
           }
@@ -2453,7 +2461,9 @@ export const appRouter = router({
          const db = await getDb();
          if (!db) return false;
           try {
-            const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            // Strip slot suffix (e.g. "-slot1", "-slot2") to find the base session in DB
+            const baseSessionToken = input.sessionToken.replace(/-slot\d+$/, "");
+            const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${baseSessionToken} LIMIT 1`);
             const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
             return !!row && (row.role === "admin" || row.mobile === ENV.adminMobile);
           } catch { return false; }
@@ -2508,7 +2518,7 @@ export const appRouter = router({
         let accessToken: string | null = null;
         {
           // Slot bots (e.g. "abc-slot1") store credentials under the base token "abc"
-          const baseTokenForCreds = input.sessionToken.replace(/-slot[123]$/, "");
+          const baseTokenForCreds = input.sessionToken.replace(/-slot\d+$/, "");
           const creds = await db
             .select()
             .from(upstoxCredentials)

@@ -45,7 +45,7 @@ export function emitActivity(
   extras?: { price?: number; pnl?: number; confidence?: number; slot?: number }
 ): void {
   // Normalize: strip -slot1 / -slot2 / -slot3 suffix so all slots write to the same log
-  const rootToken = sessionToken.replace(/-slot[123]$/, "");
+  const rootToken = sessionToken.replace(/-slot\d+$/, "");
   const slot = sessionToken.endsWith("-slot3") ? 3 : sessionToken.endsWith("-slot2") ? 2 : sessionToken.endsWith("-slot1") ? 1 : 0;
 
   if (!logs.has(rootToken)) logs.set(rootToken, []);
@@ -74,7 +74,7 @@ export function getActivity(
   limit = 50,
   afterId = 0
 ): ActivityEvent[] {
-  const rootToken = sessionToken.replace(/-slot[123]$/, "");
+  const rootToken = sessionToken.replace(/-slot\d+$/, "");
   const buf = logs.get(rootToken) ?? [];
   const filtered = afterId > 0 ? buf.filter(e => e.id > afterId) : buf;
   return filtered.slice(-limit);
@@ -85,7 +85,7 @@ export function getActivity(
  * Only clears events for the specific slot, not all slots' logs.
  */
 export function clearActivity(sessionToken: string, clearAll = false): void {
-  const rootToken = sessionToken.replace(/-slot[123]$/, "");
+  const rootToken = sessionToken.replace(/-slot\d+$/, "");
   if (clearAll) {
     logs.delete(rootToken);
     return;

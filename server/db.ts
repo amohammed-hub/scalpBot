@@ -1,4 +1,4 @@
-import { eq, and, desc, gt, count, sql } from "drizzle-orm";
+import { eq, and, desc, gt, count, sql, or } from "drizzle-orm";
 import { lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -550,12 +550,16 @@ export async function checkAccess(sessionToken: string): Promise<{
   if (!db) return { hasAccess: false, plan: null, expiresAt: null, daysLeft: 0 };
 
   const now = new Date();
+  // For slot sessions (e.g. "abc-slot1"), also check the base token's subscription
+  const baseToken = sessionToken.replace(/-slot\d+$/, "");
   const rows = await db
     .select()
     .from(subscriptions)
     .where(
       and(
-        eq(subscriptions.sessionToken, sessionToken),
+        baseToken !== sessionToken
+          ? or(eq(subscriptions.sessionToken, sessionToken), eq(subscriptions.sessionToken, baseToken))
+          : eq(subscriptions.sessionToken, sessionToken),
         eq(subscriptions.status, "active")
       )
     )

@@ -1621,3 +1621,13 @@
 - [x] Admin Panel: Override Bot Slots per user
 - [x] Admin Panel: System Health tab (DB, memory, uptime, active bots)
 - [x] Anti-duplicate: verified — same instrument allowed, only same STRIKE blocked
+## Live Mode Not Taking Trades Fix (Jul 23)
+- [x] FIX: MCX option resolution expanded from 4 to 10 nearest ATM strikes (illiquid options like Copper were missed)
+- [x] FIX: MCX premium threshold lowered from ₹0.50 to ₹0.10 (MCX options are less liquid than NSE)
+- [x] FIX: Added next-expiry fallback — if nearest expiry options are all illiquid, tries next week's expiry
+- [x] FIX: Contract API fallback also uses ₹0.10 threshold (was ₹0.50)
+- [x] FIX: isAdminSession check now strips slot suffix (-slot1, -slot2, etc.) — admin bypass works for all slots
+- [x] FIX: Safety gate counts paper trades across ALL user slots (not just the current slot)
+- [x] FIX: Credential lookup in bot.start strips slot suffix to find base session credentials
+- [x] FIX: All slot[123] patterns replaced with slot\d+ to support unlimited bot slots
+- [x] FIX: checkAccess (subscription lookup) also checks base session token for slot bots
