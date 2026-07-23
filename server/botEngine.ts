@@ -4177,13 +4177,21 @@ async function tick(
         // FIX: For PAPER mode, always use LTP (last actually traded price).
         // For LIVE mode, use bid (what we can actually sell at) but cap it to prevent phantom quotes.
         let bestExitPrice: number;
-        if (state.mode === "paper") {
+        const entryPx = state.openTrade.entryPrice;
+        
+        // LIQUIDITY CHECK: If LTP hasn't moved from entry at all, the option is frozen/illiquid.
+        // In this case, effectivePrice = entryPrice (no P&L change) to prevent phantom exits.
+        const ltpMovePct = entryPx > 0 ? Math.abs(optQuote.ltp - entryPx) / entryPx : 0;
+        if (ltpMovePct < 0.005) {
+          // LTP within 0.5% of entry = no real movement = illiquid/frozen
+          bestExitPrice = entryPx; // P&L stays at 0 until real movement happens
+        } else if (state.mode === "paper") {
           // Paper mode: LTP only — no phantom bid inflation
           bestExitPrice = optQuote.ltp;
         } else {
           // Live mode: use bid (real exit price) but sanity-check against LTP
-          // If bid > 2× LTP, it's likely a phantom quote in an illiquid option
-          if (optQuote.bid > 0 && optQuote.bid <= optQuote.ltp * 2) {
+          // If bid > 1.5× LTP, it's likely a phantom quote in an illiquid option
+          if (optQuote.bid > 0 && optQuote.bid <= optQuote.ltp * 1.5) {
             bestExitPrice = optQuote.bid;
           } else {
             bestExitPrice = optQuote.ltp;
