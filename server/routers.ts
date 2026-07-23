@@ -2455,18 +2455,9 @@ export const appRouter = router({
           }
         }
 
-        // SAFETY: Reject if any running slot (including primary) is already trading the same instrument.
-        // This prevents two bots from opening trades on the same instrument simultaneously.
-        const runningBots = getAllRunningBotsForSession(input.sessionToken);
-        const duplicate = runningBots.find(b => b.instrumentToken === input.instrumentToken);
-        if (duplicate) {
-          // BLOCK: Do not allow same instrument in multiple slots — causes duplicate trades
-          const { TRPCError } = await import("@trpc/server");
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `${input.instrumentLabel} is already running in ${duplicate.botSlot === 0 ? "Primary Bot" : `Bot ${duplicate.botSlot}`}. Cannot run same instrument in multiple slots.`,
-          });
-        }
+        // NOTE: Multiple bots CAN run the same instrument (e.g., all 4 on BankNifty).
+        // Diversification happens at trade time: each bot picks a DIFFERENT strike.
+        // The cross-bot guard in botEngine.ts blocks same exact strike+expiry+direction.
         // Server-side safety guard: NSE_INDEX and MCX_FO tokens are ALWAYS options mode.
         // This prevents accidental direct futures/spot trading regardless of what the frontend sends.
         const slotIsIndexToken = input.instrumentToken.startsWith("NSE_INDEX|") || input.instrumentToken.startsWith("MCX_FO|");

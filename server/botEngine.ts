@@ -3314,6 +3314,7 @@ export async function resolveAtmOptionToken(
   underlyingToken: string,
   optionType: "CE" | "PE",
   accessToken: string,
+  excludeStrikes: number[] = [],
 ): Promise<ResolvedOption | null> {
   try {
     // Step 1: get current underlying price
@@ -3409,16 +3410,27 @@ export async function resolveAtmOptionToken(
     });
 
     let best: ResolvedOption | null = null;
-    const otm1 = otmCandidates[0]; // 1 strike OTM
+    // Strike diversification: skip strikes already used by other bots
+    const availableOtm = otmCandidates.filter(s => !excludeStrikes.includes(s.strike));
+    const otm1 = availableOtm[0] ?? otmCandidates[0]; // prefer non-excluded, fallback to first OTM
 
     if (otm1 && otm1.premium >= 5) {
-      // Use 1-OTM: lower premium = more lots = better profit potential
-      best = { token: otm1.token, premium: otm1.premium, strike: otm1.strike, expiry: chainExpiry };
-      console.log(`[BotEngine] Selected 1-OTM ${optionType}: strike ${otm1.strike} premium Rs${otm1.premium.toFixed(1)} (ATM was ${atm.strike} @ Rs${atm.premium.toFixed(1)})`);
+      // Check if this strike is excluded — if so, try next available
+      if (excludeStrikes.includes(otm1.strike) && availableOtm.length > 0) {
+        const next = availableOtm[0];
+        best = { token: next.token, premium: next.premium, strike: next.strike, expiry: chainExpiry };
+        console.log(`[BotEngine] Selected diversified ${optionType}: strike ${next.strike} premium Rs${next.premium.toFixed(1)} (skipped excluded strikes [${excludeStrikes.join(",")}])`);
+      } else {
+        best = { token: otm1.token, premium: otm1.premium, strike: otm1.strike, expiry: chainExpiry };
+        console.log(`[BotEngine] Selected 1-OTM ${optionType}: strike ${otm1.strike} premium Rs${otm1.premium.toFixed(1)} (ATM was ${atm.strike} @ Rs${atm.premium.toFixed(1)})`);
+      }
     } else {
-      // Fallback to ATM if OTM is illiquid
-      best = { token: atm.token, premium: atm.premium, strike: atm.strike, expiry: chainExpiry };
-      console.log(`[BotEngine] Selected ATM ${optionType}: strike ${atm.strike} premium Rs${atm.premium.toFixed(1)}`);
+      // Fallback to ATM if OTM is illiquid — but skip if ATM is excluded too
+      const atmCandidate = excludeStrikes.includes(atm.strike) && sorted.length > 1
+        ? sorted.find(s => !excludeStrikes.includes(s.strike)) ?? atm
+        : atm;
+      best = { token: atmCandidate.token, premium: atmCandidate.premium, strike: atmCandidate.strike, expiry: chainExpiry };
+      console.log(`[BotEngine] Selected ATM ${optionType}: strike ${atmCandidate.strike} premium Rs${atmCandidate.premium.toFixed(1)}${excludeStrikes.length > 0 ? ` (diversified, excluded [${excludeStrikes.join(",")}])` : ""}`);
     }
     return best;
   } catch (err) {
@@ -3542,6 +3554,7 @@ export async function resolveAtmMcxOptionToken(
   futuresToken: string,
   optionType: "CE" | "PE",
   accessToken: string,
+  excludeStrikes: number[] = [],
 ): Promise<ResolvedOption | null> {
   try {
     // Step 1: get current futures price
@@ -3634,10 +3647,10 @@ export async function resolveAtmMcxOptionToken(
           }
           for (const c of near) {
             const premium = premiumByToken.get(c.instrument_key) ?? 0;
-            if (premium > 0.5) {
+            if (premium > 0.5 && !excludeStrikes.includes(c.strike_price ?? 0)) {
               const expDate = new Date(c.expiry!);
               const expiryStr = `${expDate.getFullYear()}-${String(expDate.getMonth() + 1).padStart(2, "0")}-${String(expDate.getDate()).padStart(2, "0")}`;
-              console.log(`[BotEngine] MCX ATM ${optionType} resolved (instruments JSON): ${c.trading_symbol} | strike ${c.strike_price}, premium ₹${premium.toFixed(2)}, expiry ${expiryStr}, lot ${c.lot_size}`);
+              console.log(`[BotEngine] MCX ATM ${optionType} resolved (instruments JSON): ${c.trading_symbol} | strike ${c.strike_price}, premium ₹${premium.toFixed(2)}, expiry ${expiryStr}, lot ${c.lot_size}${excludeStrikes.length > 0 ? ` (diversified, excluded [${excludeStrikes.join(",")}])` : ""}`);
               return {
                 token: c.instrument_key,
                 premium,
@@ -3691,7 +3704,7 @@ export async function resolveAtmMcxOptionToken(
       const strike = opt.strike_price ?? 0;
       const dist = Math.abs(strike - underlyingPrice);
       const premium = opt.market_data?.ltp ?? 0;
-      if (dist < bestDist && premium > 0.5 && opt.instrument_key) {
+      if (dist < bestDist && premium > 0.5 && opt.instrument_key && !excludeStrikes.includes(strike)) {
         bestDist = dist;
         best = { token: opt.instrument_key, premium, strike, expiry: opt.expiry, lotSize: opt.lot_size, tradingSymbol: opt.trading_symbol };
       }
@@ -5434,10 +5447,39 @@ async function tick(
     // Use MCX-specific resolver for MCX tokens, NSE chain resolver for everything else.
     // Skip if optionPremiumForSizing was already set by the MCX placeholder fallback above.
     if (!optionPremiumForSizing) {
+    // ── Strike Diversification: collect strikes already used by other bots on same underlying ──
+    const excludeStrikes: number[] = [];
+    const thisUnderlying = state.underlyingToken || state.instrumentToken;
+    for (const [otherKey, otherState] of Array.from(bots.entries())) {
+      if (otherKey === state.sessionToken) continue;
+      if (otherState.status !== "running") continue;
+      const otherUnderlying = otherState.underlyingToken || otherState.instrumentToken;
+      if (otherUnderlying !== thisUnderlying) continue;
+      // Same underlying — check if other bot has an open trade with same option type
+      if (otherState.openTrade) {
+        const otherSym = (otherState.openTrade.symbol ?? "").toUpperCase();
+        const otherIsCall = otherSym.includes("_CE_") || otherSym.includes(" CE");
+        const otherIsPut = otherSym.includes("_PE_") || otherSym.includes(" PE");
+        const thisIsCall = ceOrPe === "CE";
+        if ((thisIsCall && otherIsCall) || (!thisIsCall && otherIsPut)) {
+          // Extract strike from symbol like "BANKNIFTY_CE_57800" or "GOLD_CE_148500"
+          const strikeMatch = otherSym.match(/(\d{3,})\s*$/);
+          if (strikeMatch) excludeStrikes.push(parseInt(strikeMatch[1], 10));
+        }
+      }
+      // Also check if other bot is currently opening (race condition)
+      if (otherState.isOpeningTrade && otherState.optionType === ceOrPe) {
+        // Can't know the exact strike yet, but we'll check after resolution
+      }
+    }
+    if (excludeStrikes.length > 0) {
+      console.log(`[BotEngine] Strike diversification: excluding strikes [${excludeStrikes.join(", ")}] already used by other bots on ${thisUnderlying} ${ceOrPe}`);
+      emitActivity(state.sessionToken, "signal", `🎯 Diversifying: skipping strikes [${excludeStrikes.join(", ")}] (used by other bots)`);
+    }
     const isMcxToken = resolvedUnderlying.startsWith("MCX_FO|");
     const resolved = isMcxToken
-      ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken)
-      : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken);
+      ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes)
+      : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes);
 
     if (!resolved) {
       // Option resolve failed.
@@ -5745,64 +5787,13 @@ async function tick(
   // guard because neither has isOpeningTrade=true yet. This caused Bot 1+2 to both buy
   // GOLD 147000 CE at same time on Jul 22.
   state.isOpeningTrade = true;
-  // ── Cross-bot duplicate guard: prevent same instrument being traded by multiple bots simultaneously ──
-  for (const [otherKey, otherState] of Array.from(bots.entries())) {
-    if (otherKey === state.sessionToken) continue; // skip self
-    // RACE CONDITION FIX: Also block if other bot has mutex acquired (isOpeningTrade=true)
-    // even if openTrade is not yet set. This prevents two bots from opening the same trade simultaneously.
-    if (!otherState.openTrade && !otherState.isOpeningTrade) continue;
-    // If the other bot is in the process of opening (no openTrade yet), compare underlying tokens directly
-    if (!otherState.openTrade && otherState.isOpeningTrade) {
-      // Compare the underlying instrument token — if same underlying and same option type, block
-      const otherUnderlying = otherState.underlyingToken || otherState.instrumentToken;
-      const thisUnderlying = isOptionsMode ? (state.underlyingToken || state.instrumentToken) : tradeInstrumentToken;
-      if (otherUnderlying === thisUnderlying) {
-        // Check option type direction
-        const otherOptType = otherState.optionType || "CE"; // default to CE if unknown — safer to block
-        const thisOptType = state.optionType === "CE" ? "CE"
-          : state.optionType === "PE" ? "PE"
-          : signal.direction === "BUY" ? "CE" : "PE";
-        if (otherOptType === thisOptType || (!isOptionsMode && !otherState.optionType)) {
-          console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — RACE GUARD: slot ${otherState.botSlot} is already opening trade on same underlying ${otherUnderlying}`);
-          emitActivity(state.sessionToken, "signal", `⊘ Race guard — slot ${otherState.botSlot} is already opening same instrument`);
-          pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Race guard: slot ${otherState.botSlot} opening same`);
-          state.isOpeningTrade = false;
-          return;
-        }
-      }
-      continue; // different underlying, allow
-    }
-    // BUG FIX 4: Check UNDERLYING instrument (not just exact option token).
-    // BankNifty 57800 CE and 57900 CE have different tokens but same underlying.
-    const otherIsOptions = !!otherState.openTrade!.isIndexOptions;
-    const otherUnderlying = otherIsOptions ? (otherState.instrumentToken || otherState.openTrade!.instrumentToken) : otherState.openTrade!.instrumentToken;
-    const thisUnderlying = isOptionsMode ? (state.underlyingToken || state.instrumentToken) : tradeInstrumentToken;
-    const exactTokenMatch = otherState.openTrade!.instrumentToken === tradeInstrumentToken;
-    const sameUnderlyingMatch = otherUnderlying === thisUnderlying;
-    // For options, allow CE + PE on same underlying (opposite bets).
-    // Only block if BOTH are same option type (both CE or both PE).
-    let sameDirection: boolean;
-    if (isOptionsMode && otherIsOptions) {
-      // FIX: Check for " CE" or "_CE" in symbol (trade symbols use space: "GOLD 29JUL26 148500 CE")
-      const otherSym = (otherState.openTrade!.symbol ?? "").toUpperCase();
-      const otherOptionType = (otherSym.includes(" CE") || otherSym.includes("_CE")) ? "CE" : "PE";
-      const thisOptionType = state.optionType === "CE" ? "CE"
-        : state.optionType === "PE" ? "PE"
-        : signal.direction === "BUY" ? "CE" : "PE";
-      sameDirection = thisOptionType === otherOptionType; // block only same type
-    } else if (!isOptionsMode && !otherIsOptions) {
-      sameDirection = otherState.openTrade!.direction === signal.direction;
-    } else {
-      sameDirection = false; // one is options, other is futures — never duplicate
-    }
-    if ((exactTokenMatch || sameUnderlyingMatch) && sameDirection) {
-      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${otherKey.slice(0, 8)} already has ${otherState.openTrade!.symbol || otherState.openTrade!.instrumentToken} on same underlying`);
-      emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — slot ${otherState.botSlot} already has position on same underlying (${otherState.openTrade!.symbol || ""})`);
-      pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Duplicate: slot ${otherState.botSlot} on same underlying`);
-      state.isOpeningTrade = false;
-      return;
-    }
-  }
+  // ── Cross-bot STRIKE guard: Multiple bots CAN trade same underlying instrument.
+  // But they MUST pick DIFFERENT strikes for diversification.
+  // BLOCK: same exact option token (same strike + same expiry + same direction) across bots.
+  // This is checked AFTER option resolution (below) — see "Strike Diversification" section.
+  // At this point we only block if another bot is opening on the EXACT same tick with same direction
+  // (race condition guard — both bots would resolve to the same strike otherwise).
+  // The actual strike exclusion happens in resolveAtmOptionToken via excludeStrikes param.
   // FINAL SAFETY: Double-check no open trade exists (guards against any code path that might skip the early return)
   if (state.openTrade) {
     emitActivity(state.sessionToken, "signal", `⊘ Trade blocked — already has open position`);

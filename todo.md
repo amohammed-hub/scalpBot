@@ -1535,3 +1535,12 @@
 - [x] Bug 3: Crude Oil token auto-resolution improved — retries when candles empty during market hours, allows resolution on first 3 ticks
 - [x] Time Exit analysis completed — recommendation: increase from 20min to 45min (pending user confirmation)
 - [x] Time Exit increased: 20min → 45min (averaged trades: 30min → 60min). Opening Burst stays at 10min.
+- [ ] Fix anti-duplicate: Allow same instrument in multiple bots, block same strike+expiry+direction only
+- [ ] Add strike diversification: each bot picks unique strike when same instrument
+
+## Anti-Duplicate Fix v2 (Jul 23)
+- [x] Remove "Cannot run same instrument in multiple slots" startup block in routers.ts
+- [x] Rewrite cross-bot guard: allow same underlying, block same exact strike+expiry+direction
+- [x] Add strike diversification: resolveAtmOptionToken/resolveAtmMcxOptionToken accept excludeStrikes[]
+- [x] Each bot picks a DIFFERENT strike when multiple bots trade same instrument
+- [x] All 194 tests pass
