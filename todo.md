@@ -1544,3 +1544,9 @@
 - [x] Add strike diversification: resolveAtmOptionToken/resolveAtmMcxOptionToken accept excludeStrikes[]
 - [x] Each bot picks a DIFFERENT strike when multiple bots trade same instrument
 - [x] All 194 tests pass
+
+## ADX Momentum Filter (Jul 23)
+- [x] Implement ADX > 25 filter for BankNifty only (blocks entries when ADX < 25)
+- [x] Nifty and Crude Oil unchanged (profitable without filter per backtest)
+- [x] Logged to activity + signal journal when blocked
+- [x] All 194 tests pass

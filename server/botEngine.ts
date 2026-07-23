@@ -5195,6 +5195,31 @@ async function tick(
   }
   if (signal.direction === "HOLD") return; // confidence already checked inside generateSignal (tod multiplier applied there)
 
+  // ── ADX MOMENTUM FILTER (BankNifty only) ─────────────────────────────────────
+  // Backtest (Oct 2025 – Jul 2026) showed BankNifty loses ₹-6,148 without filter
+  // but only ₹-918 with ADX > 25 (85% reduction in losses).
+  // Nifty and Crude Oil are profitable WITHOUT this filter — keep them unchanged.
+  const isBankNiftyInstrument = (
+    state.instrumentSymbol === "BANKNIFTY" ||
+    state.instrumentToken.includes("BANKNIFTY") ||
+    state.instrumentToken.includes("Nifty Bank") ||
+    (state.underlyingToken ?? "").includes("Nifty Bank")
+  );
+  if (isBankNiftyInstrument && state.candles.length >= 20) {
+    const adxNow = calcADX(state.candles, 14);
+    if (adxNow < 25) {
+      emitActivity(state.sessionToken, "signal", `⊘ ADX FILTER: ${signal.direction} from ${signal.layer} blocked — ADX(${adxNow.toFixed(1)}) < 25 (BankNifty needs momentum to trend). Waiting for stronger move.`);
+      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `ADX filter: ${adxNow.toFixed(1)} < 25 (BankNifty)`);
+      logSignalToJournal({
+        sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+        direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+        entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+        atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `ADX ${adxNow.toFixed(1)} < 25`,
+      });
+      return;
+    }
+  }
+
   // ── GLOBAL ANTI-CHASING GATE ──────────────────────────────────────────────────
   // Reject signals where the current price has already moved significantly past the
   // signal's entry price. This prevents entering at local highs/lows (chasing).
