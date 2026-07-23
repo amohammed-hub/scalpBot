@@ -73,6 +73,7 @@ const INSTRUMENTS = [
   { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → OTM Options (Auto)",  segment: "NSE Index Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
   { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 65,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
   { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 60,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
+  { token: "BSE_INDEX|SENSEX",             symbol: "SENSEX",    label: "Sensex → OTM Options (Auto)",     segment: "NSE Index Options", lotSize: 20,   spotOnly: false, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" },
   // ── MCX Commodity Options — Auto OTM ─────────────────────────────────────────
   // Tokens are numeric front-month IDs verified from Upstox instrument master (Jul 2026).
   // These auto-resolve to the correct front-month contract via resolveMcxFuturesToken() at runtime.

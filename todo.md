@@ -1565,3 +1565,5 @@
 - [x] Added hot-reload token feature — running bots auto-update when token is refreshed (no restart needed)
 - [x] Hot-reload integrated into both exchangeCode and saveAccessToken procedures
 - [ ] Verify live order placement works tomorrow (9:15 AM IST)
+- [x] Add Sensex (BSE_INDEX|SENSEX) to instrument dropdown with lot size 20
+- [x] Add BSE_INDEX support in option resolution and lot size lookup

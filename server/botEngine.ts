@@ -5553,7 +5553,7 @@ async function tick(
       // Use the contract's actual lot size when available (MCX lot sizes vary per commodity)
       if (resolved.lotSize && resolved.lotSize > 0) {
         state.lotSize = resolved.lotSize;
-      } else if (state.accessToken && resolvedUnderlying.startsWith("NSE_INDEX|")) {
+      } else if (state.accessToken && (resolvedUnderlying.startsWith("NSE_INDEX|") || resolvedUnderlying.startsWith("BSE_INDEX|"))) {
         // NSE option chain doesn't return lot_size — fetch it live from /v2/option/contract
         // (self-correcting: exchanges revise lot sizes; stale client configs sent 25 for NIFTY → rejected orders)
         const liveLot = await resolveNseLotSize(resolvedUnderlying, state.accessToken);
