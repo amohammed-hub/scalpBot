@@ -1603,3 +1603,21 @@
 - [x] Bug 2: Scope hotReloadAccessToken to only update bots for the caller's session
 - [x] Bug 6: Implement Upstox Access Token Request API + Notifier Webhook for semi-auto token refresh
 - [ ] Bug 5: Static IP proxy (deferred — redeployment fixed it; monitor for recurrence)
+
+## Paper Mode Fake P&L Fix (Jul 23)
+- [x] FIX: Paper mode was using inflated bid price (₹2037) instead of LTP (₹956) for illiquid options — now uses LTP only in paper mode
+- [x] FIX: Added sanity cap — effectivePrice cannot exceed 2.5× entry in a single tick (prevents unrealistic profits)
+- [x] FIX: Live mode bid capped to 2× LTP to prevent phantom quotes in illiquid options
+
+## Add Instruments (Jul 23)
+- [x] SENSEX (BSE, lot 10) — corrected lot from 20 to 10
+- [x] BANKEX (BSE, lot 15) — added to all dropdowns, maps, resolvers
+- [x] MIDCPNIFTY (NSE, lot 75) — added to all dropdowns, maps, resolvers
+
+## Referral + Admin + Bot Plans (Jul 23)
+- [x] Referral System: "Refer & Earn" card visible on Dashboard sidebar
+- [x] Bot Allocation: maxBots enforcement at runtime (trial=3 paper, paid=3 live+paper, referral=+1, admin=unlimited)
+- [x] Admin Panel: Referrals tab with stats
+- [x] Admin Panel: Override Bot Slots per user
+- [x] Admin Panel: System Health tab (DB, memory, uptime, active bots)
+- [x] Anti-duplicate: verified — same instrument allowed, only same STRIKE blocked

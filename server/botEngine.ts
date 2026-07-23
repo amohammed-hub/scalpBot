@@ -4172,10 +4172,30 @@ async function tick(
       const isPaperToken = realOptToken.startsWith("PAPER_OPT|");
       const optQuote = isPaperToken ? null : await fetchFullQuote(realOptToken, state.accessToken);
       if (optQuote && optQuote.ltp > 0) {
-        // For options we hold (BUY direction): the exit price is the BID (what we can sell at).
-        // Use bid when available and > 0; if bid is significantly higher than LTP (illiquid option),
-        // prefer bid as it represents the real market value for exit.
-        const bestExitPrice = optQuote.bid > 0 ? Math.max(optQuote.bid, optQuote.ltp) : optQuote.ltp;
+        // BUG FIX: In illiquid options (MCX after-hours, deep OTM), bid/ask can be wildly inflated
+        // (e.g., LTP ₹956 but bid ₹2,037 with zero volume). Using bid creates fake P&L.
+        // FIX: For PAPER mode, always use LTP (last actually traded price).
+        // For LIVE mode, use bid (what we can actually sell at) but cap it to prevent phantom quotes.
+        let bestExitPrice: number;
+        if (state.mode === "paper") {
+          // Paper mode: LTP only — no phantom bid inflation
+          bestExitPrice = optQuote.ltp;
+        } else {
+          // Live mode: use bid (real exit price) but sanity-check against LTP
+          // If bid > 2× LTP, it's likely a phantom quote in an illiquid option
+          if (optQuote.bid > 0 && optQuote.bid <= optQuote.ltp * 2) {
+            bestExitPrice = optQuote.bid;
+          } else {
+            bestExitPrice = optQuote.ltp;
+          }
+        }
+        // SANITY CAP: effectivePrice should not exceed entry × 2.5 in a single tick
+        // (no option realistically gains 150% in one 5-second tick)
+        const maxReasonablePrice = state.openTrade.entryPrice * 2.5;
+        if (bestExitPrice > maxReasonablePrice) {
+          console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — SANITY: effectivePrice ₹${bestExitPrice.toFixed(2)} exceeds 2.5× entry ₹${state.openTrade.entryPrice.toFixed(2)}. Capping to LTP ₹${optQuote.ltp.toFixed(2)}`);
+          bestExitPrice = optQuote.ltp;
+        }
         effectivePrice = bestExitPrice;
         state.optionPremiumPrice = bestExitPrice; // update for Dashboard display
       } else {
