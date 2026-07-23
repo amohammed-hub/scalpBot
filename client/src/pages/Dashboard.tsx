@@ -1555,16 +1555,27 @@ export default function Dashboard() {
 
         {activeTab === "command" && (<>
        {/* Token warning */}
-       {tokenStatus !== "valid" && config.mode === "live" && !showReminder && (
-         <div className="mb-4 flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
-           <ShieldOff className="w-4 h-4 shrink-0" />
-           <span><strong>Live mode requires an Access Token.</strong>{" "}
-             <button onClick={() => navigate("/settings")} className="underline hover:opacity-80">Go to Settings to add it</button>
-             {" "}— or switch to Paper mode.
-           </span>
-         </div>
-       )}
+      {tokenStatus !== "valid" && config.mode === "live" && !showReminder && (
+        <div className="mb-4 flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
+          <ShieldOff className="w-4 h-4 shrink-0" />
+          <span><strong>Live mode requires an Access Token.</strong>{" "}
+            <button onClick={() => navigate("/settings")} className="underline hover:opacity-80">Go to Settings to add it</button>
+            {" "}— or switch to Paper mode.
+          </span>
+        </div>
+      )}
 
+        {/* ── Trading Mode Toggle (Paper / Live) ─────────────────────────────── */}
+        <div className="flex items-center gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+          <span className="text-xs text-white/50 font-medium">Trading Mode</span>
+          <div className="flex rounded-lg overflow-hidden border border-white/20 h-[36px]">
+            <button onClick={() => setConfig(c => ({ ...c, mode: "paper" }))} disabled={isRunning}
+              className={`px-5 text-sm font-medium transition-colors ${config.mode === "paper" ? "bg-amber-500/30 text-amber-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Paper</button>
+            <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning}
+              className={`px-5 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>
+          </div>
+          <span className="text-xs text-white/30 ml-auto">{config.mode === "paper" ? "Simulated trades, no real money" : "⚠ Real orders via Upstox"}</span>
+        </div>
 
         {/* Opening Burst Quick Toggle — 4 contextual states */}
         <div className="text-[10px] text-white/30 mb-1 ml-1">Scans for gap-up/gap-down trades during 9:15–9:25 AM window only</div>
