@@ -5674,11 +5674,64 @@ async function tick(
       if (maxQtyByCapital >= lotSize) {
         quantity = lotSize; // Allow minimum 1 lot, SL tightening below will handle risk
       } else {
-        const reason = `Insufficient capital for 1 lot (need ₹${(optionPremiumForSizing * lotSize).toFixed(0)}, have ₹${state.capital.toFixed(0)})`;
-        const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
-        state.lastSignal = rejectSignal;
-        emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
-        return;
+        // ── CAPITAL-AWARE OTM FALLBACK ──────────────────────────────────────────
+        // ATM/1-OTM option is too expensive for allocated capital.
+        // Try progressively deeper OTM strikes until we find one that fits.
+        const maxAffordablePremium = state.capital / lotSize;
+        emitActivity(state.sessionToken, "signal", `💰 Premium ₹${optionPremiumForSizing.toFixed(0)} × ${lotSize} lot = ₹${(optionPremiumForSizing * lotSize).toFixed(0)} exceeds capital ₹${state.capital.toFixed(0)}. Searching cheaper OTM strike (max premium ₹${maxAffordablePremium.toFixed(0)})...`);
+        
+        // Re-resolve with a maxPremium constraint
+        const isMcxForFallback = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX_FO|");
+        const resolvedUnderlying2 = state.underlyingToken ?? state.instrumentToken;
+        const ceOrPe2 = state.optionType === "CE" ? "CE" as const : state.optionType === "PE" ? "PE" as const : (signal.direction === "BUY" ? "CE" as const : "PE" as const);
+        
+        let cheaperResolved: ResolvedOption | null = null;
+        if (state.accessToken) {
+          // Exclude the current (too expensive) strike so resolver picks a deeper OTM
+          const currentStrikeNum = parseInt(tradeSymbol?.match(/(\d+)$/)?.[ 1] ?? "0");
+          const fallbackExclude = currentStrikeNum > 0 ? [currentStrikeNum] : [];
+          cheaperResolved = isMcxForFallback
+            ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude)
+            : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude);
+          // If the resolver returned a strike that's still too expensive, try one more OTM
+          if (cheaperResolved && cheaperResolved.premium * lotSize > state.capital) {
+            const secondExclude = [...fallbackExclude, cheaperResolved.strike];
+            cheaperResolved = isMcxForFallback
+              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, secondExclude)
+              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, secondExclude);
+          }
+          // Third attempt if still too expensive
+          if (cheaperResolved && cheaperResolved.premium * lotSize > state.capital) {
+            const thirdExclude = [...fallbackExclude, cheaperResolved.strike];
+            cheaperResolved = isMcxForFallback
+              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, thirdExclude)
+              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, thirdExclude);
+          }
+        }
+        
+        if (cheaperResolved && cheaperResolved.premium > 0 && cheaperResolved.premium * lotSize <= state.capital) {
+          // Found a cheaper strike that fits!
+          optionPremiumForSizing = cheaperResolved.premium;
+          tradeInstrumentToken = cheaperResolved.token;
+          tradeSymbol = `${state.instrumentSymbol}_${ceOrPe2}_${cheaperResolved.strike}`;
+          resolvedExpiry = cheaperResolved.expiry;
+          tradeLabel = formatOptionContractLabel(state.instrumentSymbol, cheaperResolved.strike, ceOrPe2, cheaperResolved.expiry);
+          state.optionTradeToken = cheaperResolved.token;
+          state.optionPremiumPrice = cheaperResolved.premium;
+          if (cheaperResolved.lotSize && cheaperResolved.lotSize > 0) {
+            state.lotSize = cheaperResolved.lotSize;
+          }
+          quantity = state.lotSize ?? lotSize;
+          emitActivity(state.sessionToken, "signal", `✅ Capital fallback: picked cheaper OTM strike ${cheaperResolved.strike} ${ceOrPe2} @ ₹${cheaperResolved.premium.toFixed(2)} (fits ₹${state.capital.toFixed(0)} capital)`);
+          console.log(`[BotEngine] Capital fallback: ${state.sessionToken.slice(0,8)} — cheaper OTM ${cheaperResolved.strike} ${ceOrPe2} @ ₹${cheaperResolved.premium.toFixed(2)}`);
+        } else {
+          // Even deeper OTM doesn't fit — truly insufficient capital
+          const reason = `Insufficient capital for 1 lot (need ₹${(optionPremiumForSizing * lotSize).toFixed(0)}, have ₹${state.capital.toFixed(0)}). Tried cheaper OTM — none available within budget.`;
+          const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
+          state.lastSignal = rejectSignal;
+          emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+          return;
+        }
       }
     } else {
       quantity = riskBasedQty;

@@ -1550,3 +1550,10 @@
 - [x] Nifty and Crude Oil unchanged (profitable without filter per backtest)
 - [x] Logged to activity + signal journal when blocked
 - [x] All 194 tests pass
+
+## Capital-Aware OTM Fallback (Jul 23)
+- [x] When ATM option premium × lot > allocated capital, auto-pick cheaper OTM strike
+- [x] Tries up to 3 progressively deeper OTM strikes until one fits within capital
+- [x] Works for both NSE and MCX options
+- [x] Only rejects if NO OTM strike fits (truly insufficient capital)
+- [x] All 194 tests pass
