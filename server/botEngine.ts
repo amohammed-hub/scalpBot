@@ -5516,20 +5516,11 @@ async function tick(
   // Three pre-entry filters to eliminate trades with guaranteed slippage loss.
   // ══════════════════════════════════════════════════════════════════════════════════
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
-    // ── MCX Premium Floor: Block trades below ₹30 ──
-    // NatGas ₹4.28, Copper ₹9.43 etc. are illiquid OTM options with huge spreads.
-    // These consistently lose money (₹-1,939 net on Jul 22 from 12 such trades).
-    const isMcxInstrument = state.instrumentToken.startsWith("MCX");
-    const MCX_PREMIUM_FLOOR = 30; // ₹30 minimum for MCX options
-    const NSE_PREMIUM_FLOOR = 50; // ₹50 minimum for NSE/NFO options (avoid penny options)
-    const premiumFloor = isMcxInstrument ? MCX_PREMIUM_FLOOR : NSE_PREMIUM_FLOOR;
-    if (optionPremiumForSizing < premiumFloor) {
-      const reason = `Premium ₹${optionPremiumForSizing.toFixed(1)} below floor ₹${premiumFloor} — illiquid/OTM, skipping`;
-      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ${reason}`);
-      emitActivity(state.sessionToken, "signal", `⊘ ${reason}`);
-      pushRejectedSignal(state, { direction: signal.direction, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, reason);
-      state.isOpeningTrade = false;
-      return;
+    // Premium floor removed — let the bid-ask spread filter (below) handle illiquid options.
+    // Copper at ₹11 was profitable (+₹1,802 on Jul 22), so blanket floors hurt good trades.
+    // Log a warning for very low premiums for awareness only.
+    if (optionPremiumForSizing < 10) {
+      emitActivity(state.sessionToken, "signal", `⚠ Low premium: ₹${optionPremiumForSizing.toFixed(1)} — relying on spread filter`);
     }
 
     // ── FIX 3: Expiry-Day ATM Only (no OTM on 0DTE) ─────────────────────────────

@@ -1530,7 +1530,7 @@
 ## Bug Fixes — Jul 23 Session (from Jul 22 trade analysis)
 - [x] Bug 1: Anti-duplicate cross-bot guard — moved isOpeningTrade=true BEFORE cross-bot check (was AFTER, causing race condition where Bot 1+2 both passed guard simultaneously)
 - [x] Bug 1b: Fixed option type detection in cross-bot guard (was checking "_CE_" but symbols use " CE" format like "GOLD 29JUL26 148500 CE")
-- [x] Bug 2: MCX premium floor at ₹30 — blocks trades with option premium below ₹30 (NatGas ₹4.28, Copper ₹9.43 etc.)
-- [x] Bug 2b: NSE premium floor at ₹50 — blocks penny options on NSE/NFO too
+- [x] Bug 2: Premium floor REVERTED — Copper at ₹11 was profitable (+₹1,802), only NatGas was bad. Let bid-ask spread filter handle it.
+- [x] Bug 2b: (reverted with Bug 2 — no hard floor, spread filter is the guard)
 - [x] Bug 3: Crude Oil token auto-resolution improved — retries when candles empty during market hours, allows resolution on first 3 ticks
 - [x] Time Exit analysis completed — recommendation: increase from 20min to 45min (pending user confirmation)
