@@ -1534,3 +1534,4 @@
 - [x] Bug 2b: (reverted with Bug 2 — no hard floor, spread filter is the guard)
 - [x] Bug 3: Crude Oil token auto-resolution improved — retries when candles empty during market hours, allows resolution on first 3 ticks
 - [x] Time Exit analysis completed — recommendation: increase from 20min to 45min (pending user confirmation)
+- [x] Time Exit increased: 20min → 45min (averaged trades: 30min → 60min). Opening Burst stays at 10min.

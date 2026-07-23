@@ -4651,11 +4651,11 @@ async function tick(
     const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
     // ── TIME-BASED EXIT: Exit if trade is stagnant/losing after max hold time ──
     // For options: theta decay kills you if you hold too long without movement.
-    // Exit if: (1) trade is older than 20 minutes, AND (2) trade is in loss or flat.
+    // Exit if: (1) trade is older than 45 minutes, AND (2) trade is in loss or flat.
     // This prevents holding losing options that slowly bleed to zero.
-    // If trade was averaged, give more time (30 min) since the new avg entry is lower
+    // If trade was averaged, give more time (60 min) since the new avg entry is lower
     // Opening Burst: strict 10-minute limit (moves happen in 2-3 min, don't hold long)
-    const MAX_HOLD_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : (trade.averageCount ?? 0) > 0 ? 30 : 20;
+    const MAX_HOLD_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : (trade.averageCount ?? 0) > 0 ? 60 : 45;
     if (!exitReason && trade.isIndexOptions && tradeAgeMs > MAX_HOLD_MINUTES * 60 * 1000) {
       const currentPnlPerUnit = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
