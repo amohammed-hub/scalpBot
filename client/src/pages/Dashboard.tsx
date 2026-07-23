@@ -74,7 +74,9 @@ const INSTRUMENTS = [
   { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → OTM Options (Auto)",  segment: "NSE Index Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
   { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 65,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
   { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 60,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
-  { token: "BSE_INDEX|SENSEX",             symbol: "SENSEX",    label: "Sensex → OTM Options (Auto)",     segment: "NSE Index Options", lotSize: 20,   spotOnly: false, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" },
+  { token: "BSE_INDEX|SENSEX",             symbol: "SENSEX",    label: "Sensex → OTM Options (Auto)",     segment: "BSE Index Options", lotSize: 10,   spotOnly: false, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" },
+  { token: "BSE_INDEX|BANKEX",             symbol: "BANKEX",    label: "Bankex → OTM Options (Auto)",     segment: "BSE Index Options", lotSize: 15,   spotOnly: false, isIndexOptions: true, underlyingToken: "BSE_INDEX|BANKEX" },
+  { token: "NSE_INDEX|NIFTY MID SELECT",   symbol: "MIDCPNIFTY", label: "MidcpNifty → OTM Options (Auto)", segment: "NSE Index Options", lotSize: 75,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|NIFTY MID SELECT" },
   // ── MCX Commodity Options — Auto OTM ─────────────────────────────────────────
   // Tokens are numeric front-month IDs verified from Upstox instrument master (Jul 2026).
   // These auto-resolve to the correct front-month contract via resolveMcxFuturesToken() at runtime.
@@ -316,7 +318,7 @@ export default function Dashboard() {
       const defaults = getAllSessionDefaults(session);
       const symbolMap: Record<string, string> = {
         "MCX_GOLD": "MCX_GOLD", "MCX_CRUDE": "MCX_CRUDE", "MCX_SILVER": "MCX_SILVER",
-        "NIFTY": "NIFTY", "BANKNIFTY": "BANKNIFTY", "FINNIFTY": "FINNIFTY",
+        "NIFTY": "NIFTY", "BANKNIFTY": "BANKNIFTY", "FINNIFTY": "FINNIFTY", "SENSEX": "SENSEX", "BANKEX": "BANKEX", "MIDCPNIFTY": "MIDCPNIFTY",
       };
       return {
         0: { symbol: defaults[0]?.symbol ?? "NIFTY", capital: 50000 },
@@ -465,7 +467,9 @@ export default function Dashboard() {
       NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → OTM Options (Auto)",   lotSize: 65 },
       BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → OTM Options (Auto)",  lotSize: 30 },
       FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → OTM Options (Auto)",   lotSize: 60 },
-      SENSEX:    { token: "BSE_INDEX|SENSEX",            label: "Sensex → OTM Options (Auto)",     lotSize: 20 },
+      SENSEX:    { token: "BSE_INDEX|SENSEX",            label: "Sensex → OTM Options (Auto)",     lotSize: 10 },
+      BANKEX:    { token: "BSE_INDEX|BANKEX",            label: "Bankex → OTM Options (Auto)",     lotSize: 15 },
+      MIDCPNIFTY: { token: "NSE_INDEX|NIFTY MID SELECT", label: "MidcpNifty → OTM Options (Auto)", lotSize: 75 },
     };
     const MCX_SYMBOL_MAP: Record<string, string> = {
       MCX_CRUDE: "CRUDEOIL",
@@ -2195,7 +2199,7 @@ export default function Dashboard() {
                       value={(() => {
                         // Reverse-map current instrument to dropdown value
                         const sym = (bot as any).instrumentSymbol ?? "";
-                        if (["NIFTY", "BANKNIFTY", "FINNIFTY"].includes(sym)) return sym;
+                        if (["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"].includes(sym)) return sym;
                         if (sym.startsWith("MCX_")) return sym;
                         // Try matching by label
                         const lbl = (bot.instrumentLabel ?? "").toLowerCase();
@@ -2204,10 +2208,13 @@ export default function Dashboard() {
                         if (lbl.includes("silver")) return "MCX_SILVER";
                         if (lbl.includes("natural") || lbl.includes("natgas")) return "MCX_NATGAS";
                         if (lbl.includes("copper")) return "MCX_COPPER";
+                        if (lbl.includes("bankex")) return "BANKEX";
+                        if (lbl.includes("midcp") || lbl.includes("mid select")) return "MIDCPNIFTY";
+                        if (lbl.includes("sensex")) return "SENSEX";
                         if (lbl.includes("banknifty") || lbl.includes("bank")) return "BANKNIFTY";
                         if (lbl.includes("finnifty") || lbl.includes("fin")) return "FINNIFTY";
                         if (lbl.includes("nifty")) return "NIFTY";
-                        return "NIFTY";
+                        return sym || "NIFTY";
                       })()}
                       onChange={e => {
                         const newSym = e.target.value;
@@ -2221,6 +2228,9 @@ export default function Dashboard() {
                      <option value="NIFTY">Nifty 50</option>
                      <option value="BANKNIFTY">BankNifty</option>
                      <option value="FINNIFTY">FinNifty</option>
+                     <option value="SENSEX">Sensex</option>
+                     <option value="BANKEX">Bankex</option>
+                     <option value="MIDCPNIFTY">MidcpNifty</option>
                       <option value="MCX_CRUDE" disabled={!hasMcxAccess}>{hasMcxAccess ? "Crude Oil" : "🔒 Crude Oil"}</option>
                       <option value="MCX_GOLD" disabled={!hasMcxAccess}>{hasMcxAccess ? "Gold" : "🔒 Gold"}</option>
                       <option value="MCX_SILVER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Silver" : "🔒 Silver"}</option>
@@ -2237,13 +2247,16 @@ export default function Dashboard() {
                         if (newCap >= 5000 && newCap <= 5000000 && newCap !== currentCap) {
                           const sym = (() => {
                             const s = (bot as any).instrumentSymbol ?? "";
-                            if (["NIFTY", "BANKNIFTY", "FINNIFTY"].includes(s) || s.startsWith("MCX_")) return s;
+                            if (["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"].includes(s) || s.startsWith("MCX_")) return s;
                             const lbl = (bot.instrumentLabel ?? "").toLowerCase();
                             if (lbl.includes("crude")) return "MCX_CRUDE";
                             if (lbl.includes("gold")) return "MCX_GOLD";
                             if (lbl.includes("silver")) return "MCX_SILVER";
                             if (lbl.includes("natural")) return "MCX_NATGAS";
                             if (lbl.includes("copper")) return "MCX_COPPER";
+                            if (lbl.includes("bankex")) return "BANKEX";
+                            if (lbl.includes("midcp") || lbl.includes("mid select")) return "MIDCPNIFTY";
+                            if (lbl.includes("sensex")) return "SENSEX";
                             if (lbl.includes("banknifty")) return "BANKNIFTY";
                             if (lbl.includes("finnifty")) return "FINNIFTY";
                             return "NIFTY";
@@ -2406,6 +2419,9 @@ export default function Dashboard() {
                            <option value="NIFTY">NIFTY</option>
                            <option value="BANKNIFTY">BANKNIFTY</option>
                            <option value="FINNIFTY">FINNIFTY</option>
+                           <option value="SENSEX">SENSEX</option>
+                           <option value="BANKEX">BANKEX</option>
+                           <option value="MIDCPNIFTY">MIDCPNIFTY</option>
                             <option value="MCX_CRUDE" disabled={!hasMcxAccess}>{hasMcxAccess ? "Crude Oil" : "🔒 Crude Oil"}</option>
                             <option value="MCX_GOLD" disabled={!hasMcxAccess}>{hasMcxAccess ? "Gold" : "🔒 Gold"}</option>
                             <option value="MCX_SILVER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Silver" : "🔒 Silver"}</option>
@@ -3938,6 +3954,9 @@ export default function Dashboard() {
                               if (sym.includes('NIFTY') && !sym.includes('BANK') && !sym.includes('FIN') && i.symbol === 'NIFTY') return true;
                               if (sym.includes('BANKNIFTY') && i.symbol === 'BANKNIFTY') return true;
                               if (sym.includes('FINNIFTY') && i.symbol === 'FINNIFTY') return true;
+                              if (sym.includes('SENSEX') && i.symbol === 'SENSEX') return true;
+                              if (sym.includes('BANKEX') && i.symbol === 'BANKEX') return true;
+                              if (sym.includes('MIDCPNIFTY') && i.symbol === 'MIDCPNIFTY') return true;
                               return false;
                             });
                             const ls = instr?.lotSize ?? 1;

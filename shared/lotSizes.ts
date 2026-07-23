@@ -15,7 +15,8 @@ export const NSE_INDEX_LOT_SIZES: Record<string, number> = {
   BANKNIFTY: 30,
   FINNIFTY: 60,
   MIDCPNIFTY: 120,
-  SENSEX: 20,
+  SENSEX: 10,
+  BANKEX: 15,
 };
 
 export function getNseIndexLotSize(symbol: string): number | null {
@@ -23,6 +24,7 @@ export function getNseIndexLotSize(symbol: string): number | null {
   if (s.includes("BANKNIFTY") || s.includes("NIFTY BANK")) return NSE_INDEX_LOT_SIZES.BANKNIFTY;
   if (s.includes("FINNIFTY") || s.includes("FIN SERVICE")) return NSE_INDEX_LOT_SIZES.FINNIFTY;
   if (s.includes("MIDCPNIFTY") || s.includes("MIDCAP")) return NSE_INDEX_LOT_SIZES.MIDCPNIFTY;
+  if (s.includes("BANKEX")) return NSE_INDEX_LOT_SIZES.BANKEX;
   if (s.includes("SENSEX")) return NSE_INDEX_LOT_SIZES.SENSEX;
   if (s.includes("NIFTY")) return NSE_INDEX_LOT_SIZES.NIFTY;
   return null;
