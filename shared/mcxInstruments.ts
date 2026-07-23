@@ -18,6 +18,7 @@ export interface MCXInstrument {
   margin: number;           // Approximate margin per lot (₹)
   bestTimes: string;        // Best trading windows (IST)
   category: "metal" | "energy" | "agri";
+  disabled?: boolean;       // If true, bot will skip this instrument
 }
 
 export const MCX_INSTRUMENTS: MCXInstrument[] = [
@@ -32,6 +33,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
     margin: 150000,
     bestTimes: "9:00–11:30 AM, 7:30–9:30 PM",
     category: "metal",
+    disabled: true,    // MCX disabled — lost ₹17,816 on Jul 23
   },
   {
     label: "Silver",
@@ -44,6 +46,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
     margin: 120000,
     bestTimes: "9:00–11:30 AM, 7:30–9:30 PM",
     category: "metal",
+    disabled: true,    // MCX disabled
   },
   {
     label: "Crude Oil",
@@ -68,6 +71,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
     margin: 25000,
     bestTimes: "7:30–9:30 PM, Thu 8:30 PM (EIA NatGas)",
     category: "energy",
+    disabled: true,    // MCX disabled
   },
   {
     label: "Copper",
@@ -80,6 +84,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
     margin: 50000,
     bestTimes: "9:00–11:30 AM, 7:30–9:30 PM",
     category: "metal",
+    disabled: true,    // MCX disabled
   },
   {
     label: "Zinc",

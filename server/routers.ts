@@ -415,6 +415,14 @@ export const appRouter = router({
        if (!limits.mcxAccess && input.instrumentToken.startsWith("MCX_FO|")) {
          throw new Error("MCX markets require 3-Month plan or higher. Upgrade → /pricing");
        }
+       // MCX Disabled Guard: Block disabled MCX instruments
+       if (input.instrumentToken.startsWith("MCX_FO|")) {
+         const { MCX_INSTRUMENTS } = await import("../shared/mcxInstruments");
+         const mcxMatch = MCX_INSTRUMENTS.find(i => i.instrumentToken === input.instrumentToken);
+         if (mcxMatch?.disabled) {
+           throw new Error(`${mcxMatch.label} (MCX) is currently disabled. MCX instruments lost heavily — only NSE instruments (NIFTY, BANKNIFTY, FINNIFTY) are enabled.`);
+         }
+       }
         // Cap maxTradesPerDay to tier limit (0 = unlimited for that tier)
         if (limits.maxTradesPerDay > 0 && input.maxTradesPerDay > limits.maxTradesPerDay) {
           input.maxTradesPerDay = limits.maxTradesPerDay;
@@ -2479,6 +2487,14 @@ export const appRouter = router({
           }
           if (!slotLimits.mcxAccess && input.instrumentToken.startsWith("MCX_FO|")) {
             throw new Error("MCX markets require 3-Month plan or higher. Upgrade → /pricing");
+          }
+          // MCX Disabled Guard: Block disabled MCX instruments
+          if (input.instrumentToken.startsWith("MCX_FO|")) {
+            const { MCX_INSTRUMENTS } = await import("../shared/mcxInstruments");
+            const mcxSlotMatch = MCX_INSTRUMENTS.find(i => i.instrumentToken === input.instrumentToken);
+            if (mcxSlotMatch?.disabled) {
+              throw new Error(`${mcxSlotMatch.label} (MCX) is currently disabled. MCX instruments lost heavily — only NSE instruments are enabled.`);
+            }
           }
           // Cap maxTradesPerDay to tier limit
           if (slotLimits.maxTradesPerDay > 0 && input.maxTradesPerDay > slotLimits.maxTradesPerDay) {

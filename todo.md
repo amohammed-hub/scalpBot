@@ -1631,3 +1631,13 @@
 - [x] FIX: Credential lookup in bot.start strips slot suffix to find base session credentials
 - [x] FIX: All slot[123] patterns replaced with slot\d+ to support unlimited bot slots
 - [x] FIX: checkAccess (subscription lookup) also checks base session token for slot bots
+## Pre-Live Critical Fixes (Jul 24)
+- [x] FIX 1: Target change from ×1.40 to ×1.15 (15%)
+- [x] FIX 2: Stop Loss change from ×0.70 to ×0.88 (12%)
+- [x] FIX 3: Add trailing stop (≥1.07→BE, ≥1.12→trail at 1.07)
+- [x] FIX 4: Premium floor change from ₹10 to ₹30
+- [x] FIX 5: Anti-duplicate 30-min cooldown per symbol
+- [x] FIX 6: Capital guard max ₹3,250/trade, max 4 open positions
+- [x] FIX 7: Disable MCX (GOLD, SILVER, COPPER, NATURALGAS)
+- [x] FIX 8: Add SENSEX, BANKEX, MIDCPNIFTY to instruments (already existed)
+- [x] FIX 9: Time exit change to max 20 minutes

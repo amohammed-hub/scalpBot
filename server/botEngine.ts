@@ -4579,6 +4579,31 @@ async function tick(
       }
     }
 
+    // ── Premium Trailing Stop (options mode) ─────────────────────────────────
+    // If price ≥ entry × 1.07 → move SL to breakeven (entry)
+    // If price ≥ entry × 1.12 → move SL to entry × 1.07 (lock +7%)
+    if (trade.isIndexOptions || isOptionsMode) {
+      const premEntry = trade.entryPrice;
+      if (trade.direction === "BUY") {
+        if (effectivePrice >= premEntry * 1.12 && trade.currentSl < premEntry * 1.07) {
+          trade.currentSl = premEntry * 1.07;
+          devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to +7% (₹${trade.currentSl.toFixed(2)})`);
+        } else if (effectivePrice >= premEntry * 1.07 && trade.currentSl < premEntry) {
+          trade.currentSl = premEntry;
+          devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
+        }
+      } else {
+        // SELL direction (PE options): price going DOWN is profitable
+        if (effectivePrice <= premEntry * 0.88 && trade.currentSl > premEntry * 0.93) {
+          trade.currentSl = premEntry * 0.93;
+          devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to -7% (₹${trade.currentSl.toFixed(2)})`);
+        } else if (effectivePrice <= premEntry * 0.93 && trade.currentSl > premEntry) {
+          trade.currentSl = premEntry;
+          devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
+        }
+      }
+    }
+
     // ── AVERAGING/DCA: Add to losing position when reversal signal is clear ──────
     // Logic: If trade is in significant loss AND candles show clear reversal pattern,
     // buy more at the lower price to bring average entry down. This allows profitable
@@ -4749,10 +4774,10 @@ async function tick(
     // ── TIME-BASED EXIT: Exit if trade is stagnant/losing after max hold time ──
     // For options: theta decay kills you if you hold too long without movement.
     // Exit if: (1) trade is older than 45 minutes, AND (2) trade is in loss or flat.
-    // This prevents holding losing options that slowly bleed to zero.
-    // If trade was averaged, give more time (60 min) since the new avg entry is lower
+    // This prevents holding losing options that slowly bleed to zero (theta decay).
+    // Max hold: 20 minutes for all trades (scalping — no point holding longer).
     // Opening Burst: strict 10-minute limit (moves happen in 2-3 min, don't hold long)
-    const MAX_HOLD_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : (trade.averageCount ?? 0) > 0 ? 60 : 45;
+    const MAX_HOLD_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : 20;
     if (!exitReason && trade.isIndexOptions && tradeAgeMs > MAX_HOLD_MINUTES * 60 * 1000) {
       const currentPnlPerUnit = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
@@ -5668,10 +5693,11 @@ async function tick(
   // ══════════════════════════════════════════════════════════════════════════════════
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
     // Premium floor removed — let the bid-ask spread filter (below) handle illiquid options.
-    // Copper at ₹11 was profitable (+₹1,802 on Jul 22), so blanket floors hurt good trades.
-    // Log a warning for very low premiums for awareness only.
-    if (optionPremiumForSizing < 10) {
-      emitActivity(state.sessionToken, "signal", `⚠ Low premium: ₹${optionPremiumForSizing.toFixed(1)} — relying on spread filter`);
+    // Hard premium floor: skip trade if premium < ₹30 (illiquid, high spread risk)
+    if (optionPremiumForSizing < 30) {
+      emitActivity(state.sessionToken, "signal", `⛔ SKIPPED: Premium ₹${optionPremiumForSizing.toFixed(1)} below ₹30 floor — too illiquid`);
+      state.isOpeningTrade = false;
+      return;
     }
 
     // ── FIX 3: Expiry-Day ATM Only (no OTM on 0DTE) ─────────────────────────────
@@ -5734,8 +5760,19 @@ async function tick(
 
   // ── Position sizing ───────────────────────────────────────────────────────────────
   // For options: RISK-BASED sizing — SL = 30% below premium, size to keep loss ≤ riskAmount.
-  // This ensures SL stays at entry × 0.70 (30% buffer) and quantity is capped by risk.
+  // This ensures SL stays at entry × 0.88 (12% buffer) and quantity is capped by risk.
   // For futures/equity: use signal SL distance as before.
+  // ── CAPITAL GUARD: Max ₹3,250 per trade ──────────────────────────────────────
+  const MAX_CAPITAL_PER_TRADE = 3250;
+  const MAX_OPEN_POSITIONS = 4;
+  // Check max open positions across all bots for this user
+  const userBots = getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, ""));
+  const currentOpenCount = userBots.filter(b => b.openTrade !== null).length;
+  if (currentOpenCount >= MAX_OPEN_POSITIONS) {
+    emitActivity(state.sessionToken, "signal", `⛔ Max ${MAX_OPEN_POSITIONS} open positions reached — skipping entry`);
+    state.isOpeningTrade = false;
+    return;
+  }
   const riskAmount = (state.capital * state.riskPerTradePct) / 100;
   const lotSize = state.lotSize ?? 1;
   let quantity: number;
@@ -5747,10 +5784,9 @@ async function tick(
     const slDist = optionPremiumForSizing * slDistPct;
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
-    const maxQtyByCapital = Math.floor(state.capital / optionPremiumForSizing / lotSize) * lotSize;
+    const maxQtyByCapital = Math.floor(Math.min(state.capital, MAX_CAPITAL_PER_TRADE) / optionPremiumForSizing / lotSize) * lotSize;
     // MAX LOT CAP REMOVED per user request — risk-based sizing formula handles quantity.
-    // The formula: qty = riskAmount / (premium × 0.30) already limits max loss.
-    // Capital cap still applies (can't buy more than capital allows).
+    // Capital guard: max ₹3,250 per trade. If premium × 1 lot > 3250, skip.
     const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital);
     
     if (riskBasedQty < lotSize) {
@@ -5825,14 +5861,15 @@ async function tick(
     const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
     const rawQty = slDistance > 0 ? Math.floor(riskAmount / slDistance) : lotSize;
     quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
-    // Per-bot capital cap for non-options: total trade cost must NOT exceed bot's own capital
-    const maxQtyByCapital = Math.floor(state.capital / signal.entryPrice / lotSize) * lotSize;
+    // Per-bot capital cap: max ₹3,250 per trade
+    const maxQtyByCapital = Math.floor(Math.min(state.capital, MAX_CAPITAL_PER_TRADE) / signal.entryPrice / lotSize) * lotSize;
     if (maxQtyByCapital < lotSize) {
-      // Capital too low for even 1 lot — reject trade entirely
-      const reason = `Insufficient capital for 1 lot (need ${(signal.entryPrice * lotSize).toFixed(0)}, have ${state.capital.toFixed(0)})`;
+      // Too expensive for capital guard — reject trade
+      const reason = `Insufficient capital for 1 lot (need ₹${(signal.entryPrice * lotSize).toFixed(0)}, max ₹${MAX_CAPITAL_PER_TRADE} per trade)`;
       const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
       state.lastSignal = rejectSignal;
       emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+      state.isOpeningTrade = false;
       return;
     } else {
       quantity = Math.min(quantity, maxQtyByCapital);
@@ -5903,20 +5940,18 @@ async function tick(
   // For options: book 50% at +20% profit, book 25% at +40% profit (= target)
   // e.g., entry ₹556 → partial1R = ₹667 (+20%), partial2R = ₹778 (+40% = target)
   const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode
-    ? optionEntry * 1.20  // 20% gain — book 50% here
+    ? optionEntry * 1.07  // 7% gain — book 50% here (breakeven trail)
     : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
   const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode
-    ? optionEntry * 1.40  // 40% gain — book 25% here (= target)
+    ? optionEntry * 1.15  // 15% gain — book 25% here (= target)
     : (signal.direction === "BUY" ? optionEntry + slDist * (p2Pct / p1Pct) : optionEntry - slDist * (p2Pct / p1Pct)));
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  // ── BUG FIX 1: ABSOLUTE Premium SL = entry × 0.70 (30% max loss). NO OVERRIDES. ──
-  // Previously: risk formula could override this to entry × 0.85 (only 15% buffer).
-  // Now: SL is ALWAYS 30% below entry for options. Position sizing handles risk, not SL.
-  const tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.70 : signal.slPrice;
+  // ── ABSOLUTE Premium SL = entry × 0.88 (12% max loss) ──
+  const tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.88 : signal.slPrice;
   const tradeTarget = isOptionsMode && optionPremiumForSizing
-    ? optionPremiumForSizing * 1.40 // target = 40% gain on premium, e.g., ₹556 × 1.40 = ₹778
+    ? optionPremiumForSizing * 1.15 // target = 15% gain on premium
     : signal.targetPrice;
 
   // Set mutex before async DB write to prevent concurrent duplicate opens
@@ -5943,6 +5978,34 @@ async function tick(
   } catch (dbErr) {
     console.error(`[BotEngine] DB guard check failed:`, dbErr);
     // Continue anyway — the in-memory guard is still active
+  }
+  // ── Anti-Duplicate: 30-min cooldown per EXACT symbol ──────────────────────
+  // If the same exact symbol (e.g. "GOLD 148500 CE") was traded in the last 30 min, skip.
+  try {
+    const { getDb } = await import("./db");
+    const dbDup = await getDb();
+    if (dbDup) {
+      const { tradeLog } = await import("../drizzle/schema");
+      const { eq, and, gt } = await import("drizzle-orm");
+      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const recentSameSymbol = await dbDup
+        .select({ id: tradeLog.id })
+        .from(tradeLog)
+        .where(and(
+          eq(tradeLog.sessionToken, state.sessionToken),
+          eq(tradeLog.symbol, tradeLabel),
+          gt(tradeLog.enteredAt, thirtyMinAgo),
+        ))
+        .limit(1);
+      if (recentSameSymbol.length > 0) {
+        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${tradeLabel} traded within 30 min`);
+        emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — ${tradeLabel} traded in last 30 min`);
+        state.isOpeningTrade = false;
+        return;
+      }
+    }
+  } catch (dupErr) {
+    console.error(`[BotEngine] Duplicate check failed:`, dupErr);
   }
   // ── CRITICAL FIX: Set mutex BEFORE cross-bot check ──
   // Without this, two bots processing the same tick simultaneously both pass the cross-bot
@@ -6038,8 +6101,8 @@ async function tick(
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.70 : signal.slPrice;
-  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 1.40 : signal.targetPrice;
+  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.88 : signal.slPrice;
+  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 1.15 : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   devLog(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
   const capitalDeployed = displayEntry * quantity;
