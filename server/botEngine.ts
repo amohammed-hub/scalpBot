@@ -6502,10 +6502,16 @@ export function getAllBotsForSession(sessionToken: string): BotState[] {
  * Called after user re-authenticates Upstox — updates in-memory token
  * so bots don't need to be stopped and restarted.
  */
-export function hotReloadAccessToken(newToken: string): number {
+export function hotReloadAccessToken(newToken: string, sessionToken?: string): number {
   let updated = 0;
   for (const [, state] of Array.from(bots.entries())) {
+    // If sessionToken provided, only update bots belonging to that session (strip slot suffix for matching)
     if (state.status === "running") {
+      if (sessionToken) {
+        const baseInput = sessionToken.replace(/-slot[0-9]+$/, "");
+        const baseBot = state.sessionToken.replace(/-slot[0-9]+$/, "");
+        if (baseBot !== baseInput) continue;
+      }
       state.accessToken = newToken;
       updated++;
     }

@@ -163,7 +163,8 @@ export const appRouter = router({
         sessionToken: sessionTokenSchema,
         accessToken: z.string().min(1),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -172,7 +173,7 @@ export const appRouter = router({
           .set({ accessToken: input.accessToken, tokenExpiresAt: expires })
           .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
         // Hot-reload: update all running bots with the new token immediately
-        const botsUpdated = hotReloadAccessToken(input.accessToken);
+        const botsUpdated = hotReloadAccessToken(input.accessToken, input.sessionToken);
         console.log(`[saveAccessToken] Token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
         return { success: true };
       }),
@@ -183,7 +184,8 @@ export const appRouter = router({
         code: z.string().min(1),
         redirectUri: z.string().min(1),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
 
@@ -233,7 +235,7 @@ export const appRouter = router({
           .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
 
         // Hot-reload: update all running bots with the new token immediately
-        const botsUpdated = hotReloadAccessToken(data.access_token);
+        const botsUpdated = hotReloadAccessToken(data.access_token, input.sessionToken);
         console.log(`[exchangeCode] Token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
 
         return { success: true };
@@ -542,7 +544,8 @@ export const appRouter = router({
             else if (sym0.includes("NATGAS") || sym0.includes("GAS")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
             else if (sym0.includes("COPPER")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
             else if (sym0.includes("BANK"))   restoredOptionMockKey = ceOrPe0 === "CE" ? "BNF_CE"        : "BNF_PE";
-            else                              restoredOptionMockKey = ceOrPe0 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
+            else if (sym0.includes("SENSEX")) restoredOptionMockKey = ceOrPe0 === "CE" ? "NIFTY_CE"      : "NIFTY_PE"; // Sensex uses similar premium range
+            else                              restoredOptionMockKey = ceOrPe0 === "CE" ? "NIFTY_CE"      : "NIFTY_PE"; // Default: NIFTY
           }
           existingOpenTrade = {
             dbId: t.id,
@@ -2527,7 +2530,9 @@ export const appRouter = router({
             else if (sym0.includes("SILVER")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_SILVER_CE" : "MCX_SILVER_PE";
             else if (sym0.includes("CRUDE") || sym0.includes("OIL")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_CRUDE_CE" : "MCX_CRUDE_PE";
             else if (sym0.includes("NATGAS") || sym0.includes("GAS")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_NATGAS_CE" : "MCX_NATGAS_PE";
+            else if (sym0.includes("COPPER")) restoredOptionMockKey = ceOrPe0 === "CE" ? "MCX_COPPER_CE" : "MCX_COPPER_PE";
             else if (sym0.includes("BANK"))   restoredOptionMockKey = ceOrPe0 === "CE" ? "BNF_CE"        : "BNF_PE";
+            else if (sym0.includes("SENSEX")) restoredOptionMockKey = ceOrPe0 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
             else                              restoredOptionMockKey = ceOrPe0 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
           }
           slotExistingOpenTrade = {

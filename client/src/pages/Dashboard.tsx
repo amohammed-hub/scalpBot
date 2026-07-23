@@ -464,6 +464,7 @@ export default function Dashboard() {
       NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → OTM Options (Auto)",   lotSize: 65 },
       BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → OTM Options (Auto)",  lotSize: 30 },
       FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → OTM Options (Auto)",   lotSize: 60 },
+      SENSEX:    { token: "BSE_INDEX|SENSEX",            label: "Sensex → OTM Options (Auto)",     lotSize: 20 },
     };
     const MCX_SYMBOL_MAP: Record<string, string> = {
       MCX_CRUDE: "CRUDEOIL",

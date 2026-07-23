@@ -1567,3 +1567,11 @@
 - [ ] Verify live order placement works tomorrow (9:15 AM IST)
 - [x] Add Sensex (BSE_INDEX|SENSEX) to instrument dropdown with lot size 20
 - [x] Add BSE_INDEX support in option resolution and lot size lookup
+
+## Audit Bug Fixes (Jul 23)
+- [x] Bug 3: Add SENSEX to NSE_INDEX_MAP in Dashboard (prevents wrong lot size after reload)
+- [x] Bug 4: Add SENSEX case in server mock-key fallback for paper mode P&L
+- [x] Bug 1: Add verifySessionOwnership to saveAccessToken and exchangeCode (security)
+- [x] Bug 2: Scope hotReloadAccessToken to only update bots for the caller's session
+- [x] Bug 6: Implement Upstox Access Token Request API + Notifier Webhook for semi-auto token refresh
+- [ ] Bug 5: Static IP proxy (deferred — redeployment fixed it; monitor for recurrence)

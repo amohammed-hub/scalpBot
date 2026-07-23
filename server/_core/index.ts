@@ -25,6 +25,7 @@ import { getDb } from "../db";
 import { upstoxCredentials, botSessions, tradeLog } from "../../drizzle/schema";
 import { eq, and, gte, inArray } from "drizzle-orm";
 import { restartRunningBots } from "../botRestart";
+import { hotReloadAccessToken } from "../botEngine";
 import { startBotWatchdog } from "../botWatchdog";
 import rateLimit from "express-rate-limit";
 import jwt from "jsonwebtoken";
@@ -289,10 +290,78 @@ async function startServer() {
     }
   });
 
+  // ── Upstox Notifier Webhook — receives access_token automatically after user approves ──
+  // This is the endpoint configured as "Notifier Webhook Endpoint" in the Upstox Developer App.
+  // When the user approves a token request (via mobile notification), Upstox POSTs the token here.
+  app.post('/api/upstox-token-webhook', async (req, res) => {
+    try {
+      const { access_token, client_id, user_id, expires_at, message_type } = req.body;
+      
+      // Validate this is an access_token webhook
+      if (message_type !== 'access_token' || !access_token) {
+        console.log('[upstox-token-webhook] Non-token webhook received:', message_type);
+        res.status(200).json({ ok: true, skipped: true });
+        return;
+      }
+
+      console.log(`[upstox-token-webhook] Received access_token from Upstox for client_id=${client_id}, user_id=${user_id}`);
+
+      const db = await getDb();
+      if (!db) {
+        res.status(500).json({ error: 'DB unavailable' });
+        return;
+      }
+
+      // Find the credentials row matching this client_id (apiKey)
+      const rows = await db
+        .select()
+        .from(upstoxCredentials)
+        .where(eq(upstoxCredentials.apiKey, client_id))
+        .limit(1);
+
+      if (!rows.length) {
+        console.warn('[upstox-token-webhook] No credentials found for client_id:', client_id);
+        res.status(200).json({ ok: true, skipped: 'no matching credentials' });
+        return;
+      }
+
+      const creds = rows[0];
+      const expires = expires_at ? new Date(parseInt(expires_at)) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      // Save the new token to DB
+      await db
+        .update(upstoxCredentials)
+        .set({ accessToken: access_token, tokenExpiresAt: expires })
+        .where(eq(upstoxCredentials.id, creds.id));
+
+      // Hot-reload to all running bots for this session
+      const botsUpdated = hotReloadAccessToken(access_token, creds.sessionToken);
+      console.log(`[upstox-token-webhook] Token saved & hot-reloaded to ${botsUpdated} bot(s) for session ${creds.sessionToken.slice(0, 8)}`);
+
+      // Send Telegram confirmation if configured
+      const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+      const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+      if (telegramBotToken && telegramChatId) {
+        const msg = `✅ <b>Token Auto-Refreshed</b>\n\nUpstox access token received via webhook and applied to ${botsUpdated} running bot(s).\n\n🤖 ScalpBot — ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
+        fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: telegramChatId, text: msg, parse_mode: 'HTML' }),
+          signal: AbortSignal.timeout(10000),
+        }).catch(e => console.error('[upstox-token-webhook] Telegram notify failed:', e));
+      }
+
+      res.status(200).json({ ok: true, botsUpdated });
+    } catch (err: any) {
+      console.error('[upstox-token-webhook] Error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Scheduled: Daily Upstox Token Refresh (8:30 AM IST = 03:00 UTC) ──────────
   // This endpoint is called by the Manus heartbeat cron system.
-  // It re-initiates the Upstox OAuth flow by sending a Telegram reminder
-  // (since Upstox requires manual login — no refresh token is available).
+  // It calls the Upstox Access Token Request API which sends a push notification
+  // to the user's phone. User taps "Approve" and the token is delivered to the webhook above.
   app.post('/api/scheduled/token-refresh', async (req, res) => {
     try {
       const user = await sdk.authenticateRequest(req as any);
@@ -317,24 +386,52 @@ async function startServer() {
         return;
       }
       const creds = rows[0];
-      // Upstox does NOT support refresh tokens — every day requires a new OAuth login.
-      // We send a Telegram reminder to the user to log in and get a new token.
-      // If Telegram is not configured, we log a reminder to the server console.
+      // Call Upstox Access Token Request API — this sends a push notification to the user
+      // who can approve it with one tap. The token is then delivered to our webhook endpoint.
+      let tokenRequested = false;
+      if (creds.apiKey && creds.apiSecret) {
+        try {
+          const tokenReqResp = await fetch(`https://api.upstox.com/v3/login/auth/token/request/${creds.apiKey}`, {
+            method: 'POST',
+            headers: { 'accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_secret: creds.apiSecret }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const tokenReqData = await tokenReqResp.json() as any;
+          if (tokenReqData.status === 'success') {
+            tokenRequested = true;
+            console.log(`[token-refresh] Access Token Request sent successfully. Expiry: ${tokenReqData.data?.authorization_expiry}. Waiting for user approval...`);
+          } else {
+            console.warn('[token-refresh] Access Token Request failed:', JSON.stringify(tokenReqData));
+          }
+        } catch (e: any) {
+          console.error('[token-refresh] Access Token Request API call failed:', e.message);
+        }
+      }
+
+      // Also send Telegram reminder as backup
       const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
       const telegramChatId = process.env.TELEGRAM_CHAT_ID;
-      const loginUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${creds.apiKey}&redirect_uri=${encodeURIComponent(creds.redirectUri || '')}`;
       const message = [
-        '\u23F0 <b>Daily Token Refresh Reminder</b>',
+        tokenRequested ? '🔔 <b>Token Request Sent — Approve on Phone</b>' : '\u23F0 <b>Daily Token Refresh Reminder</b>',
         '',
-        'Your Upstox access token expires at midnight. Please refresh it now:',
+        tokenRequested
+          ? 'A token request has been sent to your Upstox app. Please tap <b>Approve</b> on the notification to auto-refresh your token.'
+          : 'Your Upstox access token expires at 3:30 AM. Please refresh it:',
         '',
-        `1. Open your ScalpBot app`,
-        `2. Go to Settings \u2192 Get Token Automatically`,
-        `3. Log in with Mobile Number \u2192 OTP \u2192 PIN (NOT QR code)`,
+        ...(!tokenRequested ? [
+          `1. Open your ScalpBot app`,
+          `2. Go to Settings → Get Token Automatically`,
+          `3. Log in with Mobile Number → OTP → PIN (NOT QR code)`,
+        ] : [
+          `If you don't see the notification:`,
+          `1. Open Upstox app → check pending approvals`,
+          `2. Or manually refresh via ScalpBot Settings`,
+        ]),
         '',
-        '\u26a0\ufe0f Token must be refreshed before 9:15 AM for Live trading.',
+        '⚠️ Token must be refreshed before 9:15 AM for Live trading.',
         '',
-        `\u{1F916} ScalpBot \u2014 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`,
+        `🤖 ScalpBot — ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`,
       ].join('\n');
       if (telegramBotToken && telegramChatId) {
         try {
@@ -350,7 +447,7 @@ async function startServer() {
       } else {
         console.log('[token-refresh] No Telegram configured. Reminder: refresh Upstox token for session', creds.sessionToken.slice(0, 8));
       }
-      res.json({ ok: true, sessionToken: creds.sessionToken.slice(0, 8), reminded: true });
+      res.json({ ok: true, sessionToken: creds.sessionToken.slice(0, 8), tokenRequested, reminded: true });
     } catch (err: any) {
       res.status(500).json({
         error: err.message,
