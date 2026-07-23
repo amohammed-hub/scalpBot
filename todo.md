@@ -1557,3 +1557,11 @@
 - [x] Works for both NSE and MCX options
 - [x] Only rejects if NO OTM strike fits (truly insufficient capital)
 - [x] All 194 tests pass
+## Live Mode Fix — Static IP & Token Hot-Reload (Jul 23)
+- [x] Diagnosed root cause: UDAPI1154 static IP restriction blocking orders on Railway
+- [x] Enabled Railway Static Outbound IPs (162.220.232.251, 162.220.232.252, 152.55.177.181)
+- [x] User configured Primary/Secondary IPs in Upstox Developer Console
+- [x] Added order retry logic (3 attempts) for UDAPI1154 — handles Railway's 3-IP load balancing
+- [x] Added hot-reload token feature — running bots auto-update when token is refreshed (no restart needed)
+- [x] Hot-reload integrated into both exchangeCode and saveAccessToken procedures
+- [ ] Verify live order placement works tomorrow (9:15 AM IST)

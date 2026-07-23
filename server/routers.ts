@@ -7,7 +7,7 @@ import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, noti
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -171,6 +171,9 @@ export const appRouter = router({
           .update(upstoxCredentials)
           .set({ accessToken: input.accessToken, tokenExpiresAt: expires })
           .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
+        // Hot-reload: update all running bots with the new token immediately
+        const botsUpdated = hotReloadAccessToken(input.accessToken);
+        console.log(`[saveAccessToken] Token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
         return { success: true };
       }),
 
@@ -228,6 +231,10 @@ export const appRouter = router({
           .update(upstoxCredentials)
           .set({ accessToken: data.access_token, tokenExpiresAt: expires })
           .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
+
+        // Hot-reload: update all running bots with the new token immediately
+        const botsUpdated = hotReloadAccessToken(data.access_token);
+        console.log(`[exchangeCode] Token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
 
         return { success: true };
       }),

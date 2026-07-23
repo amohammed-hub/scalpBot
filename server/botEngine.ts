@@ -3730,6 +3730,8 @@ export function getLastOrderRejectionReason(): string | null {
 export async function placeUpstoxOrder(
   accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number,
 ): Promise<string | null> {
+  const MAX_RETRIES = 3; // Railway has 3 static IPs; retry ensures we hit a whitelisted one
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
   try {
     const resp = await axios.post(
       "https://api.upstox.com/v3/order/place",
@@ -3747,10 +3749,19 @@ export async function placeUpstoxOrder(
         reason = body.errors.map(e => `${e.errorCode ?? e.error_code ?? ""} ${e.message ?? ""}`.trim()).join("; ");
       }
     }
+    // If the error is UDAPI1154 (static IP restriction), retry — Railway load-balances
+    // across 3 IPs but only 2 are whitelisted in Upstox. Retrying hits a different IP.
+    if (reason.includes("UDAPI1154") && attempt < MAX_RETRIES) {
+      console.log(`[BotEngine] Order hit non-whitelisted IP (attempt ${attempt}/${MAX_RETRIES}), retrying in 500ms...`);
+      await new Promise(r => setTimeout(r, 500));
+      continue;
+    }
     lastOrderRejectionReason = reason;
     console.error(`[BotEngine] Order placement failed (${instrumentToken} ${direction} qty=${quantity}):`, reason);
     return null;
   }
+  }
+  return null; // Should not reach here, but safety fallback
 }
 
 // ── NSE lot size resolution (live, self-correcting) ─────────────────────────
@@ -6484,4 +6495,23 @@ export function getAllBotsForSession(sessionToken: string): BotState[] {
     }
   }
   return results;
+}
+
+/**
+ * Hot-reload access token for ALL running bots.
+ * Called after user re-authenticates Upstox — updates in-memory token
+ * so bots don't need to be stopped and restarted.
+ */
+export function hotReloadAccessToken(newToken: string): number {
+  let updated = 0;
+  for (const [, state] of Array.from(bots.entries())) {
+    if (state.status === "running") {
+      state.accessToken = newToken;
+      updated++;
+    }
+  }
+  if (updated > 0) {
+    console.log(`[BotEngine] Hot-reloaded access token for ${updated} running bot(s)`);
+  }
+  return updated;
 }
