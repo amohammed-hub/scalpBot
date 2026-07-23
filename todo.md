@@ -1109,6 +1109,34 @@
 
 ## BACKLOG: Paid Extra Bot Slots + Strategy Subset Config
 
+## Verify & Implement — Bot Plans + Referral + Admin (Jul 23, 2026)
+
+### 1. REFERRAL SYSTEM — Verify & Surface
+- [x] Verify referral backend works (myReferral, applyCode, listAll)
+- [x] Add "Refer & Earn" section visible on Dashboard (not just Settings)
+- [x] Confirm each user gets unique referral code on first query
+- [x] Confirm referrer gets +1 bot slot when someone uses their code
+
+### 2. BOT ALLOCATION BY PLAN
+- [x] Add liveTrading field to TierLimits — trial=false (paper only), paid=true
+- [x] Enforce maxBots at bot.start and multiBots.startSecondary (count running bots, block if >= maxBots + extraBotSlots)
+- [x] Trial/Free: 3 bots, paper only
+- [x] Paid (all plans): 3 bots, live + paper
+- [x] Referral bonus: +1 extra bot (temporary, based on referred user's plan duration)
+- [x] Admin: 4+ bots (unlimited)
+- [x] Update Dashboard grid to show correct number of slots based on plan + extraBotSlots
+
+### 3. ADMIN PANEL — New Features
+- [x] Add "Referrals" tab showing all referral stats (referrer, referee, date, reward status)
+- [x] Add "Override Bot Count" button per user (set extraBotSlots directly)
+- [x] Add "System Health" section (DB status, running bots count, memory, uptime)
+- [x] Verify existing features: Grant Access, View Users + Plans, Telegram Broadcast
+
+### 4. ANTI-DUPLICATE FIX
+- [x] Remove any "Cannot run same instrument in multiple slots" error (if exists)
+- [x] Confirm: same instrument allowed in multiple bots
+- [x] Confirm: only same STRIKE is blocked (already implemented via excludeStrikes)
+
 ## Notification Preferences + Admin Broadcast Control
 
 ### User Side (Settings → Telegram)

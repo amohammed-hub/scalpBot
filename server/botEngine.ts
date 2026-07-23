@@ -6521,3 +6521,21 @@ export function hotReloadAccessToken(newToken: string, sessionToken?: string): n
   }
   return updated;
 }
+
+/**
+ * Get total running bots across all users (for system health dashboard).
+ */
+export function getTotalRunningBots(): number {
+  let count = 0;
+  for (const [, state] of Array.from(bots.entries())) {
+    if (state.status === "running") count++;
+  }
+  return count;
+}
+
+/**
+ * Get total bots in memory (running + stopped) for system health.
+ */
+export function getTotalBotsInMemory(): number {
+  return bots.size;
+}

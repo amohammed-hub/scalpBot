@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Loader2, Shield, Users, CreditCard, TrendingUp, Ban, Gift, Activity, ArrowLeft, UserPlus, Clock, RotateCcw, Bell, Send, FileText } from "lucide-react";
+import { Loader2, Shield, Users, CreditCard, TrendingUp, Ban, Gift, Activity, ArrowLeft, UserPlus, Clock, RotateCcw, Bell, Send, FileText, Heart, Link2, Bot } from "lucide-react";
 
-type AdminTab = "users" | "subscriptions" | "activity" | "grants" | "notifications" | "broadcast" | "templates";
+type AdminTab = "users" | "subscriptions" | "activity" | "grants" | "referrals" | "health" | "notifications" | "broadcast" | "templates";
 
 export function AdminPanel({ onClose }: { onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
@@ -14,6 +14,16 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
   const userPrefsQuery = trpc.adminNotif.listUserPrefs.useQuery();
   const broadcastsQuery = trpc.adminNotif.listBroadcasts.useQuery();
   const templatesQuery = trpc.adminNotif.getTemplates.useQuery();
+  // Referral & Health queries
+  const referralStatsQuery = trpc.admin.referralStats.useQuery();
+  const systemHealthQuery = trpc.admin.systemHealth.useQuery(undefined, { refetchInterval: 10000 });
+  // Override bot slots
+  const overrideBotSlotsMutation = trpc.admin.overrideBotSlots.useMutation({
+    onSuccess: (data) => { toast.success(`Bot slots set to ${data.extraBotSlots}`); usersQuery.refetch(); referralStatsQuery.refetch(); },
+    onError: (err: { message: string }) => toast.error(err.message),
+  });
+  const [overrideModal, setOverrideModal] = useState<{ sessionToken: string; mobile: string; current: number } | null>(null);
+  const [overrideValue, setOverrideValue] = useState(0);
   const setMasterMutation = trpc.adminNotif.setMasterSwitch.useMutation({ onSuccess: () => { masterSwitchQuery.refetch(); toast.success("Master switch updated"); } });
   const overrideMutation = trpc.adminNotif.overrideUserPrefs.useMutation({ onSuccess: () => { userPrefsQuery.refetch(); toast.success("Override applied"); } });
   const sendBroadcastMutation = trpc.adminNotif.sendBroadcast.useMutation({ onSuccess: (d) => { broadcastsQuery.refetch(); toast.success(`Broadcast ${d.status}: sent to ${d.sentCount} users`); } });
@@ -93,6 +103,8 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
     { id: "subscriptions", label: "Subscriptions", icon: <CreditCard className="w-4 h-4" /> },
     { id: "activity", label: "Activity", icon: <Activity className="w-4 h-4" /> },
     { id: "grants", label: "Access Grants", icon: <UserPlus className="w-4 h-4" /> },
+    { id: "referrals", label: "Referrals", icon: <Link2 className="w-4 h-4" /> },
+    { id: "health", label: "System Health", icon: <Heart className="w-4 h-4" /> },
     { id: "notifications", label: "Notifications", icon: <Bell className="w-4 h-4" /> },
     { id: "broadcast", label: "Broadcast", icon: <Send className="w-4 h-4" /> },
     { id: "templates", label: "Templates", icon: <FileText className="w-4 h-4" /> },
@@ -177,17 +189,25 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                     <td className="px-4 py-3 text-white/50">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</td>
                     <td className="px-4 py-3 text-white/50">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString() : "Never"}</td>
                     <td className="px-4 py-3 space-x-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs border-teal-500/30 text-teal-300 hover:bg-teal-500/10"
+                      onClick={() => setGrantModal({ sessionToken: user.sessionToken ?? "", mobile: user.mobile })}
+                    >
+                      <Gift className="w-3 h-3 mr-1" /> Grant
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs border-purple-500/30 text-purple-300 hover:bg-purple-500/10"
+                      onClick={() => setOverrideModal({ sessionToken: user.sessionToken ?? "", mobile: user.mobile, current: user.extraBotSlots ?? 0 })}
+                    >
+                      <Bot className="w-3 h-3 mr-1" /> Bots
+                    </Button>
+                    {user.sessionToken && (
                       <Button
                         size="sm"
-                        variant="outline"
-                        className="h-7 text-xs border-teal-500/30 text-teal-300 hover:bg-teal-500/10"
-                        onClick={() => setGrantModal({ sessionToken: user.sessionToken ?? "", mobile: user.mobile })}
-                      >
-                        <Gift className="w-3 h-3 mr-1" /> Grant
-                      </Button>
-                      {user.sessionToken && (
-                        <Button
-                          size="sm"
                           variant="outline"
                           className="h-7 text-xs border-red-500/30 text-red-300 hover:bg-red-500/10"
                           onClick={() => {
@@ -465,7 +485,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
         <div className="space-y-4">
           <div className="bg-white/5 border border-white/10 rounded-xl p-5">
             <h3 className="text-white font-semibold mb-1">Alert Message Templates</h3>
-            <p className="text-white/40 text-xs mb-4">Edit the format of automated alerts. Use {"{{variable}}"} placeholders.</p>
+            <p className="text-white/40 text-xs mb-4">Edit the format of automated alerts. Use {"{"}{"{"} variable {"}"}{"}"}  placeholders.</p>
             <div className="space-y-4">
               {(templatesQuery.data || []).map((t: any) => (
                 <div key={t.id} className="bg-black/20 border border-white/10 rounded-xl p-4">
@@ -684,6 +704,103 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
+      {/* Referrals Tab */}
+      {activeTab === "referrals" && (
+        <div className="space-y-6">
+          {/* Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <StatCard icon={<Link2 className="w-5 h-5" />} label="Total Referrals" value={referralStatsQuery.data?.totalReferrals ?? 0} color="teal" />
+            <StatCard icon={<Gift className="w-5 h-5" />} label="Rewards Granted" value={referralStatsQuery.data?.totalRewardsGranted ?? 0} color="green" />
+            <StatCard icon={<Users className="w-5 h-5" />} label="Users with Bonus Slots" value={referralStatsQuery.data?.usersWithBonusSlots ?? 0} color="purple" />
+            <StatCard icon={<Bot className="w-5 h-5" />} label="Total Extra Slots Given" value={(referralStatsQuery.data?.userSlots ?? []).reduce((s: number, u: any) => s + (u.extraBotSlots ?? 0), 0)} color="amber" />
+          </div>
+          {/* Users with bonus slots */}
+          {(referralStatsQuery.data?.userSlots ?? []).length > 0 && (
+            <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-white/10">
+                <h3 className="text-sm font-semibold text-white">Users with Extra Bot Slots</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-white/5"><tr>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Mobile</th>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Referral Code</th>
+                    <th className="text-left px-4 py-3 text-white/50 font-medium">Extra Slots</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-white/5">
+                    {(referralStatsQuery.data?.userSlots ?? []).map((u: any, i: number) => (
+                      <tr key={i} className="hover:bg-white/5">
+                        <td className="px-4 py-3 font-mono text-teal-300">{u.mobile}</td>
+                        <td className="px-4 py-3 font-mono text-white/60">{u.referralCode || "—"}</td>
+                        <td className="px-4 py-3"><span className="bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded text-xs font-bold">+{u.extraBotSlots}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {/* All referrals log */}
+          <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-white/10">
+              <h3 className="text-sm font-semibold text-white">Referral Log ({referralStatsQuery.data?.totalReferrals ?? 0})</h3>
+            </div>
+            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-white/5 sticky top-0"><tr>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Referrer</th>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Referee</th>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Code</th>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Reward</th>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Date</th>
+                </tr></thead>
+                <tbody className="divide-y divide-white/5">
+                  {(referralStatsQuery.data?.referrals ?? []).map((r: any) => (
+                    <tr key={r.id} className="hover:bg-white/5">
+                      <td className="px-4 py-3 font-mono text-xs text-teal-300">{r.referrerMobile}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-white/60">{r.refereeMobile}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-white/40">{r.referralCode}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-xs ${r.rewardGranted ? "bg-green-500/20 text-green-300" : "bg-amber-500/20 text-amber-300"}`}>
+                          {r.rewardGranted ? "Granted" : "Pending"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-white/50 text-xs">{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "—"}</td>
+                    </tr>
+                  ))}
+                  {(referralStatsQuery.data?.referrals ?? []).length === 0 && (
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-white/30">No referrals yet</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* System Health Tab */}
+      {activeTab === "health" && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <StatCard icon={<Heart className="w-5 h-5" />} label="Database" value={systemHealthQuery.data?.dbStatus === "connected" ? "✓ Connected" : "✗ Error"} color={systemHealthQuery.data?.dbStatus === "connected" ? "green" : "amber"} />
+            <StatCard icon={<Bot className="w-5 h-5" />} label="Running Bots" value={systemHealthQuery.data?.runningBots ?? 0} color="teal" />
+            <StatCard icon={<Activity className="w-5 h-5" />} label="Memory (Heap)" value={`${systemHealthQuery.data?.memoryMB ?? 0} MB`} color="purple" />
+            <StatCard icon={<Clock className="w-5 h-5" />} label="Uptime" value={`${systemHealthQuery.data?.uptimeHours ?? 0} hrs`} color="amber" />
+          </div>
+          <div className="bg-white/5 border border-white/10 rounded-xl p-5">
+            <h3 className="text-white font-semibold mb-4">System Details</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+              <div><span className="text-white/40 text-xs block">Total Bots in Memory</span><span className="text-white font-mono">{systemHealthQuery.data?.totalBotsInMemory ?? 0}</span></div>
+              <div><span className="text-white/40 text-xs block">Total Users</span><span className="text-white font-mono">{systemHealthQuery.data?.totalUsers ?? 0}</span></div>
+              <div><span className="text-white/40 text-xs block">Total Trades</span><span className="text-white font-mono">{(systemHealthQuery.data?.totalTrades ?? 0).toLocaleString()}</span></div>
+              <div><span className="text-white/40 text-xs block">Heap Total</span><span className="text-white font-mono">{systemHealthQuery.data?.memoryTotalMB ?? 0} MB</span></div>
+              <div><span className="text-white/40 text-xs block">Node Version</span><span className="text-white font-mono">{systemHealthQuery.data?.nodeVersion ?? "?"}</span></div>
+              <div><span className="text-white/40 text-xs block">Last Check</span><span className="text-white font-mono text-xs">{systemHealthQuery.data?.timestamp ? new Date(systemHealthQuery.data.timestamp).toLocaleTimeString() : "—"}</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Extend Grant Modal */}
       {extendId && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
@@ -709,6 +826,43 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                 {extendGrantMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Extend"}
               </Button>
               <Button variant="outline" className="border-white/20 text-white/60" onClick={() => setExtendId(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Override Bot Slots Modal */}
+      {overrideModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+          <div className="bg-[#1a1f2e] border border-white/10 rounded-xl p-6 w-full max-w-sm space-y-4">
+            <h3 className="text-lg font-semibold text-white">Override Bot Slots</h3>
+            <p className="text-sm text-white/50">User: <span className="text-teal-300">{overrideModal.mobile}</span></p>
+            <p className="text-xs text-white/40">Current extra slots: <span className="text-purple-300 font-bold">{overrideModal.current}</span></p>
+            <div>
+              <label className="text-xs text-white/50 mb-1 block">Set Extra Bot Slots (0-10)</label>
+              <Input
+                type="number"
+                min={0}
+                max={10}
+                value={overrideValue}
+                onChange={e => setOverrideValue(Number(e.target.value))}
+                className="bg-white/5 border-white/10 text-white"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1 bg-purple-500 hover:bg-purple-600 text-white"
+                onClick={() => {
+                  overrideBotSlotsMutation.mutate({ sessionToken: overrideModal.sessionToken, extraBotSlots: overrideValue });
+                  setOverrideModal(null);
+                }}
+                disabled={overrideBotSlotsMutation.isPending}
+              >
+                {overrideBotSlotsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Set Slots"}
+              </Button>
+              <Button variant="outline" className="border-white/20 text-white/60" onClick={() => setOverrideModal(null)}>
                 Cancel
               </Button>
             </div>

@@ -9,6 +9,7 @@ export interface TierLimits {
   maxTradesPerDay: number; // 0 = unlimited
   mcxAccess: boolean;
   maxBots: number; // 0 = unlimited
+  liveTrading: boolean; // false = paper only (trial)
   telegram: boolean;
   backtester: boolean;
   customStrategy: boolean;
@@ -23,6 +24,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     maxTradesPerDay: 5,
     mcxAccess: false,
     maxBots: 3,
+    liveTrading: false,
     telegram: false,
     backtester: false,
     customStrategy: false,
@@ -35,6 +37,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     maxTradesPerDay: 10,
     mcxAccess: false,
     maxBots: 3,
+    liveTrading: true,
     telegram: true,
     backtester: false,
     customStrategy: false,
@@ -47,6 +50,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     maxTradesPerDay: 15,
     mcxAccess: true,
     maxBots: 3,
+    liveTrading: true,
     telegram: true,
     backtester: true,
     customStrategy: false,
@@ -59,6 +63,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     maxTradesPerDay: 20,
     mcxAccess: true,
     maxBots: 3,
+    liveTrading: true,
     telegram: true,
     backtester: true,
     customStrategy: true,
@@ -71,6 +76,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     maxTradesPerDay: 0, // unlimited
     mcxAccess: true,
     maxBots: 3,
+    liveTrading: true,
     telegram: true,
     backtester: true,
     customStrategy: true,
@@ -83,6 +89,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     maxTradesPerDay: 0, // unlimited
     mcxAccess: true,
     maxBots: 0, // unlimited
+    liveTrading: true,
     telegram: true,
     backtester: true,
     customStrategy: true,

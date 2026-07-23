@@ -7,7 +7,7 @@ import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, noti
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -405,23 +405,38 @@ export const appRouter = router({
         throw new Error("No active subscription. Start a free trial or subscribe to use ScalpBot.");
        }
         // Tier-based enforcement (admin bypasses all)
-        if (!isAdminSession && !isAdminViaCookie) {
-          const limits = getTierLimits(access.plan, false);
-          if (access.plan === "trial" && input.mode === "live") {
-            throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
-          }
-         if (!limits.mcxAccess && input.instrumentToken.startsWith("MCX_FO|")) {
-           throw new Error("MCX markets require 3-Month plan or higher. Upgrade → /pricing");
-         }
-          // Cap maxTradesPerDay to tier limit (0 = unlimited for that tier)
-          if (limits.maxTradesPerDay > 0 && input.maxTradesPerDay > limits.maxTradesPerDay) {
-            input.maxTradesPerDay = limits.maxTradesPerDay;
-          }
-          // Block unlimitedTrades for non-admin users below annual plan
-          if (input.unlimitedTrades && limits.maxTradesPerDay > 0) {
-            input.unlimitedTrades = false;
+      if (!isAdminSession && !isAdminViaCookie) {
+        const limits = getTierLimits(access.plan, false);
+        if (access.plan === "trial" && input.mode === "live") {
+          throw new Error("Live trading is not available during the free trial. Subscribe to unlock live trading.");
+        }
+       if (!limits.mcxAccess && input.instrumentToken.startsWith("MCX_FO|")) {
+         throw new Error("MCX markets require 3-Month plan or higher. Upgrade → /pricing");
+       }
+        // Cap maxTradesPerDay to tier limit (0 = unlimited for that tier)
+        if (limits.maxTradesPerDay > 0 && input.maxTradesPerDay > limits.maxTradesPerDay) {
+          input.maxTradesPerDay = limits.maxTradesPerDay;
+        }
+        // Block unlimitedTrades for non-admin users below annual plan
+        if (input.unlimitedTrades && limits.maxTradesPerDay > 0) {
+          input.unlimitedTrades = false;
+        }
+        // ── maxBots enforcement ─────────────────────────────────────────────
+        if (limits.maxBots > 0) {
+          const runningBots = getAllRunningBotsForSession(input.sessionToken);
+          // Get extra bot slots from referrals
+          let extraSlots = 0;
+          try {
+            const [ebRaw]: any = await db.execute(sql`SELECT extraBotSlots FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            const ebRow = Array.isArray(ebRaw) ? ebRaw[0] : ebRaw;
+            extraSlots = ebRow?.extraBotSlots ?? 0;
+          } catch { /* column may not exist */ }
+          const maxAllowed = limits.maxBots + extraSlots;
+          if (runningBots.length >= maxAllowed) {
+            throw new Error(`Maximum ${maxAllowed} bot${maxAllowed > 1 ? "s" : ""} allowed on your plan. Stop a running bot first or upgrade for more slots.`);
           }
         }
+      }
 
         // Load access token for BOTH paper and live modes.
         // Paper mode uses it for real market data (candles, quotes) but skips actual order placement.
@@ -2462,6 +2477,20 @@ export const appRouter = router({
           // Block unlimitedTrades for non-admin users below annual plan
           if (input.unlimitedTrades && slotLimits.maxTradesPerDay > 0) {
             input.unlimitedTrades = false;
+          }
+          // ── maxBots enforcement for slot bots ────────────────────────────────
+          if (slotLimits.maxBots > 0) {
+            const runningSlotBots = getAllRunningBotsForSession(input.sessionToken);
+            let extraSlots = 0;
+            try {
+              const [ebRaw]: any = await db.execute(sql`SELECT extraBotSlots FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+              const ebRow = Array.isArray(ebRaw) ? ebRaw[0] : ebRaw;
+              extraSlots = ebRow?.extraBotSlots ?? 0;
+            } catch { /* column may not exist */ }
+            const maxAllowed = slotLimits.maxBots + extraSlots;
+            if (runningSlotBots.length >= maxAllowed) {
+              throw new Error(`Maximum ${maxAllowed} bot${maxAllowed > 1 ? "s" : ""} allowed on your plan. Stop a running bot first or upgrade for more slots.`);
+            }
           }
         }
 
@@ -4592,8 +4621,81 @@ export const appRouter = router({
     extendGrant: publicProcedure
       .input(z.object({ grantId: z.number(), additionalDays: z.number().min(1).max(3650) }))
       .mutation(async ({ input, ctx }) => {
+      if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+      return extendAccessGrant(input.grantId, input.additionalDays);
+    }),
+
+    // ── Override Bot Slots for a user ──────────────────────────────────────
+    overrideBotSlots: publicProcedure
+      .input(z.object({ sessionToken: z.string(), extraBotSlots: z.number().min(0).max(10) }))
+      .mutation(async ({ input, ctx }) => {
         if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
-        return extendAccessGrant(input.grantId, input.additionalDays);
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        await db.update(appUsers).set({ extraBotSlots: input.extraBotSlots }).where(eq(appUsers.sessionToken, input.sessionToken));
+        return { success: true, extraBotSlots: input.extraBotSlots };
+      }),
+
+    // ── Referral Stats (all referrals with user info) ─────────────────────
+    referralStats: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        if (!db) return { referrals: [], totalReferrals: 0, totalRewardsGranted: 0, usersWithBonusSlots: 0 };
+        try {
+          const allRefs = await db.select().from(referrals).orderBy(desc(referrals.createdAt)).limit(200);
+          const usersWithSlots = await db.select({ id: appUsers.id, mobile: appUsers.mobile, referralCode: appUsers.referralCode, extraBotSlots: appUsers.extraBotSlots })
+            .from(appUsers);
+          const totalRewardsGranted = allRefs.filter((r: any) => r.rewardGranted).length;
+          const usersWithBonusSlots = usersWithSlots.filter((u: any) => (u.extraBotSlots ?? 0) > 0).length;
+          return {
+            referrals: allRefs,
+            totalReferrals: allRefs.length,
+            totalRewardsGranted,
+            usersWithBonusSlots,
+            userSlots: usersWithSlots.filter((u: any) => (u.extraBotSlots ?? 0) > 0).map((u: any) => ({
+              mobile: u.mobile,
+              referralCode: u.referralCode,
+              extraBotSlots: u.extraBotSlots,
+            })),
+          };
+        } catch (e) {
+          console.error("[admin.referralStats] Error:", e);
+          return { referrals: [], totalReferrals: 0, totalRewardsGranted: 0, usersWithBonusSlots: 0, userSlots: [] };
+        }
+      }),
+
+    // ── System Health ─────────────────────────────────────────────────────
+    systemHealth: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        const db = await getDb();
+        const memUsage = process.memoryUsage();
+        const uptime = process.uptime();
+        let dbStatus = "disconnected";
+        let totalUsersCount = 0;
+        let totalTradesCount = 0;
+        try {
+          if (db) {
+            const [uc] = await db.select({ count: count() }).from(appUsers);
+            totalUsersCount = uc.count;
+            const [tc] = await db.select({ count: count() }).from(tradeLog);
+            totalTradesCount = tc.count;
+            dbStatus = "connected";
+          }
+        } catch { dbStatus = "error"; }
+        return {
+          dbStatus,
+          runningBots: getTotalRunningBots(),
+          totalBotsInMemory: getTotalBotsInMemory(),
+          memoryMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+          memoryTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+          uptimeHours: Math.round(uptime / 3600 * 10) / 10,
+          totalUsers: totalUsersCount,
+          totalTrades: totalTradesCount,
+          nodeVersion: process.version,
+          timestamp: Date.now(),
+        };
       }),
   }),
 
