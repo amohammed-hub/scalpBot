@@ -3943,6 +3943,33 @@ export async function placeUpstoxOrder(
   return null; // Should not reach here, but safety fallback
 }
 
+// Order status verification (prevents ghost trades)
+// After placing a live order, Upstox may accept it (return orderId) but the
+// exchange can reject it asynchronously. This function checks the actual status.
+export async function verifyUpstoxOrderStatus(
+  accessToken: string, orderId: string
+): Promise<{ status: string; rejectionReason?: string; filledQty?: number; avgPrice?: number }> {
+  try {
+    const resp = await axios.get(
+      `https://api.upstox.com/v2/order/details?order_id=${orderId}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 }
+    );
+    const order = resp.data?.data;
+    if (!order) return { status: "unknown" };
+    // Upstox order statuses: "complete", "rejected", "cancelled", "open", "pending", "trigger pending"
+    const status = (order.status ?? order.order_status ?? "unknown").toLowerCase();
+    const rejectionReason = order.status_message ?? order.rejection_reason ?? undefined;
+    const filledQty = order.filled_quantity ?? order.traded_quantity ?? 0;
+    const avgPrice = order.average_price ?? order.traded_price ?? 0;
+    return { status, rejectionReason, filledQty, avgPrice };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[BotEngine] verifyUpstoxOrderStatus failed for ${orderId}: ${msg}`);
+    return { status: "unknown" };
+  }
+}
+
+
 // ── NSE lot size resolution (live, self-correcting) ─────────────────────────
 // The option/chain API does NOT return lot_size, so we fetch it once per day per
 // underlying from /v2/option/contract. Falls back to the shared static map.
@@ -6189,7 +6216,35 @@ async function tick(
     orderId = oid;
     // Reset rejection counter on successful order
     state.consecutiveRejections = 0;
-    emitActivity(state.sessionToken, "signal", `✅ Upstox order confirmed: ${orderId}`);
+    // CRITICAL: Verify order was actually FILLED by exchange (not just accepted by API).
+    // Upstox API can return orderId but exchange may reject it async (margin, invalid token, etc.)
+    // We verify BEFORE recording the trade to prevent ghost trades.
+    emitActivity(state.sessionToken, "signal", `📤 Order submitted: ${orderId} — verifying exchange fill...`);
+    await new Promise(r => setTimeout(r, 2500)); // Wait 2.5s for exchange to process
+    const verification = await verifyUpstoxOrderStatus(state.accessToken, orderId);
+    console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Order ${orderId} verification: status=${verification.status} | filled=${verification.filledQty} | avgPrice=${verification.avgPrice} | reason=${verification.rejectionReason ?? "none"}`);
+    if (verification.status === "rejected" || verification.status === "cancelled") {
+      // ORDER WAS REJECTED BY EXCHANGE — do NOT record a ghost trade
+      state.lastError = `Order REJECTED by exchange: ${verification.rejectionReason ?? "unknown reason"}`;
+      emitActivity(state.sessionToken, "error", `🚨 GHOST TRADE PREVENTED — Order ${orderId} REJECTED by exchange: ${verification.rejectionReason ?? "unknown"}. Trade NOT recorded.`);
+      console.error(`[BotEngine] ${state.sessionToken} — GHOST TRADE PREVENTED: order ${orderId} rejected. Reason: ${verification.rejectionReason}`);
+      sendTelegramAlert(state, `🚨 <b>ORDER REJECTED BY EXCHANGE</b>\n📊 ${tradeLabel} ${orderDirection}\n❌ ${verification.rejectionReason ?? "unknown"}\n🆔 ${orderId}\n\n⚠️ Check Upstox order book.`, "criticalAlerts");
+      state.lastTradeOpenedAt = Date.now(); // Cooldown
+      state.consecutiveRejections = (state.consecutiveRejections ?? 0) + 1;
+      if (state.consecutiveRejections >= 3) {
+        state.status = "paused";
+        state.lastError = `Bot PAUSED: ${state.consecutiveRejections} consecutive exchange rejections.`;
+        emitActivity(state.sessionToken, "error", `🛑 Bot AUTO-PAUSED after ${state.consecutiveRejections} exchange rejections. Last: ${verification.rejectionReason ?? "unknown"}`);
+      }
+      return;
+    }
+    // Order filled or still processing — record the actual fill price if available
+    if ((verification.status === "complete" || verification.status === "traded") && verification.avgPrice && verification.avgPrice > 0) {
+      // Store actual fill price to use below (signal.entryPrice will be overridden)
+      signal.entryPrice = verification.avgPrice;
+      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Using actual fill price: ₹${verification.avgPrice}`);
+    }
+    emitActivity(state.sessionToken, "signal", `✅ Order VERIFIED: ${orderId} (${verification.status}) @ ₹${verification.avgPrice ?? "market"}`);
   } else if (state.mode === "live" && !state.accessToken) {
     // CRITICAL FIX: If mode is "live" but accessToken is null, do NOT silently record a paper trade.
     // This was the root cause of "trades on dashboard but not in Upstox" bug.

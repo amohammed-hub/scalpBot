@@ -1873,7 +1873,7 @@ export default function Dashboard() {
             if (bot.slot === 0) return; // primary already counted
             const ot = bot.openTrade;
             if (!ot) return;
-            const isOpts = ot.isIndexOptions;
+            const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
             const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
             let liveP = 0;
             if (isOpts) {
@@ -2001,7 +2001,8 @@ export default function Dashboard() {
                 if (bot.slot === 0) return;
                 const ot = bot.openTrade;
                 if (!ot) return;
-                const isOpts = ot.isIndexOptions;
+                // Check both openTrade-level AND bot-level isIndexOptions (handles legacy/DB-restored trades)
+                const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
                 const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
                 let liveP = 0;
                 if (isOpts) {

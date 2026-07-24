@@ -1686,3 +1686,13 @@
 - [x] Added diagnostic logging: CANDLE-FETCH log on first 3 ticks for MCX bots shows actual signalToken being used.
 - [x] Exported resolveMcxFuturesToken from botEngine.ts for use in routers.ts and botRestart.ts.
 - [x] Verified: MCX_FO|555922 (GOLDM numeric) returns 588 candles; MCX_FO|GOLDM (placeholder) returns 0 candles.
+
+## BUG 18 — Ghost Trade + Incorrect P&L in Live Mode (MCX Options)
+- [x] Root cause 1: Upstox API accepts order (returns orderId) but exchange rejects it async → bot records ghost trade
+- [x] Root cause 2: DB-fallback openTrade missing isIndexOptions → frontend uses underlying price as "Current" → absurd P&L
+- [x] FIX 1: Added verifyUpstoxOrderStatus() — checks order status 2.5s after placement via Upstox Order Details API
+- [x] FIX 2: If exchange rejects/cancels order, trade NOT recorded (ghost trade prevented), Telegram alert sent
+- [x] FIX 3: Uses actual fill price (verification.avgPrice) instead of signal price for accurate entry
+- [x] FIX 4: DB-fallback openTrade in liveData now includes isIndexOptions and entryUnderlyingPrice
+- [x] FIX 5: allStatus response now includes bot-level isIndexOptions field
+- [x] FIX 6: Dashboard uses ot.isIndexOptions ?? bot.isIndexOptions as fallback for legacy/DB-restored trades

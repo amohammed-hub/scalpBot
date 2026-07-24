@@ -1351,6 +1351,9 @@ export const appRouter = router({
                 partialBooked: (dbOpenTrade.partialBooked ?? 0) as 0 | 1 | 2,
                 bookedQty: dbOpenTrade.bookedQty ?? 0,
                 bookedPnl: dbOpenTrade.bookedPnl ?? 0,
+                // CRITICAL: Include options metadata so frontend doesn't use underlying price as "Current"
+                isIndexOptions: !!(rows[0].isIndexOptions),
+                entryUnderlyingPrice: dbOpenTrade.entryUnderlyingPrice ?? undefined,
               };
             })() : null,
           };
@@ -2308,6 +2311,8 @@ export const appRouter = router({
             hasRealData: !!(inMem?.accessToken) || (inMem?.candles?.length ?? 0) > 0,
             // Current option premium price (for unrealised P&L calculation in slot cards)
             optionPremiumPrice: inMem?.optionPremiumPrice ?? null,
+            // Bot-level isIndexOptions for frontend fallback when openTrade doesn't have it
+            isIndexOptions: inMem?.isIndexOptions ?? dbRow?.isIndexOptions ?? false,
           };
         });
       }),
