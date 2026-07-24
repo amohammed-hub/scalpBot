@@ -5374,6 +5374,10 @@ async function tick(
     emitActivity(state.sessionToken, "signal", heartbeatMsg);
   }
   state.lastSignal = signal;
+  // ── MCX DIAGNOSTIC: Log when MCX bot generates a tradeable signal ──────────
+  if (isMCX && signal.direction !== "HOLD") {
+    console.log(`[MCX-DIAG] ${state.sessionToken.slice(0,8)} ${state.instrumentSymbol} signal=${signal.direction} layer=${signal.layer} conf=${(signal.confidence*100).toFixed(0)}% entry=₹${signal.entryPrice.toFixed(2)} | accessToken=${!!state.accessToken} | openTrade=${!!state.openTrade} | isOpeningTrade=${state.isOpeningTrade}`);
+  }
   // ── BUG FIX 2: Layer filter BEFORE any further processing ─────────────────
   // MUST check enabledLayers IMMEDIATELY after signal generation, before anti-chasing,
   // before VRP gate, before options resolution. Previously this was checked too late,
@@ -5464,6 +5468,9 @@ async function tick(
   // ── P2: Underlying-Level Cooldown (any direction) ───────────────────────────
   // After 2+ consecutive SLs on this underlying (regardless of CE/PE direction), block for 15 min (NSE) / 8 min (MCX)
   if (state.consecutiveUnderlyingSLs >= 2 && state.lastUnderlyingSLAt) {
+    if (isMCX) {
+      console.log(`[MCX-DIAG] ${state.sessionToken.slice(0,8)} ${state.instrumentSymbol} → P2 gate check: consecutiveUnderlyingSLs=${state.consecutiveUnderlyingSLs}, lastSLAt=${state.lastUnderlyingSLAt}, elapsed=${Date.now() - state.lastUnderlyingSLAt}ms`);
+    }
     // Skip cooldown if user manually restarted (acknowledged losses) or has unlimited trades
     if (state.dailyLossAcknowledged || state.unlimitedTrades) {
       // User explicitly restarted — clear the cooldown and proceed
@@ -5695,6 +5702,7 @@ async function tick(
     const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
       : state.optionType === "PE" ? "PE"
       : signal.direction === "BUY" ? "CE" : "PE";
+    if (isMCX) { console.log("[MCX-DIAG] " + state.sessionToken.slice(0,8) + " " + state.instrumentSymbol + " entering option resolution: ceOrPe=" + ceOrPe + " underlying=" + state.underlyingToken); }
 
     // Detect MCX placeholder token (e.g. MCX_FO|GOLDM — no numeric ID)
     // MCX uses /v2/option/contract; NSE/NFO uses /v2/option/chain
@@ -6254,6 +6262,7 @@ async function tick(
     else                              optionMockKey = ceOrPe2 === "CE" ? "NIFTY_CE"      : "NIFTY_PE";
   }
 
+  if (isMCX) { console.log(`[MCX-DIAG] ${state.sessionToken.slice(0,8)} ${state.instrumentSymbol} → ✅ TRADE OPENED: ${tradeSymbol} qty=${quantity} entry=₹${tradeEntryPrice.toFixed(2)}`); }
   state.openTrade = {
     dbId, symbol: tradeSymbol, symbolLabel: tradeLabel,
     instrumentToken: tradeInstrumentToken, direction: isOptionsMode ? "BUY" : signal.direction, mode: state.mode,
