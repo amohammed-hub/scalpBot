@@ -236,6 +236,8 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       currentSl: state.openTrade?.currentSl ?? null,
       // Staleness detection — Dashboard shows warning if this is too old
       lastTickAt: Date.now(),
+      // Persist optionTradeToken so it survives server restarts
+      optionTradeToken: state.optionTradeToken ?? null,
     }).where(eq(botSessions.sessionToken, state.sessionToken));
   };
 
@@ -309,6 +311,8 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       unlimitedTrades: session.unlimitedTrades ?? false,
       openingBurstEnabled: session.openingBurstEnabled ?? false,
       consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+      // Restore persisted optionTradeToken from DB — prevents underlying price leak after restart
+      optionTradeToken: session.optionTradeToken ?? undefined,
     },
     onTradeOpen,
     onTradeClose,

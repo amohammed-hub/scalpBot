@@ -1696,3 +1696,11 @@
 - [x] FIX 4: DB-fallback openTrade in liveData now includes isIndexOptions and entryUnderlyingPrice
 - [x] FIX 5: allStatus response now includes bot-level isIndexOptions field
 - [x] FIX 6: Dashboard uses ot.isIndexOptions ?? bot.isIndexOptions as fallback for legacy/DB-restored trades
+## FIX: MCX Order Placement Failures (Jul 24)
+- [x] BUG 19: MCX orders rejected — product type "I" (Intraday/MIS) not allowed for MCX options. Changed to "D" (NRML/Delivery) for MCX.
+- [x] BUG 20: MCX quantity wrong — Upstox API expects NUMBER OF LOTS for commodity, not units. Added mcxLotSize param to placeUpstoxOrder, divides quantity by lotSize before sending. Updated all 9+ callers.
+## FIX: Underlying Price Leak After Server Restart (Jul 24)
+- [x] BUG 21: After server restart, optionTradeToken lost (in-memory only). Fallback fetches underlying futures price (e.g. ₹1261 COPPER) instead of option premium (₹3-8). Added priceLeakRatio > 10 detection — freezes at entry price, clears bad token.
+- [x] BUG 21 ROOT CAUSE FIX: Added optionTradeToken column to bot_sessions DB table. Persisted on every tick via onTick callback (all 4 paths: primary, restart, secondary, botRestart). Restored from DB on bot restart. Token now survives server restarts permanently.
+- [x] Fixed second sanity check (ratio > 5) to also reset state.optionPremiumPrice to prevent Dashboard from showing wrong value.
+- [x] Fixed retry path in option premium fetch to also apply underlying leak detection (priceLeakRatio > 10).

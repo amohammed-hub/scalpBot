@@ -113,6 +113,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   unlimitedTrades: boolean("unlimitedTrades").default(false),
   openingBurstEnabled: boolean("openingBurstEnabled").default(false),
   crudeOilCorrelation: boolean("crudeOilCorrelation").default(false),
+  // Persisted option trade token — survives server restarts (prevents underlying price leak)
+  optionTradeToken: varchar("optionTradeToken", { length: 128 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

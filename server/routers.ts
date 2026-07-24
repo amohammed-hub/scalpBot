@@ -895,6 +895,8 @@ export const appRouter = router({
               currentSl: tickState.openTrade?.currentSl ?? null,
               // Staleness detection — Dashboard shows warning if this is too old
               lastTickAt: Date.now(),
+              // Persist optionTradeToken so it survives server restarts (prevents underlying price leak)
+              optionTradeToken: (tickState as any).optionTradeToken ?? null,
             }).where(eq(botSessions.sessionToken, tickState.sessionToken));
           },
         );
@@ -1236,6 +1238,7 @@ export const appRouter = router({
               nextScanAt: tickState.nextScanAt, lastSignal: tickState.lastSignal?.direction ?? null,
               lastSignalAt: tickState.lastSignal ? new Date() : undefined,
               currentSl: tickState.openTrade?.currentSl ?? null, lastTickAt: Date.now(),
+              optionTradeToken: (tickState as any).optionTradeToken ?? null,
             }).where(eq(botSessions.sessionToken, tickState.sessionToken));
           },
         );
@@ -2813,6 +2816,7 @@ export const appRouter = router({
             lastSignalAt: tickState.lastSignal ? new Date() : undefined,
             currentSl: tickState.openTrade?.currentSl ?? null,
             lastTickAt: Date.now(),
+            optionTradeToken: (tickState as any).optionTradeToken ?? null,
           }).where(eq(botSessions.sessionToken, tickState.sessionToken));
         });
 

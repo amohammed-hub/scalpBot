@@ -4411,15 +4411,31 @@ async function tick(
         console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — P&L: using PAPER_OPT token (no real token resolved). optionTradeToken=${state.optionTradeToken}`);
       }
       const optQuote = isPaperToken ? null : await fetchFullQuote(realOptToken, state.accessToken);
-      if (optQuote && optQuote.ltp > 0) {
-        // Real quote fetched successfully — use it for P&L
-        // BUG FIX: In illiquid options (MCX after-hours, deep OTM), bid/ask can be wildly inflated
-        // (e.g., LTP ₹956 but bid ₹2,037 with zero volume). Using bid creates fake P&L.
-        // FIX: For PAPER mode, always use LTP (last actually traded price).
-        // For LIVE mode, use bid (what we can actually sell at) but cap it to prevent phantom quotes.
-        let bestExitPrice: number;
-        const entryPx = state.openTrade.entryPrice;
-        
+     if (optQuote && optQuote.ltp > 0) {
+       // Real quote fetched successfully — use it for P&L
+       // BUG FIX: In illiquid options (MCX after-hours, deep OTM), bid/ask can be wildly inflated
+       // (e.g., LTP ₹956 but bid ₹2,037 with zero volume). Using bid creates fake P&L.
+       // FIX: For PAPER mode, always use LTP (last actually traded price).
+       // For LIVE mode, use bid (what we can actually sell at) but cap it to prevent phantom quotes.
+       let bestExitPrice: number;
+       const entryPx = state.openTrade.entryPrice;
+
+        // ═══ CRITICAL FIX: UNDERLYING PRICE LEAK DETECTION ═══
+        // After server restart, optionTradeToken is lost. Fallback uses openTrade.instrumentToken.
+        // If that token is wrong/expired, fetchFullQuote may return the UNDERLYING futures price
+        // (e.g., ₹1261 for COPPER) instead of the option premium (₹3-8 range).
+        // Detection: if LTP > 10× entry price, it's clearly NOT an option premium.
+        const priceLeakRatio = entryPx > 0 ? optQuote.ltp / entryPx : 1;
+        if (priceLeakRatio > 10) {
+          // Underlying price leaked through — freeze at entry (P&L = 0)
+          console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — UNDERLYING LEAK DETECTED: fetchFullQuote(${realOptToken}) returned LTP ₹${optQuote.ltp.toFixed(2)} which is ${priceLeakRatio.toFixed(0)}× entry ₹${entryPx.toFixed(2)}. This is the underlying futures price, NOT option premium. Freezing at entry.`);
+          effectivePrice = entryPx;
+          state.optionPremiumPrice = entryPx;
+          // Clear bad optionTradeToken so livePrices endpoint re-resolves
+          if (state.optionTradeToken === realOptToken) {
+            state.optionTradeToken = undefined;
+          }
+        } else {
         // LIQUIDITY CHECK: If LTP hasn't moved from entry at all, the option is frozen/illiquid.
         // In this case, effectivePrice = entryPrice (no P&L change) to prevent phantom exits.
         const ltpMovePct = entryPx > 0 ? Math.abs(optQuote.ltp - entryPx) / entryPx : 0;
@@ -4445,16 +4461,25 @@ async function tick(
           console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — SANITY: effectivePrice ₹${bestExitPrice.toFixed(2)} exceeds 2.5× entry ₹${state.openTrade.entryPrice.toFixed(2)}. Capping to LTP ₹${optQuote.ltp.toFixed(2)}`);
           bestExitPrice = optQuote.ltp;
         }
-        effectivePrice = bestExitPrice;
-        state.optionPremiumPrice = bestExitPrice; // update for Dashboard display
+       effectivePrice = bestExitPrice;
+       state.optionPremiumPrice = bestExitPrice; // update for Dashboard display
+        } // end of priceLeakRatio <= 10 block
       } else {
         // fetchFullQuote failed — retry once after 1s delay
         await new Promise(r => setTimeout(r, 1000));
-        const retryQuote = await fetchFullQuote(realOptToken, state.accessToken!);
-        if (retryQuote && retryQuote.ltp > 0) {
-          effectivePrice = retryQuote.ltp;
-          state.optionPremiumPrice = retryQuote.ltp;
-          console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote retry SUCCEEDED: LTP=₹${retryQuote.ltp}`);
+       const retryQuote = await fetchFullQuote(realOptToken, state.accessToken!);
+       if (retryQuote && retryQuote.ltp > 0) {
+          // Apply same underlying leak check on retry
+          const retryRatio = state.openTrade.entryPrice > 0 ? retryQuote.ltp / state.openTrade.entryPrice : 1;
+          if (retryRatio > 10) {
+            console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — UNDERLYING LEAK (retry): LTP ₹${retryQuote.ltp.toFixed(2)} is ${retryRatio.toFixed(0)}× entry. Freezing at entry.`);
+            effectivePrice = state.openTrade.entryPrice;
+            state.optionPremiumPrice = state.openTrade.entryPrice;
+          } else {
+            effectivePrice = retryQuote.ltp;
+            state.optionPremiumPrice = retryQuote.ltp;
+            console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote retry SUCCEEDED: LTP=₹${retryQuote.ltp}`);
+          }
         } else {
           // Both attempts failed — use LAST KNOWN good price for SL monitoring.
           // If we never got a good price, freeze at entry (P&L = 0).
@@ -4481,13 +4506,17 @@ async function tick(
       state.optionPremiumPrice = entryPremium;
     }
   }
-  // SANITY: effectivePrice should be in the same magnitude as entry
+ // SANITY: effectivePrice should be in the same magnitude as entry
   if (state.openTrade && effectivePrice > 0) {
     const entryPx = state.openTrade.entryPrice;
     const ratio = effectivePrice / entryPx;
     if (ratio > 5 || ratio < 0.01) {
       // Price is wildly off (probably fell back to underlying) — freeze at last known
-      effectivePrice = state.optionPremiumPrice ?? entryPx;
+      // ALSO reset optionPremiumPrice to prevent Dashboard from showing wrong value
+      const safePrice = (state.optionPremiumPrice && state.optionPremiumPrice > 0 && state.optionPremiumPrice / entryPx <= 5) 
+        ? state.optionPremiumPrice : entryPx;
+      effectivePrice = safePrice;
+      state.optionPremiumPrice = safePrice;
     }
   }
 
