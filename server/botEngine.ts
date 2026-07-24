@@ -3638,18 +3638,29 @@ export async function resolveAtmMcxOptionToken(
   optionType: "CE" | "PE",
   accessToken: string,
   excludeStrikes: number[] = [],
+  fallbackPrice: number = 0,
 ): Promise<ResolvedOption | null> {
   try {
-    // Step 1: get current futures price
-    const quoteResp = await axios.get(
-      `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(futuresToken)}`,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
-    );
-    const qData = quoteResp.data?.data;
-    const qKey = qData ? Object.keys(qData)[0] : null;
-    const underlyingPrice: number = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
+    // Step 1: get current futures price (try market-quote API, fall back to candle price)
+    let underlyingPrice: number = 0;
+    try {
+      const quoteResp = await axios.get(
+        `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(futuresToken)}`,
+        { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
+      );
+      const qData = quoteResp.data?.data;
+      const qKey = qData ? Object.keys(qData)[0] : null;
+      underlyingPrice = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
+    } catch (priceFetchErr) {
+      console.warn(`[BotEngine] resolveAtmMcxOptionToken: market-quote failed for ${futuresToken} (token may be expired): ${priceFetchErr instanceof Error ? priceFetchErr.message : String(priceFetchErr)}`);
+    }
+    // Use fallback price from candles if market-quote failed
+    if (!underlyingPrice && fallbackPrice > 0) {
+      underlyingPrice = fallbackPrice;
+      console.log(`[BotEngine] resolveAtmMcxOptionToken: using fallback candle price ₹${fallbackPrice} for ATM matching`);
+    }
     if (!underlyingPrice) {
-      console.warn(`[BotEngine] resolveAtmMcxOptionToken: could not fetch futures LTP for ${futuresToken} (token may be expired)`);
+      console.warn(`[BotEngine] resolveAtmMcxOptionToken: no price available for ${futuresToken} (quote failed + no fallback)`);
       return null;
     }
 
@@ -3717,34 +3728,63 @@ export async function resolveAtmMcxOptionToken(
         // Take the 10 strikes closest to ATM and fetch their live premiums in one call
         // (MCX options can be illiquid — checking only 4 often misses liquid contracts)
         const MCX_MIN_PREMIUM = 0.10; // MCX options are less liquid than NSE — lower threshold
-        const near = chain.slice(0, 10).filter(c => c.instrument_key);
-        if (near.length > 0) {
-          const keys = near.map(c => c.instrument_key).join(",");
-          const optQuoteResp = await axios.get(
-            `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(keys)}`,
-            { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
-          );
-          const oqData: Record<string, { last_price?: number; instrument_token?: string }> = optQuoteResp.data?.data ?? {};
-          // Map premiums back to candidates (response keys use trading-symbol format like "MCX_FO:CRUDEOIL 6900 CE 16 JUL 26")
-          const premiumByToken = new Map<string, number>();
-          for (const v of Object.values(oqData)) {
-            if (v?.instrument_token) premiumByToken.set(v.instrument_token, v.last_price ?? 0);
-          }
-          for (const c of near) {
-            const premium = premiumByToken.get(c.instrument_key) ?? 0;
-            if (premium > MCX_MIN_PREMIUM && !excludeStrikes.includes(c.strike_price ?? 0)) {
-              const expDate = new Date(c.expiry!);
-              const expiryStr = `${expDate.getFullYear()}-${String(expDate.getMonth() + 1).padStart(2, "0")}-${String(expDate.getDate()).padStart(2, "0")}`;
-              console.log(`[BotEngine] MCX ATM ${optionType} resolved (instruments JSON): ${c.trading_symbol} | strike ${c.strike_price}, premium ₹${premium.toFixed(2)}, expiry ${expiryStr}, lot ${c.lot_size}${excludeStrikes.length > 0 ? ` (diversified, excluded [${excludeStrikes.join(",")}])` : ""}`);
-              return {
-                token: c.instrument_key,
-                premium,
-                strike: c.strike_price ?? 0,
-                expiry: expiryStr,
-                lotSize: c.lot_size,
-                tradingSymbol: c.trading_symbol,
-              };
+       const near = chain.slice(0, 10).filter(c => c.instrument_key);
+       if (near.length > 0) {
+         const keys = near.map(c => c.instrument_key).join(",");
+          // Try to fetch live premiums (requires valid access token)
+          let premiumByToken = new Map<string, number>();
+          let quoteFetchOk = false;
+          try {
+            const optQuoteResp = await axios.get(
+              `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(keys)}`,
+              { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+            );
+            const oqData: Record<string, { last_price?: number; instrument_token?: string }> = optQuoteResp.data?.data ?? {};
+            for (const v of Object.values(oqData)) {
+              if (v?.instrument_token) premiumByToken.set(v.instrument_token, v.last_price ?? 0);
             }
+            quoteFetchOk = true;
+          } catch (quoteFetchErr) {
+            console.warn(`[BotEngine] MCX option premium fetch failed (token may be expired): ${quoteFetchErr instanceof Error ? quoteFetchErr.message : String(quoteFetchErr)}`);
+          }
+          // If premium fetch succeeded, pick the first strike with premium > threshold
+          if (quoteFetchOk) {
+            for (const c of near) {
+              const premium = premiumByToken.get(c.instrument_key) ?? 0;
+              if (premium > MCX_MIN_PREMIUM && !excludeStrikes.includes(c.strike_price ?? 0)) {
+                const expDate = new Date(c.expiry!);
+                const expiryStr = `${expDate.getFullYear()}-${String(expDate.getMonth() + 1).padStart(2, "0")}-${String(expDate.getDate()).padStart(2, "0")}`;
+                console.log(`[BotEngine] MCX ATM ${optionType} resolved (instruments JSON): ${c.trading_symbol} | strike ${c.strike_price}, premium ₹${premium.toFixed(2)}, expiry ${expiryStr}, lot ${c.lot_size}${excludeStrikes.length > 0 ? ` (diversified, excluded [${excludeStrikes.join(",")}])` : ""}`);
+                return {
+                  token: c.instrument_key,
+                  premium,
+                  strike: c.strike_price ?? 0,
+                  expiry: expiryStr,
+                  lotSize: c.lot_size,
+                  tradingSymbol: c.trading_symbol,
+                };
+              }
+            }
+          }
+          // LAST RESORT: If premium fetch failed OR all premiums are 0,
+          // pick the nearest ATM strike anyway. For live mode, Upstox fills at market price.
+          // For paper mode, estimate premium based on distance from ATM.
+          const bestNoQuote = near.find(c => !excludeStrikes.includes(c.strike_price ?? 0));
+          if (bestNoQuote) {
+            const expDate = new Date(bestNoQuote.expiry!);
+            const expiryStr = `${expDate.getFullYear()}-${String(expDate.getMonth() + 1).padStart(2, "0")}-${String(expDate.getDate()).padStart(2, "0")}`;
+            const dist = Math.abs((bestNoQuote.strike_price ?? 0) - effectiveUnderlyingPrice);
+            // Estimate premium: ATM ≈ 0.5% of underlying, decays with distance
+            const estimatedPremium = Math.max(1.0, effectiveUnderlyingPrice * 0.003 - dist * 0.5);
+            console.log(`[BotEngine] MCX ATM ${optionType} resolved (LAST RESORT — no premium data): ${bestNoQuote.trading_symbol} | strike ${bestNoQuote.strike_price}, estimated premium ₹${estimatedPremium.toFixed(2)}, expiry ${expiryStr}`);
+            return {
+              token: bestNoQuote.instrument_key,
+              premium: estimatedPremium,
+              strike: bestNoQuote.strike_price ?? 0,
+              expiry: expiryStr,
+              lotSize: bestNoQuote.lot_size,
+              tradingSymbol: bestNoQuote.trading_symbol,
+            };
           }
           console.warn(`[BotEngine] MCX ${optionType}: found ${near.length} ATM contracts (nearest expiry) but no premium > ${MCX_MIN_PREMIUM} — trying next expiry...`);
           // FALLBACK: Try next-week expiry if nearest expiry options are all illiquid
@@ -5799,7 +5839,7 @@ async function tick(
     }
     const isMcxToken = resolvedUnderlying.startsWith("MCX_FO|");
     const resolved = isMcxToken
-      ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes)
+      ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes, state.lastPrice)
       : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes);
 
     if (!resolved) {
@@ -5901,7 +5941,7 @@ async function tick(
         if (state.accessToken) {
           const isMcx0dte = resolvedUnderlying0dte.startsWith("MCX_FO|");
           const atmResolved = isMcx0dte
-            ? await resolveAtmMcxOptionToken(resolvedUnderlying0dte, ceOrPe0dte, state.accessToken)
+            ? await resolveAtmMcxOptionToken(resolvedUnderlying0dte, ceOrPe0dte, state.accessToken, [], state.lastPrice)
             : await resolveAtmOptionToken(resolvedUnderlying0dte, ceOrPe0dte, state.accessToken);
           if (atmResolved) {
             tradeInstrumentToken = atmResolved.token;
@@ -6002,20 +6042,20 @@ async function tick(
           const fallbackExclude = currentStrikeNum > 0 ? [currentStrikeNum] : [];
           let accumulatedExclude = [...fallbackExclude];
           cheaperResolved = isMcxForFallback
-            ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude)
+            ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude, state.lastPrice)
             : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude);
           // If the resolver returned a strike that's still too expensive, try one more OTM
           if (cheaperResolved && cheaperResolved.premium * lotSize > state.capital) {
             accumulatedExclude = [...accumulatedExclude, cheaperResolved.strike];
             cheaperResolved = isMcxForFallback
-              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude)
+              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude, state.lastPrice)
               : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude);
           }
           // Third attempt if still too expensive
           if (cheaperResolved && cheaperResolved.premium * lotSize > state.capital) {
             accumulatedExclude = [...accumulatedExclude, cheaperResolved.strike];
             cheaperResolved = isMcxForFallback
-              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude)
+              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude, state.lastPrice)
               : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude);
           }
         }
@@ -6462,7 +6502,7 @@ export function startBot(
           if (exactStrike > 0) {
             if (isMcxToken) {
               // MCX: use ATM resolver but filter for exact strike match
-              const mcxResolved = await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, state.accessToken!);
+              const mcxResolved = await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, state.accessToken!, [], state.lastPrice);
               if (mcxResolved?.token && Math.abs(mcxResolved.strike - exactStrike) < 100) {
                 resolvedToken = mcxResolved.token;
                 console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — MCX resolved strike ${mcxResolved.strike} ${ceOrPe} (target: ${exactStrike}): ${resolvedToken}`);
@@ -6480,7 +6520,7 @@ export function startBot(
           // Priority 2: Fall back to ATM resolution (might be wrong strike but better than nothing)
           if (!resolvedToken) {
             const resolved = isMcxToken
-              ? await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, state.accessToken!)
+              ? await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, state.accessToken!, [], state.lastPrice)
               : await resolveAtmOptionToken(underlyingToken, ceOrPe, state.accessToken!);
             if (resolved?.token) {
               resolvedToken = resolved.token;
