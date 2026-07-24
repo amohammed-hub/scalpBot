@@ -5622,6 +5622,49 @@ async function tick(
   }
 
 
+  // ── CROSS-BOT DIRECTION LOCK ──────────────────────────────────────────────────────────────
+  // Correlated NSE/BSE indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, BANKEX, MIDCPNIFTY) MUST
+  // agree on direction. If any bot has a PE open (bearish), block CE entries on all correlated
+  // indices, and vice versa. These indices are 85%+ correlated — opposite positions cancel out.
+  if (isOptionsMode) {
+    const CORRELATED_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
+    const thisSymbol = (state.instrumentSymbol ?? "").toUpperCase();
+    if (CORRELATED_SYMBOLS.has(thisSymbol)) {
+      const wantsCE = state.optionType === "CE" ? true
+        : state.optionType === "PE" ? false
+        : signal.direction === "BUY"; // auto: BUY=CE, SELL=PE
+
+      for (const [otherKey, otherState] of Array.from(bots.entries())) {
+        if (otherKey === state.sessionToken) continue;
+        if (otherState.status !== "running") continue;
+        const otherSymbol = (otherState.instrumentSymbol ?? "").toUpperCase();
+        if (!CORRELATED_SYMBOLS.has(otherSymbol)) continue;
+        if (!otherState.openTrade) continue;
+
+        const otherTradeSym = (otherState.openTrade.symbol ?? "").toUpperCase();
+        const otherHasCE = otherTradeSym.includes("_CE_") || otherTradeSym.includes(" CE") || otherTradeSym.endsWith("CE");
+        const otherHasPE = otherTradeSym.includes("_PE_") || otherTradeSym.includes(" PE") || otherTradeSym.endsWith("PE");
+
+        if (wantsCE && otherHasPE) {
+          emitActivity(state.sessionToken, "signal",
+            `⊘ DIRECTION LOCK: Blocked CE entry — ${otherSymbol} (Bot ${otherState.botSlot + 1}) has PE open. Correlated indices must agree.`);
+          pushRejectedSignal(state,
+            { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
+            `Direction lock: ${otherSymbol} has PE open, CE blocked`);
+          return;
+        }
+        if (!wantsCE && otherHasCE) {
+          emitActivity(state.sessionToken, "signal",
+            `⊘ DIRECTION LOCK: Blocked PE entry — ${otherSymbol} (Bot ${otherState.botSlot + 1}) has CE open. Correlated indices must agree.`);
+          pushRejectedSignal(state,
+            { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
+            `Direction lock: ${otherSymbol} has CE open, PE blocked`);
+          return;
+        }
+      }
+    }
+  }
+
   // ── Options mode: resolve ATM option token based on signal direction ──────────────────────
   // When isOptionsMode=true, the bot reads the underlying (Nifty/BankNifty futures) for signals
   // but places the actual order on the ATM CE (for BUY) or ATM PE (for SELL).

@@ -1653,3 +1653,6 @@
 - [x] BUG 7: Wrong strike price — Upstox option chain API returns mismatched instrument_key for a given strike. Fixed: added validateOptionToken() that cross-checks resolved token against /v2/option/contract before placing order. If mismatch detected, corrects label/symbol to actual strike.
 - [x] BUG 8: Duplicate lot buying — Capital-Aware OTM Fallback had thirdExclude bug (used fallbackExclude instead of accumulated secondExclude, could re-select previously tried strikes). Fixed: proper accumulation via accumulatedExclude variable.
 - [x] BUG 9: Trades not auto-closing — exit orders used bot's known qty which could be less than actual Upstox position (due to duplicate orders). Fixed: added position sync — fetches actual qty from /v2/portfolio/short-term-positions before placing exit order.
+
+## CRITICAL FIX: Cross-Bot Direction Lock (Jul 24)
+- [ ] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
