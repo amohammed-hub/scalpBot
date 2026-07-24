@@ -108,6 +108,7 @@ export interface BotState {
   instrumentLabel: string;
   capital: number;
   riskPerTradePct: number;
+  capitalUsed: number; // Cumulative capital deployed in open positions (fill_price × qty)
   maxTradesPerDay: number;
   dailyLossLimitPct: number;
   stopLossMultiplier: number;
@@ -4255,6 +4256,7 @@ async function tick(
         } else {
           state.dailyPnl += pnl;
         }
+        state.capitalUsed = 0; // BUG 26: Release capital on close
         state.openTrade = null;
         if (pnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX3); else recordDirectionalWin(state.sessionToken, trade.direction);
         await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
@@ -4565,6 +4567,7 @@ async function tick(
       state.dailyPnl += pnl + trade.bookedPnl;
     }
     state.openTrade = null;
+    state.capitalUsed = 0; // BUG 26: Release capital on close
     recordTradeClose(state.sessionToken, state.scanIntervalSec);
     const sqTotalPnl = pnl + trade.bookedPnl;
     if (sqTotalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
@@ -4622,6 +4625,7 @@ async function tick(
       state.dailyPnl += totalPnl;
     }
     state.openTrade = null;
+    state.capitalUsed = 0; // BUG 26: Release capital on close
     if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
     await onTradeClose(trade.dbId, exitPx, totalPnl, "Market Closed — Auto Square-Off (midnight wraparound fix)");
     emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: exitPx, pnl: totalPnl });
@@ -4668,6 +4672,7 @@ async function tick(
           state.dailyPnl += pnl + trade.bookedPnl;
         }
         state.openTrade = null;
+        state.capitalUsed = 0; // BUG 26: Release capital on close
         recordTradeClose(state.sessionToken, state.scanIntervalSec);
         if (pnl + trade.bookedPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
         await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
@@ -4705,6 +4710,8 @@ async function tick(
        trade.bookedQty += bookQty;
         trade.bookedPnl += bookPnl;
         trade.partialBooked = 1;
+        // BUG 26: Reduce capitalUsed by the portion exited
+        state.capitalUsed = Math.max(0, state.capitalUsed - (trade.entryPrice * bookQty));
         // Move SL to breakeven
         trade.currentSl = trade.entryPrice;
         state.dailyPnl += bookPnl;
@@ -4757,6 +4764,8 @@ async function tick(
        trade.bookedQty += bookQty;
         trade.bookedPnl += bookPnl;
         trade.partialBooked = 2;
+        // BUG 26: Reduce capitalUsed by the portion exited
+        state.capitalUsed = Math.max(0, state.capitalUsed - (trade.entryPrice * bookQty));
         // Trail SL to 1R level
         trade.currentSl = trade.partial1RPrice;
         state.dailyPnl += bookPnl;
@@ -4923,6 +4932,8 @@ async function tick(
           trade.quantity = combinedQty;
           trade.averageCount = 1;
           trade.averagedAt = Date.now();
+          // BUG 26: Increase capitalUsed by the additional averaged quantity
+          state.capitalUsed += avgPrice * avgQty;
 
           // New SL: tighter — new average - ATR * 0.8 (protect the larger position)
           if (trade.isIndexOptions) {
@@ -5106,6 +5117,7 @@ async function tick(
         state.dailyPnl += totalPnl;
       }
       state.openTrade = null;
+      state.capitalUsed = 0; // BUG 26: Release capital on close
       recordTradeClose(state.sessionToken, state.scanIntervalSec);
       if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
       // P2: Reset underlying cooldown on a winning trade
@@ -6077,6 +6089,13 @@ async function tick(
     state.isOpeningTrade = false;
     return;
   }
+  // BUG 26: Per-bot capital guard — if this bot already has capital deployed (open position), block new entry
+  // This prevents the scenario where a bot with an existing open trade somehow tries to open another.
+  if (state.capitalUsed > 0 && state.openTrade) {
+    emitActivity(state.sessionToken, "signal", `⛔ Capital already deployed (₹${state.capitalUsed.toFixed(0)}) — bot has open position, skipping entry`);
+    state.isOpeningTrade = false;
+    return;
+  }
   const riskAmount = (state.capital * state.riskPerTradePct) / 100;
   const lotSize = state.lotSize ?? 1;
   let quantity: number;
@@ -6467,6 +6486,8 @@ async function tick(
   }
 
   if (isMCX) { console.log(`[MCX-DIAG] ${state.sessionToken.slice(0,8)} ${state.instrumentSymbol} → ✅ TRADE OPENED: ${tradeSymbol} qty=${quantity} entry=₹${tradeEntryPrice.toFixed(2)}`); }
+  // BUG 26: Track capital deployed in this position
+  state.capitalUsed = tradeEntryPrice * quantity;
   state.openTrade = {
     dbId, symbol: tradeSymbol, symbolLabel: tradeLabel,
     instrumentToken: tradeInstrumentToken, direction: isOptionsMode ? "BUY" : signal.direction, mode: state.mode,
@@ -6583,6 +6604,7 @@ export function startBot(
     candlesDay: [],
     lastSignal: null, lastPrice: 0, bidPrice: 0, askPrice: 0,
     openTrade: existingOpenTrade ?? null, intervalHandle: null, lastError: null,
+    capitalUsed: existingOpenTrade ? (existingOpenTrade.entryPrice * existingOpenTrade.quantity) : 0,
     nextScanAt: Date.now() + config.scanIntervalSec * 1000,
     lastTickAt: 0,
     lastSlHitAt: null, lastSlDirection: null, reEntryCandles: 0,
@@ -6785,10 +6807,11 @@ export function startBot(
             lotSize: state.lotSize,
             isIndexOptions: state.isIndexOptions,
             underlyingToken: state.underlyingToken,
-            optionType: state.optionType,
-            consecutiveTickErrors: 0,
-           enabledLayers: state.enabledLayers,
-            partial1Pct: state.partial1Pct,
+           optionType: state.optionType,
+           consecutiveTickErrors: 0,
+            capitalUsed: 0,
+          enabledLayers: state.enabledLayers,
+           partial1Pct: state.partial1Pct,
            partial2Pct: state.partial2Pct,
            carryForward: state.carryForward,
            unlimitedTrades: state.unlimitedTrades,
@@ -6920,6 +6943,8 @@ export async function forceAverageDown(sessionToken: string): Promise<{ success:
   trade.quantity = combinedQty;
   trade.averageCount = 1;
   trade.averagedAt = Date.now();
+  // BUG 26: Increase capitalUsed by the additional averaged quantity
+  state.capitalUsed += avgPrice * avgQty;
   
   // New SL: tighter
   const newSlDist = atrNow * 0.8;

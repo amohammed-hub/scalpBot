@@ -1713,3 +1713,14 @@
 - [x] BUG 25: Verify all admin features — CONFIRMED: Grant (inserts subscription), Broadcast (sends Telegram + saves to DB), Access Grants (creates grant + subscription), Referrals (tracks referrals + extraBotSlots). All write to DB correctly.
 - [x] BUG 22: Entry price was candle-based estimate, not actual Upstox fill price. Now uses verification.avgPrice (actual exchange fill) as entry price when order confirmed "complete"/"traded". Fixes P&L accuracy permanently.
 - [x] Fixed retry path in option premium fetch to also apply underlying leak detection (priceLeakRatio > 10).
+
+## FIX: Capital Guard — capitalUsed Tracking (Jul 25)
+- [x] BUG 26: Capital guard over-deployment fix. Added `capitalUsed` field to BotState interface to track cumulative capital deployed in open positions (fill_price × qty). Prevents bots from opening new trades when capital is already deployed.
+- [x] Added capitalUsed: 0 to all 5 startBot config objects (routers.ts ×3, botEngine.ts ×1, botRestart.ts ×1) — fixes TypeScript errors.
+- [x] Increment capitalUsed on trade open (entry_price × quantity).
+- [x] Decrement capitalUsed on partial profit bookings (entry_price × booked_qty).
+- [x] Increment capitalUsed on averaging (avg_price × avg_qty).
+- [x] Reset capitalUsed = 0 on all 5 full-close paths (SL, target, trailing, market close, hero-zero exit).
+- [x] Per-bot capital guard: if capitalUsed > 0 && openTrade exists, block new entry signal.
+- [x] startBot initializes capitalUsed from existing open trade on restart (entry_price × quantity).
+- [x] All 202 tests pass, TypeScript 0 errors.
