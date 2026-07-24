@@ -1038,6 +1038,10 @@ export const appRouter = router({
         if (slot1) slot1.carryForward = input.carryForward;
         if (slot2) slot2.carryForward = input.carryForward;
         if (slot3) slot3.carryForward = input.carryForward;
+        const slot4 = getBotState(`${input.sessionToken}-slot4`);
+        const slot5 = getBotState(`${input.sessionToken}-slot5`);
+        if (slot4) slot4.carryForward = input.carryForward;
+        if (slot5) slot5.carryForward = input.carryForward;
         // Persist to DB on the open trade so it survives server restarts
         const db = await getDb();
         if (db && state.openTrade) {
@@ -1051,6 +1055,12 @@ export const appRouter = router({
         }
         if (db && slot3?.openTrade) {
           await db.update(tradeLog).set({ carryForward: input.carryForward }).where(eq(tradeLog.id, slot3.openTrade.dbId));
+        }
+        if (db && slot4?.openTrade) {
+          await db.update(tradeLog).set({ carryForward: input.carryForward }).where(eq(tradeLog.id, slot4.openTrade.dbId));
+        }
+        if (db && slot5?.openTrade) {
+          await db.update(tradeLog).set({ carryForward: input.carryForward }).where(eq(tradeLog.id, slot5.openTrade.dbId));
         }
         return { success: true, carryForward: input.carryForward };
       }),
@@ -1570,6 +1580,8 @@ export const appRouter = router({
           `${input.sessionToken}-slot1`,
           `${input.sessionToken}-slot2`,
           `${input.sessionToken}-slot3`,
+          `${input.sessionToken}-slot4`,
+          `${input.sessionToken}-slot5`,
         ];
         return db
           .select()
@@ -1616,7 +1628,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return { totalTrades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0, avgPnl: 0 };
         const { inArray: inArrayStats } = await import("drizzle-orm");
-        const statsTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        const statsTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -1644,7 +1656,7 @@ export const appRouter = router({
        const db = await getDb();
        if (!db) return { todayTrades: 0, todayPnl: 0, wins: 0, losses: 0, winRate: 0 };
        const { inArray: inArrayToday } = await import("drizzle-orm");
-       const todayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+       const todayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         // IST midnight calculation (UTC+5:30) — Railway runs in UTC
         const nowMs_ = Date.now(); const istOff_ = 5.5 * 60 * 60 * 1000;
         const istNow = new Date(nowMs_ + istOff_);
@@ -1677,7 +1689,7 @@ export const appRouter = router({
         const db = await getDb();
                 if (!db) return [];
         const { inArray: inArrayDay } = await import("drizzle-orm");
-        const dayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        const dayTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -1723,7 +1735,7 @@ export const appRouter = router({
         const db = await getDb();
                 if (!db) return [];
         const { inArray: inArrayWeek } = await import("drizzle-orm");
-        const weekTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        const weekTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -1800,7 +1812,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return [];
         const { inArray: inArrayMonth } = await import("drizzle-orm");
-        const monthTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        const monthTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         const trades = await db
           .select()
           .from(tradeLog)
@@ -1864,7 +1876,7 @@ export const appRouter = router({
         if (!db) throw new Error("DB unavailable");
         // Allow deleting trades from primary or any slot
         const { inArray: inArrayDel } = await import("drizzle-orm");
-        const delTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        const delTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         await db.delete(tradeLog).where(
           and(
             eq(tradeLog.id, input.tradeId),
@@ -2267,7 +2279,7 @@ export const appRouter = router({
         return slotTokens.map(tok => {
           const inMem = getBotState(tok);
           const dbRow = dbRows[tok];
-          const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : tok.endsWith("-slot2") ? 2 : 3;
+          const slot = tok === input.sessionToken ? 0 : parseInt(tok.match(/-slot(\d+)$/)?.[1] ?? "0", 10);
           // If DB says 'running' but the bot is not in this process's memory (server
           // restart / redeploy), still report 'running' — the watchdog restores it within 60s.
           const effectiveStatus = inMem?.status ?? dbRow?.status ?? "stopped";
@@ -2329,7 +2341,7 @@ export const appRouter = router({
     livePrices: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
-        const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         const results: Array<{ sessionToken: string; slot: number; livePrice: number; updatedAt: number; optionPremiumPrice?: number }> = [];
 
         for (const tok of slotTokens) {
@@ -2403,7 +2415,7 @@ export const appRouter = router({
               // If optPremium is still 0, frontend will show stored DB P&L or "—".
             }
 
-            const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : tok.endsWith("-slot2") ? 2 : 3;
+            const slot = tok === input.sessionToken ? 0 : parseInt(tok.match(/-slot(\d+)$/)?.[1] ?? "0", 10);
             results.push({
               sessionToken: tok,
               slot,
@@ -2413,7 +2425,7 @@ export const appRouter = router({
             });
           } catch {
             // On error, return the last known price from memory
-            const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : tok.endsWith("-slot2") ? 2 : 3;
+            const slot = tok === input.sessionToken ? 0 : parseInt(tok.match(/-slot(\d+)$/)?.[1] ?? "0", 10);
             results.push({
               sessionToken: tok,
               slot,
@@ -3851,7 +3863,7 @@ export const appRouter = router({
         let recentTrades: Array<{ exitReason: string | null; pnl: number | null }> = [];
         if (db) {
           const { inArray } = await import("drizzle-orm");
-          const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+          const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
           const rows = await db.select({ exitReason: tradeLog.exitReason, pnl: tradeLog.pnl })
             .from(tradeLog)
             .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed")))
@@ -3873,7 +3885,7 @@ export const appRouter = router({
         let recentTrades: Array<{ exitReason: string | null; pnl: number | null }> = [];
         if (db) {
           const { inArray } = await import("drizzle-orm");
-          const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+          const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
           const rows = await db.select({ exitReason: tradeLog.exitReason, pnl: tradeLog.pnl })
             .from(tradeLog)
             .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed")))
@@ -4050,7 +4062,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return [];
         const { inArray } = await import("drizzle-orm");
-        const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         const trades = await db.select({ signalReason: tradeLog.signalReason, pnl: tradeLog.pnl, exitedAt: tradeLog.exitedAt })
           .from(tradeLog)
           .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed")))
@@ -4120,7 +4132,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return { ready: false, score: 0, checks: [] };
         const { inArray } = await import("drizzle-orm");
-        const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`];
+        const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         const trades = await db.select({ pnl: tradeLog.pnl, mode: tradeLog.mode, entryPrice: tradeLog.entryPrice, quantity: tradeLog.quantity })
           .from(tradeLog)
           .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed"), eq(tradeLog.mode, "paper")))
