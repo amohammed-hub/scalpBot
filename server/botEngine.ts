@@ -5835,10 +5835,11 @@ async function tick(
   // Three pre-entry filters to eliminate trades with guaranteed slippage loss.
   // ══════════════════════════════════════════════════════════════════════════════════
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
-    // Premium floor removed — let the bid-ask spread filter (below) handle illiquid options.
-    // Hard premium floor: skip trade if premium < ₹30 (illiquid, high spread risk)
-    if (optionPremiumForSizing < 30) {
-      emitActivity(state.sessionToken, "signal", `⛔ SKIPPED: Premium ₹${optionPremiumForSizing.toFixed(1)} below ₹30 floor — too illiquid`);
+    // Per-segment premium floor: NSE ₹30 (illiquid below), MCX ₹3 (NatGas/Copper premiums are ₹2-12)
+    const isMcxSegment = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
+    const PREMIUM_FLOOR = isMcxSegment ? 3 : 30;
+    if (optionPremiumForSizing < PREMIUM_FLOOR) {
+      emitActivity(state.sessionToken, "signal", `⛔ SKIPPED: Premium ₹${optionPremiumForSizing.toFixed(1)} below ₹${PREMIUM_FLOOR} floor — too illiquid`);
       state.isOpeningTrade = false;
       return;
     }
@@ -5906,7 +5907,9 @@ async function tick(
   // This ensures SL stays at entry × 0.88 (12% buffer) and quantity is capped by risk.
   // For futures/equity: use signal SL distance as before.
   // ── CAPITAL GUARD: Max ₹3,250 per trade ──────────────────────────────────────
-  const MAX_CAPITAL_PER_TRADE = 3250;
+  // Per-segment capital cap: NSE ₹3,250, MCX ₹13,000 (allows 1 lot of any MCX commodity)
+  const isMcxForCapital = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
+  const MAX_CAPITAL_PER_TRADE = isMcxForCapital ? 13000 : 3250;
   const MAX_OPEN_POSITIONS = 4;
   // Check max open positions across all bots for this user
   const userBots = getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, ""));
