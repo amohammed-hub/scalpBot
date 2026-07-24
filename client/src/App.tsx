@@ -16,6 +16,8 @@ import Backtest from "./pages/Backtest";
 import Login from "./pages/Login";
 import Terms from "./pages/Terms";
 import Privacy from "./pages/Privacy";
+import { WhatsAppButton } from "./components/WhatsAppButton";
+
 
 function Router() {
   return (
@@ -49,6 +51,7 @@ function App() {
           <Toaster />
           <TradeToastContainer />
           <Router />
+          <WhatsAppButton />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

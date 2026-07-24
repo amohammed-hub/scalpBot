@@ -1724,3 +1724,6 @@
 - [x] Per-bot capital guard: if capitalUsed > 0 && openTrade exists, block new entry signal.
 - [x] startBot initializes capitalUsed from existing open trade on restart (entry_price × quantity).
 - [x] All 202 tests pass, TypeScript 0 errors.
+
+## WhatsApp Contact Button
+- [x] Add floating WhatsApp icon button (bottom-right corner) linking to wa.me/916301742267
