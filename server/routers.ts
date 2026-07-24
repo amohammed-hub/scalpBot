@@ -4571,6 +4571,12 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         // Admin access check (BUG 13/14 fix: also checks ADMIN_MOBILE and DB role)
         if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        // Stop all in-memory bot instances for this user (all slots)
+        const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
+        for (const tok of slotTokens) {
+          try { stopBot(tok); } catch { /* may not be running */ }
+        }
+        // Then revoke in DB (cancels sub, stops DB bot rows, blocks user)
         return adminRevokeAccess(input.sessionToken);
       }),
 
@@ -5088,8 +5094,13 @@ import { sendTelegramMessage } from "./botEngine";
 
 // Helper: get all slot tokens for a session (includes slot3 for admin)
 function getSlotTokens(sessionToken: string, includeSlot3 = true): string[] {
+  // Dynamic slot generation: base 3 slots + up to 3 extra (for admin/referral bonus)
   const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
-  if (includeSlot3) tokens.push(`${sessionToken}-slot3`);
+  if (includeSlot3) {
+    tokens.push(`${sessionToken}-slot3`);
+    tokens.push(`${sessionToken}-slot4`);
+    tokens.push(`${sessionToken}-slot5`);
+  }
   return tokens;
 }
 

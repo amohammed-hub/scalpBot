@@ -945,13 +945,34 @@ export async function adminGrantSubscription(params: {
 export async function adminRevokeAccess(sessionToken: string) {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
+
+  // 1. Cancel ALL active subscriptions for this user
   await db.update(subscriptions)
     .set({ status: "cancelled" })
     .where(and(
       eq(subscriptions.sessionToken, sessionToken),
       eq(subscriptions.status, "active"),
     ));
-  return { success: true };
+
+  // 2. Stop all running bots for this user (all slots)
+  const slotTokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`, `${sessionToken}-slot3`, `${sessionToken}-slot4`, `${sessionToken}-slot5`];
+  for (const tok of slotTokens) {
+    await db.update(botSessions)
+      .set({ status: "stopped", stoppedAt: new Date() })
+      .where(and(
+        eq(botSessions.sessionToken, tok),
+        eq(botSessions.status, "running"),
+      ));
+  }
+
+  // 3. Mark the user as suspended in app_users (set role to 'user' and clear session)
+  // We don't change role to prevent breaking the enum, but we mark isVerified=false
+  // to block access. The checkAccess will return hasAccess=false since sub is cancelled.
+  await db.update(appUsers)
+    .set({ isVerified: false })
+    .where(eq(appUsers.sessionToken, sessionToken));
+
+  return { success: true, message: "Access revoked: subscription cancelled, all bots stopped, user blocked" };
 }
 
 // ── Access Grants (Admin Manual Access) ─────────────────────────────────────

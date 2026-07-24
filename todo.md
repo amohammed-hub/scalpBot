@@ -1706,5 +1706,10 @@
 
 ## FIX: Order Verification Retry Loop + Actual Fill Price (Jul 25)
 - [x] BUG 22: If exchange takes >2.5s to fill, order status="pending" → trade was recorded anyway (potential ghost trade). Added 3-attempt retry loop (2.5s + 3s + 3s = ~10s total). If still not "complete"/"traded" after 10s → trade NOT recorded, Telegram alert sent.
+
+## FIX: Admin Panel Bugs (Jul 25)
+- [x] BUG 23: Revoke not working — FIXED: adminRevokeAccess now cancels all subs + stops all bot slots (in-memory + DB) + marks user isVerified=false. Bot.start already blocks users without active sub.
+- [x] BUG 24: MaxBots not applying — FIXED: Dashboard now renders dynamic slots (6 for admin, 3+extraBotSlots for users). Server getSlotTokens() now returns 6 slots. Added colors for slots 4-5.
+- [x] BUG 25: Verify all admin features — CONFIRMED: Grant (inserts subscription), Broadcast (sends Telegram + saves to DB), Access Grants (creates grant + subscription), Referrals (tracks referrals + extraBotSlots). All write to DB correctly.
 - [x] BUG 22: Entry price was candle-based estimate, not actual Upstox fill price. Now uses verification.avgPrice (actual exchange fill) as entry price when order confirmed "complete"/"traded". Fixes P&L accuracy permanently.
 - [x] Fixed retry path in option premium fetch to also apply underlying leak detection (priceLeakRatio > 10).

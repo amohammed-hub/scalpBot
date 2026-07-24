@@ -2127,13 +2127,19 @@ export default function Dashboard() {
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
         <div className="text-[10px] text-white/30 mb-1.5 ml-1">Each bot slot runs independently on a different instrument — start/stop individually</div>
-        <div className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${(meQuery.data?.role === "admin" || (accessQuery.data as any)?.extraBotSlots > 0) ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
-          {((allBots && allBots.length > 0) ? allBots : [
-            { sessionToken, slot: 0, status: "stopped", dailyPnl: 0, tradesCount: 0 },
-            { sessionToken: `${sessionToken}-slot1`, slot: 1, status: "stopped", dailyPnl: 0, tradesCount: 0 },
-            { sessionToken: `${sessionToken}-slot2`, slot: 2, status: "stopped", dailyPnl: 0, tradesCount: 0 },
-            ...(isAdmin || (accessQuery.data as any)?.extraBotSlots > 0 ? [{ sessionToken: `${sessionToken}-slot3`, slot: 3, status: "stopped", dailyPnl: 0, tradesCount: 0 }] : []),
-          ]).map((bot: any) => {
+        <div className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${(() => {
+          const totalSlots = isAdmin ? 6 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
+          return totalSlots >= 5 ? "lg:grid-cols-3 xl:grid-cols-6" : totalSlots >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3";
+        })()}`}>
+          {((allBots && allBots.length > 0) ? allBots : (() => {
+            const totalSlots = isAdmin ? 6 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
+            const slots = [];
+            for (let i = 0; i < totalSlots; i++) {
+              const tok = i === 0 ? sessionToken : `${sessionToken}-slot${i}`;
+              slots.push({ sessionToken: tok, slot: i, status: "stopped", dailyPnl: 0, tradesCount: 0 });
+            }
+            return slots;
+          })()).map((bot: any) => {
             const isActive = bot.status === "running";
             const slotLabel = `Bot ${bot.slot + 1}`;
             const slotClasses = bot.slot === 0
@@ -2142,7 +2148,11 @@ export default function Dashboard() {
                 ? { border: "border-purple-500/30", borderActive: "border-purple-500/40", bg: "bg-purple-500/5", badge: "bg-purple-500/20", text: "text-purple-300", glow: "shadow-[0_0_20px_oklch(0.7_0.15_280/0.06)]" }
                 : bot.slot === 2
                   ? { border: "border-amber-500/30", borderActive: "border-amber-500/40", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_65/0.06)]" }
-                  : { border: "border-rose-500/30", borderActive: "border-rose-500/40", bg: "bg-rose-500/5", badge: "bg-rose-500/20", text: "text-rose-300", glow: "shadow-[0_0_20px_oklch(0.7_0.18_15/0.06)]" };
+                  : bot.slot === 3
+                    ? { border: "border-rose-500/30", borderActive: "border-rose-500/40", bg: "bg-rose-500/5", badge: "bg-rose-500/20", text: "text-rose-300", glow: "shadow-[0_0_20px_oklch(0.7_0.18_15/0.06)]" }
+                    : bot.slot === 4
+                      ? { border: "border-sky-500/30", borderActive: "border-sky-500/40", bg: "bg-sky-500/5", badge: "bg-sky-500/20", text: "text-sky-300", glow: "shadow-[0_0_20px_oklch(0.75_0.15_230/0.06)]" }
+                      : { border: "border-emerald-500/30", borderActive: "border-emerald-500/40", bg: "bg-emerald-500/5", badge: "bg-emerald-500/20", text: "text-emerald-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_160/0.06)]" };
             const hasOpenTrade = !!bot.openTrade;
             const modeTag = bot.openingBurstMode ? "🚀 Opening Burst" : bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
 
