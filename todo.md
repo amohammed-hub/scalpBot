@@ -1648,3 +1648,4 @@
 - [x] BUG 4: Missing `market_protection: -1` and `slice: false` parameters (required for MARKET orders per Upstox docs)
 - [x] Added comprehensive logging: order placement confirmation, rejection reasons, accessToken status at bot start
 - [x] FIX 9: Time exit change to max 20 minutes
+- [x] BUG 5: No cooldown after order rejection — bot retried every 3-5 sec, flooding Upstox with failed orders (caused 455 qty / 7 lots on NIFTY). Fixed: 2-min cooldown + auto-pause after 3 rejections.
