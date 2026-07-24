@@ -130,6 +130,7 @@ export interface BotState {
   intervalHandle: ReturnType<typeof setInterval> | null;
   lastError: string | null;
   consecutiveTickErrors: number; // auto-restart after 3 consecutive failures
+  consecutiveRejections?: number; // auto-pause after 3 consecutive order rejections
   nextScanAt: number;
   // Timestamp of the last completed tick (unix ms) — used for staleness detection
   lastTickAt: number;
@@ -5936,9 +5937,22 @@ async function tick(
       const rejReason = getLastOrderRejectionReason();
       emitActivity(state.sessionToken, "error", `⚠ Live order REJECTED — ${tradeLabel} ${orderDirection} ${quantity} qty${rejReason ? ` | Upstox: ${rejReason}` : ". Check Upstox logs."}`);
       console.error(`[BotEngine] ${state.sessionToken} — Live order rejected, trade NOT recorded.`);
+      // CRITICAL: Set cooldown to prevent infinite retry loop.
+      // Without this, the bot retries every tick (3-5 sec) and floods Upstox with failed orders.
+      state.lastTradeOpenedAt = Date.now(); // Triggers 2-min cooldown before next attempt
+      // Track consecutive rejections — pause bot after 3 to prevent margin drain
+      state.consecutiveRejections = (state.consecutiveRejections ?? 0) + 1;
+      if (state.consecutiveRejections >= 3) {
+        state.status = "paused";
+        state.lastError = `Bot PAUSED: ${state.consecutiveRejections} consecutive order rejections. Likely insufficient margin. Add funds or reduce position size, then restart.`;
+        emitActivity(state.sessionToken, "error", `🛑 Bot AUTO-PAUSED after ${state.consecutiveRejections} consecutive order rejections. Reason: ${rejReason ?? "unknown"}. Add funds or restart manually.`);
+        sendTelegramAlert(state, `🛑 <b>BOT AUTO-PAUSED</b>\n📊 ${tradeLabel}\n❌ ${state.consecutiveRejections} orders rejected by Upstox\n💰 Reason: ${rejReason ?? "Insufficient margin"}\n\n⚠️ Add funds or reduce capital, then restart.`, "criticalAlerts");
+      }
       return;
     }
     orderId = oid;
+    // Reset rejection counter on successful order
+    state.consecutiveRejections = 0;
     emitActivity(state.sessionToken, "signal", `✅ Upstox order confirmed: ${orderId}`);
   } else if (state.mode === "live" && !state.accessToken) {
     // CRITICAL FIX: If mode is "live" but accessToken is null, do NOT silently record a paper trade.
