@@ -3779,12 +3779,23 @@ export async function placeUpstoxOrder(
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
   try {
     const resp = await axios.post(
-      "https://api.upstox.com/v3/order/place",
-      { quantity, product: "I", validity: "DAY", price: 0, tag: "scalp-bot", instrument_token: instrumentToken, order_type: "MARKET", transaction_type: direction, disclosed_quantity: 0, trigger_price: 0, is_amo: false },
+      "https://api-hft.upstox.com/v3/order/place",
+      { quantity, product: "I", validity: "DAY", price: 0, tag: "scalp-bot", instrument_token: instrumentToken, order_type: "MARKET", transaction_type: direction, disclosed_quantity: 0, trigger_price: 0, is_amo: false, slice: false, market_protection: -1 },
       { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" }, timeout: 8000 }
     );
     lastOrderRejectionReason = null;
-    return resp.data?.data?.order_id ?? null;
+    // v3 API returns { data: { order_ids: ["..."] } } (array)
+    // v2 API returns { data: { order_id: "..." } } (string)
+    // Handle BOTH formats for backward compatibility
+    const respData = resp.data?.data;
+    const orderId = respData?.order_id ?? respData?.order_ids?.[0] ?? null;
+    if (orderId) {
+      console.log(`[BotEngine] ✅ Order PLACED on Upstox: ${instrumentToken} ${direction} qty=${quantity} → orderId=${orderId}`);
+    } else {
+      console.error(`[BotEngine] ⚠ Order API returned 200 but no order_id found. Response:`, JSON.stringify(resp.data));
+      lastOrderRejectionReason = `API returned 200 but no order_id in response: ${JSON.stringify(resp.data?.data)}`;
+    }
+    return orderId;
   } catch (err: unknown) {
     // Extract the REAL Upstox rejection reason from the error response body
     let reason = err instanceof Error ? err.message : String(err);
@@ -5916,6 +5927,7 @@ async function tick(
     // Options: always BUY the option (CE for bullish, PE for bearish)
     // Futures/equity: use signal direction directly
     const orderDirection = isOptionsMode ? "BUY" : signal.direction;
+    console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — PLACING LIVE ORDER: ${tradeInstrumentToken} ${orderDirection} qty=${quantity}`);
     const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity);
     if (!oid) {
       // CRITICAL: if the order was rejected by Upstox, do NOT record a phantom trade.
@@ -5927,6 +5939,14 @@ async function tick(
       return;
     }
     orderId = oid;
+    emitActivity(state.sessionToken, "signal", `✅ Upstox order confirmed: ${orderId}`);
+  } else if (state.mode === "live" && !state.accessToken) {
+    // CRITICAL FIX: If mode is "live" but accessToken is null, do NOT silently record a paper trade.
+    // This was the root cause of "trades on dashboard but not in Upstox" bug.
+    state.lastError = `LIVE mode but no access token — cannot place real order. Refresh your Upstox token.`;
+    emitActivity(state.sessionToken, "error", `🚨 BLOCKED: Bot is in LIVE mode but has no Upstox access token. Trade NOT placed. Go to Settings → refresh your token.`);
+    console.error(`[BotEngine] ${state.sessionToken} — CRITICAL: mode=live but accessToken is NULL. Trade blocked to prevent phantom recording.`);
+    return;
   }
 
   const signalLabel = signal.isPowerHour
@@ -6197,6 +6217,13 @@ export function startBot(
     openingBurstMode: false, openingBurstTradeTaken: false,
     alertsSent: new Set<string>(),
   };
+
+  // CRITICAL: Log whether accessToken was passed to startBot
+  console.log(`[BotEngine] startBot: session=${config.sessionToken.slice(0, 8)}... mode=${config.mode} accessToken=${config.accessToken ? `SET (${config.accessToken.slice(0, 8)}...)` : "NULL ⚠"} instrument=${config.instrumentSymbol}`);
+  if (config.mode === "live" && !config.accessToken) {
+    console.error(`[BotEngine] ⚠ CRITICAL WARNING: Bot started in LIVE mode but accessToken is NULL! Orders will be blocked.`);
+    emitActivity(config.sessionToken, "error", `🚨 Bot started in LIVE mode but has NO access token. Orders will NOT be placed. Go to Settings → refresh your Upstox token.`);
+  }
 
   // Restore optionTradeToken from existing open trade so live quote fetching works after restart
   if (existingOpenTrade && existingOpenTrade.isIndexOptions && existingOpenTrade.instrumentToken) {

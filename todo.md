@@ -1640,4 +1640,11 @@
 - [x] FIX 6: Capital guard max ₹3,250/trade, max 4 open positions
 - [x] FIX 7: Disable MCX (GOLD, SILVER, COPPER, NATURALGAS)
 - [x] FIX 8: Add SENSEX, BANKEX, MIDCPNIFTY to instruments (already existed)
+
+## CRITICAL FIX: Orders Not Reaching Upstox (Jul 24)
+- [x] BUG 1: placeUpstoxOrder parsed wrong response field — v3 API returns `order_ids[]` (array) but code read `order_id` (singular). Fixed to handle both formats.
+- [x] BUG 2: When mode=live but accessToken is null, trade was silently recorded without placing real order (phantom paper trade in live mode). Fixed to BLOCK trade and alert user.
+- [x] BUG 3: Used wrong API endpoint — `api.upstox.com` instead of `api-hft.upstox.com` (HFT endpoint required for v3 orders)
+- [x] BUG 4: Missing `market_protection: -1` and `slice: false` parameters (required for MARKET orders per Upstox docs)
+- [x] Added comprehensive logging: order placement confirmation, rejection reasons, accessToken status at bot start
 - [x] FIX 9: Time exit change to max 20 minutes
