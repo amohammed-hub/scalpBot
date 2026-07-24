@@ -5915,9 +5915,9 @@ async function tick(
   // This ensures SL stays at entry × 0.88 (12% buffer) and quantity is capped by risk.
   // For futures/equity: use signal SL distance as before.
   // ── CAPITAL GUARD: Max ₹3,250 per trade ──────────────────────────────────────
-  // Per-segment capital cap: NSE ₹3,250, MCX ₹13,000 (allows 1 lot of any MCX commodity)
+  // Per-segment capital cap: NSE ₹3,250, MCX ₹50,000 (allows 1 lot of Gold/Silver — user specified)
   const isMcxForCapital = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
-  const MAX_CAPITAL_PER_TRADE = isMcxForCapital ? 13000 : 3250;
+  const MAX_CAPITAL_PER_TRADE = isMcxForCapital ? 50000 : 3250;
   const MAX_OPEN_POSITIONS = 4;
   // Check max open positions across all bots for this user
   const userBots = getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, ""));
