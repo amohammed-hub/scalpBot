@@ -3896,6 +3896,26 @@ export function getLastOrderRejectionReason(): string | null {
   return lastOrderRejectionReason;
 }
 
+// ── MARGIN CHECK: Call Upstox funds API before placing any BUY order ──────────────────────
+// Returns available margin for the relevant segment (equity or commodity).
+// Returns null if API call fails (we proceed with order in that case — don't block on API failure).
+async function checkUpstoxMargin(accessToken: string, isMcx: boolean): Promise<number | null> {
+  try {
+    const resp = await axios.get("https://api.upstox.com/v2/user/get-funds-and-margin", {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      timeout: 5000,
+    });
+    const data = resp.data?.data;
+    if (isMcx) {
+      return data?.commodity?.available_margin ?? null;
+    }
+    return data?.equity?.available_margin ?? null;
+  } catch (err) {
+    console.warn(`[BotEngine] Margin check API failed (proceeding with order):`, err instanceof Error ? err.message : err);
+    return null; // Don't block trading if margin API is down
+  }
+}
+
 export async function placeUpstoxOrder(
   accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number, mcxLotSize?: number,
 ): Promise<string | null> {
@@ -4903,7 +4923,18 @@ async function tick(
 
           // For live mode: place the order first
           if (trade.mode === "live" && state.accessToken) {
-            const avgOrderDir = trade.direction; // Same direction as original trade
+           const avgOrderDir = trade.direction; // Same direction as original trade
+            // Margin check before averaging
+            const avgOrderValue = avgPrice * avgQty;
+            const isMcxAvg = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
+            const avgMargin = await checkUpstoxMargin(state.accessToken, isMcxAvg);
+            if (avgMargin !== null && avgMargin < avgOrderValue) {
+              console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — AVERAGING MARGIN CHECK FAILED: need ₹${avgOrderValue.toFixed(0)}, have ₹${avgMargin.toFixed(0)}`);
+              emitActivity(state.sessionToken, "error", `⛔ Averaging blocked — insufficient margin (need ₹${avgOrderValue.toFixed(0)}, have ₹${avgMargin.toFixed(0)})`);
+              sendTelegramAlert(state, `🚫 <b>MARGIN BLOCK (AVG)</b>\n${trade.symbolLabel}\nNeed: ₹${avgOrderValue.toFixed(0)} | Available: ₹${avgMargin.toFixed(0)}`, "criticalAlerts");
+              trade.averageCount = 1; // Prevent retry spam
+              return;
+            }
             const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty, state.lotSize);
             if (!avgOrderId) {
               // Order failed — don't average, just log
@@ -6253,6 +6284,20 @@ async function tick(
     // Options: always BUY the option (CE for bullish, PE for bearish)
     // Futures/equity: use signal direction directly
     const orderDirection = isOptionsMode ? "BUY" : signal.direction;
+    // ── MARGIN CHECK: Verify sufficient funds before placing order ──────────────
+    const orderValue = entryPriceForExposure * quantity;
+    const isMcxForMargin = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
+    const availableMargin = await checkUpstoxMargin(state.accessToken, isMcxForMargin);
+    if (availableMargin !== null && availableMargin < orderValue) {
+      const shortfall = orderValue - availableMargin;
+      const msg = `⛔ INSUFFICIENT MARGIN — need ₹${orderValue.toFixed(0)} but only ₹${availableMargin.toFixed(0)} available (short ₹${shortfall.toFixed(0)}). Order SKIPPED.`;
+      emitActivity(state.sessionToken, "error", msg);
+      sendTelegramAlert(state, `🚫 <b>MARGIN BLOCK</b>\n${state.instrumentLabel}\n${orderDirection} ${quantity} qty @ ₹${entryPriceForExposure.toFixed(2)}\nNeed: ₹${orderValue.toFixed(0)} | Available: ₹${availableMargin.toFixed(0)}\nShortfall: ₹${shortfall.toFixed(0)}`, "criticalAlerts");
+      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — MARGIN CHECK FAILED: need ₹${orderValue.toFixed(0)}, have ₹${availableMargin.toFixed(0)}`);
+      state.lastTradeOpenedAt = Date.now(); // Cooldown to prevent spam
+      state.isOpeningTrade = false;
+      return;
+    }
     console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — PLACING LIVE ORDER: ${tradeInstrumentToken} ${orderDirection} qty=${quantity}`);
     const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity, state.lotSize);
     if (!oid) {
@@ -6919,6 +6964,16 @@ export async function forceAverageDown(sessionToken: string): Promise<{ success:
   
   // For live mode: place the order
   if (trade.mode === "live" && state.accessToken) {
+    // Margin check before manual averaging
+    const manualAvgOrderValue = avgPrice * avgQty;
+    const isMcxManualAvg = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
+    const manualAvgMargin = await checkUpstoxMargin(state.accessToken, isMcxManualAvg);
+    if (manualAvgMargin !== null && manualAvgMargin < manualAvgOrderValue) {
+      console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — MANUAL AVG MARGIN CHECK FAILED: need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)}`);
+      emitActivity(state.sessionToken, "error", `⛔ Manual averaging blocked — insufficient margin (need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)})`);
+      sendTelegramAlert(state, `🚫 <b>MARGIN BLOCK (Manual AVG)</b>\n${trade.symbolLabel}\nNeed: ₹${manualAvgOrderValue.toFixed(0)} | Available: ₹${manualAvgMargin.toFixed(0)}`, "criticalAlerts");
+      return { success: false, error: `Insufficient margin: need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)}` };
+    }
     const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction, avgQty, state.lotSize);
     if (!avgOrderId) {
       trade.averageCount = 1; // Prevent retry spam

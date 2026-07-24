@@ -1727,3 +1727,11 @@
 
 ## WhatsApp Contact Button
 - [x] Add floating WhatsApp icon button (bottom-right corner) linking to wa.me/916301742267
+
+## FIX: Margin Check Before Every Order (Jul 25)
+- [x] BUG 27: Added checkUpstoxMargin() helper — calls GET /v2/user/get-funds-and-margin, returns available_margin for equity or commodity segment.
+- [x] Entry order: If available_margin < order_value (entryPrice × quantity) → SKIP order + Telegram alert + activity log + 2-min cooldown.
+- [x] Auto-averaging order: Same margin check before averaging order. If insufficient → block averaging, set averageCount=1 to prevent retry spam.
+- [x] Manual averaging (forceAverageDown): Same margin check. Returns error to caller if insufficient.
+- [x] Graceful degradation: If margin API fails/times out → proceed with order (don't block trading on API failure).
+- [x] All 202 tests pass, TypeScript 0 errors.
