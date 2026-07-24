@@ -25,9 +25,9 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Gold",
     symbol: "GOLD",
-    instrumentToken: "MCX_FO|552720",   // GOLD front-month Jul 2026
+    instrumentToken: "MCX_FO|555922",   // GOLDM FUT 05 AUG 26 (has weekly options chain — NOT GOLDGUINEA which has zero options)
     upstoxName: "GOLD",
-    lotSize: 100,      // 100 grams
+    lotSize: 100,      // GOLDM lot size = 100 (per Upstox instruments JSON)
     tickSize: 1,
     tickValue: 100,    // ₹100 per tick
     margin: 150000,

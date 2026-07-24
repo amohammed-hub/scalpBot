@@ -3530,35 +3530,59 @@ async function resolveMcxFuturesToken(
   try {
     const instruments = await getMcxInstruments();
     const now = Date.now();
-    // Build a normalized name from symbol for matching. Strip MCX_ prefix first:
-    // MCX_GOLD → GOLD, MCX_CRUDE → CRUDE OIL, CRUDEOIL → CRUDE OIL, MCX_NATURALGAS → NATURALGAS
-    const SYMBOL_TO_NAME: Record<string, string> = {
-      'CRUDE': 'CRUDE OIL', 'CRUDEOIL': 'CRUDE OIL', 'CRUDEOILM': 'CRUDE OIL MINI',
+    // Map bot symbol → the asset_symbol(s) of futures contracts that HAVE options chains.
+    // CRITICAL: Many MCX commodities have multiple futures variants (GOLD, GOLDM, GOLDGUINEA,
+    // GOLDPETAL, GOLDTEN) but only some have options. We MUST pick one that has options.
+    // Priority: prefer the "mini" variant (GOLDM, CRUDEOILM, SILVERM) for weekly options (more liquid).
+    const SYMBOL_TO_ASSET: Record<string, string[]> = {
+      'GOLD': ['GOLDM', 'GOLD'],           // GOLDM has weekly options (most liquid), GOLD has monthly
+      'SILVER': ['SILVERM', 'SILVER'],      // SILVERM has weekly, SILVER has monthly
+      'CRUDEOIL': ['CRUDEOIL', 'CRUDEOILM'], // Both have options
+      'CRUDE': ['CRUDEOIL', 'CRUDEOILM'],
+      'NATURALGAS': ['NATURALGAS', 'NATGASMINI'],
+      'COPPER': ['COPPER'],
+      'ZINC': ['ZINC'],                     // ZINCMINI has NO options
+      'ALUMINIUM': ['ALUMINIUM'],           // NO options available
+    };
+    const strippedSymbol = symbol.toUpperCase().replace(/^MCX_/, '');
+    const preferredAssets = SYMBOL_TO_ASSET[strippedSymbol] ?? [strippedSymbol];
+    
+    // Try each preferred asset_symbol in priority order (first = most liquid options)
+    for (const assetSym of preferredAssets) {
+      const futures = instruments.filter(x =>
+        x.instrument_type === "FUT" &&
+        (x.expiry ?? 0) > now &&
+        (x.asset_symbol ?? "").toUpperCase() === assetSym.toUpperCase()
+      );
+      futures.sort((a, b) => (a.expiry ?? 0) - (b.expiry ?? 0));
+      if (futures.length > 0) {
+        console.log(`[BotEngine] Resolved MCX futures token (asset_symbol=${assetSym}): ${symbol} → ${futures[0].instrument_key} (${futures[0].trading_symbol})`);
+        return futures[0].instrument_key;
+      }
+    }
+    
+    // Final fallback: match by name (less reliable — may pick GOLDGUINEA etc.)
+    const NAME_MAP: Record<string, string> = {
+      'CRUDE': 'CRUDE OIL', 'CRUDEOIL': 'CRUDE OIL',
       'GOLD': 'GOLD', 'SILVER': 'SILVER', 'NATURALGAS': 'NATURALGAS',
       'COPPER': 'COPPER', 'ZINC': 'ZINC', 'ALUMINIUM': 'ALUMINIUM',
     };
-    const strippedSymbol = symbol.toUpperCase().replace(/^MCX_/, '');
-    const normalizedSymbol = SYMBOL_TO_NAME[strippedSymbol] ?? strippedSymbol;
-    const futures = instruments.filter(x =>
+    const normalizedName = NAME_MAP[strippedSymbol] ?? strippedSymbol;
+    const nameFutures = instruments.filter(x =>
       x.instrument_type === "FUT" &&
       (x.expiry ?? 0) > now &&
-      (x.name ?? "").toUpperCase() === normalizedSymbol
+      (x.name ?? "").toUpperCase() === normalizedName &&
+      // Exclude variants without options chains
+      !(x.asset_symbol ?? "").toUpperCase().includes("GUINEA") &&
+      !(x.asset_symbol ?? "").toUpperCase().includes("PETAL") &&
+      !(x.asset_symbol ?? "").toUpperCase().includes("TEN") &&
+      !(x.asset_symbol ?? "").toUpperCase().includes("100") &&
+      !(x.asset_symbol ?? "").toUpperCase().includes("MIC")
     );
-    futures.sort((a, b) => (a.expiry ?? 0) - (b.expiry ?? 0));
-    if (futures.length > 0) {
-      console.log(`[BotEngine] Resolved MCX futures token (instruments JSON): ${symbol} → ${futures[0].instrument_key} (name=${futures[0].name})`);
-      return futures[0].instrument_key;
-    }
-    // Fallback: partial name match
-    const partialFutures = instruments.filter(x =>
-      x.instrument_type === "FUT" &&
-      (x.expiry ?? 0) > now &&
-      (x.name ?? "").toUpperCase().includes(strippedSymbol.replace('CRUDEOIL','CRUDE'))
-    );
-    partialFutures.sort((a, b) => (a.expiry ?? 0) - (b.expiry ?? 0));
-    if (partialFutures.length > 0) {
-      console.log(`[BotEngine] Resolved MCX futures token (partial match): ${symbol} → ${partialFutures[0].instrument_key} (name=${partialFutures[0].name})`);
-      return partialFutures[0].instrument_key;
+    nameFutures.sort((a, b) => (a.expiry ?? 0) - (b.expiry ?? 0));
+    if (nameFutures.length > 0) {
+      console.log(`[BotEngine] Resolved MCX futures token (name fallback): ${symbol} → ${nameFutures[0].instrument_key} (${nameFutures[0].trading_symbol})`);
+      return nameFutures[0].instrument_key;
     }
   } catch (err) {
     console.error(`[BotEngine] resolveMcxFuturesToken instruments JSON failed for ${symbol}:`, err instanceof Error ? err.message : String(err));
@@ -3573,6 +3597,7 @@ interface McxInstrumentRow {
   instrument_key: string;
   trading_symbol?: string;
   name?: string;
+  asset_symbol?: string;
   instrument_type?: string;
   strike_price?: number;
   expiry?: number;
@@ -3962,7 +3987,22 @@ async function tick(
 
   const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100;
   if (state.dailyPnl <= maxDailyLoss) {
-    if ((state.tickCount ?? 0) <= 1) {
+    if (state.unlimitedTrades) {
+      // Admin/unlimited mode: NEVER pause — just warn and continue trading
+      if (!state.alertsSent.has("daily_loss_warn")) {
+        state.alertsSent.add("daily_loss_warn");
+        console.warn(`[tick] ⚠ Daily loss limit reached (ADMIN MODE — continuing) — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)}`);
+        emitActivity(state.sessionToken, "error", `⚠ Daily loss limit reached (₹${state.dailyPnl.toFixed(0)}) — Admin mode: continuing to trade.`);
+        sendTelegramAlert(state,
+          `⚠️ <b>DAILY LOSS LIMIT WARNING</b>\n` +
+          `📊 <b>${state.instrumentLabel}</b>\n` +
+          `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +
+          `✅ Admin mode — bot continues trading\n` +
+          `⚠️ Monitor positions carefully`
+        , "criticalAlerts");
+      }
+      state.dailyLossAcknowledged = true;
+    } else if ((state.tickCount ?? 0) <= 1) {
       // User manually started despite existing losses — warn but don't block
       console.warn(`[tick] ⚠ Daily loss limit already reached — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — Bot will only pause on NEW losses`);
       emitActivity(state.sessionToken, "error", `⚠ Daily loss limit already reached (₹${state.dailyPnl.toFixed(0)}). Bot will only pause on NEW losses.`);

@@ -1669,3 +1669,10 @@
 - [x] Updated safety guard comments in botEngine.ts (line 4854) — no longer references "delta approximation", correctly describes frozen-at-entry behavior.
 - [x] Updated trailing SL guard comment (line 4631) — correctly describes "frozen at entry due to failed quote fetch".
 - [x] Frontend now shows "—" or stored DB P&L when no real option premium is available (instead of fake delta-approximated value).
+- [x] Frontend now shows "—" or stored DB P&L when no real option premium is available (instead of fake delta-approximated value).
+
+## FIX: Daily Loss Limit Should Be Warning-Only for Admin (Jul 24)
+- [ ] BUG 15: Daily loss limit blocks ALL new trades for admin — should only warn (notification) but continue trading. Admin needs full control.
+
+## FIX: MCX Option Contracts Not Found for Current Expiry (Jul 24)
+- [ ] BUG 16: "no matching option contracts found for this expiry" — MCX option resolution fails because expiry date logic picks wrong expiry or Upstox instruments JSON doesn't have contracts for current week's expiry.
