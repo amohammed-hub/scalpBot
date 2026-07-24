@@ -4284,8 +4284,12 @@ async function tick(
       // trade.instrumentToken may be a fake PAPER_OPT|... token that Upstox won't recognize
       const realOptToken = state.optionTradeToken ?? state.openTrade.instrumentToken;
       const isPaperToken = realOptToken.startsWith("PAPER_OPT|");
+      if (isPaperToken) {
+        console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — P&L: using PAPER_OPT token (no real token resolved). optionTradeToken=${state.optionTradeToken}`);
+      }
       const optQuote = isPaperToken ? null : await fetchFullQuote(realOptToken, state.accessToken);
       if (optQuote && optQuote.ltp > 0) {
+        // Real quote fetched successfully — use it for P&L
         // BUG FIX: In illiquid options (MCX after-hours, deep OTM), bid/ask can be wildly inflated
         // (e.g., LTP ₹956 but bid ₹2,037 with zero volume). Using bid creates fake P&L.
         // FIX: For PAPER mode, always use LTP (last actually traded price).
@@ -4321,52 +4325,37 @@ async function tick(
         effectivePrice = bestExitPrice;
         state.optionPremiumPrice = bestExitPrice; // update for Dashboard display
       } else {
-        // fetchFullQuote failed — fall back to delta approximation instead of using underlying price
-        const entryPremium = state.openTrade.entryPrice;
-        const entryUnderlying = state.openTrade.entryUnderlyingPrice;
-        // If no reliable entryUnderlyingPrice, use entryPrice as effectivePrice (safety guard will block exits)
-        if (!entryUnderlying || entryUnderlying <= 0) {
-          effectivePrice = entryPremium;
-          state.optionPremiumPrice = entryPremium;
+        // fetchFullQuote failed — retry once after 1s delay
+        await new Promise(r => setTimeout(r, 1000));
+        const retryQuote = await fetchFullQuote(realOptToken, state.accessToken!);
+        if (retryQuote && retryQuote.ltp > 0) {
+          effectivePrice = retryQuote.ltp;
+          state.optionPremiumPrice = retryQuote.ltp;
+          console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote retry SUCCEEDED: LTP=₹${retryQuote.ltp}`);
         } else {
-        const underlyingMove = price - entryUnderlying;
-        // BUG-15 fix: Dynamic delta based on moneyness (OTM ~0.3, ATM ~0.5, ITM ~0.7)
-        const movePct = entryUnderlying > 0 ? Math.abs(underlyingMove) / entryUnderlying : 0;
-        const delta = movePct < 0.005 ? 0.5 : movePct < 0.015 ? 0.4 : 0.3; // decays as option moves OTM
-        const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE")
-          || (state.openTrade.symbolLabel ?? "").includes(" CE");
-        const driftedPremium = Math.max(0.05, entryPremium + (isCallOption ? underlyingMove * delta : -underlyingMove * delta));
-        effectivePrice = driftedPremium;
-        state.optionPremiumPrice = driftedPremium;
+          // Both attempts failed — use LAST KNOWN good price for SL monitoring.
+          // If we never got a good price, freeze at entry (P&L = 0).
+          // state.optionPremiumPrice retains the last successful value from a previous tick.
+          const lastKnown = state.optionPremiumPrice ?? 0;
+          const entryPremium = state.openTrade.entryPrice;
+          if (lastKnown > 0 && lastKnown !== entryPremium) {
+            // Use last known good price for SL monitoring (stale but better than entry)
+            effectivePrice = lastKnown;
+            console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. Using last known ₹${lastKnown.toFixed(2)} for SL.`);
+          } else {
+            // Never got a real quote — freeze at entry (P&L = 0, SL won't fire)
+            effectivePrice = entryPremium;
+            state.optionPremiumPrice = entryPremium;
+            console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. No last known price — freezing at entry ₹${entryPremium.toFixed(2)}.`);
+          }
         }
       }
     } else {
-      // Paper mode (no access token): derive drifting option premium from real underlying price.
-      // Use delta approximation: ATM option moves ~0.5x the underlying for every 1 point move.
-      // Base premium is the entry price of the open trade (already a real option premium).
+      // Paper mode (no access token): cannot fetch real option quote.
+      // Freeze P&L at entry (show 0) — delta approximation is unreliable and gives fake P&L.
       const entryPremium = state.openTrade.entryPrice;
-      const entryUnderlying = state.openTrade.entryUnderlyingPrice;
-      // If no reliable entryUnderlyingPrice, use current price as a rough reference
-      // (better than freezing at entry which prevents SL from ever firing)
-      if (!entryUnderlying || entryUnderlying <= 0) {
-        // No entryUnderlyingPrice means we can't compute delta drift.
-        // Use the last known optionPremiumPrice if available, otherwise keep entryPremium.
-        // This ensures SL can still fire if the premium was previously tracked.
-        effectivePrice = state.optionPremiumPrice && state.optionPremiumPrice > 0
-          ? state.optionPremiumPrice
-          : entryPremium;
-      } else {
-      const underlyingMove = price - entryUnderlying;
-      // BUG-15 fix: Dynamic delta based on moneyness (OTM ~0.3, ATM ~0.5, ITM ~0.7)
-      const movePct = entryUnderlying > 0 ? Math.abs(underlyingMove) / entryUnderlying : 0;
-      const delta = movePct < 0.005 ? 0.5 : movePct < 0.015 ? 0.4 : 0.3; // decays as option moves OTM
-      // For CE: underlying up = premium up. For PE: underlying up = premium down.
-      const isCallOption = state.openTrade.symbol.includes("_CE_") || state.openTrade.symbol.endsWith("_CE")
-        || (state.openTrade.symbolLabel ?? "").includes(" CE");
-      const driftedPremium = Math.max(0.05, entryPremium + (isCallOption ? underlyingMove * delta : -underlyingMove * delta));
-      effectivePrice = driftedPremium;
-      state.optionPremiumPrice = driftedPremium;
-      }
+      effectivePrice = entryPremium; // P&L = 0 — no real quote available
+      state.optionPremiumPrice = entryPremium;
     }
   }
 
@@ -4639,7 +4628,7 @@ async function tick(
 
     // ── Trailing SL ──────────────────────────────────────────────────────────
     if (trade.trailingSlEnabled) {
-      // Only trail if we have a reliable effectivePrice (not broken delta approximation)
+      // Only trail if we have a reliable effectivePrice (not frozen at entry due to failed quote fetch)
       const trailReliable = !(trade.isIndexOptions && !state.optionTradeToken && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.02);
       if (trailReliable) {
         const trailDist = trade.entryPrice * (trade.trailingSlPct / 100);
@@ -4862,19 +4851,19 @@ async function tick(
       }
     }
 
-    // SAFETY GUARD: For options trades using delta approximation without a real quote,
-    // only skip SL/Target checks for the FIRST 5 minutes after trade open (grace period for token resolution).
-    // After 5 minutes, trust the delta approximation and enforce SL/Target — never leave a trade unprotected.
+    // SAFETY GUARD: For options trades where effectivePrice is frozen at entry (no real quote available),
+    // skip SL/Target checks for the FIRST 5 minutes (grace period for token resolution / quote fetching).
+    // After 5 minutes, SL/Target checks resume — if effectivePrice is still frozen at entry, P&L = 0 so neither SL nor Target will fire.
     const isOptionsWithBrokenDelta = trade.isIndexOptions
       && !state.optionTradeToken
       && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.01
       && tradeAgeMs < 5 * 60 * 1000; // Only skip for first 5 minutes
     if (isOptionsWithBrokenDelta) {
-      // Grace period: don't check SL/Target for first 5 minutes while token resolves
+      // Grace period: skip SL/Target for first 5 minutes while token resolves / quote fetching stabilizes
       if (!state.alertsSent.has("broken_delta_guard")) {
         state.alertsSent.add("broken_delta_guard");
-        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — SAFETY: skipping SL/Target for 5min grace period (delta approx unreliable, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
-        emitActivity(state.sessionToken, "error", `⚠ Delta approximation unreliable — grace period (5min) for token resolution. SL/Target will activate after.`);
+        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — SAFETY: skipping SL/Target for 5min grace period (no real quote, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
+        emitActivity(state.sessionToken, "error", `⚠ No real option quote yet — grace period (5min) for token resolution. SL/Target will activate after.`);
       }
     } else {
       // For options: direction in trade is always "BUY" (we buy CE or PE).
@@ -6354,7 +6343,7 @@ export type TradeInsert = {
   // Partial profit levels — stored in DB so they survive server restarts exactly
   partial1RPrice: number;
   partial2RPrice: number;
-  // Options mode: underlying price at entry (for delta approximation when live premium unavailable)
+  // Options mode: underlying price at entry (stored for reference; delta approximation removed)
   entryUnderlyingPrice?: number;
 };
 

@@ -1156,21 +1156,12 @@ export default function Dashboard() {
   // IMPORTANT: For options, NEVER use underlying price as fallback — it gives absurd P&L
   const effectiveLivePrice = (() => {
     if (!isIndexOptions) return currentPrice;
-    // Priority: liveData optionPremiumPrice > livePrices optionPremiumPrice > delta approximation
+    // Priority: liveData optionPremiumPrice > livePrices optionPremiumPrice > NOTHING (no fake delta)
     if (optionPremiumPrice && optionPremiumPrice > 0) return optionPremiumPrice;
     const lpPrimary = livePricesData?.find(lp => lp.slot === 0);
     const lpOptPremium = (lpPrimary as any)?.optionPremiumPrice ?? 0;
     if (lpOptPremium > 0) return lpOptPremium;
-    // Delta approximation fallback using underlying price + entryUnderlyingPrice
-    if (activeTrade && currentPrice > 0) {
-      const entryUnderlying = (activeTrade as any).entryUnderlyingPrice ?? (inMemOpenTrade as any)?.entryUnderlyingPrice;
-      if (entryUnderlying && entryUnderlying > 0) {
-        const underlyingMove = currentPrice - entryUnderlying;
-        const delta = 0.5;
-        const isCall = (activeTrade.symbol ?? "").includes("CE") || ((activeTrade as any).symbolLabel ?? "").includes(" CE");
-        return Math.max(0.05, activeTrade.entryPrice + (isCall ? underlyingMove * delta : -underlyingMove * delta));
-      }
-    }
+    // NO delta approximation — it gives FAKE P&L. Return 0 → shows "—" in UI.
     return 0;
   })();
   const unrealizedPnl = activeTrade && effectiveLivePrice > 0
@@ -3848,7 +3839,7 @@ export default function Dashboard() {
                     let liveEffectivePrice = 0;
                     if (isOptionTrade) {
                       // Options: use option premium price from best available source
-                      // Source priority: liveData optionPremiumPrice > livePrices optionPremiumPrice > allBots optionPremiumPrice > delta approximation
+                      // Source priority: liveData optionPremiumPrice > livePrices optionPremiumPrice > allBots optionPremiumPrice
                       if (tradeSlot === 0 && optionPremiumPrice && optionPremiumPrice > 0) {
                         liveEffectivePrice = optionPremiumPrice;
                       } else if (tradeSlot === 0 && lpOptionPremium > 0) {
@@ -3856,26 +3847,8 @@ export default function Dashboard() {
                       } else if (tradeSlot > 0 && slotOptionPremium > 0) {
                         liveEffectivePrice = slotOptionPremium;
                       }
-                      // Fallback: delta approximation using underlying price + entryUnderlyingPrice from DB
-                      if (liveEffectivePrice === 0 && t.status === "open") {
-                        // Try DB value first, then in-memory openTrade (for trades opened before this fix)
-                        let entryUnderlying = (t as any).entryUnderlyingPrice;
-                        if (!entryUnderlying || entryUnderlying <= 0) {
-                          // Check in-memory open trade from liveData (primary) or allBots (slots)
-                          if (tradeSlot === 0 && (inMemOpenTrade as any)?.entryUnderlyingPrice) {
-                            entryUnderlying = (inMemOpenTrade as any).entryUnderlyingPrice;
-                          } else if (tradeSlot > 0 && (slotBot as any)?.openTrade?.entryUnderlyingPrice) {
-                            entryUnderlying = (slotBot as any).openTrade.entryUnderlyingPrice;
-                          }
-                        }
-                        const currentUnderlying = slotEffectivePrice;
-                        if (entryUnderlying && entryUnderlying > 0 && currentUnderlying > 0) {
-                          const underlyingMove = currentUnderlying - entryUnderlying;
-                          const delta = 0.5;
-                          const isCall = (t.symbol ?? "").includes("CE") || (t.symbolLabel ?? "").includes(" CE");
-                          liveEffectivePrice = Math.max(0.05, t.entryPrice + (isCall ? underlyingMove * delta : -underlyingMove * delta));
-                        }
-                      }
+                      // NO delta approximation fallback — it gives FAKE P&L.
+                      // If liveEffectivePrice is still 0, livePnl will show stored DB pnl (for closed) or 0 (for open).
                     } else {
                       // Non-options: use underlying/futures price as before
                       liveEffectivePrice = slotEffectivePrice;

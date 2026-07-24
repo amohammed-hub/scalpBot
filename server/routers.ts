@@ -2311,7 +2311,7 @@ export const appRouter = router({
               bot.lastPrice = latestClose;
             }
 
-            // For options bots: compute optionPremiumPrice via delta approximation if not yet set by tick
+            // For options bots: fetch real option premium price (no delta approximation)
             let optPremium = bot.optionPremiumPrice ?? 0;
             if (bot.isIndexOptions && bot.openTrade) {
               // Priority 1: Fetch real option quote if we have a resolved token
@@ -2323,7 +2323,7 @@ export const appRouter = router({
                     optPremium = bestPriceQ;
                     bot.optionPremiumPrice = optPremium;
                   }
-                } catch { /* fall through to delta approx */ }
+                } catch { /* non-fatal */ }
               }
               // Priority 1.5: No resolved token yet — try to resolve from trade symbol on-the-fly
               if (optPremium === 0 && !bot.optionTradeToken && bot.accessToken && bot.openTrade) {
@@ -2359,22 +2359,10 @@ export const appRouter = router({
                     }
                     }
                   }
-                } catch { /* non-fatal */ }
-              }
-              // Priority 2: Delta approximation (only if no real quote AND entryUnderlyingPrice is reliable)
-              if (optPremium === 0 && latestClose > 0) {
-                const entryPremium = bot.openTrade.entryPrice;
-                const entryUnderlying = bot.openTrade.entryUnderlyingPrice;
-                // Only use delta approx if we have a REAL entryUnderlyingPrice (not null/0)
-                if (entryUnderlying && entryUnderlying > 0 && Math.abs(latestClose - entryUnderlying) / entryUnderlying > 0.001) {
-                  const underlyingMove = latestClose - entryUnderlying;
-                  const delta = 0.5;
-                  const isCall = bot.openTrade.symbol.includes("_CE_") || bot.openTrade.symbol.endsWith("_CE")
-                    || (bot.openTrade.symbolLabel ?? "").includes(" CE");
-                  optPremium = Math.max(0.05, entryPremium + (isCall ? underlyingMove * delta : -underlyingMove * delta));
-                  bot.optionPremiumPrice = optPremium;
-                }
-              }
+               } catch { /* non-fatal */ }
+             }
+              // NO delta approximation fallback — it gives FAKE P&L.
+              // If optPremium is still 0, frontend will show stored DB P&L or "—".
             }
 
             const slot = tok === input.sessionToken ? 0 : tok.endsWith("-slot1") ? 1 : tok.endsWith("-slot2") ? 2 : 3;
