@@ -1676,3 +1676,13 @@
 
 ## FIX: MCX Option Contracts Not Found for Current Expiry (Jul 24)
 - [x] BUG 16: "no matching option contracts found for this expiry" — MCX option resolution fails because expiry date logic picks wrong expiry or Upstox instruments JSON doesn't have contracts for current week's expiry.
+
+## FIX: MCX Placeholder Token Chicken-and-Egg Problem (Jul 24)
+- [x] BUG 17: MCX bots stuck in "Waiting for market data" — signalToken is placeholder "MCX_FO|GOLDM" (not numeric). Candle API returns 0 candles for placeholders → bot never generates signals.
+- [x] ROOT CAUSE: Token resolution only happened AFTER signal fires, but signals need candles first. Chicken-and-egg loop.
+- [x] FIX 1: Resolve MCX futures token at BOT START (startBot in botEngine.ts) — uses _pendingOptionResolve pattern so first tick awaits resolution.
+- [x] FIX 2: Resolve MCX placeholder in routers.ts startBot procedure BEFORE DB insert — DB always stores valid numeric token.
+- [x] FIX 3: Resolve MCX placeholder in botRestart.ts (watchdog restart path) — if DB has stale placeholder, resolve before calling startBot and update DB.
+- [x] Added diagnostic logging: CANDLE-FETCH log on first 3 ticks for MCX bots shows actual signalToken being used.
+- [x] Exported resolveMcxFuturesToken from botEngine.ts for use in routers.ts and botRestart.ts.
+- [x] Verified: MCX_FO|555922 (GOLDM numeric) returns 588 candles; MCX_FO|GOLDM (placeholder) returns 0 candles.

@@ -498,6 +498,33 @@ export const appRouter = router({
           throw new Error("No Upstox access token found. Go to Settings → paste your Access Token or use 'Get Token Automatically'. Token expires daily — refresh it each morning before 9:15 AM.");
         }
 
+        // ── MCX Token Resolution at Bot Start ──────────────────────────────────
+        // If underlyingToken is a placeholder (e.g. "MCX_FO|GOLDM"), resolve it NOW
+        // so the DB stores a valid numeric token and the bot can fetch candles from tick #1.
+        if (input.underlyingToken?.startsWith("MCX_FO|") && !/\|\d+$/.test(input.underlyingToken)) {
+          const { resolveMcxFuturesToken } = await import("./botEngine");
+          const mcxSym = (input.instrumentSymbol ?? "").replace(/^MCX_/, "");
+          console.log(`[Router] MCX placeholder detected: "${input.underlyingToken}" — resolving for ${mcxSym}...`);
+          const resolved = await resolveMcxFuturesToken(mcxSym, accessToken);
+          if (resolved) {
+            console.log(`[Router] MCX resolved: ${mcxSym} → ${resolved}`);
+            (input as any).underlyingToken = resolved;
+            (input as any).instrumentToken = resolved;
+          } else {
+            console.warn(`[Router] MCX resolution failed for ${mcxSym} — storing placeholder, bot will retry`);
+          }
+        }
+        // Also resolve instrumentToken if it's a placeholder (same pattern)
+        if (input.instrumentToken.startsWith("MCX_FO|") && !/\|\d+$/.test(input.instrumentToken)) {
+          const { resolveMcxFuturesToken } = await import("./botEngine");
+          const mcxSym = (input.instrumentSymbol ?? "").replace(/^MCX_/, "");
+          const resolved = await resolveMcxFuturesToken(mcxSym, accessToken);
+          if (resolved) {
+            (input as any).instrumentToken = resolved;
+            if (!input.underlyingToken) (input as any).underlyingToken = resolved;
+          }
+        }
+
         if (input.mode === "live") {
           // Paper-trade safety gate: require at least 3 closed paper trades before going live
           // Admin bypass: admin account can skip this gate
@@ -2546,6 +2573,27 @@ export const appRouter = router({
           }
           if (!accessToken) {
             throw new Error("No Upstox access token found. Go to Settings → paste your Access Token or use 'Get Token Automatically'. Token expires daily — refresh it each morning before 9:15 AM.");
+          }
+        }
+
+        // ── MCX Token Resolution for slot bots ──────────────────────────────────
+        if (input.underlyingToken?.startsWith("MCX_FO|") && !/\|\d+$/.test(input.underlyingToken)) {
+          const { resolveMcxFuturesToken } = await import("./botEngine");
+          const mcxSym = (input.instrumentSymbol ?? "").replace(/^MCX_/, "");
+          const resolved = await resolveMcxFuturesToken(mcxSym, accessToken);
+          if (resolved) {
+            console.log(`[Router/Slot] MCX resolved: ${mcxSym} → ${resolved}`);
+            (input as any).underlyingToken = resolved;
+            (input as any).instrumentToken = resolved;
+          }
+        }
+        if (input.instrumentToken.startsWith("MCX_FO|") && !/\|\d+$/.test(input.instrumentToken)) {
+          const { resolveMcxFuturesToken } = await import("./botEngine");
+          const mcxSym = (input.instrumentSymbol ?? "").replace(/^MCX_/, "");
+          const resolved = await resolveMcxFuturesToken(mcxSym, accessToken);
+          if (resolved) {
+            (input as any).instrumentToken = resolved;
+            if (!input.underlyingToken) (input as any).underlyingToken = resolved;
           }
         }
 

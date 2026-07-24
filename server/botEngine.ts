@@ -3496,7 +3496,7 @@ async function validateOptionToken(
 // MCX futures tokens are numeric IDs that change every month (e.g. MCX_FO|226593).
 // Placeholder tokens like MCX_FO|GOLDM (no numeric ID) must be resolved before use.
 // This function works WITHOUT an access token by downloading the public Upstox instruments JSON.
-async function resolveMcxFuturesToken(
+export async function resolveMcxFuturesToken(
   symbol: string,
   accessToken?: string | null,
 ): Promise<string | null> {
@@ -4138,6 +4138,10 @@ async function tick(
   // Fetch candles + quote
   // The Upstox intraday candle API works WITHOUT authentication for NSE_INDEX and MCX_FO tokens.
   // Paper mode uses real candle data from Upstox — no access token needed.
+  // Diagnostic: log signalToken on first few ticks to verify MCX resolution worked
+  if ((state.tickCount ?? 0) <= 3 && signalToken.startsWith("MCX_FO|")) {
+    console.log(`[BotEngine] CANDLE-FETCH tick#${state.tickCount ?? 0} session=${state.sessionToken.slice(0,8)} signalToken=${signalToken} underlying=${state.underlyingToken ?? "none"}`);
+  }
   let newCandle: Candle;
   const [candles1m, candles5m, dayCandles, quote] = await Promise.all([
     fetchUpstoxCandles(signalToken, state.accessToken ?? undefined),
@@ -6547,6 +6551,49 @@ export function startBot(
           emitActivity(state.sessionToken, "error", `Option token re-resolve error: ${(e as Error).message}`);
         }
       })();
+    }
+  }
+
+  // ── MCX FUTURES TOKEN RESOLUTION AT BOT START ──────────────────────────────
+  // Fix chicken-and-egg: MCX placeholder tokens (e.g. "MCX_FO|GOLDM") can't fetch candles,
+  // so the bot loops forever in "Waiting for market data". Resolve BEFORE first tick.
+  const mcxSignalToken = (state.isIndexOptions && state.underlyingToken) ? state.underlyingToken : state.instrumentToken;
+  if (mcxSignalToken.startsWith("MCX_FO|")) {
+    const isPlaceholder = !/\|\d+$/.test(mcxSignalToken); // "MCX_FO|GOLDM" vs "MCX_FO|555922"
+    const mcxSymbol = state.instrumentSymbol ?? "";
+    if (isPlaceholder && mcxSymbol) {
+      // Placeholder token — MUST resolve before any candle fetch
+      console.log(`[BotEngine] MCX START-RESOLVE: ${mcxSymbol} has placeholder token "${mcxSignalToken}" — resolving now...`);
+      const mcxResolvePromise = (async () => {
+        try {
+          const resolved = await resolveMcxFuturesToken(mcxSymbol, state.accessToken);
+          if (resolved) {
+            console.log(`[BotEngine] MCX START-RESOLVE SUCCESS: ${mcxSymbol} → ${resolved}`);
+            if (state.isIndexOptions && state.underlyingToken) {
+              state.underlyingToken = resolved;
+            } else {
+              state.instrumentToken = resolved;
+            }
+            (state as any)._mcxTokenResolved = true;
+            emitActivity(state.sessionToken, "bot_start", `✅ MCX token resolved at start: ${mcxSymbol} → ${resolved.split("|")[1]}`);
+          } else {
+            console.warn(`[BotEngine] MCX START-RESOLVE FAILED: ${mcxSymbol} — will retry on first tick`);
+            emitActivity(state.sessionToken, "error", `⚠ MCX token resolution failed at start for ${mcxSymbol} — will retry`);
+          }
+        } catch (err) {
+          console.error(`[BotEngine] MCX START-RESOLVE ERROR: ${mcxSymbol}:`, err instanceof Error ? err.message : String(err));
+        }
+      })();
+      // Chain onto existing pending resolve or create new one
+      if (state._pendingOptionResolve) {
+        state._pendingOptionResolve = state._pendingOptionResolve.then(() => mcxResolvePromise);
+      } else {
+        state._pendingOptionResolve = mcxResolvePromise;
+      }
+    } else if (!isPlaceholder) {
+      // Numeric token — mark as resolved so tick doesn't re-resolve unnecessarily
+      (state as any)._mcxTokenResolved = true;
+      console.log(`[BotEngine] MCX token already numeric at start: ${mcxSignalToken} (${mcxSymbol})`);
     }
   }
 

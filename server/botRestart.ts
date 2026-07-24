@@ -13,7 +13,7 @@
 import { getDb } from "./db";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc, gte } from "drizzle-orm";
-import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, type OpenTrade, type BotState } from "./botEngine";
+import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import axios from "axios";
 
@@ -239,13 +239,42 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     }).where(eq(botSessions.sessionToken, state.sessionToken));
   };
 
+  // ── MCX Token Resolution on Restart ──────────────────────────────────────────
+  // If the DB has a placeholder token (e.g. "MCX_FO|GOLDM"), resolve it before starting the bot.
+  let resolvedInstrumentToken = session.instrumentToken ?? "NSE_EQ|INE009A01021";
+  let resolvedUnderlyingToken = session.underlyingToken ?? undefined;
+  if (resolvedUnderlyingToken?.startsWith("MCX_FO|") && !/\|\d+$/.test(resolvedUnderlyingToken)) {
+    const mcxSym = (session.instrumentSymbol ?? "").replace(/^MCX_/, "");
+    if (mcxSym) {
+      const resolved = await resolveMcxFuturesToken(mcxSym, accessToken);
+      if (resolved) {
+        console.log(`[BotRestart] MCX resolved placeholder: ${mcxSym} → ${resolved}`);
+        resolvedUnderlyingToken = resolved;
+        resolvedInstrumentToken = resolved;
+        // Update DB so future restarts don't need to re-resolve
+        await db.update(botSessions).set({ underlyingToken: resolved, instrumentToken: resolved }).where(eq(botSessions.sessionToken, session.sessionToken));
+      }
+    }
+  } else if (resolvedInstrumentToken.startsWith("MCX_FO|") && !/\|\d+$/.test(resolvedInstrumentToken)) {
+    const mcxSym = (session.instrumentSymbol ?? "").replace(/^MCX_/, "");
+    if (mcxSym) {
+      const resolved = await resolveMcxFuturesToken(mcxSym, accessToken);
+      if (resolved) {
+        console.log(`[BotRestart] MCX resolved placeholder instrumentToken: ${mcxSym} → ${resolved}`);
+        resolvedInstrumentToken = resolved;
+        if (!resolvedUnderlyingToken) resolvedUnderlyingToken = resolved;
+        await db.update(botSessions).set({ instrumentToken: resolved, underlyingToken: resolved }).where(eq(botSessions.sessionToken, session.sessionToken));
+      }
+    }
+  }
+
   startBot(
     {
       sessionToken: session.sessionToken,
       sessionId: session.id,
       status: "running",
       mode: session.mode,
-      instrumentToken: session.instrumentToken ?? "NSE_EQ|INE009A01021",
+      instrumentToken: resolvedInstrumentToken,
       instrumentSymbol: session.instrumentSymbol ?? "RELIANCE",
       instrumentLabel: session.instrumentLabel ?? "Reliance Industries",
       capital: session.capital ?? 100000,
@@ -268,7 +297,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       // Sanitize stale NSE lot sizes persisted before the Jan-2026 revision (e.g. NIFTY 25 → 65)
       lotSize: getNseIndexLotSize(session.instrumentSymbol ?? "") ?? session.lotSize ?? 1,
       isIndexOptions: !!(session.isIndexOptions),
-      underlyingToken: session.underlyingToken ?? undefined,
+      underlyingToken: resolvedUnderlyingToken,
       optionType: (session.optionType ?? undefined) as "CE" | "PE" | "auto" | undefined,
       consecutiveTickErrors: 0,
       enabledLayers: session.enabledLayers ? (() => { try { return JSON.parse(session.enabledLayers!); } catch { return undefined; } })() : undefined,
