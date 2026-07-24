@@ -313,10 +313,11 @@ interface DirectionLossStreak {
 }
 const directionStreaks = new Map<string, DirectionLossStreak>();
 
-export function recordDirectionalLoss(sessionToken: string, direction: "BUY" | "SELL"): void {
+export function recordDirectionalLoss(sessionToken: string, direction: "BUY" | "SELL", isMCX: boolean = false): void {
   const now = Date.now();
   const WINDOW_MS = 90 * 60 * 1000;
-  const BLOCK_MS = 30 * 60 * 1000;
+  // MCX trends strongly — reduce direction block from 30min to 15min for MCX
+  const BLOCK_MS = isMCX ? 15 * 60 * 1000 : 30 * 60 * 1000; // MCX: 15 min, NSE: 30 min
   const cur = directionStreaks.get(sessionToken);
   if (!cur || cur.direction !== direction) {
     directionStreaks.set(sessionToken, { direction, losses: [now], blockedUntil: 0 });

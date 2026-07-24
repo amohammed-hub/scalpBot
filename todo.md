@@ -1656,3 +1656,8 @@
 
 ## CRITICAL FIX: Cross-Bot Direction Lock (Jul 24)
 - [ ] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
+
+## FIX: MCX Trades Not Triggering (Jul 24)
+- [x] BUG 11: MCX cooldown gates too aggressive — reduced P2 underlying cooldown from 15min→8min, P1 direction block from 3min→90s, P1 consecutive block from 10min→5min, anti-chase threshold from 1%→1.5%, direction streak block from 30min→15min for MCX
+- [x] BUG 12: resolveMcxFuturesToken failed for MCX_GOLD/MCX_CRUDE symbols — function didn't strip MCX_ prefix before matching against instruments JSON name field. Fixed with proper SYMBOL_TO_NAME mapping.
+- [x] Removed `disabled: true` flags from mcxInstruments.ts (Gold, Silver, Copper, NatGas) since user is actively trading MCX

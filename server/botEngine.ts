@@ -3530,11 +3530,15 @@ async function resolveMcxFuturesToken(
   try {
     const instruments = await getMcxInstruments();
     const now = Date.now();
-    // Build a normalized name from symbol for matching:
-    // CRUDEOIL → CRUDE OIL, NATURALGAS → NATURALGAS, GOLD → GOLD, SILVER → SILVER
-    const normalizedSymbol = symbol.toUpperCase()
-      .replace('CRUDEOIL', 'CRUDE OIL')
-      .replace('CRUDEOILM', 'CRUDE OIL MINI');
+    // Build a normalized name from symbol for matching. Strip MCX_ prefix first:
+    // MCX_GOLD → GOLD, MCX_CRUDE → CRUDE OIL, CRUDEOIL → CRUDE OIL, MCX_NATURALGAS → NATURALGAS
+    const SYMBOL_TO_NAME: Record<string, string> = {
+      'CRUDE': 'CRUDE OIL', 'CRUDEOIL': 'CRUDE OIL', 'CRUDEOILM': 'CRUDE OIL MINI',
+      'GOLD': 'GOLD', 'SILVER': 'SILVER', 'NATURALGAS': 'NATURALGAS',
+      'COPPER': 'COPPER', 'ZINC': 'ZINC', 'ALUMINIUM': 'ALUMINIUM',
+    };
+    const strippedSymbol = symbol.toUpperCase().replace(/^MCX_/, '');
+    const normalizedSymbol = SYMBOL_TO_NAME[strippedSymbol] ?? strippedSymbol;
     const futures = instruments.filter(x =>
       x.instrument_type === "FUT" &&
       (x.expiry ?? 0) > now &&
@@ -3549,7 +3553,7 @@ async function resolveMcxFuturesToken(
     const partialFutures = instruments.filter(x =>
       x.instrument_type === "FUT" &&
       (x.expiry ?? 0) > now &&
-      (x.name ?? "").toUpperCase().includes(symbol.replace('CRUDEOIL','CRUDE').toUpperCase())
+      (x.name ?? "").toUpperCase().includes(strippedSymbol.replace('CRUDEOIL','CRUDE'))
     );
     partialFutures.sort((a, b) => (a.expiry ?? 0) - (b.expiry ?? 0));
     if (partialFutures.length > 0) {
@@ -4129,7 +4133,7 @@ async function tick(
           state.dailyPnl += pnl;
         }
         state.openTrade = null;
-        if (pnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
+        if (pnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX3); else recordDirectionalWin(state.sessionToken, trade.direction);
         await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
         emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
         console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
@@ -4413,7 +4417,7 @@ async function tick(
     state.openTrade = null;
     recordTradeClose(state.sessionToken, state.scanIntervalSec);
     const sqTotalPnl = pnl + trade.bookedPnl;
-    if (sqTotalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
+    if (sqTotalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
     await onTradeClose(trade.dbId, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
     emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${sqTotalPnl >= 0 ? "+" : ""}₹${sqTotalPnl.toFixed(0)}`, { price: effectivePrice, pnl: sqTotalPnl });
@@ -4468,7 +4472,7 @@ async function tick(
       state.dailyPnl += totalPnl;
     }
     state.openTrade = null;
-    if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
+    if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
     await onTradeClose(trade.dbId, exitPx, totalPnl, "Market Closed — Auto Square-Off (midnight wraparound fix)");
     emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: exitPx, pnl: totalPnl });
     sendTelegramAlert(state,
@@ -4515,7 +4519,7 @@ async function tick(
         }
         state.openTrade = null;
         recordTradeClose(state.sessionToken, state.scanIntervalSec);
-        if (pnl + trade.bookedPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
+        if (pnl + trade.bookedPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
         await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
         console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
         return;
@@ -4953,7 +4957,7 @@ async function tick(
       }
       state.openTrade = null;
       recordTradeClose(state.sessionToken, state.scanIntervalSec);
-      if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction); else recordDirectionalWin(state.sessionToken, trade.direction);
+      if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
       // P2: Reset underlying cooldown on a winning trade
       if (totalPnl >= 0) {
         state.consecutiveUnderlyingSLs = 0;
@@ -5439,10 +5443,10 @@ async function tick(
     const moveFrom3CandlesAgo = signal.direction === "BUY"
       ? (lastCandle.close - prev2Candle.open) / prev2Candle.open
       : (prev2Candle.open - lastCandle.close) / prev2Candle.open;
-    // If 3 consecutive same-direction candles AND moved > 0.3% → chasing
-    // MCX instruments (CrudeOil, NatGas) trend strongly — 3 same-direction candles is NORMAL.
-    // Use 1.0% threshold for MCX vs 0.3% for NSE to avoid blocking valid trend entries.
-    const CHASE_THRESHOLD = isMCX ? 0.010 : 0.003; // MCX: 1.0%, NSE: 0.3%
+    // If 3 consecutive same-direction candles AND moved > threshold → chasing
+    // MCX instruments (CrudeOil, NatGas, Gold) trend strongly — 3 same-direction candles is NORMAL.
+    // Use 1.5% threshold for MCX vs 0.3% for NSE to avoid blocking valid trend entries.
+    const CHASE_THRESHOLD = isMCX ? 0.015 : 0.003; // MCX: 1.5%, NSE: 0.3%
     if (allSameDir && moveFrom3CandlesAgo > CHASE_THRESHOLD) {
       const movePct = (moveFrom3CandlesAgo * 100).toFixed(2);
       emitActivity(state.sessionToken, "signal", `⊘ ANTI-CHASE: ${signal.direction} from ${signal.layer} rejected — 3 consecutive ${signal.direction === "BUY" ? "green" : "red"} candles moved ${movePct}% (>${(CHASE_THRESHOLD*100).toFixed(1)}%). Wait for pullback.`);
@@ -5458,7 +5462,7 @@ async function tick(
   }
 
   // ── P2: Underlying-Level Cooldown (any direction) ───────────────────────────
-  // After 2+ consecutive SLs on this underlying (regardless of CE/PE direction), block for 15 min
+  // After 2+ consecutive SLs on this underlying (regardless of CE/PE direction), block for 15 min (NSE) / 8 min (MCX)
   if (state.consecutiveUnderlyingSLs >= 2 && state.lastUnderlyingSLAt) {
     // Skip cooldown if user manually restarted (acknowledged losses) or has unlimited trades
     if (state.dailyLossAcknowledged || state.unlimitedTrades) {
@@ -5467,8 +5471,10 @@ async function tick(
       state.lastUnderlyingSLAt = null;
     } else {
     const elapsedSinceUnderlyingSL = Date.now() - state.lastUnderlyingSLAt;
-    if (elapsedSinceUnderlyingSL < 900_000) { // 15 minutes
-      const remainMin = Math.ceil((900_000 - elapsedSinceUnderlyingSL) / 60000);
+    // MCX trends strongly — reduce cooldown from 15min to 8min for MCX to avoid missing trend continuations
+    const P2_COOLDOWN_MS = isMCX ? 480_000 : 900_000; // MCX: 8 min, NSE: 15 min
+    if (elapsedSinceUnderlyingSL < P2_COOLDOWN_MS) {
+      const remainMin = Math.ceil((P2_COOLDOWN_MS - elapsedSinceUnderlyingSL) / 60000);
       emitActivity(state.sessionToken, "signal", `⊘ Underlying cooldown — ${state.consecutiveUnderlyingSLs} consecutive SLs on ${state.instrumentLabel} (${remainMin}min remaining)`);
       pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Underlying cooldown: ${state.consecutiveUnderlyingSLs} SLs in ${state.instrumentLabel}`);
       return;
@@ -5481,31 +5487,34 @@ async function tick(
   }
   // ── P1: Direction-Aware Cooldown ─────────────────────────────────────────────
   // After SL, penalize same-direction signals:
-  // - Within 3 minutes: BLOCK same direction entirely (market proved you wrong)
-  // - 3-5 minutes: require 75% confidence for same direction (higher bar)
-  // - After 2+ consecutive same-direction SLs: BLOCK that direction for 10 minutes
+  // - Within 3 minutes (NSE) / 90 sec (MCX): BLOCK same direction entirely (market proved you wrong)
+  // - 3-5 minutes (NSE) / 90s-2.5min (MCX): require 75% confidence for same direction (higher bar)
+  // - After 2+ consecutive same-direction SLs: BLOCK that direction for 10 min (NSE) / 5 min (MCX)
   if (state.lastSlExitAt && state.lastSlExitDirection && !state.dailyLossAcknowledged && !state.unlimitedTrades) {
     // Skip P1 cooldown if user manually restarted (acknowledged) or has unlimited trades
     const elapsedSinceSl = Date.now() - state.lastSlExitAt;
     const signalMatchesSLDirection = signal.direction === state.lastSlExitDirection;
 
     if (signalMatchesSLDirection) {
-      // 2+ consecutive SLs in same direction → block for 10 minutes
-      if (state.consecutiveSameDirectionSLs >= 2 && elapsedSinceSl < 600_000) {
-        const remainMin = Math.ceil((600_000 - elapsedSinceSl) / 60000);
+      // 2+ consecutive SLs in same direction → block for 10 min (NSE) / 5 min (MCX)
+      const P1_CONSECUTIVE_BLOCK_MS = isMCX ? 300_000 : 600_000; // MCX: 5 min, NSE: 10 min
+      if (state.consecutiveSameDirectionSLs >= 2 && elapsedSinceSl < P1_CONSECUTIVE_BLOCK_MS) {
+        const remainMin = Math.ceil((P1_CONSECUTIVE_BLOCK_MS - elapsedSinceSl) / 60000);
         emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked — ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs (${remainMin}min cooldown remaining)`);
         pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Direction cooldown: ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs`);
         return;
       }
-      // Within 3 minutes of SL → block same direction
-      if (elapsedSinceSl < 180_000) {
-        const remainSec = Math.ceil((180_000 - elapsedSinceSl) / 1000);
+      // Within short window of SL → block same direction (MCX: 90s, NSE: 3min)
+      const P1_SHORT_BLOCK_MS = isMCX ? 90_000 : 180_000; // MCX: 90s, NSE: 3 min
+      if (elapsedSinceSl < P1_SHORT_BLOCK_MS) {
+        const remainSec = Math.ceil((P1_SHORT_BLOCK_MS - elapsedSinceSl) / 1000);
         emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked — same direction as recent SL (${remainSec}s cooldown)`);
         pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Same-direction cooldown (${remainSec}s remaining)`);
         return;
       }
-      // 3-5 minutes: require higher confidence (75%)
-      if (elapsedSinceSl < 300_000 && signal.confidence < 0.75) {
+      // After short block: require higher confidence (75%) for a brief window
+      const P1_CONFIDENCE_GATE_MS = isMCX ? 150_000 : 300_000; // MCX: 2.5 min, NSE: 5 min
+      if (elapsedSinceSl < P1_CONFIDENCE_GATE_MS && signal.confidence < 0.75) {
         emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} needs ≥75% conf after SL (got ${(signal.confidence*100).toFixed(0)}%)`);
         pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Post-SL confidence gate: needs 75%, got ${(signal.confidence*100).toFixed(0)}%`);
         return;
