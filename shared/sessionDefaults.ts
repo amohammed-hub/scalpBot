@@ -28,10 +28,10 @@ const MORNING_DEFAULTS: InstrumentDefault[] = [
 
 // Evening session: MCX Commodity Options
 const EVENING_DEFAULTS: InstrumentDefault[] = [
-  { token: "MCX_FO|552720",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|552720" },
-  { token: "MCX_FO|520702",  symbol: "MCX_CRUDE",  label: "Crude Oil → OTM Options (Auto)",    lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|520702" },
+  { token: "MCX_FO|555922",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|555922" },
+  { token: "MCX_FO|560977",  symbol: "MCX_CRUDE",  label: "Crude Oil → OTM Options (Auto)",    lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|560977" },
   { token: "MCX_FO|471725",  symbol: "MCX_SILVER", label: "Silver → OTM Options (Auto)",       lotSize: 30,  isIndexOptions: true, underlyingToken: "MCX_FO|471725" },
-  { token: "MCX_FO|552720",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|552720" },
+  { token: "MCX_FO|555922",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|555922" },
 ];
 
 export type TradingSession = "morning" | "evening" | "closed";

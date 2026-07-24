@@ -1,6 +1,6 @@
 // MCX Instrument Registry — verified Upstox instrument tokens (numeric IDs, July 2026 front-month)
 // Tokens verified against https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz
-// on 2026-07-10. These are NUMERIC instrument keys (e.g. MCX_FO|520702) — NOT text-based symbols.
+// on 2026-07-10. These are NUMERIC instrument keys (e.g. MCX_FO|560977) — NOT text-based symbols.
 //
 // ⚠️  MCX futures are monthly contracts. Tokens change every month when contracts roll over.
 // The resolveMcxFrontMonthToken() function in botEngine.ts auto-resolves the current front-month

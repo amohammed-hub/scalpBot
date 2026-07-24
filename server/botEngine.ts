@@ -4008,20 +4008,18 @@ async function tick(
       emitActivity(state.sessionToken, "error", `⚠ Daily loss limit already reached (₹${state.dailyPnl.toFixed(0)}). Bot will only pause on NEW losses.`);
       state.dailyLossAcknowledged = true;
     } else if (!state.dailyLossAcknowledged) {
-      // New losses pushed past limit — pause
-      console.warn(`[tick] 🛑 DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — PAUSING`);
-      state.status = "paused";
-      state.lastError = `Daily loss limit reached (₹${state.dailyPnl.toFixed(0)})`;
-      emitActivity(state.sessionToken, "bot_stop", `🛑 Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit`);
-      // Telegram: critical alert for daily loss limit
+      // New losses pushed past limit — WARNING ONLY (never pause, admin single-user system)
+      console.warn(`[tick] ⚠ DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — WARNING ONLY (continuing)`);
+      state.dailyLossAcknowledged = true;
+      emitActivity(state.sessionToken, "error", `⚠ Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit. Bot continues (warning only).`);
+      // Telegram: warning alert for daily loss limit
       sendTelegramAlert(state,
-        `🚨 <b>DAILY LOSS LIMIT HIT</b>\n` +
+        `⚠️ <b>DAILY LOSS LIMIT WARNING</b>\n` +
         `📊 <b>${state.instrumentLabel}</b>\n` +
         `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +
-        `⏸ Bot PAUSED — no new trades until tomorrow\n` +
-        `⚠️ Review positions and risk settings`
+        `✅ Bot continues trading (warning only)\n` +
+        `⚠️ Monitor positions carefully`
       , "criticalAlerts");
-      return;
     }
   }
 
