@@ -5333,10 +5333,14 @@ async function tick(
   // Reject signals where the current price has already moved significantly past the
   // signal's entry price. This prevents entering at local highs/lows (chasing).
   // All 4 trades on July 21 hit SL within 1-5 min because they entered at extremes.
-  // Layers with built-in anti-chasing (ORB, Trend, Momentum, Adeeb) already check this
-  // internally, but BoomingBulls, RedBarTheory, CPR, FailedBreakout do NOT.
-  // This gate catches those cases universally.
-  if (signal.entryPrice > 0 && state.candles.length >= 3) {
+  // Layers exempt from this gate (they rely on consecutive same-direction candles):
+  // ORB, Trend, Momentum, Adeeb, RedBarTheory (5 red/green bricks = 5 same-dir candles).
+  // Applies to: BoomingBulls, CPR, FailedBreakout, HourlyClose, etc.
+  // EXEMPTION: RedBarTheory and Momentum signals are BASED on consecutive same-direction
+  // candles — the anti-chase gate would ALWAYS block them (5 red bricks = 5 red candles).
+  // These layers have their own built-in confirmation logic (brick size, strength score).
+  const antiChaseExemptLayers = ["RedBarTheory", "Momentum", "Trend", "ORB", "Adeeb"];
+  if (signal.entryPrice > 0 && state.candles.length >= 3 && !antiChaseExemptLayers.includes(signal.layer)) {
     const lastCandle = state.candles[state.candles.length - 1];
     const prevCandle = state.candles[state.candles.length - 2];
     const prev2Candle = state.candles[state.candles.length - 3];
