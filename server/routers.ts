@@ -2319,7 +2319,7 @@ export const appRouter = router({
                 try {
                   const optQuote = await fetchFullQuote(bot.optionTradeToken, bot.accessToken);
                   if (optQuote && optQuote.ltp > 0) {
-                    const bestPriceQ = optQuote.bid > 0 ? Math.max(optQuote.bid, optQuote.ltp) : optQuote.ltp;
+                    const bestPriceQ = optQuote.ltp;
                     optPremium = bestPriceQ;
                     bot.optionPremiumPrice = optPremium;
                   }
@@ -2341,7 +2341,7 @@ export const appRouter = router({
                         bot.optionTradeToken = resolved.token;
                         const q = await fetchFullQuote(resolved.token, bot.accessToken);
                         if (q && q.ltp > 0) {
-                          const bestPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                          const bestPrice = q.ltp;
                           optPremium = bestPrice;
                           bot.optionPremiumPrice = optPremium;
                         }
@@ -2352,7 +2352,7 @@ export const appRouter = router({
                       bot.optionTradeToken = resolvedToken;
                       const q = await fetchFullQuote(resolvedToken, bot.accessToken);
                       if (q && q.ltp > 0) {
-                        const bestPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                        const bestPrice = q.ltp;
                         optPremium = bestPrice;
                         bot.optionPremiumPrice = optPremium;
                       }

@@ -4316,7 +4316,7 @@ async function tick(
   // ── Resolve effective price for open trade monitoring ───────────────────────
   // For options mode: use current option premium (not underlying spot price) for P&L.
   // For regular mode: use underlying/futures price as before.
-  let effectivePrice = price; // default: underlying price
+  let effectivePrice = state.optionPremiumPrice ?? state.openTrade?.entryPrice ?? price;
   if (state.openTrade?.isIndexOptions) {
     if (state.accessToken && state.openTrade.instrumentToken) {
       // Fetch current option premium from Upstox using the REAL option token
@@ -4396,6 +4396,15 @@ async function tick(
       const entryPremium = state.openTrade.entryPrice;
       effectivePrice = entryPremium; // P&L = 0 — no real quote available
       state.optionPremiumPrice = entryPremium;
+    }
+  }
+  // SANITY: effectivePrice should be in the same magnitude as entry
+  if (state.openTrade && effectivePrice > 0) {
+    const entryPx = state.openTrade.entryPrice;
+    const ratio = effectivePrice / entryPx;
+    if (ratio > 5 || ratio < 0.01) {
+      // Price is wildly off (probably fell back to underlying) — freeze at last known
+      effectivePrice = state.optionPremiumPrice ?? entryPx;
     }
   }
 
@@ -5754,7 +5763,7 @@ async function tick(
         // Only use mock premiums when there is NO token at all (no-token paper mode).
         console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping trade.`);
         emitActivity(state.sessionToken, "error", `⚠ MCX futures resolve failed for ${symbol} — cannot find active futures contract. Upstox instruments API may be down or token expired. Refresh token in Settings.`);
-        return;
+        // Don't return — let trade continue with estimated premium below
       }
     } // end isMcxPlaceholder
 
