@@ -1649,3 +1649,7 @@
 - [x] Added comprehensive logging: order placement confirmation, rejection reasons, accessToken status at bot start
 - [x] FIX 9: Time exit change to max 20 minutes
 - [x] BUG 5: No cooldown after order rejection — bot retried every 3-5 sec, flooding Upstox with failed orders (caused 455 qty / 7 lots on NIFTY). Fixed: 2-min cooldown + auto-pause after 3 rejections.
+- [ ] BUG 6: Profit showing incorrect on dashboard (shows +₹3507 but actual P&L is different)
+- [ ] BUG 7: Wrong strike price — dashboard shows 23800 CE but Upstox purchased 23900 CE
+- [ ] BUG 8: Duplicate lot buying that is NOT averaging — same lot bought multiple times (130 qty = 2 lots)
+- [ ] BUG 9: Trades not auto-closing — SL/target not triggering exit orders on Upstox, user had to close manually

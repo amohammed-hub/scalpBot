@@ -3262,7 +3262,24 @@ export async function fetchFullQuote(instrumentToken: string, accessToken: strin
     const bid = data.depth?.buy?.[0]?.price ?? ltp;
     const ask = data.depth?.sell?.[0]?.price ?? ltp;
     return { ltp, bid, ask };
-  } catch { return null; }
+  } catch (err) {
+    // Retry once after 1 second — Upstox API can have transient failures
+    try {
+      await new Promise(r => setTimeout(r, 1000));
+      const encoded = encodeURIComponent(instrumentToken);
+      const url = `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded}`;
+      const resp = await axios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
+      const data = resp.data?.data?.[instrumentToken] ?? resp.data?.data?.[Object.keys(resp.data?.data ?? {})[0]];
+      if (!data) return null;
+      const ltp = data.last_price ?? 0;
+      const bid = data.depth?.buy?.[0]?.price ?? ltp;
+      const ask = data.depth?.sell?.[0]?.price ?? ltp;
+      return { ltp, bid, ask };
+    } catch {
+      console.warn(`[BotEngine] fetchFullQuote failed twice for ${instrumentToken}`);
+      return null;
+    }
+  }
 }
 
 // ── Mock price generator ──────────────────────────────────────────────────────
@@ -3439,6 +3456,42 @@ export async function resolveAtmOptionToken(
     return null;
   }
 }
+
+// ── Token Validation: Cross-check resolved token against /v2/option/contract ──
+// The option chain API sometimes returns mismatched instrument_key for a given strike.
+// This function validates by fetching the contract details for the token and confirming
+// the strike_price matches what we expect.
+async function validateOptionToken(
+  token: string,
+  expectedStrike: number,
+  optionType: "CE" | "PE",
+  accessToken: string,
+): Promise<{ valid: boolean; actualStrike?: number; tradingSymbol?: string }> {
+  try {
+    // Use instrument search to find the actual details of this token
+    const resp = await axios.get(
+      `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(token.split("|")[0] === "NSE_FO" ? "NSE_INDEX|Nifty 50" : token)}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+    );
+    const contracts: Array<{ instrument_key: string; strike_price: number; trading_symbol: string; instrument_type: string }> = resp.data?.data ?? [];
+    const match = contracts.find(c => c.instrument_key === token);
+    if (match) {
+      if (match.strike_price !== expectedStrike) {
+        console.error(`[BotEngine] TOKEN MISMATCH! Token ${token} has strike ${match.strike_price} but expected ${expectedStrike}. Trading symbol: ${match.trading_symbol}`);
+        return { valid: false, actualStrike: match.strike_price, tradingSymbol: match.trading_symbol };
+      }
+      console.log(`[BotEngine] Token validated: ${token} → strike ${match.strike_price} ${match.instrument_type} (${match.trading_symbol})`);
+      return { valid: true, actualStrike: match.strike_price, tradingSymbol: match.trading_symbol };
+    }
+    // Token not found in contracts — might be a different underlying. Skip validation.
+    console.warn(`[BotEngine] Token ${token} not found in option contracts — skipping validation`);
+    return { valid: true }; // assume valid if we can't verify
+  } catch (err) {
+    console.warn(`[BotEngine] validateOptionToken failed for ${token}:`, err instanceof Error ? err.message : String(err));
+    return { valid: true }; // don't block trading on validation failure
+  }
+}
+
 // ── MCX: Resolve front-month futures instrument_key ─────────────────────────
 // MCX futures tokens are numeric IDs that change every month (e.g. MCX_FO|226593).
 // Placeholder tokens like MCX_FO|GOLDM (no numeric ID) must be resolved before use.
@@ -4838,11 +4891,33 @@ async function tick(
       const totalPnl  = remainPnl + trade.bookedPnl;
       if (trade.mode === "live" && state.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
-        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, remainingQty);
+        // ── POSITION SYNC: Fetch actual Upstox position qty to handle duplicate order scenarios ──
+        // If the bot placed duplicate orders (due to past bugs), the actual Upstox position
+        // may be larger than what the bot knows (remainingQty). Exit the FULL position.
+        let actualExitQty = remainingQty;
+        try {
+          const posResp = await axios.get("https://api.upstox.com/v2/portfolio/short-term-positions", {
+            headers: { Authorization: `Bearer ${state.accessToken}`, Accept: "application/json" },
+            timeout: 8000,
+          });
+          const positions: Array<{ instrument_token: string; quantity: number; day_buy_quantity: number; day_sell_quantity: number }> = posResp.data?.data ?? [];
+          const matchingPos = positions.find(p => p.instrument_token === trade.instrumentToken);
+          if (matchingPos) {
+            const netQty = Math.abs(matchingPos.quantity);
+            if (netQty > remainingQty) {
+              console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — POSITION SYNC: Upstox has ${netQty} qty but bot knows ${remainingQty}. Exiting full ${netQty} qty.`);
+              emitActivity(state.sessionToken, "signal", `⚠ Position sync: Upstox has ${netQty} qty (bot expected ${remainingQty}). Exiting full position.`);
+              actualExitQty = netQty;
+            }
+          }
+        } catch (posErr) {
+          console.warn(`[BotEngine] Position sync failed, using bot's qty (${remainingQty}):`, posErr instanceof Error ? posErr.message : String(posErr));
+        }
+        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty);
         if (!exitOrderId) {
           // Retry once after 2 seconds — network blip or brief Upstox outage
           await new Promise(r => setTimeout(r, 2000));
-          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, remainingQty);
+          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty);
         }
         if (!exitOrderId) {
           // Both attempts failed — keep trade open, alert user to close manually
@@ -5826,22 +5901,23 @@ async function tick(
           // Exclude the current (too expensive) strike so resolver picks a deeper OTM
           const currentStrikeNum = parseInt(tradeSymbol?.match(/(\d+)$/)?.[ 1] ?? "0");
           const fallbackExclude = currentStrikeNum > 0 ? [currentStrikeNum] : [];
+          let accumulatedExclude = [...fallbackExclude];
           cheaperResolved = isMcxForFallback
             ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude)
             : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude);
           // If the resolver returned a strike that's still too expensive, try one more OTM
           if (cheaperResolved && cheaperResolved.premium * lotSize > state.capital) {
-            const secondExclude = [...fallbackExclude, cheaperResolved.strike];
+            accumulatedExclude = [...accumulatedExclude, cheaperResolved.strike];
             cheaperResolved = isMcxForFallback
-              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, secondExclude)
-              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, secondExclude);
+              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude)
+              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude);
           }
           // Third attempt if still too expensive
           if (cheaperResolved && cheaperResolved.premium * lotSize > state.capital) {
-            const thirdExclude = [...fallbackExclude, cheaperResolved.strike];
+            accumulatedExclude = [...accumulatedExclude, cheaperResolved.strike];
             cheaperResolved = isMcxForFallback
-              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, thirdExclude)
-              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, thirdExclude);
+              ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude)
+              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude);
           }
         }
         
@@ -5925,6 +6001,23 @@ async function tick(
   // The actual order placed is always a BUY of the option contract.
   let orderId: string | undefined;
   if (state.mode === "live" && state.accessToken) {
+    // ── TOKEN VALIDATION: Cross-check resolved token before placing order ──────
+    // The Upstox option chain API sometimes returns mismatched instrument_key for a strike.
+    // Validate the token's actual strike matches what we resolved.
+    if (isOptionsMode && tradeInstrumentToken && state.accessToken) {
+      const ceOrPeForValidation = tradeSymbol?.includes("_CE") ? "CE" as const : "PE" as const;
+      const expectedStrikeForValidation = parseInt(tradeSymbol?.match(/_(\d+)$/)?.[1] ?? "0");
+      if (expectedStrikeForValidation > 0) {
+        const validation = await validateOptionToken(tradeInstrumentToken, expectedStrikeForValidation, ceOrPeForValidation, state.accessToken);
+        if (!validation.valid && validation.actualStrike) {
+          // Token mismatch detected! Update the label and symbol to reflect the ACTUAL strike
+          console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — STRIKE MISMATCH CORRECTED: label said ${expectedStrikeForValidation} but token is actually ${validation.actualStrike} ${ceOrPeForValidation}`);
+          emitActivity(state.sessionToken, "signal", `⚠ Strike correction: ${expectedStrikeForValidation} → ${validation.actualStrike} ${ceOrPeForValidation} (token validation)`);
+          tradeSymbol = `${state.instrumentSymbol}_${ceOrPeForValidation}_${validation.actualStrike}`;
+          tradeLabel = formatOptionContractLabel(state.instrumentSymbol, validation.actualStrike, ceOrPeForValidation, resolvedExpiry);
+        }
+      }
+    }
     // Options: always BUY the option (CE for bullish, PE for bearish)
     // Futures/equity: use signal direction directly
     const orderDirection = isOptionsMode ? "BUY" : signal.direction;
