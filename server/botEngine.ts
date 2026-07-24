@@ -3896,14 +3896,28 @@ export function getLastOrderRejectionReason(): string | null {
 }
 
 export async function placeUpstoxOrder(
-  accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number,
+  accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number, mcxLotSize?: number,
 ): Promise<string | null> {
-  const MAX_RETRIES = 3; // Railway has 3 static IPs; retry ensures we hit a whitelisted one
+  const MAX_RETRIES = 3;
+  // ── PRODUCT TYPE: MCX and F&O use "D" (NRML/Delivery), equity uses "I" (Intraday) ──
+  // Upstox API docs: F&O examples all use product "D". MCX options REQUIRE "D".
+  // Using "I" for MCX options causes exchange rejection (ghost trades).
+  const isMcx = instrumentToken.startsWith("MCX_FO|") || instrumentToken.startsWith("MCX|");
+  const isFnO = instrumentToken.includes("_FO|");
+  const product = isMcx ? "D" : "I"; // MCX requires NRML; NSE F&O uses MIS (less margin for scalping)
+  // ── QUANTITY: For MCX commodity, Upstox expects NUMBER OF LOTS, not units ──
+  // API docs: "For commodity - number of lots is accepted"
+  // Our internal quantity is in units (lotSize multiples). Convert to lots for MCX.
+  let orderQty = quantity;
+  if (isMcx && mcxLotSize && mcxLotSize > 0) {
+    orderQty = Math.max(1, Math.round(quantity / mcxLotSize));
+    console.log(`[BotEngine] MCX lot conversion: ${quantity} units / ${mcxLotSize} lot_size = ${orderQty} lots`);
+  }
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
   try {
     const resp = await axios.post(
       "https://api-hft.upstox.com/v3/order/place",
-      { quantity, product: "I", validity: "DAY", price: 0, tag: "scalp-bot", instrument_token: instrumentToken, order_type: "MARKET", transaction_type: direction, disclosed_quantity: 0, trigger_price: 0, is_amo: false, slice: false, market_protection: -1 },
+      { quantity: orderQty, product, validity: "DAY", price: 0, tag: "scalp-bot", instrument_token: instrumentToken, order_type: "MARKET", transaction_type: direction, disclosed_quantity: 0, trigger_price: 0, is_amo: false, slice: true, market_protection: -1 },
       { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" }, timeout: 8000 }
     );
     lastOrderRejectionReason = null;
@@ -3913,7 +3927,7 @@ export async function placeUpstoxOrder(
     const respData = resp.data?.data;
     const orderId = respData?.order_id ?? respData?.order_ids?.[0] ?? null;
     if (orderId) {
-      console.log(`[BotEngine] ✅ Order PLACED on Upstox: ${instrumentToken} ${direction} qty=${quantity} → orderId=${orderId}`);
+      console.log(`[BotEngine] ✅ Order PLACED on Upstox: ${instrumentToken} ${direction} qty=${orderQty} (product=${product}${isMcx ? `, lots from ${quantity} units` : ""}) → orderId=${orderId}`);
     } else {
       console.error(`[BotEngine] ⚠ Order API returned 200 but no order_id found. Response:`, JSON.stringify(resp.data));
       lastOrderRejectionReason = `API returned 200 but no order_id in response: ${JSON.stringify(resp.data?.data)}`;
@@ -3936,7 +3950,7 @@ export async function placeUpstoxOrder(
       continue;
     }
     lastOrderRejectionReason = reason;
-    console.error(`[BotEngine] Order placement failed (${instrumentToken} ${direction} qty=${quantity}):`, reason);
+    console.error(`[BotEngine] Order placement failed (${instrumentToken} ${direction} qty=${orderQty} product=${product}):`, reason);
     return null;
   }
   }
@@ -4501,7 +4515,7 @@ async function tick(
     }
    const trade = state.openTrade;
    if (trade.mode === "live" && state.accessToken) {
-     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", (trade.quantity - (trade.bookedQty ?? 0)));
+     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", (trade.quantity - (trade.bookedQty ?? 0)), state.lotSize);
       if (!sqOffId) {
         state.lastError = `Auto square-off REJECTED — close ${trade.symbolLabel} manually on Upstox`;
         emitActivity(state.sessionToken, "error", `⚠ AUTO SQUARE-OFF FAILED — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
@@ -4606,7 +4620,7 @@ async function tick(
         const heroRemQty = trade.quantity - (trade.bookedQty ?? 0);
         let pnl = (effectivePrice - trade.entryPrice) * heroRemQty;
         if (trade.mode === "live" && state.accessToken) {
-          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", heroRemQty);
+          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", heroRemQty, state.lotSize);
           if (!heroOrderId2) {
             state.lastError = `Hero Zero exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
             emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
@@ -4651,7 +4665,7 @@ async function tick(
          ? (trade.partial1RPrice - trade.entryPrice) * bookQty
          : (trade.entryPrice - trade.partial1RPrice) * bookQty;
        if (trade.mode === "live" && state.accessToken) {
-          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
+          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize);
           if (!partialOrderId) {
             state.lastError = `Partial 1R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 1R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
@@ -4703,7 +4717,7 @@ async function tick(
         ? (trade.partial2RPrice - trade.entryPrice) * bookQty
         : (trade.entryPrice - trade.partial2RPrice) * bookQty;
        if (trade.mode === "live" && state.accessToken) {
-          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty);
+          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize);
           if (!partialOrderId) {
             state.lastError = `Partial 2R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 2R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
@@ -4852,7 +4866,7 @@ async function tick(
           // For live mode: place the order first
           if (trade.mode === "live" && state.accessToken) {
             const avgOrderDir = trade.direction; // Same direction as original trade
-            const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty);
+            const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty, state.lotSize);
             if (!avgOrderId) {
               // Order failed — don't average, just log
               console.warn(`[BotEngine] ${state.sessionToken} — AVERAGING order REJECTED by Upstox`);
@@ -5024,11 +5038,11 @@ async function tick(
         } catch (posErr) {
           console.warn(`[BotEngine] Position sync failed, using bot's qty (${remainingQty}):`, posErr instanceof Error ? posErr.message : String(posErr));
         }
-        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty);
+        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize);
         if (!exitOrderId) {
           // Retry once after 2 seconds — network blip or brief Upstox outage
           await new Promise(r => setTimeout(r, 2000));
-          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty);
+          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize);
         }
         if (!exitOrderId) {
           // Both attempts failed — keep trade open, alert user to close manually
@@ -6192,7 +6206,7 @@ async function tick(
     // Futures/equity: use signal direction directly
     const orderDirection = isOptionsMode ? "BUY" : signal.direction;
     console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — PLACING LIVE ORDER: ${tradeInstrumentToken} ${orderDirection} qty=${quantity}`);
-    const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity);
+    const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity, state.lotSize);
     if (!oid) {
       // CRITICAL: if the order was rejected by Upstox, do NOT record a phantom trade.
       // Log the failure and skip this tick entirely.
@@ -6827,7 +6841,7 @@ export async function forceAverageDown(sessionToken: string): Promise<{ success:
   
   // For live mode: place the order
   if (trade.mode === "live" && state.accessToken) {
-    const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction, avgQty);
+    const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction, avgQty, state.lotSize);
     if (!avgOrderId) {
       trade.averageCount = 1; // Prevent retry spam
       return { success: false, error: "Upstox order rejected" };

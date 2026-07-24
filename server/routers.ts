@@ -1490,7 +1490,10 @@ export const appRouter = router({
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken && trade.instrumentToken) {
             const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
-            orderId = await placeUpstoxOrder(creds[0].accessToken, trade.instrumentToken, exitDir, remainingQty);
+            // Get lotSize from running bot state (for MCX lot conversion)
+            const botState = getBotState(input.sessionToken);
+            const lotSize = botState?.lotSize ?? 1;
+            orderId = await placeUpstoxOrder(creds[0].accessToken, trade.instrumentToken, exitDir, remainingQty, lotSize);
           }
         }
 

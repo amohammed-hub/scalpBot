@@ -2300,7 +2300,7 @@ export default function Dashboard() {
                     <div className="text-[10px] text-white/50 mb-1 font-medium">● IN TRADE</div>
                     {(() => {
                       const ot = bot.openTrade;
-                      const isOpts = ot.isIndexOptions;
+                      const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
                       const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
                       let liveP = 0;
                       if (isOpts) {
