@@ -1703,4 +1703,8 @@
 - [x] BUG 21: After server restart, optionTradeToken lost (in-memory only). Fallback fetches underlying futures price (e.g. ₹1261 COPPER) instead of option premium (₹3-8). Added priceLeakRatio > 10 detection — freezes at entry price, clears bad token.
 - [x] BUG 21 ROOT CAUSE FIX: Added optionTradeToken column to bot_sessions DB table. Persisted on every tick via onTick callback (all 4 paths: primary, restart, secondary, botRestart). Restored from DB on bot restart. Token now survives server restarts permanently.
 - [x] Fixed second sanity check (ratio > 5) to also reset state.optionPremiumPrice to prevent Dashboard from showing wrong value.
+
+## FIX: Order Verification Retry Loop + Actual Fill Price (Jul 25)
+- [x] BUG 22: If exchange takes >2.5s to fill, order status="pending" → trade was recorded anyway (potential ghost trade). Added 3-attempt retry loop (2.5s + 3s + 3s = ~10s total). If still not "complete"/"traded" after 10s → trade NOT recorded, Telegram alert sent.
+- [x] BUG 22: Entry price was candle-based estimate, not actual Upstox fill price. Now uses verification.avgPrice (actual exchange fill) as entry price when order confirmed "complete"/"traded". Fixes P&L accuracy permanently.
 - [x] Fixed retry path in option premium fetch to also apply underlying leak detection (priceLeakRatio > 10).

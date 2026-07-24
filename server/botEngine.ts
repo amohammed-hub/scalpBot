@@ -6263,9 +6263,24 @@ async function tick(
     // Upstox API can return orderId but exchange may reject it async (margin, invalid token, etc.)
     // We verify BEFORE recording the trade to prevent ghost trades.
     emitActivity(state.sessionToken, "signal", `📤 Order submitted: ${orderId} — verifying exchange fill...`);
-    await new Promise(r => setTimeout(r, 2500)); // Wait 2.5s for exchange to process
-    const verification = await verifyUpstoxOrderStatus(state.accessToken, orderId);
-    console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Order ${orderId} verification: status=${verification.status} | filled=${verification.filledQty} | avgPrice=${verification.avgPrice} | reason=${verification.rejectionReason ?? "none"}`);
+    // RETRY LOOP: Wait for exchange to confirm fill (up to 3 attempts, ~10s total)
+    // This prevents ghost trades from "pending" orders that never fill.
+    let verification: { status: string; rejectionReason?: string; filledQty?: number; avgPrice?: number } = { status: "unknown" };
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await new Promise(r => setTimeout(r, attempt === 1 ? 2500 : 3000)); // 2.5s first, then 3s
+      verification = await verifyUpstoxOrderStatus(state.accessToken, orderId);
+      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Order ${orderId} verify attempt ${attempt}/3: status=${verification.status} | filled=${verification.filledQty} | avgPrice=${verification.avgPrice} | reason=${verification.rejectionReason ?? "none"}`);
+      // Definitive answers — stop retrying
+      if (verification.status === "complete" || verification.status === "traded" ||
+          verification.status === "rejected" || verification.status === "cancelled") {
+        break;
+      }
+      // Still pending/open/unknown — retry
+      if (attempt < 3) {
+        emitActivity(state.sessionToken, "signal", `⏳ Order still ${verification.status} (attempt ${attempt}/3) — waiting...`);
+      }
+    }
+
     if (verification.status === "rejected" || verification.status === "cancelled") {
       // ORDER WAS REJECTED BY EXCHANGE — do NOT record a ghost trade
       state.lastError = `Order REJECTED by exchange: ${verification.rejectionReason ?? "unknown reason"}`;
@@ -6281,13 +6296,24 @@ async function tick(
       }
       return;
     }
-    // Order filled or still processing — record the actual fill price if available
-    if ((verification.status === "complete" || verification.status === "traded") && verification.avgPrice && verification.avgPrice > 0) {
-      // Store actual fill price to use below (signal.entryPrice will be overridden)
-      signal.entryPrice = verification.avgPrice;
-      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Using actual fill price: ₹${verification.avgPrice}`);
+
+    // If STILL pending/open/unknown after 3 attempts (~10s) — DO NOT record trade
+    if (verification.status !== "complete" && verification.status !== "traded") {
+      state.lastError = `Order still ${verification.status} after 10s — NOT recording trade. Check Upstox order book.`;
+      emitActivity(state.sessionToken, "error", `⚠️ Order ${orderId} still "${verification.status}" after 10s — trade NOT recorded. Check Upstox order book manually.`);
+      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Order ${orderId} NOT FILLED after 10s (status: ${verification.status}). Trade NOT recorded to prevent ghost.`);
+      sendTelegramAlert(state, `⚠️ <b>ORDER NOT FILLED</b>\n📊 ${tradeLabel} ${orderDirection}\n⏱ Status: ${verification.status} after 10s\n🆔 ${orderId}\n\n⚠️ Check Upstox order book — order may still be open.`, "criticalAlerts");
+      state.lastTradeOpenedAt = Date.now(); // Cooldown
+      return;
     }
-    emitActivity(state.sessionToken, "signal", `✅ Order VERIFIED: ${orderId} (${verification.status}) @ ₹${verification.avgPrice ?? "market"}`);
+
+    // ORDER CONFIRMED FILLED — use ACTUAL fill price from Upstox (not candle estimate)
+    const actualFillPrice = verification.avgPrice ?? verification.filledQty ?? optionPremiumForSizing;
+    if (actualFillPrice && actualFillPrice > 0) {
+      signal.entryPrice = actualFillPrice;
+      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ✅ Using ACTUAL fill price from Upstox: ₹${actualFillPrice} (overrides candle estimate)`);
+    }
+    emitActivity(state.sessionToken, "signal", `✅ Order FILLED & VERIFIED: ${orderId} @ ₹${actualFillPrice ?? "market"} (actual Upstox fill price)`);
   } else if (state.mode === "live" && !state.accessToken) {
     // CRITICAL FIX: If mode is "live" but accessToken is null, do NOT silently record a paper trade.
     // This was the root cause of "trades on dashboard but not in Upstox" bug.
