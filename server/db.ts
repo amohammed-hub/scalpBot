@@ -604,6 +604,18 @@ export async function hasUsedTrial(sessionToken: string): Promise<boolean> {
 
 /** Start a 2-day free trial for a session */
 export async function startTrial(sessionToken: string): Promise<{ success: boolean; expiresAt: Date | null; error?: string }> {
+  // Guard: require verified user (phone+OTP completed) before allowing trial
+  const dbCheck = await getDb();
+  if (dbCheck) {
+    const userRows = await dbCheck.select({ isVerified: appUsers.isVerified, mobile: appUsers.mobile })
+      .from(appUsers)
+      .where(eq(appUsers.sessionToken, sessionToken))
+      .limit(1);
+    if (!userRows.length || !userRows[0].isVerified) {
+      return { success: false, expiresAt: null, error: "Please sign in with your phone number first to start the trial." };
+    }
+  }
+
   const used = await hasUsedTrial(sessionToken);
   if (used) {
     return { success: false, expiresAt: null, error: "Trial already used" };

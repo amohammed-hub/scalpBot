@@ -1748,3 +1748,9 @@
 - [x] FIX: Pricing 6-month plan — mark unbuilt features as "Coming Soon"
 - [x] FIX: Payment flow — replace Subscribe buttons with "WhatsApp to Subscribe" until Razorpay configured
 - [x] MOVE: Precision Verify → tab inside P&L Analytics (remove as separate page)
+
+## Sunday Priority Items (Jul 25)
+- [x] VERIFIED: Admin Revoke — correctly cancels subscriptions, stops bots, sets isVerified=false. checkAccess returns hasAccess=false for revoked users.
+- [x] VERIFIED: Admin Bot Slots — overrideBotSlots updates extraBotSlots in DB. Bot start flow reads it and adds to maxBots limit.
+- [x] FIX: Trial flow — added server-side guard in startTrial(): requires verified user (phone+OTP completed) before trial activation. Frontend already redirects to /login?intent=trial.
+- [x] FIX: Removed "AI-powered" / "AI Signal Engine" claims from hero badge, subtitle, and Dashboard header → "Multi-Layer Signal Engine"

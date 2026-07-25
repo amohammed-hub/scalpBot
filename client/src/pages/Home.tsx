@@ -145,14 +145,14 @@ export default function Home() {
       <div className="max-w-6xl mx-auto px-6 pt-20 pb-16 text-center">
         <div className="inline-flex items-center gap-2 bg-teal-500/10 border border-teal-500/30 rounded-full px-4 py-1.5 text-teal-400 text-sm mb-6">
           <span className="w-2 h-2 bg-teal-400 rounded-full animate-pulse" />
-          Fully Automated Scalping Bot — Powered by AI Signal Engine
+          Fully Automated Scalping Bot — Multi-Layer Signal Engine
         </div>
         <h1 className="text-5xl md:text-6xl font-bold text-white mb-6 leading-tight">
           Let the Bot Trade.<br />
           <span className="text-teal-400">You Just Watch the Profits.</span>
         </h1>
         <p className="text-xl text-white/60 mb-10 max-w-2xl mx-auto">
-          Connect your Upstox account, configure your risk settings, and let the AI-powered scalping bot automatically detect signals and place orders on NSE and MCX markets.
+          Connect your Upstox account, configure your risk settings, and let the scalping bot automatically detect signals and place orders on NSE and MCX markets.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Button size="lg" className="bg-teal-500 hover:bg-teal-600 text-white px-8 py-6 text-lg" onClick={handleStartTrial} disabled={showTrialStarting}>
