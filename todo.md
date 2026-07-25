@@ -1757,4 +1757,4 @@
 
 ## First-Time User Guide (Jul 26)
 - [x] Add "?" help icon tooltips on each Dashboard section explaining: bot slots, Paper vs Live, Kill Switch, Stop, capital field, signals/strategies
-- [ ] Show first-login guide overlay/modal for new users on their first Dashboard visit
+- [x] Show first-login guide overlay/modal for new users on their first Dashboard visit

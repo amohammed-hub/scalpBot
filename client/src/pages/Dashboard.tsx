@@ -12,6 +12,7 @@ import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon }
 import { Gift, Copy, Users as UsersIcon } from "lucide-react";
 import { Pencil } from "lucide-react";
 import { HelpTip } from "@/components/HelpTip";
+import { FirstLoginGuide } from "@/components/FirstLoginGuide";
 import { Clock, Timer, Trophy, Ban, ArrowDownUp } from "lucide-react";
 import { Infinity as InfinityIcon } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -1216,7 +1217,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col md:flex-row">
       {/* ── Name Prompt Dialog ────────────────────────────────────────────────── */}
       {showNamePrompt && (
-        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[250] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="max-w-sm w-full bg-[oklch(0.15_0.02_240)] border border-teal-500/30 rounded-2xl p-6 space-y-4">
             <h3 className="text-lg font-bold text-white text-center">What should we call you?</h3>
             <p className="text-white/50 text-sm text-center">Enter your name to personalize your experience</p>
@@ -1239,6 +1240,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      {/* ── First-Login Guide Overlay ──────────────────────────────────────── */}
+      {!showNamePrompt && <FirstLoginGuide />}
       {/* ── Subscription Paywall Overlay ─────────────────────────────────────── */}
       {accessQuery.data && !accessQuery.data.hasAccess && meQuery.data?.role !== "admin" && !accessQuery.data?.plan?.includes("yearly") && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
