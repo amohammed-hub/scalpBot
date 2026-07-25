@@ -1777,3 +1777,4 @@
 - [x] Backtest rewritten RedBarTheory on 3-month data — show results before enabling live
 - [x] Add PremiumRenko layer (Lesson 7 — Renko on option premium chart, brick 10/15)
 - [x] Backtest PremiumRenko on 3-month data — show results before enabling live
+- [x] PremiumRenko backtest with REAL option premium data (Analytics Token, 30 days)
