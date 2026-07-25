@@ -1754,3 +1754,7 @@
 - [x] VERIFIED: Admin Bot Slots — overrideBotSlots updates extraBotSlots in DB. Bot start flow reads it and adds to maxBots limit.
 - [x] FIX: Trial flow — added server-side guard in startTrial(): requires verified user (phone+OTP completed) before trial activation. Frontend already redirects to /login?intent=trial.
 - [x] FIX: Removed "AI-powered" / "AI Signal Engine" claims from hero badge, subtitle, and Dashboard header → "Multi-Layer Signal Engine"
+
+## First-Time User Guide (Jul 26)
+- [x] Add "?" help icon tooltips on each Dashboard section explaining: bot slots, Paper vs Live, Kill Switch, Stop, capital field, signals/strategies
+- [ ] Show first-login guide overlay/modal for new users on their first Dashboard visit
