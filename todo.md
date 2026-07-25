@@ -1657,6 +1657,12 @@
 ## CRITICAL FIX: Cross-Bot Direction Lock (Jul 24)
 - [x] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
 
+## Direction Lock v2 — Relaxed Rules (Jul 26)
+- [x] Rule 1: Same underlying (both bots on NIFTY) → HARD BLOCK opposite direction
+- [x] Rule 2: Correlated indices (Group 1: NIFTY/BANKNIFTY/FINNIFTY/SENSEX/BANKEX/MIDCPNIFTY) → Allow opposite direction ONLY if signal confidence > 85%, log as "⚠️ Correlation override — high confidence counter-signal"
+- [x] Rule 3: Different segments (NSE vs MCX, GOLD vs CRUDE) → NO BLOCK at all — fully independent
+- [x] Enhanced activity logging: when a counter-signal is generated (blocked OR overridden), log FULL signal details — strategy name, confidence, candle pattern, reversal assessment
+
 ## FIX: MCX Trades Not Triggering (Jul 24)
 - [x] BUG 11: MCX cooldown gates too aggressive — reduced P2 underlying cooldown from 15min→8min, P1 direction block from 3min→90s, P1 consecutive block from 10min→5min, anti-chase threshold from 1%→1.5%, direction streak block from 30min→15min for MCX
 - [x] BUG 12: resolveMcxFuturesToken failed for MCX_GOLD/MCX_CRUDE symbols — function didn't strip MCX_ prefix before matching against instruments JSON name field. Fixed with proper SYMBOL_TO_NAME mapping.

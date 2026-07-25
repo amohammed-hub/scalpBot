@@ -1,361 +1,218 @@
 /**
  * directionLock.test.ts
  *
- * Tests for BUG 10: Cross-bot direction lock.
- * Correlated indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, BANKEX, MIDCPNIFTY)
- * must agree on direction. If one bot has a PE open, other bots on correlated
- * indices cannot open a CE position (and vice versa).
+ * Unit tests for Cross-Bot Direction Lock v2 (pure function).
+ * Rules:
+ *   1. Same underlying (both bots on NIFTY) → HARD BLOCK opposite direction
+ *   2. Correlated Group 1 (NIFTY/BANKNIFTY/FINNIFTY/SENSEX/BANKEX/MIDCPNIFTY) →
+ *      Allow opposite ONLY if signal confidence > 85%, log as "⚠️ Correlation override"
+ *   3. Different segments (NSE vs MCX, GOLD vs CRUDE) → NO BLOCK at all
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
-import {
-  startBot,
-  stopBot,
-  getBotState,
-  type BotState,
-  type OpenTrade,
-  type TradeInsert,
-} from "./botEngine";
-import { getActivity, clearActivity } from "./activityLog";
+import { describe, it, expect } from "vitest";
+import { evaluateDirectionLock, GROUP1_CORRELATED } from "./botEngine";
 
-// Mock axios so tests don't make real HTTP calls
-vi.mock("axios", () => {
-  // Generate mock candles that produce a strong BUY signal (uptrend)
-  const basePrice = 24500;
-  const mockCandles = Array.from({ length: 30 }, (_, i) => ({
-    timestamp: Date.now() - (30 - i) * 60000,
-    open: basePrice + i * 15,
-    high: basePrice + i * 15 + 30,
-    low: basePrice + i * 15 - 10,
-    close: basePrice + i * 15 + 20,
-    volume: 100000 + i * 5000,
-  }));
-  const mockAxios = {
-    get: vi.fn().mockResolvedValue({
-      data: {
-        status: "success",
-        data: {
-          candles: mockCandles.map(c => [
-            new Date(c.timestamp).toISOString(),
-            c.open, c.high, c.low, c.close, c.volume, 0,
-          ]),
-        },
-      },
-    }),
-    create: vi.fn().mockReturnThis(),
-    defaults: { headers: {} },
-  };
-  return { default: mockAxios, ...mockAxios };
-});
+describe("Cross-Bot Direction Lock v2", () => {
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+  // ── Rule 1: Same underlying → HARD BLOCK ────────────────────────────────────
+  describe("Rule 1: Same underlying HARD BLOCK", () => {
+    it("blocks CE entry when same underlying (NIFTY) has PE open", () => {
+      const result = evaluateDirectionLock("NIFTY", true, 0.75, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("hard_block");
+      expect(result.reason).toContain("Same underlying NIFTY");
+    });
 
-const activeBots: string[] = [];
+    it("blocks PE entry when same underlying (BANKNIFTY) has CE open", () => {
+      const result = evaluateDirectionLock("BANKNIFTY", false, 0.95, [
+        { symbol: "BANKNIFTY", openTradeSymbol: "BANKNIFTY_CE_52000", botSlot: 1, status: "running" },
+      ]);
+      expect(result.action).toBe("hard_block");
+      expect(result.reason).toContain("Same underlying BANKNIFTY");
+    });
 
-function makeSessionToken(slot: number) {
-  return `dirlock-test-${slot}-${Math.random().toString(36).slice(2)}`;
-}
+    it("hard blocks even with 100% confidence on same underlying", () => {
+      const result = evaluateDirectionLock("NIFTY", true, 1.0, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("hard_block");
+    });
 
-function makeBotConfig(sessionToken: string, overrides: Partial<BotState> = {}) {
-  return {
-    sessionToken,
-    sessionId: 1,
-    status: "running" as const,
-    mode: "paper" as const,
-    instrumentToken: "NSE_INDEX|Nifty 50",
-    instrumentSymbol: "NIFTY",
-    instrumentLabel: "Nifty 50",
-    capital: 100_000,
-    riskPerTradePct: 1.0,
-    maxTradesPerDay: 5,
-    dailyLossLimitPct: 3.0,
-    stopLossMultiplier: 1.5,
-    targetMultiplier: 3.0,
-    trailingSlEnabled: false,
-    trailingSlPct: 0.5,
-    minConfidence: 0,
-    scanIntervalSec: 9999,
-    tradesCount: 0,
-    dailyPnl: 0,
-    accessToken: null,
-    telegramBotToken: null,
-    telegramChatId: null,
-    telegramEnabled: false,
-    botSlot: 0,
-    lotSize: 25,
-    isIndexOptions: true, // Options mode — this is key for direction lock
-    capitalUsed: 0,
-    ...overrides,
-  };
-}
-
-function makeOpenTrade(direction: "BUY" | "SELL", symbol: string): OpenTrade {
-  return {
-    dbId: 1,
-    symbol,
-    symbolLabel: symbol,
-    instrumentToken: "NSE_FO|NIFTY_CE_24500",
-    direction,
-    mode: "paper",
-    entryPrice: 250,
-    quantity: 25,
-    slPrice: 200,
-    targetPrice: 400,
-    atr: 50,
-    confidence: 80,
-    enteredAt: new Date(),
-    trailingSlEnabled: false,
-    trailingSlPct: 0.5,
-    currentSl: 200,
-    partial1RPrice: 300,
-    partial2RPrice: 350,
-    partialBooked: 0,
-    bookedQty: 0,
-    bookedPnl: 0,
-    isIndexOptions: true,
-    carryForward: true, // Prevent market-close auto-close during tests
-  };
-}
-
-async function waitForTick(ms = 300) {
-  await new Promise(r => setTimeout(r, ms));
-}
-
-afterEach(() => {
-  // Stop all bots started during tests
-  for (const token of activeBots) {
-    stopBot(token);
-  }
-  activeBots.length = 0;
-});
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-describe("Cross-Bot Direction Lock (BUG 10)", () => {
-
-  it("blocks CE entry on BANKNIFTY when NIFTY has PE open", async () => {
-    const niftyToken = makeSessionToken(0);
-    const bnfToken = makeSessionToken(1);
-    activeBots.push(niftyToken, bnfToken);
-
-    const onTradeOpen = vi.fn().mockResolvedValue(1);
-    const onTradeClose = vi.fn().mockResolvedValue(undefined);
-    const onTick = vi.fn().mockResolvedValue(undefined);
-
-    // Start NIFTY bot with a PE open trade (bearish position)
-    const niftyOpenTrade = makeOpenTrade("SELL", "NIFTY_PE_24000");
-    startBot(
-      makeBotConfig(niftyToken, {
-        instrumentSymbol: "NIFTY",
-        instrumentLabel: "Nifty 50",
-        botSlot: 0,
-        carryForward: true,
-      }),
-      onTradeOpen, onTradeClose, niftyOpenTrade, onTick
-    );
-    await waitForTick();
-
-    // Verify NIFTY bot has the PE open trade
-    const niftyState = getBotState(niftyToken);
-    expect(niftyState).toBeDefined();
-    // The open trade should still be there (carryForward prevents auto-close)
-    if (!niftyState!.openTrade) {
-      // If trade was closed (e.g. by SL hit from mock prices), skip this test gracefully
-      return;
-    }
-    expect(niftyState!.openTrade.symbol).toContain("PE");
-
-    // Start BANKNIFTY bot — it should try to open a CE (BUY signal from uptrend candles)
-    // but the direction lock should block it
-    const bnfTradeOpen = vi.fn().mockResolvedValue(2);
-    startBot(
-      makeBotConfig(bnfToken, {
-        instrumentToken: "NSE_INDEX|Nifty Bank",
-        instrumentSymbol: "BANKNIFTY",
-        instrumentLabel: "Bank Nifty",
-        botSlot: 1,
-        optionType: "CE", // Explicitly wants CE
-      }),
-      bnfTradeOpen, onTradeClose, null, onTick
-    );
-    activeBots.push(bnfToken);
-    await waitForTick(500);
-
-    // The BANKNIFTY bot should NOT have opened a trade due to direction lock
-    const bnfState = getBotState(bnfToken);
-    expect(bnfState).toBeDefined();
-    // If signal was generated but blocked, onTradeOpen should NOT have been called for BNF
-    // Check activity log for direction lock message
-    const activity = getActivity(bnfToken);
-    const dirLockActivity = activity.find(a => 
-      a.message.includes("DIRECTION LOCK") || a.message.includes("direction lock")
-    );
-    
-    // Either the direction lock blocked it (activity log has the message)
-    // OR no signal was generated (which is also fine — no opposite position)
-    if (bnfTradeOpen.mock.calls.length > 0) {
-      // If a trade was opened, it should NOT be a CE when NIFTY has PE
-      // This would be a BUG — the direction lock failed
-      expect(bnfState!.openTrade?.symbol).not.toContain("CE");
-    }
-    // The key assertion: no CE trade opened on BANKNIFTY
-    if (bnfState!.openTrade) {
-      expect(bnfState!.openTrade.symbol).not.toMatch(/CE/);
-    }
+    it("allows same direction on same underlying (CE + CE)", () => {
+      const result = evaluateDirectionLock("NIFTY", true, 0.75, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_CE_24500", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("allow");
+    });
   });
 
-  it("blocks PE entry on SENSEX when FINNIFTY has CE open", async () => {
-    const finniftyToken = makeSessionToken(0);
-    const sensexToken = makeSessionToken(1);
-    activeBots.push(finniftyToken, sensexToken);
+  // ── Rule 2: Correlated indices — confidence threshold ───────────────────────
+  describe("Rule 2: Correlated indices confidence threshold", () => {
+    it("soft blocks CE on BANKNIFTY when NIFTY has PE and confidence ≤ 85%", () => {
+      const result = evaluateDirectionLock("BANKNIFTY", true, 0.70, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("soft_block");
+      expect(result.reason).toContain("confidence 70% ≤ 85%");
+    });
 
-    const onTradeOpen = vi.fn().mockResolvedValue(1);
-    const onTradeClose = vi.fn().mockResolvedValue(undefined);
-    const onTick = vi.fn().mockResolvedValue(undefined);
+    it("soft blocks at exactly 85% confidence (threshold is > 85, not >=)", () => {
+      const result = evaluateDirectionLock("SENSEX", true, 0.85, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("soft_block");
+      expect(result.reason).toContain("85% ≤ 85%");
+    });
 
-    // Start FINNIFTY bot with a CE open trade (bullish position)
-    const finniftyOpenTrade = makeOpenTrade("BUY", "FINNIFTY_CE_22000");
-    startBot(
-      makeBotConfig(finniftyToken, {
-        instrumentSymbol: "FINNIFTY",
-        instrumentLabel: "Fin Nifty",
-        botSlot: 0,
-        carryForward: true,
-      }),
-      onTradeOpen, onTradeClose, finniftyOpenTrade, onTick
-    );
-    await waitForTick();
+    it("OVERRIDES (allows) at 86% confidence on correlated index", () => {
+      const result = evaluateDirectionLock("BANKNIFTY", true, 0.86, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("override");
+      expect(result.reason).toContain("Correlation override");
+      expect(result.reason).toContain("86%");
+    });
 
-    // Verify FINNIFTY bot has the CE open trade
-    const finniftyState = getBotState(finniftyToken);
-    expect(finniftyState).toBeDefined();
-    if (!finniftyState!.openTrade) {
-      // If trade was closed (e.g. by SL hit from mock prices), skip gracefully
-      return;
-    }
-    expect(finniftyState!.openTrade.symbol).toContain("CE");
+    it("OVERRIDES at 95% confidence with 'genuine reversal' assessment", () => {
+      const result = evaluateDirectionLock("FINNIFTY", false, 0.95, [
+        { symbol: "BANKNIFTY", openTradeSymbol: "BANKNIFTY_CE_52000", botSlot: 1, status: "running" },
+      ]);
+      expect(result.action).toBe("override");
+      expect(result.detail).toContain("genuine reversal");
+    });
 
-    // Start SENSEX bot wanting PE — should be blocked
-    const sensexTradeOpen = vi.fn().mockResolvedValue(2);
-    startBot(
-      makeBotConfig(sensexToken, {
-        instrumentToken: "BSE_INDEX|SENSEX",
-        instrumentSymbol: "SENSEX",
-        instrumentLabel: "Sensex",
-        botSlot: 1,
-        optionType: "PE", // Explicitly wants PE
-      }),
-      sensexTradeOpen, onTradeClose, null, onTick
-    );
-    await waitForTick(500);
+    it("OVERRIDES at 87% confidence with 'possible divergence' assessment", () => {
+      const result = evaluateDirectionLock("SENSEX", true, 0.87, [
+        { symbol: "FINNIFTY", openTradeSymbol: "FINNIFTY_PE_22000", botSlot: 2, status: "running" },
+      ]);
+      expect(result.action).toBe("override");
+      expect(result.detail).toContain("possible divergence");
+    });
 
-    // The SENSEX bot should NOT have opened a PE trade
-    const sensexState = getBotState(sensexToken);
-    expect(sensexState).toBeDefined();
-    if (sensexState!.openTrade) {
-      expect(sensexState!.openTrade.symbol).not.toMatch(/PE/);
-    }
+    it("soft blocks PE on SENSEX when FINNIFTY has CE and confidence is 50%", () => {
+      const result = evaluateDirectionLock("SENSEX", false, 0.50, [
+        { symbol: "FINNIFTY", openTradeSymbol: "FINNIFTY_CE_22000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("soft_block");
+      expect(result.detail).toContain("Moderate confidence");
+    });
+
+    it("soft blocks with 'Low confidence' assessment at 30%", () => {
+      const result = evaluateDirectionLock("BANKEX", true, 0.30, [
+        { symbol: "MIDCPNIFTY", openTradeSymbol: "MIDCPNIFTY_PE_12000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("soft_block");
+      expect(result.detail).toContain("Low confidence");
+    });
+
+    it("allows same direction (CE+CE) on correlated indices without blocking", () => {
+      const result = evaluateDirectionLock("BANKNIFTY", true, 0.60, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_CE_24500", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("allow");
+    });
   });
 
-  it("allows same direction (CE+CE) on correlated indices", async () => {
-    const niftyToken = makeSessionToken(0);
-    const bnfToken = makeSessionToken(1);
-    activeBots.push(niftyToken, bnfToken);
+  // ── Rule 3: Different segments → NO BLOCK ───────────────────────────────────
+  describe("Rule 3: Different segments — no blocking", () => {
+    it("does NOT block MCX instruments regardless of NSE positions", () => {
+      const result = evaluateDirectionLock("NIFTY", true, 0.60, [
+        { symbol: "GOLD", openTradeSymbol: "GOLD_PE_72000", botSlot: 1, status: "running" },
+        { symbol: "CRUDEOIL", openTradeSymbol: "CRUDE_PE_6500", botSlot: 2, status: "running" },
+      ]);
+      expect(result.action).toBe("allow");
+    });
 
-    const onTradeOpen = vi.fn().mockResolvedValue(1);
-    const onTradeClose = vi.fn().mockResolvedValue(undefined);
-    const onTick = vi.fn().mockResolvedValue(undefined);
+    it("MCX GOLD is fully independent from NSE indices", () => {
+      const result = evaluateDirectionLock("GOLD", true, 0.60, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+      ]);
+      // GOLD is not in GROUP1_CORRELATED, so it returns "allow" immediately
+      expect(result.action).toBe("allow");
+      expect(result.reason).toBe("Not in correlated group");
+    });
 
-    // Start NIFTY bot with a CE open trade (bullish)
-    const niftyOpenTrade = makeOpenTrade("BUY", "NIFTY_CE_24500");
-    startBot(
-      makeBotConfig(niftyToken, {
-        instrumentSymbol: "NIFTY",
-        instrumentLabel: "Nifty 50",
-        botSlot: 0,
-        carryForward: true,
-      }),
-      onTradeOpen, onTradeClose, niftyOpenTrade, onTick
-    );
-    await waitForTick();
+    it("MCX SILVER is fully independent", () => {
+      const result = evaluateDirectionLock("SILVER", false, 0.40, [
+        { symbol: "BANKNIFTY", openTradeSymbol: "BANKNIFTY_CE_52000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("allow");
+      expect(result.reason).toBe("Not in correlated group");
+    });
 
-    // Start BANKNIFTY bot also wanting CE — should NOT be blocked
-    const bnfTradeOpen = vi.fn().mockResolvedValue(2);
-    startBot(
-      makeBotConfig(bnfToken, {
-        instrumentToken: "NSE_INDEX|Nifty Bank",
-        instrumentSymbol: "BANKNIFTY",
-        instrumentLabel: "Bank Nifty",
-        botSlot: 1,
-        optionType: "CE", // Same direction as NIFTY — should be allowed
-      }),
-      bnfTradeOpen, onTradeClose, null, onTick
-    );
-    await waitForTick(500);
+    it("MCX CRUDEOIL is fully independent", () => {
+      const result = evaluateDirectionLock("CRUDEOIL", true, 0.90, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("allow");
+    });
 
-    // Check activity log — should NOT have direction lock message
-    const activity = getActivity(bnfToken);
-    const dirLockActivity = activity.find(a => 
-      a.message.includes("DIRECTION LOCK")
-    );
-    expect(dirLockActivity).toBeUndefined();
+    it("MCX NATURALGAS is fully independent", () => {
+      const result = evaluateDirectionLock("NATURALGAS", false, 0.50, [
+        { symbol: "SENSEX", openTradeSymbol: "SENSEX_CE_80000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("allow");
+    });
+
+    it("MCX COPPER is fully independent", () => {
+      const result = evaluateDirectionLock("COPPER", true, 0.75, [
+        { symbol: "FINNIFTY", openTradeSymbol: "FINNIFTY_PE_22000", botSlot: 0, status: "running" },
+      ]);
+      expect(result.action).toBe("allow");
+    });
   });
 
-  it("does NOT apply direction lock to MCX instruments", async () => {
-    const niftyToken = makeSessionToken(0);
-    const crudeToken = makeSessionToken(1);
-    activeBots.push(niftyToken, crudeToken);
+  // ── Group membership verification ──────────────────────────────────────────
+  describe("Group 1 membership", () => {
+    it("includes all 6 correlated NSE/BSE indices", () => {
+      expect(GROUP1_CORRELATED.has("NIFTY")).toBe(true);
+      expect(GROUP1_CORRELATED.has("BANKNIFTY")).toBe(true);
+      expect(GROUP1_CORRELATED.has("FINNIFTY")).toBe(true);
+      expect(GROUP1_CORRELATED.has("SENSEX")).toBe(true);
+      expect(GROUP1_CORRELATED.has("BANKEX")).toBe(true);
+      expect(GROUP1_CORRELATED.has("MIDCPNIFTY")).toBe(true);
+    });
 
-    const onTradeOpen = vi.fn().mockResolvedValue(1);
-    const onTradeClose = vi.fn().mockResolvedValue(undefined);
-    const onTick = vi.fn().mockResolvedValue(undefined);
-
-    // Start NIFTY bot with PE open
-    const niftyOpenTrade = makeOpenTrade("SELL", "NIFTY_PE_24000");
-    startBot(
-      makeBotConfig(niftyToken, {
-        instrumentSymbol: "NIFTY",
-        instrumentLabel: "Nifty 50",
-        botSlot: 0,
-        carryForward: true,
-      }),
-      onTradeOpen, onTradeClose, niftyOpenTrade, onTick
-    );
-    await waitForTick();
-
-    // Start MCX CRUDE bot — should NOT be affected by NIFTY's PE position
-    const crudeTradeOpen = vi.fn().mockResolvedValue(2);
-    startBot(
-      makeBotConfig(crudeToken, {
-        instrumentToken: "MCX_FO|CRUDE",
-        instrumentSymbol: "MCX_CRUDE",
-        instrumentLabel: "Crude Oil",
-        botSlot: 1,
-        isIndexOptions: false, // MCX is not index options
-      }),
-      crudeTradeOpen, onTradeClose, null, onTick
-    );
-    await waitForTick(500);
-
-    // MCX should NOT have direction lock activity
-    const activity = getActivity(crudeToken);
-    const dirLockActivity = activity.find(a => 
-      a.message.includes("DIRECTION LOCK")
-    );
-    expect(dirLockActivity).toBeUndefined();
+    it("excludes all MCX commodities", () => {
+      expect(GROUP1_CORRELATED.has("GOLD")).toBe(false);
+      expect(GROUP1_CORRELATED.has("SILVER")).toBe(false);
+      expect(GROUP1_CORRELATED.has("CRUDEOIL")).toBe(false);
+      expect(GROUP1_CORRELATED.has("NATURALGAS")).toBe(false);
+      expect(GROUP1_CORRELATED.has("COPPER")).toBe(false);
+    });
   });
 
-  it("CORRELATED_SYMBOLS set includes all 6 expected indices", () => {
-    // Verify the implementation covers all correlated indices
-    const CORRELATED_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
-    expect(CORRELATED_SYMBOLS.has("NIFTY")).toBe(true);
-    expect(CORRELATED_SYMBOLS.has("BANKNIFTY")).toBe(true);
-    expect(CORRELATED_SYMBOLS.has("FINNIFTY")).toBe(true);
-    expect(CORRELATED_SYMBOLS.has("SENSEX")).toBe(true);
-    expect(CORRELATED_SYMBOLS.has("BANKEX")).toBe(true);
-    expect(CORRELATED_SYMBOLS.has("MIDCPNIFTY")).toBe(true);
-    // MCX should NOT be in the set
-    expect(CORRELATED_SYMBOLS.has("MCX_CRUDE")).toBe(false);
-    expect(CORRELATED_SYMBOLS.has("MCX_GOLD")).toBe(false);
+  // ── Edge cases ─────────────────────────────────────────────────────────────
+  describe("Edge cases", () => {
+    it("ignores stopped bots", () => {
+      const result = evaluateDirectionLock("BANKNIFTY", true, 0.60, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "stopped" },
+      ]);
+      expect(result.action).toBe("allow");
+    });
+
+    it("returns allow when no other bots exist", () => {
+      const result = evaluateDirectionLock("NIFTY", true, 0.60, []);
+      expect(result.action).toBe("allow");
+    });
+
+    it("handles multiple conflicting bots — first conflict wins", () => {
+      const result = evaluateDirectionLock("SENSEX", true, 0.60, [
+        { symbol: "NIFTY", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+        { symbol: "BANKNIFTY", openTradeSymbol: "BANKNIFTY_PE_51000", botSlot: 1, status: "running" },
+      ]);
+      expect(result.action).toBe("soft_block");
+      // First conflicting bot (NIFTY) should be in the reason
+      expect(result.reason).toContain("NIFTY");
+    });
+
+    it("case-insensitive symbol matching", () => {
+      const result = evaluateDirectionLock("nifty", true, 0.60, [
+        { symbol: "Nifty", openTradeSymbol: "NIFTY_PE_24000", botSlot: 0, status: "running" },
+      ]);
+      // Same underlying (both NIFTY after uppercasing) → hard block
+      expect(result.action).toBe("hard_block");
+    });
   });
 });

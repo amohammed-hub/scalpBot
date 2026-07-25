@@ -259,6 +259,84 @@ export interface ShadowSummary {
 // ── In-memory store ───────────────────────────────────────────────────────────
 const bots = new Map<string, BotState>();
 
+// ── Direction Lock v2 — Exported for unit testing ─────────────────────────────
+export const GROUP1_CORRELATED = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
+
+export interface DirectionLockResult {
+  action: "allow" | "hard_block" | "soft_block" | "override";
+  reason: string;
+  detail: string;
+}
+
+/**
+ * Evaluates the direction lock rules for correlated indices.
+ * Pure function — no side effects. Returns the decision and reason.
+ *
+ * Rules:
+ *   1. Same underlying → HARD BLOCK
+ *   2. Correlated Group 1, confidence > 85% → OVERRIDE (allow with warning)
+ *   3. Correlated Group 1, confidence ≤ 85% → SOFT BLOCK
+ *   4. Different segments (MCX vs NSE) → ALLOW (no restriction)
+ */
+export function evaluateDirectionLock(
+  thisSymbol: string,
+  wantsCE: boolean,
+  signalConfidence: number, // 0-1 scale
+  otherBots: Array<{ symbol: string; openTradeSymbol: string; botSlot: number; status: string }>,
+): DirectionLockResult {
+  const thisUpper = thisSymbol.toUpperCase();
+  if (!GROUP1_CORRELATED.has(thisUpper)) {
+    return { action: "allow", reason: "Not in correlated group", detail: "" };
+  }
+
+  const wantsDirection = wantsCE ? "CE (bullish)" : "PE (bearish)";
+
+  for (const other of otherBots) {
+    if (other.status !== "running") continue;
+    const otherUpper = other.symbol.toUpperCase();
+
+    // Rule 3: Different segments → NO BLOCK
+    if (!GROUP1_CORRELATED.has(otherUpper)) continue;
+
+    const otherTradeSym = other.openTradeSymbol.toUpperCase();
+    const otherHasCE = otherTradeSym.includes("_CE_") || otherTradeSym.includes(" CE") || otherTradeSym.endsWith("CE");
+    const otherHasPE = otherTradeSym.includes("_PE_") || otherTradeSym.includes(" PE") || otherTradeSym.endsWith("PE");
+
+    // Check conflict
+    const isConflict = (wantsCE && otherHasPE) || (!wantsCE && otherHasCE);
+    if (!isConflict) continue;
+
+    const otherDirection = otherHasCE ? "CE (bullish)" : "PE (bearish)";
+    const confidencePct = signalConfidence * 100;
+
+    // Rule 1: SAME underlying → HARD BLOCK
+    if (thisUpper === otherUpper) {
+      return {
+        action: "hard_block",
+        reason: `Same underlying ${thisUpper} — cannot have ${wantsDirection} and ${otherDirection} simultaneously`,
+        detail: `Bot ${other.botSlot + 1} on ${otherUpper} has ${otherDirection} open`,
+      };
+    }
+
+    // Rule 2: Correlated, different underlying
+    if (confidencePct > 85) {
+      return {
+        action: "override",
+        reason: `Correlation override — high confidence counter-signal (${confidencePct.toFixed(0)}% > 85%)`,
+        detail: `${thisUpper} ${wantsDirection} allowed despite ${otherUpper} Bot ${other.botSlot + 1} having ${otherDirection}. ${confidencePct >= 90 ? "Very high confidence — likely genuine reversal" : "Moderate-high confidence — possible divergence"}`,
+      };
+    } else {
+      return {
+        action: "soft_block",
+        reason: `Direction lock: ${otherUpper} has ${otherDirection}, confidence ${confidencePct.toFixed(0)}% ≤ 85%`,
+        detail: `${confidencePct >= 70 ? "Near threshold — possibly noise" : confidencePct >= 50 ? "Moderate confidence — likely noise" : "Low confidence — almost certainly noise"}`,
+      };
+    }
+  }
+
+  return { action: "allow", reason: "No conflicting positions", detail: "" };
+}
+
 // ── Telegram alert helper ─────────────────────────────────────────────────────
 export type AlertCategory = "tradeEntry" | "tradeExit" | "dailySummary" | "criticalAlerts" | "announcements";
 
@@ -5832,42 +5910,81 @@ async function tick(
 
 
   // ── CROSS-BOT DIRECTION LOCK ──────────────────────────────────────────────────────────────
-  // Correlated NSE/BSE indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, BANKEX, MIDCPNIFTY) MUST
-  // agree on direction. If any bot has a PE open (bearish), block CE entries on all correlated
-  // indices, and vice versa. These indices are 85%+ correlated — opposite positions cancel out.
+  // v2 RULES:
+  //   Rule 1: SAME underlying (both bots on NIFTY) → HARD BLOCK opposite direction
+  //   Rule 2: Correlated Group 1 (NIFTY/BANKNIFTY/FINNIFTY/SENSEX/BANKEX/MIDCPNIFTY) →
+  //           Allow opposite ONLY if signal confidence > 85%. Log as "⚠️ Correlation override"
+  //   Rule 3: Different segments (NSE vs MCX, GOLD vs CRUDE) → NO BLOCK at all
+  // Groups: Group 1 = correlated NSE/BSE indices. All MCX (GOLD, SILVER, CRUDEOIL, NATURALGAS, COPPER) are independent.
   if (isOptionsMode) {
-    const CORRELATED_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
+    const GROUP1_CORRELATED = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
     const thisSymbol = (state.instrumentSymbol ?? "").toUpperCase();
-    if (CORRELATED_SYMBOLS.has(thisSymbol)) {
+
+    if (GROUP1_CORRELATED.has(thisSymbol)) {
       const wantsCE = state.optionType === "CE" ? true
         : state.optionType === "PE" ? false
         : signal.direction === "BUY"; // auto: BUY=CE, SELL=PE
+      const wantsDirection = wantsCE ? "CE (bullish)" : "PE (bearish)";
+
+      // Build detailed signal info for logging
+      const lastCandle = state.candles.length > 0 ? state.candles[state.candles.length - 1] : null;
+      const candleInfo = lastCandle
+        ? `O:${lastCandle.open.toFixed(1)} H:${lastCandle.high.toFixed(1)} L:${lastCandle.low.toFixed(1)} C:${lastCandle.close.toFixed(1)} Vol:${lastCandle.volume.toFixed(0)}`
+        : "no candle";
+      const signalDetail = `Strategy: ${signal.layer} | Confidence: ${(signal.confidence * 100).toFixed(0)}% | Direction: ${signal.direction} → ${wantsDirection} | Candle: [${candleInfo}] | Reason: ${signal.reason}`;
 
       for (const [otherKey, otherState] of Array.from(bots.entries())) {
         if (otherKey === state.sessionToken) continue;
         if (otherState.status !== "running") continue;
-        const otherSymbol = (otherState.instrumentSymbol ?? "").toUpperCase();
-        if (!CORRELATED_SYMBOLS.has(otherSymbol)) continue;
         if (!otherState.openTrade) continue;
+
+        const otherSymbol = (otherState.instrumentSymbol ?? "").toUpperCase();
+
+        // Rule 3: Different segments → NO BLOCK (MCX instruments are independent)
+        if (!GROUP1_CORRELATED.has(otherSymbol)) continue;
 
         const otherTradeSym = (otherState.openTrade.symbol ?? "").toUpperCase();
         const otherHasCE = otherTradeSym.includes("_CE_") || otherTradeSym.includes(" CE") || otherTradeSym.endsWith("CE");
         const otherHasPE = otherTradeSym.includes("_PE_") || otherTradeSym.includes(" PE") || otherTradeSym.endsWith("PE");
 
-        if (wantsCE && otherHasPE) {
+        // Check if directions conflict
+        const isConflict = (wantsCE && otherHasPE) || (!wantsCE && otherHasCE);
+        if (!isConflict) continue;
+
+        const conflictType = wantsCE ? "CE vs PE" : "PE vs CE";
+        const otherDirection = otherHasCE ? "CE (bullish)" : "PE (bearish)";
+
+        // Rule 1: SAME underlying → HARD BLOCK (no override possible)
+        if (thisSymbol === otherSymbol) {
           emitActivity(state.sessionToken, "signal",
-            `⊘ DIRECTION LOCK: Blocked CE entry — ${otherSymbol} (Bot ${otherState.botSlot + 1}) has PE open. Correlated indices must agree.`);
+            `⊘ HARD BLOCK: Same underlying ${thisSymbol} — cannot have ${conflictType} simultaneously.\n` +
+            `📊 Blocked Signal: ${signalDetail}\n` +
+            `🔒 Existing: ${otherSymbol} Bot ${otherState.botSlot + 1} has ${otherDirection} open`);
           pushRejectedSignal(state,
             { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
-            `Direction lock: ${otherSymbol} has PE open, CE blocked`);
+            `Hard block: same underlying ${thisSymbol} has ${otherDirection} open`);
           return;
         }
-        if (!wantsCE && otherHasCE) {
+
+        // Rule 2: Correlated but DIFFERENT underlying → allow if confidence > 85%
+        const confidencePct = signal.confidence * 100;
+        if (confidencePct > 85) {
+          // HIGH CONFIDENCE OVERRIDE — allow the trade but log prominently
           emitActivity(state.sessionToken, "signal",
-            `⊘ DIRECTION LOCK: Blocked PE entry — ${otherSymbol} (Bot ${otherState.botSlot + 1}) has CE open. Correlated indices must agree.`);
+            `⚠️ CORRELATION OVERRIDE — high confidence counter-signal (${confidencePct.toFixed(0)}% > 85%)\n` +
+            `📊 Allowed Signal: ${signalDetail}\n` +
+            `🔓 Override: ${thisSymbol} ${wantsDirection} allowed despite ${otherSymbol} Bot ${otherState.botSlot + 1} having ${otherDirection}\n` +
+            `💡 Assessment: ${confidencePct >= 90 ? "Very high confidence — likely genuine reversal" : "Moderate-high confidence — possible divergence"}`);
+          // DO NOT return — let the trade proceed
+        } else {
+          // LOW CONFIDENCE → BLOCK (correlated indices should agree)
+          emitActivity(state.sessionToken, "signal",
+            `⊘ DIRECTION LOCK: Blocked ${wantsDirection} — ${otherSymbol} Bot ${otherState.botSlot + 1} has ${otherDirection}. Confidence ${confidencePct.toFixed(0)}% ≤ 85% threshold.\n` +
+            `📊 Blocked Signal: ${signalDetail}\n` +
+            `💡 Assessment: ${confidencePct >= 70 ? "Near threshold — possibly noise, not a genuine reversal" : confidencePct >= 50 ? "Moderate confidence — likely noise" : "Low confidence — almost certainly noise"}`);
           pushRejectedSignal(state,
             { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
-            `Direction lock: ${otherSymbol} has CE open, PE blocked`);
+            `Direction lock: ${otherSymbol} has ${otherDirection}, confidence ${confidencePct.toFixed(0)}% ≤ 85%`);
           return;
         }
       }
