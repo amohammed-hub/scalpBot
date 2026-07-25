@@ -2634,25 +2634,52 @@ export function generateOpeningBurstSignal(
   };
 }
 
-// ── Red Bar Theory Signal Layer ──────────────────────────────────────────────────────────
-// Constructs Renko bricks from 1-min candle closes using ATR(14) as adaptive brick size.
-// BUY: 3 consecutive green bricks. SELL: 3 consecutive red bricks.
-// EXIT: first opposite color brick after entry.
+// ── Red Bar Theory Signal Layer (Dr. Devendra Pratap's Exact Rules) ──────────────────────
+// PULLBACK-BREAKOUT strategy on Renko charts:
+//   1. Establish trend (EMA 10 filter)
+//   2. Wait for pullback (Red brick in uptrend / Green brick in downtrend)
+//   3. Entry: Green brick closes ABOVE Red brick's HIGH (BUY) / Red brick closes BELOW Green brick's LOW (SELL)
+//   4. SL: Below Red brick's LOW (BUY) / Above Green brick's HIGH (SELL)
+//   5. Target: 1:2 R:R minimum
+// Brick sizes are FIXED per instrument (not ATR-based):
+//   Nifty=10, BankNifty=15, Sensex=30, Gold=50, Silver=500, Crude=10
 
 interface RenkoBrick {
   open: number;
   close: number;
+  high: number;  // max(open, close) for the brick
+  low: number;   // min(open, close) for the brick
   color: "green" | "red";
 }
 
 /**
- * Build Renko bricks from candle close prices.
- * Uses ATR(14) as the brick size (adaptive to volatility).
- * Returns the array of bricks constructed from the price series.
+ * Get the FIXED Renko brick size for a given instrument symbol.
+ * Per Dr. Devendra Pratap Singh's course specifications.
+ * Falls back to ATR-based sizing if instrument is unknown.
  */
-function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
-  if (candles.length < 2 || atr <= 0) return [];
-  const brickSize = atr; // ATR(14) adaptive brick size
+export function getFixedBrickSize(symbol: string, atrFallback: number): number {
+  const s = (symbol || "").toUpperCase();
+  if (s.includes("BANKNIFTY") || s.includes("NIFTY BANK")) return 15;
+  if (s.includes("FINNIFTY") || s.includes("FIN SERVICE")) return 15;
+  if (s.includes("MIDCPNIFTY") || s.includes("MIDCAP")) return 10;
+  if (s.includes("BANKEX")) return 15;
+  if (s.includes("SENSEX")) return 30;
+  if (s.includes("NIFTY")) return 10;
+  if (s.includes("GOLD")) return 50;
+  if (s.includes("SILVER")) return 500;
+  if (s.includes("CRUDEOIL") || s.includes("CRUDE")) return 10;
+  if (s.includes("NATURALGAS")) return 5;
+  if (s.includes("COPPER")) return 5;
+  // Fallback: use ATR * 0.5 for unknown instruments
+  return Math.max(1, Math.round(atrFallback * 0.5));
+}
+
+/**
+ * Build Renko bricks from candle close prices using a FIXED brick size.
+ * Each brick has open, close, high, low, and color.
+ */
+function buildRenkoBricks(candles: Candle[], brickSize: number): RenkoBrick[] {
+  if (candles.length < 2 || brickSize <= 0) return [];
   const bricks: RenkoBrick[] = [];
   let basePrice = candles[0].close;
 
@@ -2660,13 +2687,12 @@ function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
     const price = candles[i].close;
     const diff = price - basePrice;
 
-    // Build as many bricks as the price movement allows
     if (diff >= brickSize) {
       const numBricks = Math.floor(diff / brickSize);
       for (let j = 0; j < numBricks; j++) {
         const brickOpen = basePrice + j * brickSize;
         const brickClose = brickOpen + brickSize;
-        bricks.push({ open: brickOpen, close: brickClose, color: "green" });
+        bricks.push({ open: brickOpen, close: brickClose, high: brickClose, low: brickOpen, color: "green" });
       }
       basePrice = basePrice + numBricks * brickSize;
     } else if (diff <= -brickSize) {
@@ -2674,25 +2700,38 @@ function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
       for (let j = 0; j < numBricks; j++) {
         const brickOpen = basePrice - j * brickSize;
         const brickClose = brickOpen - brickSize;
-        bricks.push({ open: brickOpen, close: brickClose, color: "red" });
+        bricks.push({ open: brickOpen, close: brickClose, high: brickOpen, low: brickClose, color: "red" });
       }
       basePrice = basePrice - numBricks * brickSize;
     }
-    // If |diff| < brickSize, no new brick — price hasn't moved enough
   }
 
   return bricks;
 }
 
 /**
- * Generate Red Bar Theory signal from candle data.
- * Entry: 3 consecutive same-color bricks.
- * Confidence scales with brick count (3 = 70%, 4 = 80%, 5+ = 85%).
+ * Generate Red Bar Theory signal — Dr. Devendra Pratap's EXACT pullback-breakout rules.
+ *
+ * BUY Setup:
+ *   - Uptrend established (price above EMA 10 on Renko, multiple green bricks before)
+ *   - Red brick forms (pullback)
+ *   - Green brick closes ABOVE the Red brick's HIGH → ENTRY
+ *   - SL: Below Red brick's LOW
+ *   - Target: 1:2 R:R minimum
+ *
+ * SELL Setup:
+ *   - Downtrend established (price below EMA 10 on Renko, multiple red bricks before)
+ *   - Green brick forms (pullback)
+ *   - Red brick closes BELOW the Green brick's LOW → ENTRY
+ *   - SL: Above Green brick's HIGH
+ *   - Target: 1:2 R:R minimum
+ *
+ * @param candles - 1-minute candle data
+ * @param instrumentSymbol - instrument name for fixed brick size lookup
  */
 export function generateRenkoSignal(
   candles: Candle[],
-  slMultiplier = 1.5,
-  tpMultiplier = 3.0,
+  instrumentSymbol = "",
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Red Bar Theory: insufficient data", layer: "RedBarTheory" };
   if (!candles || candles.length < 20) return hold;
@@ -2700,84 +2739,149 @@ export function generateRenkoSignal(
   const atr = calcATR(candles, 14);
   if (atr <= 0) return { ...hold, reason: "Red Bar Theory: ATR is 0" };
 
-  const bricks = buildRenkoBricks(candles, atr);
-  if (bricks.length < 2) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 2)` }; // DEFAULT: 3
+  // Use FIXED brick size per Dr. Pratap's specifications
+  const brickSize = getFixedBrickSize(instrumentSymbol, atr);
+  const bricks = buildRenkoBricks(candles, brickSize);
+  if (bricks.length < 5) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 5 for trend+pullback+breakout)` };
 
-  // Check last N bricks for consecutive same color
-  const lastBricks = bricks.slice(-5); // look at last 5 bricks max
-  let consecutiveGreen = 0;
-  let consecutiveRed = 0;
+  // ── EMA 10 Trend Filter (on brick close prices) ──
+  const brickCloses = bricks.map(b => b.close);
+  const ema10arr = ema(brickCloses, 10);
+  if (ema10arr.length === 0) return { ...hold, atr, reason: "Red Bar Theory: EMA10 calc failed" };
+  const currentEma10 = ema10arr[ema10arr.length - 1];
+  const price = candles[candles.length - 1].close;
 
-  // Count consecutive bricks from the end
-  for (let i = lastBricks.length - 1; i >= 0; i--) {
-    if (lastBricks[i].color === "green") {
-      if (consecutiveRed > 0) break; // mixed — stop counting
-      consecutiveGreen++;
-    } else {
-      if (consecutiveGreen > 0) break;
-      consecutiveRed++;
+  // Determine trend from EMA 10
+  const isUptrend = price > currentEma10;
+  const isDowntrend = price < currentEma10;
+  if (!isUptrend && !isDowntrend) {
+    return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] Price ≈ EMA10 (₹${currentEma10.toFixed(1)}) — no clear trend | brick: ₹${brickSize}` };
+  }
+
+  // ── Scan last bricks for the PULLBACK-BREAKOUT pattern ──
+  // ── BUY SETUP: Scan backwards to find the most recent Red→Green breakout in uptrend ──
+  // Pattern: ...Green(s)...Red(pullback)...Green(breakout above Red HIGH)
+  // The breakout green can be anywhere in the last few bricks (signal valid for up to 3 bricks after breakout)
+  if (isUptrend) {
+    // Find the most recent red brick within the last 6 bricks
+    let redIdx = -1;
+    for (let i = bricks.length - 1; i >= Math.max(0, bricks.length - 6); i--) {
+      if (bricks[i].color === "red") { redIdx = i; break; }
+    }
+    if (redIdx >= 0 && redIdx < bricks.length - 1) {
+      const redBrick = bricks[redIdx];
+      // Check if any green brick AFTER the red closed at or above the red's HIGH
+      // In standard Renko, the first green after red closes exactly at red's high level,
+      // so the breakout is confirmed by the first green brick forming (close >= red.high)
+      let breakoutConfirmed = false;
+      for (let gi = redIdx + 1; gi < bricks.length; gi++) {
+        if (bricks[gi].color !== "green") break;
+        if (bricks[gi].close >= redBrick.high) { breakoutConfirmed = true; break; }
+      }
+      if (breakoutConfirmed) {
+        // Verify there was an uptrend BEFORE the pullback (at least 2 green bricks before the red)
+        let greenBeforePullback = 0;
+        for (let i = redIdx - 1; i >= 0 && i >= redIdx - 8; i--) {
+          if (bricks[i].color === "green") greenBeforePullback++;
+          else break;
+        }
+        if (greenBeforePullback >= 2) {
+          // Only signal if the breakout happened recently (within last 3 bricks)
+          const bricksSinceBreakout = bricks.length - 1 - redIdx;
+          if (bricksSinceBreakout <= 3) {
+            const slPrice = redBrick.low; // SL below Red brick's LOW
+            const risk = price - slPrice;
+            if (risk > 0) {
+              const targetPrice = price + risk * 2; // 1:2 R:R
+              const confidence = Math.min(0.88, 0.70 + greenBeforePullback * 0.04);
+              return {
+                direction: "BUY",
+                confidence,
+                entryPrice: price,
+                slPrice,
+                targetPrice,
+                atr,
+                reason: `[Red Bar Theory] Pullback-Breakout BUY — ${greenBeforePullback} green → 1 red pullback → green above red HIGH (₹${redBrick.high.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2`,
+                layer: "RedBarTheory",
+              };
+            }
+          }
+        }
+      }
     }
   }
 
-  const price = candles[candles.length - 1].close;
-  const slPrice_buy = price - atr * slMultiplier;
-  const tpPrice_buy = price + atr * tpMultiplier;
-  const slPrice_sell = price + atr * slMultiplier;
-  const tpPrice_sell = price - atr * tpMultiplier;
-
-  // BUG FIX 6: Require 3+ bricks (was 2). 2-brick at 55% = noise.
-  if (consecutiveGreen >= 3) {
-    const confidence = Math.min(0.85, 0.65 + (consecutiveGreen - 3) * 0.10);
-    return {
-      direction: "BUY",
-      confidence,
-      entryPrice: price,
-      slPrice: slPrice_buy,
-      targetPrice: tpPrice_buy,
-      atr,
-      reason: `[Red Bar Theory] ${consecutiveGreen} consecutive green bricks (brick size: ₹${atr.toFixed(1)}) | Strong uptrend`,
-      layer: "RedBarTheory",
-    };
+  // ── SELL SETUP: Scan backwards to find the most recent Green→Red breakout in downtrend ──
+  if (isDowntrend) {
+    // Find the most recent green brick within the last 6 bricks
+    let greenIdx = -1;
+    for (let i = bricks.length - 1; i >= Math.max(0, bricks.length - 6); i--) {
+      if (bricks[i].color === "green") { greenIdx = i; break; }
+    }
+    if (greenIdx >= 0 && greenIdx < bricks.length - 1) {
+      const greenBrick = bricks[greenIdx];
+      // Check if any red brick AFTER the green closed at or below the green's LOW
+      let breakoutConfirmedSell = false;
+      for (let ri = greenIdx + 1; ri < bricks.length; ri++) {
+        if (bricks[ri].color !== "red") break;
+        if (bricks[ri].close <= greenBrick.low) { breakoutConfirmedSell = true; break; }
+      }
+      if (breakoutConfirmedSell) {
+        // Verify there was a downtrend BEFORE the pullback (at least 2 red bricks before the green)
+        let redBeforePullback = 0;
+        for (let i = greenIdx - 1; i >= 0 && i >= greenIdx - 8; i--) {
+          if (bricks[i].color === "red") redBeforePullback++;
+          else break;
+        }
+        if (redBeforePullback >= 2) {
+          const bricksSinceBreakout = bricks.length - 1 - greenIdx;
+          if (bricksSinceBreakout <= 3) {
+            const slPrice = greenBrick.high; // SL above Green brick's HIGH
+            const risk = slPrice - price;
+            if (risk > 0) {
+              const targetPrice = price - risk * 2; // 1:2 R:R
+              const confidence = Math.min(0.88, 0.70 + redBeforePullback * 0.04);
+              return {
+                direction: "SELL",
+                confidence,
+                entryPrice: price,
+                slPrice,
+                targetPrice,
+                atr,
+                reason: `[Red Bar Theory] Pullback-Breakout SELL — ${redBeforePullback} red → 1 green pullback → red below green LOW (₹${greenBrick.low.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2`,
+                layer: "RedBarTheory",
+              };
+            }
+          }
+        }
+      }
+    }
   }
 
-  // BUG FIX 6: Require 3+ bricks for SELL too.
-  if (consecutiveRed >= 3) {
-    const confidence = Math.min(0.85, 0.65 + (consecutiveRed - 3) * 0.10);
-    return {
-      direction: "SELL",
-      confidence,
-      entryPrice: price,
-      slPrice: slPrice_sell,
-      targetPrice: tpPrice_sell,
-      atr,
-      reason: `[Red Bar Theory] ${consecutiveRed} consecutive red bricks (brick size: ₹${atr.toFixed(1)}) | Strong downtrend`,
-      layer: "RedBarTheory",
-    };
-  }
-
-  return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${atr.toFixed(1)}` };
+  // ── No valid pullback-breakout pattern found ──
+  const lastColors = bricks.slice(-5).map(b => b.color[0]).join("");
+  return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No pullback-breakout | last5: ${lastColors} | trend: ${isUptrend ? "UP" : "DOWN"} | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize}` };
 }
 
 /**
- * Check if Red Bar Theory exit condition is met: first opposite color brick after entry.
- * Returns true if the trade should be exited based on Red Bar Theory reversal.
+ * Check if Red Bar Theory exit condition is met:
+ *   - First opposite color brick after entry (momentum stalling)
+ *   - Uses the same fixed brick size as entry
  */
-export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL", atr: number): { shouldExit: boolean; reason: string } {
-  if (!candles || candles.length < 10 || atr <= 0) return { shouldExit: false, reason: "" };
+export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL", brickSize: number): { shouldExit: boolean; reason: string } {
+  if (!candles || candles.length < 10 || brickSize <= 0) return { shouldExit: false, reason: "" };
 
-  const bricks = buildRenkoBricks(candles, atr);
+  const bricks = buildRenkoBricks(candles, brickSize);
   if (bricks.length === 0) return { shouldExit: false, reason: "" };
 
   const lastBrick = bricks[bricks.length - 1];
-
   // BUY trade exits on first RED brick; SELL trade exits on first GREEN brick
   if (tradeDirection === "BUY" && lastBrick.color === "red") {
-    return { shouldExit: true, reason: `Red Bar Theory Exit — first red brick after BUY entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
+    return { shouldExit: true, reason: `Red Bar Theory Exit — red brick formed (momentum stalling) | brick close: ₹${lastBrick.close.toFixed(2)}` };
   }
   if (tradeDirection === "SELL" && lastBrick.color === "green") {
-    return { shouldExit: true, reason: `Red Bar Theory Exit — first green brick after SELL entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
+    return { shouldExit: true, reason: `Red Bar Theory Exit — green brick formed (momentum stalling) | brick close: ₹${lastBrick.close.toFixed(2)}` };
   }
-
   return { shouldExit: false, reason: "" };
 }
 
@@ -5428,7 +5532,7 @@ async function tick(
   if (signal.direction === "HOLD" && state.enabledLayers && state.candles.length >= 28) {
     // Try Red Bar Theory
     if (state.enabledLayers.includes("RedBarTheory")) {
-      const rbtSignal = generateRenkoSignal(state.candles);
+      const rbtSignal = generateRenkoSignal(state.candles, state.instrumentSymbol ?? "");
       if (rbtSignal.direction !== "HOLD") {
         signal = rbtSignal;
         devLog(`[tick] RedBarTheory override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
