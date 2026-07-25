@@ -1655,7 +1655,7 @@
 - [x] BUG 9: Trades not auto-closing — exit orders used bot's known qty which could be less than actual Upstox position (due to duplicate orders). Fixed: added position sync — fetches actual qty from /v2/portfolio/short-term-positions before placing exit order.
 
 ## CRITICAL FIX: Cross-Bot Direction Lock (Jul 24)
-- [ ] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
+- [x] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
 
 ## FIX: MCX Trades Not Triggering (Jul 24)
 - [x] BUG 11: MCX cooldown gates too aggressive — reduced P2 underlying cooldown from 15min→8min, P1 direction block from 3min→90s, P1 consecutive block from 10min→5min, anti-chase threshold from 1%→1.5%, direction streak block from 30min→15min for MCX
