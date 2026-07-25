@@ -1773,7 +1773,7 @@
 - [x] Fix #5: Stop button = pause (keep position open), Exit button = close position (already exists)
 
 ## Strategy Rewrite (Priority 2 — After Execution Deploys)
-- [ ] Rewrite RedBarTheory to Dr. Pratap exact rules (fixed bricks, Red→Green above HIGH, EMA10, SL below Red LOW, 1:2 R:R)
-- [ ] Backtest rewritten RedBarTheory on 3-month data — show results before enabling live
-- [ ] Add PremiumRenko layer (Lesson 7 — Renko on option premium chart, brick 10/15)
+- [x] Rewrite RedBarTheory to Dr. Pratap exact rules (fixed bricks, Red→Green above HIGH, EMA10, SL below Red LOW, 1:2 R:R)
+- [x] Backtest rewritten RedBarTheory on 3-month data — show results before enabling live
+- [x] Add PremiumRenko layer (Lesson 7 — Renko on option premium chart, brick 10/15)
 - [ ] Backtest PremiumRenko on 3-month data — show results before enabling live

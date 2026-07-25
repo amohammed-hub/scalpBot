@@ -39,7 +39,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "PremiumRenko" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -2885,6 +2885,199 @@ export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL"
   return { shouldExit: false, reason: "" };
 }
 
+// ── PremiumRenko Signal Layer (Lesson 7) ─────────────────────────────────────
+// Applies Red Bar Theory DIRECTLY on option premium candles (not the underlying index).
+// Dr. Devendra Pratap Singh's Lesson 7: "Red Bar on Options Chart"
+// Benefit: Sometimes spot gives signal but option premium doesn't move as expected.
+// By analyzing premium directly, we get more accurate entry/exit timing.
+
+/**
+ * Get the fixed Renko brick size for OPTION PREMIUM charts.
+ * Per Dr. Pratap's Lesson 7 specifications:
+ *   - NIFTY options: 10
+ *   - BANKNIFTY options: 15
+ *   - FINNIFTY options: 10
+ *   - SENSEX options: 15
+ *   - MCX options: 5 (smaller premiums)
+ * Falls back to premium-relative sizing for unknown instruments.
+ */
+export function getPremiumBrickSize(instrumentSymbol: string, currentPremium: number): number {
+  const s = (instrumentSymbol || "").toUpperCase();
+  if (s.includes("BANKNIFTY") || s.includes("NIFTY BANK") || s.includes("BANKEX")) return 15;
+  if (s.includes("SENSEX")) return 15;
+  if (s.includes("FINNIFTY") || s.includes("FIN SERVICE")) return 10;
+  if (s.includes("MIDCPNIFTY") || s.includes("MIDCAP")) return 10;
+  if (s.includes("NIFTY")) return 10;
+  if (s.includes("GOLD") || s.includes("SILVER") || s.includes("CRUDE") || s.includes("NATURALGAS") || s.includes("COPPER")) return 5;
+  // Fallback: 3% of premium, minimum 2, maximum 20
+  return Math.max(2, Math.min(20, Math.round(currentPremium * 0.03)));
+}
+
+/**
+ * Generate PremiumRenko signal — Dr. Devendra Pratap's Lesson 7.
+ * Applies Red Bar Theory rules DIRECTLY on option premium candles.
+ *
+ * For option buying, we only generate BUY signals (buying CE or PE premium).
+ * The direction (CE vs PE) is determined by the option type being tracked.
+ *
+ * BUY Setup (premium going up):
+ *   - Uptrend in premium (price above EMA 10 on premium Renko)
+ *   - Red brick forms (premium pullback)
+ *   - Green brick closes ABOVE the Red brick's HIGH → ENTRY (buy the option)
+ *   - SL: Below Red brick's LOW (premium level)
+ *   - Target: 1:2 R:R on premium
+ *
+ * SELL Setup (premium going up for PE, or shorting — rare for retail):
+ *   - Downtrend in premium
+ *   - Green brick forms (premium rally/pullback)
+ *   - Red brick closes BELOW the Green brick's LOW → premium is falling
+ *   - For PE buyers: this means underlying is going UP (PE premium drops)
+ *   - This generates a "SELL" signal meaning "exit your PE" or "don't buy PE here"
+ *
+ * @param premiumCandles - 1-minute candle data of the OPTION PREMIUM (CE or PE)
+ * @param instrumentSymbol - underlying instrument name for brick size lookup
+ * @param optionType - "CE" or "PE" — determines how we interpret the signal
+ */
+export function generatePremiumRenkoSignal(
+  premiumCandles: Candle[],
+  instrumentSymbol = "",
+  optionType: "CE" | "PE" = "CE",
+): Signal {
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "PremiumRenko: insufficient data", layer: "PremiumRenko" };
+  if (!premiumCandles || premiumCandles.length < 20) return hold;
+
+  // Current premium price
+  const premium = premiumCandles[premiumCandles.length - 1].close;
+  if (premium <= 0) return { ...hold, reason: "PremiumRenko: premium is 0 or negative" };
+
+  // ATR on premium candles (for fallback brick sizing)
+  const premiumAtr = calcATR(premiumCandles, 14);
+
+  // Use FIXED brick size per Dr. Pratap's Lesson 7 specifications
+  const brickSize = getPremiumBrickSize(instrumentSymbol, premium);
+  const bricks = buildRenkoBricks(premiumCandles, brickSize);
+  if (bricks.length < 5) return { ...hold, atr: premiumAtr, reason: `PremiumRenko: only ${bricks.length} bricks (need 5) | brick: ₹${brickSize}` };
+
+  // ── EMA 10 Trend Filter (on premium brick close prices) ──
+  const brickCloses = bricks.map(b => b.close);
+  const ema10arr = ema(brickCloses, 10);
+  if (ema10arr.length === 0) return { ...hold, atr: premiumAtr, reason: "PremiumRenko: EMA10 calc failed" };
+  const currentEma10 = ema10arr[ema10arr.length - 1];
+
+  // Determine premium trend from EMA 10
+  const isPremiumUptrend = premium > currentEma10;
+  const isPremiumDowntrend = premium < currentEma10;
+  if (!isPremiumUptrend && !isPremiumDowntrend) {
+    return { ...hold, atr: premiumAtr, entryPrice: premium, reason: `[PremiumRenko] Premium ₹${premium.toFixed(1)} ≈ EMA10 (₹${currentEma10.toFixed(1)}) — no clear trend | brick: ₹${brickSize}` };
+  }
+
+  // ── BUY SETUP: Premium is in uptrend → pullback-breakout pattern ──
+  // For CE options: premium uptrend = underlying going up → BUY CE
+  // For PE options: premium uptrend = underlying going down → BUY PE
+  // In both cases, we BUY the option when premium is trending up with pullback-breakout
+  if (isPremiumUptrend) {
+    // Find the most recent red brick within the last 6 bricks
+    let redIdx = -1;
+    for (let i = bricks.length - 1; i >= Math.max(0, bricks.length - 6); i--) {
+      if (bricks[i].color === "red") { redIdx = i; break; }
+    }
+    if (redIdx >= 0 && redIdx < bricks.length - 1) {
+      const redBrick = bricks[redIdx];
+      // Check if any green brick AFTER the red closed at or above the red's HIGH
+      let breakoutConfirmed = false;
+      for (let gi = redIdx + 1; gi < bricks.length; gi++) {
+        if (bricks[gi].color !== "green") break;
+        if (bricks[gi].close >= redBrick.high) { breakoutConfirmed = true; break; }
+      }
+      if (breakoutConfirmed) {
+        // Verify there was an uptrend BEFORE the pullback (at least 2 green bricks before the red)
+        let greenBeforePullback = 0;
+        for (let i = redIdx - 1; i >= 0 && i >= redIdx - 8; i--) {
+          if (bricks[i].color === "green") greenBeforePullback++;
+          else break;
+        }
+        if (greenBeforePullback >= 2) {
+          const bricksSinceBreakout = bricks.length - 1 - redIdx;
+          if (bricksSinceBreakout <= 3) {
+            const slPrice = redBrick.low; // SL below Red brick's LOW (premium level)
+            const risk = premium - slPrice;
+            if (risk > 0 && risk < premium * 0.5) { // risk must be < 50% of premium
+              const targetPrice = premium + risk * 2; // 1:2 R:R on premium
+              const confidence = Math.min(0.90, 0.72 + greenBeforePullback * 0.04);
+              // For options, direction is always BUY (we buy CE or PE premium)
+              // The caller determines CE vs PE based on underlying direction
+              return {
+                direction: "BUY",
+                confidence,
+                entryPrice: premium,
+                slPrice,
+                targetPrice,
+                atr: premiumAtr,
+                reason: `[PremiumRenko] ${optionType} Premium Pullback-Breakout BUY — ${greenBeforePullback} green → 1 red pullback → green above red HIGH (₹${redBrick.high.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2 | Premium: ₹${premium.toFixed(1)}`,
+                layer: "PremiumRenko",
+              };
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ── SELL/EXIT SETUP: Premium is in downtrend → pullback-breakout to the downside ──
+  // For CE options: premium downtrend = underlying going down → EXIT CE (or don't enter)
+  // For PE options: premium downtrend = underlying going up → EXIT PE (or don't enter)
+  // We generate a SELL signal meaning "premium is falling — exit or avoid this option"
+  if (isPremiumDowntrend) {
+    // Find the most recent green brick within the last 6 bricks
+    let greenIdx = -1;
+    for (let i = bricks.length - 1; i >= Math.max(0, bricks.length - 6); i--) {
+      if (bricks[i].color === "green") { greenIdx = i; break; }
+    }
+    if (greenIdx >= 0 && greenIdx < bricks.length - 1) {
+      const greenBrick = bricks[greenIdx];
+      // Check if any red brick AFTER the green closed at or below the green's LOW
+      let breakoutConfirmedSell = false;
+      for (let ri = greenIdx + 1; ri < bricks.length; ri++) {
+        if (bricks[ri].color !== "red") break;
+        if (bricks[ri].close <= greenBrick.low) { breakoutConfirmedSell = true; break; }
+      }
+      if (breakoutConfirmedSell) {
+        // Verify there was a downtrend BEFORE the pullback (at least 2 red bricks before the green)
+        let redBeforePullback = 0;
+        for (let i = greenIdx - 1; i >= 0 && i >= greenIdx - 8; i--) {
+          if (bricks[i].color === "red") redBeforePullback++;
+          else break;
+        }
+        if (redBeforePullback >= 2) {
+          const bricksSinceBreakout = bricks.length - 1 - greenIdx;
+          if (bricksSinceBreakout <= 3) {
+            const slPrice = greenBrick.high; // SL above Green brick's HIGH (premium level)
+            const risk = slPrice - premium;
+            if (risk > 0 && risk < premium * 0.5) {
+              const targetPrice = premium - risk * 2; // 1:2 R:R
+              const confidence = Math.min(0.90, 0.72 + redBeforePullback * 0.04);
+              return {
+                direction: "SELL",
+                confidence,
+                entryPrice: premium,
+                slPrice,
+                targetPrice: Math.max(0, targetPrice), // premium can't go below 0
+                atr: premiumAtr,
+                reason: `[PremiumRenko] ${optionType} Premium Breakdown SELL — ${redBeforePullback} red → 1 green pullback → red below green LOW (₹${greenBrick.low.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2 | Premium: ₹${premium.toFixed(1)}`,
+                layer: "PremiumRenko",
+              };
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ── No valid pullback-breakout pattern found on premium chart ──
+  const lastColors = bricks.slice(-5).map(b => b.color[0]).join("");
+  return { ...hold, atr: premiumAtr, entryPrice: premium, reason: `[PremiumRenko] No pullback-breakout on ${optionType} premium | last5: ${lastColors} | trend: ${isPremiumUptrend ? "UP" : "DOWN"} | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize}` };
+}
+
 // ── Trikal Strategy Signal Layer (Dr. Devendra's Renko Engine Strategy) ─────────────
 // Uses EMA(9)/EMA(21) cloud + virtual Renko bricks + pullback-to-cloud entry.
 // Only trades WITH the Renko trend, waits for pullback to EMA cloud before entry.
@@ -5536,6 +5729,24 @@ async function tick(
       if (rbtSignal.direction !== "HOLD") {
         signal = rbtSignal;
         devLog(`[tick] RedBarTheory override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
+      }
+    }
+    // Try PremiumRenko (Lesson 7) — Red Bar Theory on option premium candles
+    // Only fires when: (a) in options mode, (b) optionTradeToken is resolved, (c) access token available
+    if (signal.direction === "HOLD" && state.enabledLayers.includes("PremiumRenko") && isOptionsMode && state.optionTradeToken && state.accessToken) {
+      try {
+        // Fetch 1-min premium candles for the resolved option contract
+        const premiumCandles = await fetchUpstoxCandles(state.optionTradeToken, state.accessToken);
+        if (premiumCandles.length >= 20) {
+          const optType: "CE" | "PE" = (state.optionType === "PE") ? "PE" : "CE";
+          const premRenkoSignal = generatePremiumRenkoSignal(premiumCandles, state.instrumentSymbol ?? "", optType);
+          if (premRenkoSignal.direction !== "HOLD") {
+            signal = premRenkoSignal;
+            devLog(`[tick] PremiumRenko override — ${signal.direction} conf=${signal.confidence.toFixed(2)} | ${optType} premium`);
+          }
+        }
+      } catch (premErr) {
+        console.warn(`[tick] PremiumRenko layer error:`, premErr instanceof Error ? premErr.message : String(premErr));
       }
     }
     // Try Trikal Strategy (only if still HOLD)
