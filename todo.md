@@ -1735,3 +1735,16 @@
 - [x] Manual averaging (forceAverageDown): Same margin check. Returns error to caller if insufficient.
 - [x] Graceful degradation: If margin API fails/times out → proceed with order (don't block trading on API failure).
 - [x] All 202 tests pass, TypeScript 0 errors.
+
+## UI AUDIT — Approved Changes (Jul 25)
+- [x] REMOVE: Trade Journal tab from Risk Calculator
+- [x] REMOVE: Pre-Trade Checklist tab from Risk Calculator
+- [x] REMOVE: Daily Limit tab from Risk Calculator
+- [x] REMOVE: /dashboard/config route (redundant, duplicates Command Center)
+- [x] REMOVE: ComponentShowcase.tsx (dead code, no route)
+- [x] FIX: Home page Feature Card 1 "No Login Required" → "Secure & Private" with corrected description
+- [x] FIX: Home page How It Works Step 1 — remove "never sent to any server" claim
+- [x] FIX: Home page How It Works Step 3 — "AI-powered" → "multi-layer signal engine"
+- [x] FIX: Pricing 6-month plan — mark unbuilt features as "Coming Soon"
+- [x] FIX: Payment flow — replace Subscribe buttons with "WhatsApp to Subscribe" until Razorpay configured
+- [x] MOVE: Precision Verify → tab inside P&L Analytics (remove as separate page)

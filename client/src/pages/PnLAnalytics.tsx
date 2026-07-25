@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { lazy, Suspense } from "react";
 import PullToRefresh from "@/components/PullToRefresh";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip,
@@ -70,6 +71,8 @@ function StatCard({ label, value, sub, positive }: { label: string; value: strin
 // ── main page ─────────────────────────────────────────────────────────────────
 export default function PnLAnalytics() {
   const [, navigate] = useLocation();
+  const searchStr = useSearch();
+  const pageTab = new URLSearchParams(searchStr).get("tab") === "verify" ? "verify" : "analytics";
   const sessionToken = getSessionToken();
 
   // ── Auth Gate ──────────────────────────────────────────────────────────────
@@ -263,9 +266,9 @@ export default function PnLAnalytics() {
           </button>
           <div>
             <h1 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-              <span className="text-2xl">📊</span> P&amp;L Analytics
+              <span className="text-2xl">📊</span> {pageTab === "verify" ? "Precision Verify" : "P&L Analytics"}
             </h1>
-            <p className="text-xs text-zinc-500 mt-0.5">Complete trade journal with per-trade breakdown</p>
+            <p className="text-xs text-zinc-500 mt-0.5">{pageTab === "verify" ? "Signal accuracy & strategy performance audit" : "Complete trade journal with per-trade breakdown"}</p>
           </div>
         </div>
         <div className={`flex gap-2 ${!exportRows.length ? 'hidden' : ''}`}>
@@ -286,6 +289,29 @@ export default function PnLAnalytics() {
         </div>
       </div>
 
+      {/* Page Tab Switcher */}
+      <div className="border-b border-zinc-800 px-4 sm:px-6">
+        <div className="flex gap-1 max-w-7xl mx-auto">
+          <button
+            onClick={() => navigate("/pnl-analytics")}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${pageTab === "analytics" ? "border-emerald-400 text-emerald-400" : "border-transparent text-zinc-500 hover:text-zinc-300"}`}
+          >
+            P&L Analytics
+          </button>
+          <button
+            onClick={() => navigate("/pnl-analytics?tab=verify")}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${pageTab === "verify" ? "border-amber-400 text-amber-400" : "border-transparent text-zinc-500 hover:text-zinc-300"}`}
+          >
+            Precision Verify
+          </button>
+        </div>
+      </div>
+
+      {pageTab === "verify" ? (
+        <Suspense fallback={<div className="flex items-center justify-center py-20 text-zinc-500">Loading...</div>}>
+          <VerificationEmbed />
+        </Suspense>
+      ) : (
       <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto pb-24 md:pb-6">
         {/* Summary Cards */}
         {summary ? (
@@ -649,6 +675,13 @@ export default function PnLAnalytics() {
           All times in IST (UTC+5:30). Only closed trades are included. Open trades are excluded from P&amp;L calculations.
         </p>
       </div>
+      )}
     </PullToRefresh>
   );
+}
+
+// Embedded version of Verification (lazy-loaded)
+const VerificationLazy = lazy(() => import("./Verification"));
+function VerificationEmbed() {
+  return <VerificationLazy />;
 }

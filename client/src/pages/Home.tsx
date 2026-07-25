@@ -103,18 +103,14 @@ export default function Home() {
   };
 
   const handleSubscribe = (plan: "monthly" | "quarterly" | "half_yearly" | "yearly") => {
-    // Check if user is logged in first
-    const authToken = localStorage.getItem("scalpbot_auth_token");
-    if (!authToken) {
-      toast.info("Sign in first to subscribe");
-      navigate("/login?intent=subscribe");
-      return;
-    }
-    setCheckingOut(plan);
-    createOrderMutation.mutate({
-      sessionToken: getSessionToken(),
-      plan,
-    });
+    const planLabels: Record<string, string> = {
+      monthly: "Monthly (₹9,999)",
+      quarterly: "3 Months (₹24,999)",
+      half_yearly: "6 Months (₹44,999)",
+      yearly: "1 Year (₹79,999)",
+    };
+    const msg = encodeURIComponent(`Hi, I want to subscribe to ScalpBot - ${planLabels[plan]} plan`);
+    window.open(`https://wa.me/916301742267?text=${msg}`, "_blank");
   };
 
   return (
@@ -178,7 +174,7 @@ export default function Home() {
       <div className="max-w-6xl mx-auto px-6 pb-20">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
-            { icon: Bot, title: "No Login Required", desc: "Open the app and start immediately. Your API credentials are stored securely in your browser — never sent to any server.", color: "teal" },
+            { icon: Bot, title: "Secure & Private", desc: "Your Upstox API credentials are encrypted at rest on the server. Only used for automated trading — never shared with third parties.", color: "teal" },
             { icon: Shield, title: "Built-in Risk Management", desc: "ATR-based dynamic stop-loss, daily loss limit circuit breaker, 1% risk rule, and max trades per day — all enforced automatically.", color: "amber" },
             { icon: TrendingUp, title: "Paper Trade First", desc: "Test your strategy with simulated trades before risking real money. Switch to live mode only when you're confident.", color: "purple" },
           ].map((f) => (
@@ -198,9 +194,9 @@ export default function Home() {
           <p className="text-white/50 mb-10">Three steps from setup to automated trading</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
-              { step: "01", title: "Enter API Keys", desc: "Go to Settings, enter your Upstox API Key and Secret. Stored only in your browser — never on any server." },
+              { step: "01", title: "Enter API Keys", desc: "Go to Settings, enter your Upstox API Key and Secret. Stored securely on the server for automated order placement." },
               { step: "02", title: "Configure & Start", desc: "Choose your instrument (NIFTY, RELIANCE, etc.), set capital and risk %, then click Start Bot." },
-              { step: "03", title: "Bot Trades Automatically", desc: "The bot scans every minute, generates AI-powered signals, and places orders. You watch the live dashboard." },
+              { step: "03", title: "Bot Trades Automatically", desc: "The bot scans every minute using a multi-layer signal engine, and places orders automatically. You watch the live dashboard." },
             ].map((s) => (
               <div key={s.step} className="relative bg-white/5 border border-white/10 rounded-2xl p-6">
                 <div className="text-5xl font-black text-teal-500/20 mb-3">{s.step}</div>
@@ -236,7 +232,7 @@ export default function Home() {
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> P&L Analytics</li>
               </ul>
               <Button className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20" onClick={() => handleSubscribe("monthly")} disabled={!!checkingOut}>
-                {checkingOut === "monthly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe"}
+                {checkingOut === "monthly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe via WhatsApp"}
               </Button>
             </div>
 
@@ -256,7 +252,7 @@ export default function Home() {
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Priority Support</li>
               </ul>
               <Button className="w-full bg-teal-500 hover:bg-teal-600 text-white" onClick={() => handleSubscribe("quarterly")} disabled={!!checkingOut}>
-                {checkingOut === "quarterly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe"}
+                {checkingOut === "quarterly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe via WhatsApp"}
               </Button>
             </div>
 
@@ -269,13 +265,13 @@ export default function Home() {
               <p className="text-teal-400 text-xs mb-4">Save 25% — ₹7,500/month</p>
               <ul className="space-y-2.5 text-left mb-6">
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Everything in 3 Months</li>
-                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Custom Strategy Builder</li>
-                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Multi-Account Support</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Custom Strategy Builder <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded ml-1">Coming Soon</span></li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Multi-Account Support <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded ml-1">Coming Soon</span></li>
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Advanced Analytics</li>
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Dedicated Onboarding</li>
               </ul>
               <Button className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20" onClick={() => handleSubscribe("half_yearly")} disabled={!!checkingOut}>
-                {checkingOut === "half_yearly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe"}
+                {checkingOut === "half_yearly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe via WhatsApp"}
               </Button>
             </div>
 
@@ -294,7 +290,7 @@ export default function Home() {
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Best Value</li>
               </ul>
               <Button className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20" onClick={() => handleSubscribe("yearly")} disabled={!!checkingOut}>
-                {checkingOut === "yearly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe"}
+                {checkingOut === "yearly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Subscribe via WhatsApp"}
               </Button>
             </div>
           </div>

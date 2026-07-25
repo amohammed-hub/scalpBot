@@ -20,8 +20,8 @@ import { useState, useMemo, useCallback } from "react";
 import {
   Zap, AlertTriangle, TrendingUp, TrendingDown, Info, RotateCcw,
   ChevronDown, ChevronUp, Copy, Check, BookOpen, Calculator,
-  ClipboardList, BarChart2, Target, PlusCircle, Trash2, CheckCircle2,
-  Circle, Shield, Activity
+  BarChart2, Target,
+  Activity
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -29,7 +29,7 @@ import { toast } from "sonner";
 // ─── Types ────────────────────────────────────────────────────────────────────
 type TradeType = "intraday" | "delivery" | "futures" | "options";
 type Direction = "buy" | "sell";
-type Tab = "calculator" | "journal" | "checklist" | "expectancy" | "daily";
+type Tab = "calculator" | "expectancy";
 
 interface Inputs {
   capital: string;
@@ -42,17 +42,6 @@ interface Inputs {
   instrument: string;
 }
 
-interface TradeLog {
-  id: string;
-  date: string;
-  symbol: string;
-  direction: "BUY" | "SELL";
-  entry: number;
-  exit: number;
-  qty: number;
-  pnl: number;
-  notes: string;
-}
 
 // ─── Instrument Data ──────────────────────────────────────────────────────────
 const INSTRUMENTS = [
@@ -190,18 +179,13 @@ export default function RiskCalculator() {
   const [activeTab, setActiveTab] = useState<Tab>("calculator");
 
   // Checklist state
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
 
   // Journal state
-  const [journal, setJournal] = useState<TradeLog[]>([]);
-  const [journalForm, setJournalForm] = useState({ symbol: "", direction: "BUY" as "BUY" | "SELL", entry: "", exit: "", qty: "", notes: "" });
 
   // Expectancy state
   const [expInputs, setExpInputs] = useState({ winRate: "50", avgWin: "2000", avgLoss: "1000", tradesPerMonth: "20" });
 
   // Daily Loss Tracker state
-  const [dailyInputs, setDailyInputs] = useState({ dailyLimit: "3000", riskPerTrade: "1000" });
-  const [tradesLost, setTradesLost] = useState(0);
 
   const set = (key: keyof Inputs) => (val: string) => setInputs((prev) => ({ ...prev, [key]: val }));
   const reset = () => { setInputs(DEFAULT_INPUTS); setShowBrokerage(false); setShowFormula(false); };
@@ -281,83 +265,12 @@ export default function RiskCalculator() {
     const breakEvenWR = avgLoss > 0 ? (avgLoss / (avgWin + avgLoss)) * 100 : 0;
     return { exp, monthlyExp, rr, breakEvenWR };
   }, [expInputs]);
-
-  // ── Daily Loss Tracker ───────────────────────────────────────────────────────
-  const daily = useMemo(() => {
-    const limit = parseFloat(dailyInputs.dailyLimit) || 0;
-    const rpt = parseFloat(dailyInputs.riskPerTrade) || 0;
-    const lostSoFar = tradesLost * rpt;
-    const remaining = Math.max(0, limit - lostSoFar);
-    const tradesLeft = rpt > 0 ? Math.floor(remaining / rpt) : 0;
-    const pct = limit > 0 ? (lostSoFar / limit) * 100 : 0;
-    return { lostSoFar, remaining, tradesLeft, pct };
-  }, [dailyInputs, tradesLost]);
-
-  // ── Journal Calculations ─────────────────────────────────────────────────────
-  const journalStats = useMemo(() => {
-    if (journal.length === 0) return null;
-    const wins = journal.filter(t => t.pnl > 0);
-    const losses = journal.filter(t => t.pnl < 0);
-    const totalPnl = journal.reduce((s, t) => s + t.pnl, 0);
-    const winRate = (wins.length / journal.length) * 100;
-    const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
-    const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl, 0) / losses.length) : 0;
-    const rr = avgLoss > 0 ? avgWin / avgLoss : 0;
-    return { wins: wins.length, losses: losses.length, totalPnl, winRate, avgWin, avgLoss, rr };
-  }, [journal]);
-
-  // ── Copy Results ─────────────────────────────────────────────────────────────
-  const copyResults = useCallback(() => {
+  const copyResults = () => {
     if (!calc) return;
-    const text = [
-      `=== Upstox Risk Calculator Results ===`,
-      `Instrument: ${selectedInstrument.label}`,
-      `Capital: ₹${parseFloat(inputs.capital).toLocaleString("en-IN")}`,
-      `Risk %: ${inputs.riskPct}%`,
-      `Entry: ₹${inputs.entryPrice} | SL: ₹${inputs.stopLossPrice}${inputs.targetPrice ? ` | Target: ₹${inputs.targetPrice}` : ""}`,
-      ``,
-      `Max Lots: ${calc.maxLots} (${calc.qty} units)`,
-      `Risk Per Lot: ₹${calc.riskPerLot.toFixed(2)}`,
-      `Max Risk: ₹${calc.actualRisk.toFixed(2)} (${calc.actualRiskPct.toFixed(2)}%)`,
-      `Position Value: ₹${calc.positionValue.toLocaleString("en-IN")}`,
-      calc.rrRatio > 0 ? `R:R Ratio: 1:${calc.rrRatio.toFixed(2)}` : "",
-      calc.netProfit !== 0 ? `Net Profit: ₹${calc.netProfit.toFixed(2)}` : "",
-      `Net Loss (if SL): ₹${Math.abs(calc.netLoss).toFixed(2)}`,
-      `Brokerage: ₹${calc.totalBrokerage.toFixed(2)}`,
-      `Breakeven: ₹${calc.breakevenPrice.toFixed(2)}`,
-      `Consecutive Losses before -10% capital: ${calc.lossTrades}`,
-    ].filter(Boolean).join("\n");
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      toast.success("Results copied to clipboard!");
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, [calc, inputs, selectedInstrument]);
-
-  // ── Add Journal Entry ─────────────────────────────────────────────────────────
-  const addJournalEntry = () => {
-    const entry = parseFloat(journalForm.entry);
-    const exit = parseFloat(journalForm.exit);
-    const qty = parseInt(journalForm.qty);
-    if (!journalForm.symbol || !entry || !exit || !qty) {
-      toast.error("Please fill in all required fields");
-      return;
-    }
-    const pnl = journalForm.direction === "BUY" ? (exit - entry) * qty : (entry - exit) * qty;
-    const newTrade: TradeLog = {
-      id: Date.now().toString(),
-      date: new Date().toLocaleDateString("en-IN"),
-      symbol: journalForm.symbol.toUpperCase(),
-      direction: journalForm.direction,
-      entry, exit, qty, pnl,
-      notes: journalForm.notes,
-    };
-    setJournal(prev => [newTrade, ...prev]);
-    setJournalForm({ symbol: "", direction: "BUY", entry: "", exit: "", qty: "", notes: "" });
-    toast.success(`Trade logged! P&L: ₹${pnl.toFixed(2)}`);
+    const text = `Position Size: ${calc.qty} qty\nRisk: ₹${calc.actualRisk.toFixed(0)}\nReward: ₹${calc.profitAmount.toFixed(0)}\nR:R = 1:${calc.rrRatio.toFixed(1)}`;
+    navigator.clipboard.writeText(text);
+    toast.success("Results copied!");
   };
-
-  const checklistScore = Object.values(checked).filter(Boolean).length;
   const isValid = !!calc;
 
   return (
@@ -406,10 +319,7 @@ export default function RiskCalculator() {
         {/* Tab Navigation */}
         <div className="flex gap-1.5 mb-6 overflow-x-auto pb-1 scrollbar-hide">
           <TabButton active={activeTab === "calculator"} onClick={() => setActiveTab("calculator")} icon={Calculator} label="Calculator" />
-          <TabButton active={activeTab === "checklist"} onClick={() => setActiveTab("checklist")} icon={ClipboardList} label="Pre-Trade Checklist" />
-          <TabButton active={activeTab === "daily"} onClick={() => setActiveTab("daily")} icon={Shield} label="Daily Limit" />
           <TabButton active={activeTab === "expectancy"} onClick={() => setActiveTab("expectancy")} icon={Activity} label="Expectancy" />
-          <TabButton active={activeTab === "journal"} onClick={() => setActiveTab("journal")} icon={BookOpen} label="Trade Journal" />
         </div>
 
         {/* ── TAB: CALCULATOR ─────────────────────────────────────────────────── */}
@@ -655,143 +565,6 @@ export default function RiskCalculator() {
           </div>
         )}
 
-        {/* ── TAB: PRE-TRADE CHECKLIST ─────────────────────────────────────────── */}
-        {activeTab === "checklist" && (
-          <div className="max-w-2xl mx-auto space-y-4">
-            <div className="glass-card rounded-2xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-lg font-black text-white" style={{ fontFamily: "'Syne', sans-serif" }}>Pre-Trade Checklist</h2>
-                  <p className="text-white/40 text-sm">Complete before every trade. No exceptions.</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-3xl font-black text-white" style={{ fontFamily: "'Syne', sans-serif" }}>{checklistScore}/{CHECKLIST_ITEMS.length}</p>
-                  <p className={`text-xs font-bold ${checklistScore === CHECKLIST_ITEMS.length ? "text-[oklch(0.78_0.18_195)]" : checklistScore >= 7 ? "text-[oklch(0.78_0.17_65)]" : "text-[oklch(0.65_0.22_25)]"}`}>
-                    {checklistScore === CHECKLIST_ITEMS.length ? "✓ READY TO TRADE" : checklistScore >= 7 ? "ALMOST READY" : "NOT READY"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div className="h-2 bg-white/5 rounded-full mb-5 overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-500"
-                  style={{
-                    width: `${(checklistScore / CHECKLIST_ITEMS.length) * 100}%`,
-                    background: checklistScore === CHECKLIST_ITEMS.length ? "oklch(0.78 0.18 195)" : checklistScore >= 7 ? "oklch(0.78 0.17 65)" : "oklch(0.65 0.22 25)"
-                  }} />
-              </div>
-
-              {/* Grouped checklist */}
-              {["Risk", "Technical", "Macro", "Account", "Psychology"].map(cat => {
-                const items = CHECKLIST_ITEMS.filter(i => i.category === cat);
-                return (
-                  <div key={cat} className="mb-4">
-                    <p className="text-xs font-bold text-white/25 uppercase tracking-widest mb-2">{cat}</p>
-                    <div className="space-y-2">
-                      {items.map(item => (
-                        <button key={item.id} onClick={() => setChecked(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
-                          className={`w-full flex items-start gap-3 p-3 rounded-xl border transition-all duration-200 text-left ${
-                            checked[item.id]
-                              ? "bg-[oklch(0.78_0.18_195/0.06)] border-[oklch(0.78_0.18_195/0.2)]"
-                              : "bg-white/2 border-white/6 hover:border-white/15"
-                          }`}>
-                          {checked[item.id]
-                            ? <CheckCircle2 className="w-4 h-4 text-[oklch(0.78_0.18_195)] shrink-0 mt-0.5" />
-                            : <Circle className="w-4 h-4 text-white/20 shrink-0 mt-0.5" />}
-                          <span className={`text-sm ${checked[item.id] ? "text-white/60 line-through" : "text-white/70"}`}>{item.text}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-
-              <div className="flex gap-2 mt-4">
-                <button onClick={() => setChecked({})}
-                  className="flex-1 py-2.5 rounded-xl border border-white/10 text-white/40 hover:text-white/60 text-sm transition-all duration-200">
-                  Reset Checklist
-                </button>
-                <button onClick={() => setChecked(Object.fromEntries(CHECKLIST_ITEMS.map(i => [i.id, true])))}
-                  className="flex-1 py-2.5 rounded-xl bg-[oklch(0.78_0.18_195/0.1)] border border-[oklch(0.78_0.18_195/0.3)] text-[oklch(0.78_0.18_195)] text-sm font-semibold transition-all duration-200">
-                  Check All
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── TAB: DAILY LOSS LIMIT ────────────────────────────────────────────── */}
-        {activeTab === "daily" && (
-          <div className="max-w-2xl mx-auto space-y-4">
-            <div className="glass-card rounded-2xl p-5">
-              <h2 className="text-lg font-black text-white mb-1" style={{ fontFamily: "'Syne', sans-serif" }}>Daily Loss Limit Tracker</h2>
-              <p className="text-white/40 text-sm mb-5">Set your daily max loss and track remaining trades.</p>
-
-              <div className="grid grid-cols-2 gap-4 mb-5">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-white/60 uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace" }}>Daily Loss Limit (₹)</label>
-                  <input type="number" value={dailyInputs.dailyLimit} onChange={e => setDailyInputs(p => ({ ...p, dailyLimit: e.target.value }))}
-                    className="w-full bg-white/4 border border-white/10 rounded-xl px-3 py-3 text-white text-sm outline-none focus:border-[oklch(0.78_0.18_195/0.5)] transition-all duration-200"
-                    style={{ fontFamily: "'DM Mono', monospace" }} />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-white/60 uppercase tracking-wider" style={{ fontFamily: "'DM Mono', monospace" }}>Risk Per Trade (₹)</label>
-                  <input type="number" value={dailyInputs.riskPerTrade} onChange={e => setDailyInputs(p => ({ ...p, riskPerTrade: e.target.value }))}
-                    className="w-full bg-white/4 border border-white/10 rounded-xl px-3 py-3 text-white text-sm outline-none focus:border-[oklch(0.78_0.18_195/0.5)] transition-all duration-200"
-                    style={{ fontFamily: "'DM Mono', monospace" }} />
-                </div>
-              </div>
-
-              {/* Progress */}
-              <div className="rounded-2xl border p-5 mb-4 text-center"
-                style={{ borderColor: daily.pct >= 100 ? "oklch(0.65 0.22 25 / 0.4)" : daily.pct >= 70 ? "oklch(0.78 0.17 65 / 0.3)" : "oklch(0.78 0.18 195 / 0.2)" }}>
-                <p className="text-xs text-white/40 uppercase tracking-widest mb-2" style={{ fontFamily: "'DM Mono', monospace" }}>
-                  {daily.pct >= 100 ? "⛔ DAILY LIMIT REACHED — STOP TRADING" : "Daily Loss Used"}
-                </p>
-                <p className="text-5xl font-black mb-1" style={{ fontFamily: "'Syne', sans-serif",
-                  color: daily.pct >= 100 ? "oklch(0.65 0.22 25)" : daily.pct >= 70 ? "oklch(0.78 0.17 65)" : "oklch(0.78 0.18 195)" }}>
-                  ₹{daily.lostSoFar.toLocaleString("en-IN")}
-                </p>
-                <p className="text-white/40 text-sm">of ₹{parseFloat(dailyInputs.dailyLimit).toLocaleString("en-IN")} limit ({daily.pct.toFixed(0)}%)</p>
-                <div className="h-3 bg-white/5 rounded-full mt-3 overflow-hidden">
-                  <div className="h-full rounded-full transition-all duration-500"
-                    style={{
-                      width: `${Math.min(100, daily.pct)}%`,
-                      background: daily.pct >= 100 ? "oklch(0.65 0.22 25)" : daily.pct >= 70 ? "oklch(0.78 0.17 65)" : "oklch(0.78 0.18 195)"
-                    }} />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 mb-5">
-                <div className="rounded-xl bg-white/4 border border-white/8 p-4 text-center">
-                  <p className="text-xs text-white/40 mb-1">Remaining</p>
-                  <p className="text-2xl font-black text-[oklch(0.78_0.18_195)]" style={{ fontFamily: "'Syne', sans-serif" }}>₹{daily.remaining.toLocaleString("en-IN")}</p>
-                </div>
-                <div className="rounded-xl bg-white/4 border border-white/8 p-4 text-center">
-                  <p className="text-xs text-white/40 mb-1">Trades Left</p>
-                  <p className="text-2xl font-black text-white" style={{ fontFamily: "'Syne', sans-serif" }}>{daily.tradesLeft}</p>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button onClick={() => setTradesLost(p => Math.max(0, p - 1))}
-                  className="flex-1 py-2.5 rounded-xl border border-white/10 text-white/40 hover:text-white/60 text-sm transition-all duration-200">
-                  − Undo Loss
-                </button>
-                <button onClick={() => setTradesLost(p => p + 1)}
-                  disabled={daily.pct >= 100}
-                  className="flex-1 py-2.5 rounded-xl bg-[oklch(0.65_0.22_25/0.1)] border border-[oklch(0.65_0.22_25/0.3)] text-[oklch(0.65_0.22_25)] text-sm font-semibold transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed">
-                  + Log a Loss
-                </button>
-                <button onClick={() => setTradesLost(0)}
-                  className="px-4 py-2.5 rounded-xl border border-white/10 text-white/40 hover:text-white/60 text-sm transition-all duration-200">
-                  Reset
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* ── TAB: EXPECTANCY CALCULATOR ───────────────────────────────────────── */}
         {activeTab === "expectancy" && (
           <div className="max-w-2xl mx-auto space-y-4">
@@ -848,91 +621,6 @@ export default function RiskCalculator() {
                 </p>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* ── TAB: TRADE JOURNAL ───────────────────────────────────────────────── */}
-        {activeTab === "journal" && (
-          <div className="space-y-4">
-            {/* Stats */}
-            {journalStats && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[
-                  { label: "Total P&L", value: `₹${journalStats.totalPnl.toFixed(0)}`, color: journalStats.totalPnl >= 0 ? "text-[oklch(0.78_0.18_195)]" : "text-[oklch(0.65_0.22_25)]" },
-                  { label: "Win Rate", value: `${journalStats.winRate.toFixed(1)}%`, color: journalStats.winRate >= 50 ? "text-[oklch(0.78_0.18_195)]" : "text-[oklch(0.65_0.22_25)]" },
-                  { label: "Avg Win", value: `₹${journalStats.avgWin.toFixed(0)}`, color: "text-[oklch(0.78_0.18_195)]" },
-                  { label: "Avg Loss", value: `₹${journalStats.avgLoss.toFixed(0)}`, color: "text-[oklch(0.65_0.22_25)]" },
-                ].map(s => (
-                  <div key={s.label} className="glass-card rounded-2xl p-4 text-center">
-                    <p className="text-xs text-white/35 mb-1">{s.label}</p>
-                    <p className={`text-xl font-black ${s.color}`} style={{ fontFamily: "'Syne', sans-serif" }}>{s.value}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Add Trade Form */}
-            <div className="glass-card rounded-2xl p-5">
-              <h2 className="text-sm font-bold text-white/60 uppercase tracking-widest mb-4" style={{ fontFamily: "'DM Mono', monospace" }}>Log New Trade</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
-                <input placeholder="Symbol (e.g. RELIANCE)" value={journalForm.symbol} onChange={e => setJournalForm(p => ({ ...p, symbol: e.target.value }))}
-                  className="bg-white/4 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-[oklch(0.78_0.18_195/0.5)] transition-all placeholder:text-white/20" />
-                <select value={journalForm.direction} onChange={e => setJournalForm(p => ({ ...p, direction: e.target.value as "BUY" | "SELL" }))}
-                  className="bg-white/4 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-[oklch(0.78_0.18_195/0.5)] transition-all cursor-pointer">
-                  <option value="BUY" className="bg-[oklch(0.15_0.025_240)]">BUY</option>
-                  <option value="SELL" className="bg-[oklch(0.15_0.025_240)]">SELL</option>
-                </select>
-                <input placeholder="Qty" type="number" value={journalForm.qty} onChange={e => setJournalForm(p => ({ ...p, qty: e.target.value }))}
-                  className="bg-white/4 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-[oklch(0.78_0.18_195/0.5)] transition-all placeholder:text-white/20" style={{ fontFamily: "'DM Mono', monospace" }} />
-                <input placeholder="Entry Price (₹)" type="number" value={journalForm.entry} onChange={e => setJournalForm(p => ({ ...p, entry: e.target.value }))}
-                  className="bg-white/4 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-[oklch(0.78_0.18_195/0.5)] transition-all placeholder:text-white/20" style={{ fontFamily: "'DM Mono', monospace" }} />
-                <input placeholder="Exit Price (₹)" type="number" value={journalForm.exit} onChange={e => setJournalForm(p => ({ ...p, exit: e.target.value }))}
-                  className="bg-white/4 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-[oklch(0.78_0.18_195/0.5)] transition-all placeholder:text-white/20" style={{ fontFamily: "'DM Mono', monospace" }} />
-                <input placeholder="Notes (optional)" value={journalForm.notes} onChange={e => setJournalForm(p => ({ ...p, notes: e.target.value }))}
-                  className="bg-white/4 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-[oklch(0.78_0.18_195/0.5)] transition-all placeholder:text-white/20" />
-              </div>
-              <button onClick={addJournalEntry}
-                className="w-full py-2.5 rounded-xl bg-[oklch(0.78_0.18_195/0.1)] border border-[oklch(0.78_0.18_195/0.3)] text-[oklch(0.78_0.18_195)] text-sm font-semibold flex items-center justify-center gap-2 hover:bg-[oklch(0.78_0.18_195/0.15)] transition-all duration-200">
-                <PlusCircle className="w-4 h-4" /> Log Trade
-              </button>
-            </div>
-
-            {/* Trade List */}
-            {journal.length === 0 ? (
-              <div className="glass-card rounded-2xl p-10 text-center">
-                <BookOpen className="w-10 h-10 text-white/15 mx-auto mb-3" />
-                <p className="text-white/30 text-sm">No trades logged yet. Add your first trade above.</p>
-              </div>
-            ) : (
-              <div className="glass-card rounded-2xl overflow-hidden">
-                <div className="p-4 border-b border-white/5">
-                  <span className="text-xs font-bold text-white/40 uppercase tracking-widest" style={{ fontFamily: "'DM Mono', monospace" }}>Trade History ({journal.length} trades)</span>
-                </div>
-                <div className="divide-y divide-white/5">
-                  {journal.map(t => (
-                    <div key={t.id} className="flex items-center justify-between p-4 hover:bg-white/2 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${t.direction === "BUY" ? "bg-[oklch(0.78_0.18_195/0.1)] text-[oklch(0.78_0.18_195)]" : "bg-[oklch(0.65_0.22_25/0.1)] text-[oklch(0.65_0.22_25)]"}`}>{t.direction}</span>
-                        <div>
-                          <p className="text-white text-sm font-semibold">{t.symbol}</p>
-                          <p className="text-white/30 text-xs">{t.date} · {t.qty} qty · ₹{t.entry} → ₹{t.exit}</p>
-                          {t.notes && <p className="text-white/25 text-xs italic">{t.notes}</p>}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`text-sm font-bold ${t.pnl >= 0 ? "text-[oklch(0.78_0.18_195)]" : "text-[oklch(0.65_0.22_25)]"}`} style={{ fontFamily: "'DM Mono', monospace" }}>
-                          {t.pnl >= 0 ? "+" : ""}₹{t.pnl.toFixed(2)}
-                        </span>
-                        <button onClick={() => setJournal(prev => prev.filter(j => j.id !== t.id))}
-                          className="text-white/20 hover:text-[oklch(0.65_0.22_25)] transition-colors">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
