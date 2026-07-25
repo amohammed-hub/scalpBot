@@ -4608,18 +4608,27 @@ export const appRouter = router({
         const activeSubs = allSubs.filter((s: any) => s.status === "active" && new Date(s.expiresAt) > now);
         const trialSubs = activeSubs.filter((s: any) => s.plan === "trial");
         const paidSubs = activeSubs.filter((s: any) => s.plan !== "trial");
-        const revokedSubs = allSubs.filter((s: any) => s.status === "cancelled");
-        const expiredSubs = allSubs.filter((s: any) => s.status === "expired" || (s.status === "active" && new Date(s.expiresAt) <= now));
-        const revokedTokens = new Set(revokedSubs.map((s: any) => s.sessionToken));
-        const expiredTokens = new Set(expiredSubs.map((s: any) => s.sessionToken));
+        // Count revoked/expired by looking at each user's LATEST subscription only
+        const latestSubByToken = new Map<string, any>();
+        for (const s of allSubs) {
+          if (!latestSubByToken.has(s.sessionToken)) {
+            latestSubByToken.set(s.sessionToken, s); // allSubs is ordered by createdAt DESC
+          }
+        }
+        let revokedCount = 0;
+        let expiredCount = 0;
+        Array.from(latestSubByToken.values()).forEach((sub) => {
+          if (sub.status === "cancelled") revokedCount++;
+          else if (sub.status === "expired" || (sub.status === "active" && new Date(sub.expiresAt) <= now)) expiredCount++;
+        });
         const totalRevenue = allSubs.reduce((sum: number, s: any) => sum + (s.amountPaid ?? 0), 0);
 
         return {
           totalUsers: userCount.count,
           activeSubscriptions: paidSubs.length,
           trialUsers: trialSubs.length,
-          revokedUsers: revokedTokens.size,
-          expiredUsers: expiredTokens.size,
+          revokedUsers: revokedCount,
+          expiredUsers: expiredCount,
           totalRevenue: totalRevenue / 100, // paise to rupees
           mrr: paidSubs.length > 0 ? Math.round(totalRevenue / paidSubs.length / 100) : 0,
         };

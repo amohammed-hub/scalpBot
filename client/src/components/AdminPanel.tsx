@@ -214,7 +214,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                 {usersQuery.data?.filter((u: any) => userFilter === "all" || u.subStatus === userFilter).map((user: any) => (
                   <tr key={user.id} className={`hover:bg-white/5 ${user.subStatus === "revoked" ? "opacity-60" : ""}`}>
                     <td className="px-4 py-3 font-mono text-teal-300">{user.mobile}</td>
-                    <td className="px-4 py-3">{user.name || <span className="text-white/30">—</span>}</td>
+                    <td className="px-4 py-3">{user.name || <span className="text-white/30 italic text-xs">No name set</span>}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                         user.subStatus === "active" ? "bg-green-500/20 text-green-300" :

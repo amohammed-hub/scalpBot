@@ -218,6 +218,22 @@ export default function Dashboard() {
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
 
+  // ── Name Prompt for users who haven't set their name ──────────────────────
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+  const updateNameMutation = trpc.mobileAuth.updateName.useMutation({
+    onSuccess: () => {
+      toast.success(`Welcome, ${nameInput}!`);
+      setShowNamePrompt(false);
+      meQuery.refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  useEffect(() => {
+    if (meQuery.data && !meQuery.data.name) {
+      setShowNamePrompt(true);
+    }
+  }, [meQuery.data]);
 
 
   const logoutMutation = trpc.mobileAuth.logout.useMutation({
@@ -1197,6 +1213,31 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col md:flex-row">
+      {/* ── Name Prompt Dialog ────────────────────────────────────────────────── */}
+      {showNamePrompt && (
+        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-sm w-full bg-[oklch(0.15_0.02_240)] border border-teal-500/30 rounded-2xl p-6 space-y-4">
+            <h3 className="text-lg font-bold text-white text-center">What should we call you?</h3>
+            <p className="text-white/50 text-sm text-center">Enter your name to personalize your experience</p>
+            <input
+              type="text"
+              placeholder="Your name"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && nameInput.trim()) updateNameMutation.mutate({ name: nameInput.trim() }); }}
+              className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-teal-500/50"
+              autoFocus
+            />
+            <button
+              onClick={() => { if (nameInput.trim()) updateNameMutation.mutate({ name: nameInput.trim() }); }}
+              disabled={!nameInput.trim() || updateNameMutation.isPending}
+              className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-black font-bold rounded-lg transition-all active:scale-[0.97] disabled:opacity-50"
+            >
+              {updateNameMutation.isPending ? "Saving..." : "Continue"}
+            </button>
+          </div>
+        </div>
+      )}
       {/* ── Subscription Paywall Overlay ─────────────────────────────────────── */}
       {accessQuery.data && !accessQuery.data.hasAccess && meQuery.data?.role !== "admin" && !accessQuery.data?.plan?.includes("yearly") && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1298,11 +1339,11 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 text-xs px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 mb-3">
             <div className="w-7 h-7 rounded-full bg-teal-500/20 border border-teal-500/30 flex items-center justify-center shrink-0">
               <span className="text-teal-400 font-bold text-[10px]">
-                {meQuery.data.name?.charAt(0)?.toUpperCase() ?? "U"}
+                {meQuery.data.name?.charAt(0)?.toUpperCase() ?? meQuery.data.mobile?.slice(-2) ?? "U"}
               </span>
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-white/80 font-medium truncate text-xs">{meQuery.data.name || "User"}</div>
+              <div className="text-white/80 font-medium truncate text-xs">{meQuery.data.name || meQuery.data.mobile}</div>
               <div className="text-white/40 text-[10px] font-mono">{meQuery.data.mobile}</div>
             </div>
             <button
