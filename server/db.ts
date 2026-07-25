@@ -901,7 +901,36 @@ export async function getAllAppUsers() {
   const db = await getDb();
   if (!db) return [];
   try {
-    return await db.select().from(appUsers).orderBy(desc(appUsers.createdAt));
+    const users = await db.select().from(appUsers).orderBy(desc(appUsers.createdAt));
+    // Enrich each user with their subscription status
+    const now = new Date();
+    const enriched = await Promise.all(users.map(async (user: any) => {
+      if (!user.sessionToken) {
+        return { ...user, subStatus: "no_sub" as const, subPlan: null as string | null, subExpiresAt: null as Date | null, daysLeft: 0 };
+      }
+      // Find the latest subscription for this user
+      const subs = await db.select().from(subscriptions)
+        .where(eq(subscriptions.sessionToken, user.sessionToken))
+        .orderBy(desc(subscriptions.createdAt))
+        .limit(1);
+      if (!subs.length) {
+        return { ...user, subStatus: "no_sub" as const, subPlan: null as string | null, subExpiresAt: null as Date | null, daysLeft: 0 };
+      }
+      const sub = subs[0];
+      let subStatus: "active" | "trial" | "expired" | "revoked" | "no_sub";
+      if (sub.status === "cancelled") {
+        subStatus = "revoked";
+      } else if (sub.status === "expired" || sub.expiresAt < now) {
+        subStatus = "expired";
+      } else if (sub.plan === "trial") {
+        subStatus = "trial";
+      } else {
+        subStatus = "active";
+      }
+      const daysLeft = sub.expiresAt > now ? Math.ceil((sub.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+      return { ...user, subStatus, subPlan: sub.plan, subExpiresAt: sub.expiresAt, daysLeft };
+    }));
+    return enriched;
   } catch {
     // Fallback: referral columns may not exist on Railway
     try {

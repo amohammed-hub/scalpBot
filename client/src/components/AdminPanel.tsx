@@ -9,6 +9,7 @@ type AdminTab = "users" | "subscriptions" | "activity" | "grants" | "referrals" 
 
 export function AdminPanel({ onClose }: { onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
+  const [userFilter, setUserFilter] = useState<"all" | "active" | "trial" | "expired" | "revoked" | "no_sub">("all");
   // Notification admin queries
   const masterSwitchQuery = trpc.adminNotif.getMasterSwitch.useQuery();
   const userPrefsQuery = trpc.adminNotif.listUserPrefs.useQuery();
@@ -134,8 +135,8 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <StatCard icon={<Users className="w-5 h-5" />} label="Total Users" value={stats?.totalUsers ?? 0} color="teal" />
         <StatCard icon={<CreditCard className="w-5 h-5" />} label="Active Paid" value={stats?.activeSubscriptions ?? 0} color="green" />
-        <StatCard icon={<Gift className="w-5 h-5" />} label="Trial Users" value={stats?.trialUsers ?? 0} color="amber" />
-        <StatCard icon={<TrendingUp className="w-5 h-5" />} label="Total Revenue" value={`₹${(stats?.totalRevenue ?? 0).toLocaleString()}`} color="purple" />
+        <StatCard icon={<Gift className="w-5 h-5" />} label="Trial" value={stats?.trialUsers ?? 0} color="amber" />
+        <StatCard icon={<Ban className="w-5 h-5" />} label="Revoked" value={(stats as any)?.revokedUsers ?? 0} color="red" />
       </div>
 
       {/* Tabs */}
@@ -159,10 +160,40 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
       {/* Tab Content */}
       {activeTab === "users" && (
         <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <Users className="w-5 h-5 text-teal-400" /> Users ({usersQuery.data?.length ?? 0})
-            </h2>
+          <div className="px-6 py-4 border-b border-white/10">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Users className="w-5 h-5 text-teal-400" /> Users ({usersQuery.data?.length ?? 0})
+              </h2>
+            </div>
+            {/* Status Filter Tabs */}
+            <div className="flex gap-1 flex-wrap">
+              {([
+                { id: "all" as const, label: "All", count: usersQuery.data?.length ?? 0 },
+                { id: "active" as const, label: "Active", count: usersQuery.data?.filter((u: any) => u.subStatus === "active").length ?? 0 },
+                { id: "trial" as const, label: "Trial", count: usersQuery.data?.filter((u: any) => u.subStatus === "trial").length ?? 0 },
+                { id: "expired" as const, label: "Expired", count: usersQuery.data?.filter((u: any) => u.subStatus === "expired").length ?? 0 },
+                { id: "revoked" as const, label: "Revoked", count: usersQuery.data?.filter((u: any) => u.subStatus === "revoked").length ?? 0 },
+                { id: "no_sub" as const, label: "No Sub", count: usersQuery.data?.filter((u: any) => u.subStatus === "no_sub").length ?? 0 },
+              ]).map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setUserFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    userFilter === f.id
+                      ? f.id === "active" ? "bg-green-500/20 text-green-300 border border-green-500/30"
+                        : f.id === "trial" ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                        : f.id === "expired" ? "bg-gray-500/20 text-gray-300 border border-gray-500/30"
+                        : f.id === "revoked" ? "bg-red-500/20 text-red-300 border border-red-500/30"
+                        : f.id === "no_sub" ? "bg-white/10 text-white/60 border border-white/20"
+                        : "bg-teal-500/20 text-teal-300 border border-teal-500/30"
+                      : "text-white/40 hover:text-white/70 hover:bg-white/5"
+                  }`}
+                >
+                  {f.label} ({f.count})
+                </button>
+              ))}
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -170,6 +201,9 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                 <tr>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Mobile</th>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Name</th>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Status</th>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Plan</th>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Days Left</th>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Role</th>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Joined</th>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Last Login</th>
@@ -177,10 +211,29 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {usersQuery.data?.map((user: any) => (
-                  <tr key={user.id} className="hover:bg-white/5">
+                {usersQuery.data?.filter((u: any) => userFilter === "all" || u.subStatus === userFilter).map((user: any) => (
+                  <tr key={user.id} className={`hover:bg-white/5 ${user.subStatus === "revoked" ? "opacity-60" : ""}`}>
                     <td className="px-4 py-3 font-mono text-teal-300">{user.mobile}</td>
                     <td className="px-4 py-3">{user.name || <span className="text-white/30">—</span>}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                        user.subStatus === "active" ? "bg-green-500/20 text-green-300" :
+                        user.subStatus === "trial" ? "bg-amber-500/20 text-amber-300" :
+                        user.subStatus === "expired" ? "bg-gray-500/20 text-gray-300" :
+                        user.subStatus === "revoked" ? "bg-red-500/20 text-red-300" :
+                        "bg-white/10 text-white/40"
+                      }`}>
+                        {user.subStatus === "no_sub" ? "No Sub" : (user.subStatus ?? "—").charAt(0).toUpperCase() + (user.subStatus ?? "").slice(1)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-white/50 text-xs capitalize">{user.subPlan ? user.subPlan.replace("_", " ") : "—"}</td>
+                    <td className="px-4 py-3">
+                      {user.daysLeft > 0 ? (
+                        <span className={`text-xs font-mono ${user.daysLeft <= 3 ? "text-red-400" : user.daysLeft <= 7 ? "text-amber-400" : "text-green-400"}`}>
+                          {user.daysLeft}d
+                        </span>
+                      ) : <span className="text-white/20">—</span>}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded text-xs ${user.role === "admin" ? "bg-red-500/20 text-red-300" : "bg-white/10 text-white/60"}`}>
                         {user.role}
@@ -224,7 +277,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                 ))}
                 {(!usersQuery.data || usersQuery.data.length === 0) && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-white/30">No users yet</td>
+                    <td colSpan={9} className="px-4 py-8 text-center text-white/30">No users yet</td>
                   </tr>
                 )}
               </tbody>

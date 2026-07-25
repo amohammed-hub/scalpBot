@@ -4600,7 +4600,7 @@ export const appRouter = router({
         // Admin access check (BUG 13/14 fix: also checks ADMIN_MOBILE and DB role)
         if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
         const db = await getDb();
-        if (!db) return { totalUsers: 0, activeSubscriptions: 0, totalRevenue: 0, trialUsers: 0 };
+        if (!db) return { totalUsers: 0, activeSubscriptions: 0, totalRevenue: 0, trialUsers: 0, revokedUsers: 0, expiredUsers: 0 };
 
         const [userCount] = await db.select({ count: count() }).from(appUsers);
         const allSubs = await getAllSubscriptions();
@@ -4608,12 +4608,18 @@ export const appRouter = router({
         const activeSubs = allSubs.filter((s: any) => s.status === "active" && new Date(s.expiresAt) > now);
         const trialSubs = activeSubs.filter((s: any) => s.plan === "trial");
         const paidSubs = activeSubs.filter((s: any) => s.plan !== "trial");
+        const revokedSubs = allSubs.filter((s: any) => s.status === "cancelled");
+        const expiredSubs = allSubs.filter((s: any) => s.status === "expired" || (s.status === "active" && new Date(s.expiresAt) <= now));
+        const revokedTokens = new Set(revokedSubs.map((s: any) => s.sessionToken));
+        const expiredTokens = new Set(expiredSubs.map((s: any) => s.sessionToken));
         const totalRevenue = allSubs.reduce((sum: number, s: any) => sum + (s.amountPaid ?? 0), 0);
 
         return {
           totalUsers: userCount.count,
           activeSubscriptions: paidSubs.length,
           trialUsers: trialSubs.length,
+          revokedUsers: revokedTokens.size,
+          expiredUsers: expiredTokens.size,
           totalRevenue: totalRevenue / 100, // paise to rupees
           mrr: paidSubs.length > 0 ? Math.round(totalRevenue / paidSubs.length / 100) : 0,
         };
