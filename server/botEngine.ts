@@ -4043,9 +4043,15 @@ export async function placeUpstoxOrder(
     }
     // If the error is UDAPI1154 (static IP restriction), retry — Railway load-balances
     // across 3 IPs but only 2 are whitelisted in Upstox. Retrying hits a different IP.
-    if (reason.includes("UDAPI1154") && attempt < MAX_RETRIES) {
-      console.log(`[BotEngine] Order hit non-whitelisted IP (attempt ${attempt}/${MAX_RETRIES}), retrying in 500ms...`);
-      await new Promise(r => setTimeout(r, 500));
+    // Fix #3: Also retry on timeout/5xx/network errors (not just UDAPI1154)
+    const isRetryable = reason.includes("UDAPI1154") ||
+      reason.includes("timeout") || reason.includes("ETIMEDOUT") || reason.includes("ECONNRESET") ||
+      reason.includes("ECONNABORTED") || reason.includes("socket hang up") ||
+      (axios.isAxiosError(err) && err.response && err.response.status >= 500);
+    if (isRetryable && attempt < MAX_RETRIES) {
+      const delay = reason.includes("UDAPI1154") ? 500 : 1000; // Longer delay for network issues
+      console.log(`[BotEngine] Order failed (retryable: ${reason.slice(0, 60)}), attempt ${attempt}/${MAX_RETRIES}, retrying in ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
       continue;
     }
     lastOrderRejectionReason = reason;

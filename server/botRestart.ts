@@ -16,6 +16,73 @@ import { eq, and, desc, gte } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import axios from "axios";
+import { emitActivity } from "./activityLog";
+
+/**
+ * Fix #4: Portfolio Reconciliation
+ * On bot start, compare Upstox positions vs in-memory/DB state.
+ * - If Upstox has a position the bot doesn't know about → log orphan warning
+ * - If bot thinks it has a position that Upstox doesn't → mark as ghost/cancelled
+ */
+export async function reconcilePortfolio(
+  accessToken: string | null,
+  sessionToken: string,
+  existingOpenTrade: OpenTrade | undefined,
+  instrumentToken: string,
+): Promise<{ action: "none" | "ghost_cleared" | "position_found"; details?: string }> {
+  if (!accessToken) return { action: "none", details: "No access token — skipping reconciliation" };
+
+  try {
+    const posResp = await axios.get("https://api.upstox.com/v2/portfolio/short-term-positions", {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      timeout: 8000,
+    });
+    const positions: Array<{ instrument_token: string; quantity: number; day_buy_quantity: number; day_sell_quantity: number; average_price: number; pnl: number }> = posResp.data?.data ?? [];
+
+    // Find matching position for this bot's instrument
+    const tradeToken = existingOpenTrade?.instrumentToken ?? instrumentToken;
+    const matchingPos = positions.find(p => p.instrument_token === tradeToken);
+    const netQty = matchingPos ? Math.abs(matchingPos.quantity) : 0;
+
+    // Case 1: Bot has open trade but Upstox has NO position → ghost trade
+    if (existingOpenTrade && existingOpenTrade.mode === "live" && netQty === 0) {
+      console.warn(`[Reconcile] ${sessionToken.slice(0, 8)} — BOT has open trade #${existingOpenTrade.dbId} (${existingOpenTrade.symbolLabel}) but Upstox has NO position. Marking as GHOST.`);
+      emitActivity(sessionToken, "error", `⚠️ GHOST TRADE DETECTED: Trade #${existingOpenTrade.dbId} (${existingOpenTrade.symbolLabel}) not found on Upstox. Marking as cancelled.`);
+
+      // Mark trade as cancelled in DB
+      const db = await getDb();
+      if (db) {
+        await db.update(tradeLog).set({
+          status: "closed",
+          exitPrice: existingOpenTrade.entryPrice,
+          pnl: 0,
+          pnlPct: 0,
+          exitReason: "Ghost — Position not found on Upstox (reconciliation)",
+          exitedAt: new Date(),
+        }).where(eq(tradeLog.id, existingOpenTrade.dbId));
+      }
+      return { action: "ghost_cleared", details: `Trade #${existingOpenTrade.dbId} marked as ghost — not on Upstox` };
+    }
+
+    // Case 2: Upstox has a position but bot has NO open trade → orphaned position
+    if (!existingOpenTrade && netQty > 0 && matchingPos) {
+      console.warn(`[Reconcile] ${sessionToken.slice(0, 8)} — Upstox has position for ${tradeToken} (qty=${netQty}, avg=₹${matchingPos.average_price}) but bot has NO open trade. ORPHANED POSITION detected.`);
+      emitActivity(sessionToken, "error", `⚠️ ORPHANED POSITION: Upstox has ${netQty} qty of ${tradeToken} (avg ₹${matchingPos.average_price.toFixed(2)}) but bot has no open trade. Close manually or restart with trade restoration.`);
+      return { action: "position_found", details: `Orphaned: Upstox has ${netQty} qty at ₹${matchingPos.average_price}` };
+    }
+
+    // Case 3: Both match — all good
+    if (existingOpenTrade && netQty > 0) {
+      console.log(`[Reconcile] ${sessionToken.slice(0, 8)} — ✅ Position confirmed on Upstox: ${netQty} qty at ₹${matchingPos!.average_price}`);
+    }
+
+    return { action: "none" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[Reconcile] ${sessionToken.slice(0, 8)} — Portfolio reconciliation failed (non-fatal): ${msg}`);
+    return { action: "none", details: `Reconciliation failed: ${msg}` };
+  }
+}
 
 // Type alias for a row from botSessions (Drizzle infers this)
 type BotSessionRow = typeof botSessions.$inferSelect;
@@ -149,6 +216,21 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       accessToken = credWithToken.accessToken;
       await db.update(upstoxCredentials).set({ sessionToken: baseToken }).where(eq(upstoxCredentials.id, credWithToken.id));
       console.log(`[BotRestart] FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${baseToken.slice(0, 8)}...`);
+    }
+  }
+
+  // Fix #4: Portfolio Reconciliation — verify positions match before starting bot
+  if (existingOpenTrade && existingOpenTrade.mode === "live" && accessToken) {
+    const reconcileResult = await reconcilePortfolio(
+      accessToken,
+      session.sessionToken,
+      existingOpenTrade,
+      session.instrumentToken ?? "",
+    );
+    if (reconcileResult.action === "ghost_cleared") {
+      // Ghost trade cleared — start bot without open trade
+      existingOpenTrade = undefined;
+      console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} — Ghost trade cleared by reconciliation, starting in scan mode`);
     }
   }
 

@@ -10,7 +10,7 @@
  */
 
 import type { BotState, Candle } from "./botEngine";
-import { classifyMarketRegime, placeUpstoxOrder } from "./botEngine";
+import { classifyMarketRegime, placeUpstoxOrder, verifyUpstoxOrderStatus } from "./botEngine";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface MarketRiskScore {
@@ -387,8 +387,46 @@ export async function executeKillSwitch(
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
         const killOrderId = await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)), bot.lotSize);
         if (!killOrderId) {
-          console.error(`[KillSwitch] EXIT ORDER FAILED for ${trade.symbolLabel ?? trade.symbol} — position still open on Upstox!`);
-          continue; // Don't close in DB if order failed
+          // Retry once after 1s
+          await new Promise(r => setTimeout(r, 1000));
+          const retryOrderId = await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)), bot.lotSize);
+          if (!retryOrderId) {
+            console.error(`[KillSwitch] EXIT ORDER FAILED (2 attempts) for ${trade.symbolLabel ?? trade.symbol} — position still open on Upstox!`);
+            continue; // Don't close in DB if order failed
+          }
+          // Verify retry order
+          await new Promise(r => setTimeout(r, 2000));
+          const retryVerify = await verifyUpstoxOrderStatus(bot.accessToken, retryOrderId);
+          if (retryVerify.status === "rejected" || retryVerify.status === "cancelled") {
+            console.error(`[KillSwitch] EXIT ORDER REJECTED on retry for ${trade.symbolLabel ?? trade.symbol}: ${retryVerify.rejectionReason}`);
+            continue;
+          }
+          // Use actual fill price from retry if available
+          if (retryVerify.avgPrice && retryVerify.avgPrice > 0) exitPrice = retryVerify.avgPrice;
+        } else {
+          // Verify the exit order was actually filled
+          await new Promise(r => setTimeout(r, 2000));
+          const verification = await verifyUpstoxOrderStatus(bot.accessToken, killOrderId);
+          if (verification.status === "rejected" || verification.status === "cancelled") {
+            console.error(`[KillSwitch] EXIT ORDER REJECTED for ${trade.symbolLabel ?? trade.symbol}: ${verification.rejectionReason}. Retrying...`);
+            // Retry once
+            await new Promise(r => setTimeout(r, 1000));
+            const retryId = await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)), bot.lotSize);
+            if (!retryId) {
+              console.error(`[KillSwitch] EXIT RETRY ALSO FAILED for ${trade.symbolLabel ?? trade.symbol}`);
+              continue;
+            }
+            await new Promise(r => setTimeout(r, 2000));
+            const retryVerify = await verifyUpstoxOrderStatus(bot.accessToken, retryId);
+            if (retryVerify.status === "rejected" || retryVerify.status === "cancelled") {
+              console.error(`[KillSwitch] EXIT RETRY REJECTED for ${trade.symbolLabel ?? trade.symbol}: ${retryVerify.rejectionReason}`);
+              continue;
+            }
+            if (retryVerify.avgPrice && retryVerify.avgPrice > 0) exitPrice = retryVerify.avgPrice;
+          } else if (verification.avgPrice && verification.avgPrice > 0) {
+            // Use actual fill price from Upstox (more accurate than estimated exitPrice)
+            exitPrice = verification.avgPrice;
+          }
         }
       }
 

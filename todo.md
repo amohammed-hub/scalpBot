@@ -1764,3 +1764,16 @@
 ## First-Time User Guide (Jul 26)
 - [x] Add "?" help icon tooltips on each Dashboard section explaining: bot slots, Paper vs Live, Kill Switch, Stop, capital field, signals/strategies
 - [x] Show first-login guide overlay/modal for new users on their first Dashboard visit
+
+## Execution Fixes (Priority 1 — Before Monday)
+- [x] Fix #1: Exit order verification in kill switch (verify fill after placing exit order, retry if pending)
+- [x] Fix #2: Manual exit order verification (verify fill, retry if pending, same as entry verification)
+- [x] Fix #3: Order retry on timeout/5xx errors (not just UDAPI1154 IP issue)
+- [x] Fix #4: Portfolio reconciliation on bot start (GET short-term-positions, compare vs in-memory, restore/ghost)
+- [x] Fix #5: Stop button = pause (keep position open), Exit button = close position (already exists)
+
+## Strategy Rewrite (Priority 2 — After Execution Deploys)
+- [ ] Rewrite RedBarTheory to Dr. Pratap exact rules (fixed bricks, Red→Green above HIGH, EMA10, SL below Red LOW, 1:2 R:R)
+- [ ] Backtest rewritten RedBarTheory on 3-month data — show results before enabling live
+- [ ] Add PremiumRenko layer (Lesson 7 — Renko on option premium chart, brick 10/15)
+- [ ] Backtest PremiumRenko on 3-month data — show results before enabling live
