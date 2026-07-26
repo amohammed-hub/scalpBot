@@ -4,7 +4,7 @@ import {
   Settings as SettingsIcon, Zap, Activity, Calculator, Key,
   ExternalLink, Eye, EyeOff, Save, Trash2, CheckCircle,
   AlertTriangle, ChevronDown, ChevronUp, MousePointer,
-  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2, ArrowDownUp, Lock, Gift, Users
+  LogIn, Copy, ClipboardPaste, RefreshCw, Info, Send, Bell, Flame, BarChart2, ArrowDownUp, Lock, Gift, Users, Target
 } from "lucide-react";
 import { MCX_INSTRUMENTS, getMCXByCategory } from "@shared/mcxInstruments";
 import { getTierLimits, FEATURE_MIN_PLAN } from "@shared/tierLimits";
@@ -286,6 +286,52 @@ function AveragingControls() {
         </div>
       </div>
     </>
+  );
+}
+
+function SlStrategySelector() {
+  const [strategy, setStrategy] = useState<"B" | "D">(() => (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B");
+
+  const handleChange = (val: "B" | "D") => {
+    setStrategy(val);
+    localStorage.setItem("scalpbot_sl_strategy", val);
+    toast.success(val === "B" ? "Strategy B selected — wider SL + 1:2 R:R (best P&L)" : "Strategy D selected — wider SL + 1:1.5 R:R (highest win rate)");
+  };
+
+  return (
+    <div className="space-y-3">
+      <div
+        onClick={() => handleChange("B")}
+        className={`p-4 rounded-xl border cursor-pointer transition-all ${strategy === "B" ? "border-cyan-500 bg-cyan-500/10" : "border-white/10 bg-white/5 hover:border-white/20"}`}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-white font-semibold">Strategy B — Best P&L</p>
+            <p className="text-xs text-white/50 mt-1">SL: 1.5x brick | Target: 2x risk (1:2 R:R)</p>
+            <p className="text-xs text-cyan-400/70 mt-0.5">Backtest: +₹134/day NIFTY, +₹106/day BANKNIFTY | Win rate: 40%</p>
+          </div>
+          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${strategy === "B" ? "border-cyan-500" : "border-white/30"}`}>
+            {strategy === "B" && <div className="w-2.5 h-2.5 rounded-full bg-cyan-500" />}
+          </div>
+        </div>
+      </div>
+      <div
+        onClick={() => handleChange("D")}
+        className={`p-4 rounded-xl border cursor-pointer transition-all ${strategy === "D" ? "border-emerald-500 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:border-white/20"}`}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-white font-semibold">Strategy D — Highest Win Rate</p>
+            <p className="text-xs text-white/50 mt-1">SL: 1.5x brick | Target: 1.5x risk (1:1.5 R:R)</p>
+            <p className="text-xs text-emerald-400/70 mt-0.5">Backtest: 53.8% win rate NIFTY | Lower drawdown, more consistent</p>
+          </div>
+          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${strategy === "D" ? "border-emerald-500" : "border-white/30"}`}>
+            {strategy === "D" && <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />}
+          </div>
+        </div>
+      </div>
+      <p className="text-[10px] text-white/30 text-center">Takes effect on next bot start. Both strategies use V4 wider SL.</p>
+    </div>
   );
 }
 
@@ -635,6 +681,7 @@ export default function Settings() {
   const showV2Engine = activeSection === "v2Engine";
   const showShadowMode = activeSection === "shadowMode";
   const showSessionShare = activeSection === "sessionShare";
+  const showSlStrategy = activeSection === "slStrategy";
 
   // MCX Quick Launch state
   const [mcxCategory, setMcxCategory] = useState<"all" | "metal" | "energy" | "agri">("all");
@@ -683,6 +730,7 @@ export default function Settings() {
       telegramBotToken: tg.botToken ?? "",
       telegramChatId: tg.chatId ?? "",
       telegramEnabled: tg.enabled ?? false,
+      slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
     });
   };
 
@@ -1428,6 +1476,26 @@ export default function Settings() {
           )}
         </div>
         {/* ── Shadow Mode (Signal Audit) ────────────────────────────────── */}
+        {/* ── SL Strategy Selection ────────────────────────────────────── */}
+        <div className="mt-6 bg-[oklch(0.18_0.03_240)] border border-cyan-500/20 rounded-2xl overflow-hidden">
+          <button onClick={() => toggleSection("slStrategy")} className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
+            <div className="flex items-center gap-2">
+              <Target className="w-4 h-4 text-cyan-400" />
+              <span className="text-white font-semibold text-sm">SL Strategy — Risk:Reward Profile</span>
+              <span className="ml-2 text-[10px] bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded-full">V4</span>
+            </div>
+            {showSlStrategy ? <ChevronUp className="w-4 h-4 text-white/40" /> : <ChevronDown className="w-4 h-4 text-white/40" />}
+          </button>
+          {showSlStrategy && (
+            <div className="px-5 pb-5 space-y-4 border-t border-white/10 pt-4">
+              <p className="text-white/50 text-xs leading-relaxed">
+                Choose your SL/Target profile. Strategy B gives best absolute P&L with wider targets. Strategy D gives highest win rate with tighter targets. Both use the V4 wider SL (1.5x brick). Takes effect on next bot start.
+              </p>
+              <SlStrategySelector />
+            </div>
+          )}
+        </div>
+        {/* ── Shadow Mode (Signal Audit) ────────────────────────────────── (moved below) */}
         <div className={`mt-6 bg-[oklch(0.18_0.03_240)] border border-amber-500/20 rounded-2xl overflow-hidden ${!(isAdmin || currentTierLimits.shadowMode) ? "relative" : ""}`}>
           {!(isAdmin || currentTierLimits.shadowMode) && (
             <div className="absolute inset-0 z-10 bg-black/70 backdrop-blur-[2px] flex items-center justify-center rounded-2xl">

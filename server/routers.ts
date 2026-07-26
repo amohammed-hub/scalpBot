@@ -7,7 +7,7 @@ import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, noti
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, verifyUpstoxOrderStatus } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -354,6 +354,7 @@ export const appRouter = router({
         underlyingToken: z.string().optional(), // e.g. "NSE_INDEX|Nifty Bank"
         optionType: z.enum(["CE", "PE", "auto"]).optional(), // "auto" = CE for BUY, PE for SELL
         enabledLayers: z.array(z.string()).optional(),
+        slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R (best P&L), D = wider SL + 1:1.5 R:R (highest win rate)
         partial1Pct: z.number().default(30), // Book 50% at this % profit (e.g., 30 = +30%)
         partial2Pct: z.number().default(60), // Book 25% at this % profit (e.g., 60 = +60%)
         averagingEnabled: z.boolean().default(true),
@@ -672,6 +673,7 @@ export const appRouter = router({
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
               enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
+             slStrategy: input.slStrategy ?? "B",
              partial1Pct: input.partial1Pct,
              partial2Pct: input.partial2Pct,
              averagingEnabled: input.averagingEnabled,
@@ -682,6 +684,7 @@ export const appRouter = router({
              crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+            layerTradesCount: {},
            })
            .where(eq(botSessions.sessionToken, input.sessionToken));
        } else {
@@ -710,6 +713,7 @@ export const appRouter = router({
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
               enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+              slStrategy: input.slStrategy ?? "B",
               partial1Pct: input.partial1Pct,
               partial2Pct: input.partial2Pct,
               averagingEnabled: input.averagingEnabled,
@@ -720,6 +724,7 @@ export const appRouter = router({
               crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+            layerTradesCount: {},
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -865,6 +870,7 @@ export const appRouter = router({
             underlyingToken: input.underlyingToken,
             optionType: input.optionType,
            enabledLayers: input.enabledLayers,
+           slStrategy: input.slStrategy ?? "B",
            consecutiveTickErrors: 0,
             capitalUsed: 0,
            partial1Pct: input.partial1Pct,
@@ -878,6 +884,7 @@ export const appRouter = router({
             crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+            layerTradesCount: {},
           },
           onTradeOpen,
           onTradeClose,
@@ -913,6 +920,11 @@ export const appRouter = router({
 
         // Capture bot state BEFORE stopping (need lastPrice for closing trades)
         const botState = getBotState(input.sessionToken);
+        const lastPrice = botState?.lastPrice ?? 0;
+        // For options trades, use the option premium price (not underlying)
+        const optionPremium = (botState as any)?.optionPremiumPrice ?? 0;
+        const accessToken = (botState as any)?.accessToken ?? null;
+        const optionTradeToken = (botState as any)?.optionTradeToken ?? null;
         stopBot(input.sessionToken);
         // Clear activity log for this session (stale events confuse UX on next start)
         try {
@@ -925,10 +937,96 @@ export const appRouter = router({
             .update(botSessions)
             .set({ status: "stopped", stoppedAt: new Date() })
             .where(eq(botSessions.sessionToken, input.sessionToken));
-          // Fix #5: Stop = PAUSE only. Position stays open on Upstox.
-          // The "Exit" button (manualExit endpoint) is for closing positions.
-          // Open trades remain in DB with status="open" so they can be restored on next start.
-          console.log(`[BotStop] ${input.sessionToken.slice(0, 8)} — PAUSED (position preserved). Use Exit button to close trades.`);
+          // Auto-close all open trades for this session at last known price
+          const openTrades = await db.select().from(tradeLog).where(
+            and(eq(tradeLog.sessionToken, input.sessionToken), eq(tradeLog.status, "open"))
+          );
+          const now = new Date();
+          for (const t of openTrades) {
+            // For options trades: use option premium price, not underlying
+           const isOption = t.symbol.includes("CE") || t.symbol.includes("PE");
+           let exitPx = 0;
+           if (isOption) {
+              // Priority 1: fetch real quote using optionTradeToken (most accurate)
+              if (accessToken && optionTradeToken && !optionTradeToken.startsWith("PAPER_OPT|")) {
+                try {
+                  const q = await fetchFullQuote(optionTradeToken, accessToken);
+                  if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                } catch { /* non-fatal */ }
+              }
+             // Priority 2: try to resolve token from trade symbol and fetch
+             if (exitPx === 0 && accessToken) {
+               try {
+                 const sym = ((t as any).symbolLabel ?? t.symbol ?? "").toUpperCase();
+                 const isMcx = sym.includes("CRUDE") || sym.includes("GOLD") || sym.includes("SILVER") || sym.includes("NATGAS");
+                 const optType: "CE" | "PE" = sym.includes("CE") ? "CE" : "PE";
+                 // Extract exact strike from symbol
+                 const stopStrikeMatch = sym.match(/(\d{3,6})\s*(CE|PE)|(CE|PE)[_\s]*(\d{3,6})/);
+                 const stopExactStrike = stopStrikeMatch ? parseInt(stopStrikeMatch[1] ?? stopStrikeMatch[4] ?? "0", 10) : 0;
+                  let resolvedTokenStr: string | null = null;
+                  // Try specific strike resolution first (including MCX)
+                  if (stopExactStrike > 0 && isMcx) {
+                    const underlying = botState?.instrumentToken ?? "";
+                    const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
+                    resolvedTokenStr = resolved?.token ?? null;
+                  } else if (stopExactStrike > 0) {
+                    const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                    resolvedTokenStr = await resolveSpecificOptionToken(underlying, optType, stopExactStrike, accessToken);
+                  }
+                  // Fallback to ATM resolution
+                  if (!resolvedTokenStr && isMcx && stopExactStrike === 0) {
+                    const underlying = botState?.instrumentToken ?? "";
+                    const resolved = await resolveAtmMcxOptionToken(underlying, optType, accessToken);
+                    resolvedTokenStr = resolved?.token ?? null;
+                  } else if (!resolvedTokenStr) {
+                    const underlying = botState?.instrumentToken ?? (sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50");
+                    const resolved = await resolveAtmOptionToken(underlying, optType, accessToken);
+                    resolvedTokenStr = resolved?.token ?? null;
+                  }
+                  if (resolvedTokenStr) {
+                    const q = await fetchFullQuote(resolvedTokenStr, accessToken);
+                    if (q && q.ltp > 0) exitPx = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                  }
+                } catch { /* non-fatal */ }
+              }
+              // Priority 3 (LAST RESORT): use in-memory optionPremiumPrice
+              // WARNING: This may be delta-approximated and inaccurate. Only use if real quote fetch failed.
+              if (exitPx === 0 && optionPremium > 0) {
+                // Sanity check: if optionPremium is more than 50% away from entry, it's likely wrong
+                const deviationPct = Math.abs(optionPremium - t.entryPrice) / t.entryPrice;
+                if (deviationPct < 0.5) {
+                  exitPx = optionPremium;
+                } else {
+                  console.log(`[BotStop] Options trade ${t.symbol} #${t.id}: in-memory premium ₹${optionPremium.toFixed(2)} deviates ${(deviationPct * 100).toFixed(0)}% from entry ₹${t.entryPrice} — rejecting as unreliable`);
+                }
+              }
+              // If STILL no valid premium: DON'T close the trade. Keep it open.
+              if (exitPx === 0) {
+                console.log(`[BotStop] Options trade ${t.symbol} #${t.id}: no valid premium available — keeping trade OPEN`);
+                continue; // Skip this trade, don't close it
+              }
+            } else {
+              // Non-options: use lastPrice or entry as fallback
+              exitPx = lastPrice > 0 ? lastPrice : t.entryPrice;
+            }
+            // For BUY direction: P&L = (exit - entry) * qty
+            // For SELL direction: P&L = (entry - exit) * qty
+            const remainingQty = t.quantity - (t.bookedQty ?? 0);
+            const remainingPnl = t.direction === "BUY"
+              ? (exitPx - t.entryPrice) * remainingQty
+              : (t.entryPrice - exitPx) * remainingQty;
+            // Include already-booked partial profits in total P&L
+            const pnl = remainingPnl + (t.bookedPnl ?? 0);
+            const capital = t.quantity * t.entryPrice;
+            await db.update(tradeLog).set({
+              status: "closed",
+              exitPrice: exitPx,
+              pnl,
+              pnlPct: capital > 0 ? (pnl / capital) * 100 : 0,
+              exitReason: "Bot Stopped — Auto-Closed",
+              exitedAt: now,
+            }).where(eq(tradeLog.id, t.id));
+          }
         }
         return { success: true };
       }),
@@ -1147,6 +1245,7 @@ export const appRouter = router({
            crudeOilCorrelation: row.crudeOilCorrelation ?? false,
            adaptiveRegimeEnabled: (row as any).adaptiveRegimeEnabled ?? true,
            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+            layerTradesCount: {},
          },
          onTradeOpen,
          onTradeClose,
@@ -1418,36 +1517,6 @@ export const appRouter = router({
             const botState = getBotState(input.sessionToken);
             const lotSize = botState?.lotSize ?? 1;
             orderId = await placeUpstoxOrder(creds[0].accessToken, trade.instrumentToken, exitDir, remainingQty, lotSize);
-            // Fix #2: Verify exit order was filled (same pattern as entry verification)
-            if (orderId) {
-              let exitVerification: { status: string; rejectionReason?: string; filledQty?: number; avgPrice?: number } = { status: "unknown" };
-              for (let vAttempt = 1; vAttempt <= 3; vAttempt++) {
-                await new Promise(r => setTimeout(r, vAttempt === 1 ? 2000 : 2500));
-                exitVerification = await verifyUpstoxOrderStatus(creds[0].accessToken, orderId);
-                if (exitVerification.status === "complete" || exitVerification.status === "traded" ||
-                    exitVerification.status === "rejected" || exitVerification.status === "cancelled") break;
-              }
-              if (exitVerification.status === "rejected" || exitVerification.status === "cancelled") {
-                // Retry the exit order once
-                const retryOrderId = await placeUpstoxOrder(creds[0].accessToken, trade.instrumentToken, exitDir, remainingQty, lotSize);
-                if (retryOrderId) {
-                  orderId = retryOrderId;
-                  await new Promise(r => setTimeout(r, 2500));
-                  const retryVerify = await verifyUpstoxOrderStatus(creds[0].accessToken, retryOrderId);
-                  if (retryVerify.status === "rejected" || retryVerify.status === "cancelled") {
-                    throw new Error(`Exit order REJECTED by exchange: ${retryVerify.rejectionReason ?? exitVerification.rejectionReason ?? "unknown"}. Position may still be open on Upstox.`);
-                  }
-                  if (retryVerify.avgPrice && retryVerify.avgPrice > 0) {
-                    input.exitPrice = retryVerify.avgPrice;
-                  }
-                } else {
-                  throw new Error(`Exit order REJECTED and retry FAILED. Position still open on Upstox. Close manually.`);
-                }
-              } else if (exitVerification.avgPrice && exitVerification.avgPrice > 0) {
-                // Use actual fill price from Upstox
-                input.exitPrice = exitVerification.avgPrice;
-              }
-            }
           }
         }
 
@@ -2416,6 +2485,7 @@ export const appRouter = router({
         openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
         crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
         adaptiveRegimeEnabled: z.boolean().default(true), // Adaptive Regime Switching (default ON)
+        slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
@@ -2650,6 +2720,7 @@ export const appRouter = router({
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(), stoppedAt: null, lastError: null,
            enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
+           slStrategy: input.slStrategy ?? "B",
            partial1Pct: input.partial1Pct,
            partial2Pct: input.partial2Pct,
            averagingEnabled: input.averagingEnabled ?? true,
@@ -2660,6 +2731,7 @@ export const appRouter = router({
            crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+            layerTradesCount: {},
          }).where(eq(botSessions.sessionToken, slotToken));
        } else {
           const result = await db.insert(botSessions).values({
@@ -2677,6 +2749,7 @@ export const appRouter = router({
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(),
             enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
+            slStrategy: input.slStrategy ?? "B",
             partial1Pct: input.partial1Pct,
             partial2Pct: input.partial2Pct,
             averagingEnabled: input.averagingEnabled ?? true,
@@ -2687,6 +2760,7 @@ export const appRouter = router({
             crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+            layerTradesCount: {},
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -2746,6 +2820,7 @@ export const appRouter = router({
           underlyingToken: input.underlyingToken,
           optionType: input.optionType,
          enabledLayers: input.enabledLayers,
+         slStrategy: input.slStrategy ?? "B",
          consecutiveTickErrors: 0,
           capitalUsed: 0,
          partial1Pct: input.partial1Pct,
@@ -2758,6 +2833,7 @@ export const appRouter = router({
           crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+            layerTradesCount: {},
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;

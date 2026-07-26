@@ -1655,13 +1655,7 @@
 - [x] BUG 9: Trades not auto-closing — exit orders used bot's known qty which could be less than actual Upstox position (due to duplicate orders). Fixed: added position sync — fetches actual qty from /v2/portfolio/short-term-positions before placing exit order.
 
 ## CRITICAL FIX: Cross-Bot Direction Lock (Jul 24)
-- [x] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
-
-## Direction Lock v2 — Relaxed Rules (Jul 26)
-- [x] Rule 1: Same underlying (both bots on NIFTY) → HARD BLOCK opposite direction
-- [x] Rule 2: Correlated indices (Group 1: NIFTY/BANKNIFTY/FINNIFTY/SENSEX/BANKEX/MIDCPNIFTY) → Allow opposite direction ONLY if signal confidence > 85%, log as "⚠️ Correlation override — high confidence counter-signal"
-- [x] Rule 3: Different segments (NSE vs MCX, GOLD vs CRUDE) → NO BLOCK at all — fully independent
-- [x] Enhanced activity logging: when a counter-signal is generated (blocked OR overridden), log FULL signal details — strategy name, confidence, candle pattern, reversal assessment
+- [ ] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
 
 ## FIX: MCX Trades Not Triggering (Jul 24)
 - [x] BUG 11: MCX cooldown gates too aggressive — reduced P2 underlying cooldown from 15min→8min, P1 direction block from 3min→90s, P1 consecutive block from 10min→5min, anti-chase threshold from 1%→1.5%, direction streak block from 30min→15min for MCX
@@ -1761,34 +1755,15 @@
 - [x] FIX: Trial flow — added server-side guard in startTrial(): requires verified user (phone+OTP completed) before trial activation. Frontend already redirects to /login?intent=trial.
 - [x] FIX: Removed "AI-powered" / "AI Signal Engine" claims from hero badge, subtitle, and Dashboard header → "Multi-Layer Signal Engine"
 
-## First-Time User Guide (Jul 26)
-- [x] Add "?" help icon tooltips on each Dashboard section explaining: bot slots, Paper vs Live, Kill Switch, Stop, capital field, signals/strategies
-- [x] Show first-login guide overlay/modal for new users on their first Dashboard visit
-
-## Execution Fixes (Priority 1 — Before Monday)
-- [x] Fix #1: Exit order verification in kill switch (verify fill after placing exit order, retry if pending)
-- [x] Fix #2: Manual exit order verification (verify fill, retry if pending, same as entry verification)
-- [x] Fix #3: Order retry on timeout/5xx errors (not just UDAPI1154 IP issue)
-- [x] Fix #4: Portfolio reconciliation on bot start (GET short-term-positions, compare vs in-memory, restore/ghost)
-- [x] Fix #5: Stop button = pause (keep position open), Exit button = close position (already exists)
-
-## Strategy Rewrite (Priority 2 — After Execution Deploys)
-- [x] Rewrite RedBarTheory to Dr. Pratap exact rules (fixed bricks, Red→Green above HIGH, EMA10, SL below Red LOW, 1:2 R:R)
-- [x] Backtest rewritten RedBarTheory on 3-month data — show results before enabling live
-- [x] Add PremiumRenko layer (Lesson 7 — Renko on option premium chart, brick 10/15)
-- [x] Backtest PremiumRenko on 3-month data — show results before enabling live
-- [x] PremiumRenko backtest with REAL option premium data (Analytics Token, 30 days)
-
-## PremiumRenko Quality Gap Investigation (30% → 70% win rate)
-- [ ] Re-read all course notes for multi-timeframe confirmation (6hr/daily/15min trend filter)
-- [ ] Check if minimum brick count in trend BEFORE Red Bar is required
-- [ ] Check if Red Bar needs EMA/VWAP touch level
-- [x] Check if first 15 minutes are skipped (YES: skip before 9:45 AM IST)
-- [x] Check if ranging market filter exists (YES: sideways detection via 5+ color changes in 8 bricks)
-- [x] Check if volume/momentum confirmation is needed (YES: min 3 green bricks before pullback)
-- [x] Investigate entry timing: moment of breakout vs next candle vs close of green brick (CLOSE of green brick)
-- [x] Check Upsurge.club Q&A/Doubts section for unwritten rules (platform is per-user, no public Q&A)
-- [x] Analyze video lessons for visual chart examples (Lesson 4.1 + Lesson 7 analyzed)
-- [x] Implement missing quality filters in generatePremiumRenkoSignal (V3 filters + V4 wider SL)
-- [x] Re-run backtest with improved filters and compare win rate (40% with wider SL, up from 30%)
-- [x] V4 SL optimization: wider SL (1.5x brick) improves win rate from 30% to 40-54%
+## User Request — Post-V4 Tasks (Jul 26)
+- [ ] Verify 5 execution fixes deployed (margin check, order verification, kill switch, stop/exit, portfolio reconciliation)
+- [ ] Run MCX backtest with Strategy B (Gold brick=50, Crude brick=10)
+- [ ] Add SL Strategy dropdown in Settings (B vs D) for paper mode testing
+- [ ] Refresh Upstox APP access token (current one expired)
+- [ ] Final Railway verification: deploy all, confirm commit hash is live
+- [x] Multi-Strategy Engine: Run ALL 4 layers simultaneously (RedBarTheory V2, TrendMomentum, VWAPReversion, Trikal)
+- [x] Layer 2 rename: old momentum streak → "TrendMomentum" with SL=entry×0.88, target=entry×1.15, max 3/day
+- [x] Unified exit rules: SL=entry×0.88, target=entry×1.15, trailing BE at +7% lock at +12%
+- [x] Per-layer trade limits: RBT=2, TrendMomentum=3, VWAP=3, Trikal=2, TOTAL max 10/day
+- [x] Token expiry reminder: cron check at 6:35 AM IST in bot loop, send Telegram if expired
+- [ ] Final Railway deploy verification

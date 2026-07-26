@@ -56,7 +56,7 @@ export function computeLayerStats(
     { layer: "ORB", test: r => r.includes("ORB") || r.includes("Opening Range") },
     { layer: "VWAP", test: r => r.includes("VWAP") },
     { layer: "EMA Cross", test: r => r.includes("EMA") },
-    { layer: "Momentum", test: r => r.includes("Momentum") || r.includes("momentum") },
+    { layer: "TrendMomentum", test: r => r.includes("Momentum") || r.includes("momentum") || r.includes("TrendMomentum") },
     { layer: "Power Hour", test: r => r.includes("Power Hour") || r.includes("POWER") },
     { layer: "MCX Evening", test: r => r.includes("MCX") },
     { layer: "Hero Zero", test: r => r.includes("Hero") },

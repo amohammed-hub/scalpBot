@@ -11,8 +11,6 @@ import {
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
 import { Gift, Copy, Users as UsersIcon } from "lucide-react";
 import { Pencil } from "lucide-react";
-import { HelpTip } from "@/components/HelpTip";
-import { FirstLoginGuide } from "@/components/FirstLoginGuide";
 import { Clock, Timer, Trophy, Ban, ArrowDownUp } from "lucide-react";
 import { Infinity as InfinityIcon } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -445,6 +443,7 @@ export default function Dashboard() {
         unlimitedTrades,
         openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
+      slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
       });
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
@@ -466,6 +465,7 @@ export default function Dashboard() {
         unlimitedTrades,
         openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
+      slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
       });
     }
   };
@@ -557,6 +557,7 @@ export default function Dashboard() {
           unlimitedTrades,
           openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
+      slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
         });
       } else {
         startSecondaryMutation.mutate({
@@ -577,6 +578,7 @@ export default function Dashboard() {
           unlimitedTrades,
           openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
+      slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
         });
       }
       toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
@@ -1123,6 +1125,7 @@ export default function Dashboard() {
      openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
       adaptiveRegimeEnabled: localStorage.getItem("scalpbot_adaptive_regime") !== "false", // default ON
+      slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
    });
  };
 
@@ -1217,7 +1220,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col md:flex-row">
       {/* ── Name Prompt Dialog ────────────────────────────────────────────────── */}
       {showNamePrompt && (
-        <div className="fixed inset-0 z-[250] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="max-w-sm w-full bg-[oklch(0.15_0.02_240)] border border-teal-500/30 rounded-2xl p-6 space-y-4">
             <h3 className="text-lg font-bold text-white text-center">What should we call you?</h3>
             <p className="text-white/50 text-sm text-center">Enter your name to personalize your experience</p>
@@ -1240,8 +1243,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-      {/* ── First-Login Guide Overlay ──────────────────────────────────────── */}
-      {!showNamePrompt && <FirstLoginGuide />}
       {/* ── Subscription Paywall Overlay ─────────────────────────────────────── */}
       {accessQuery.data && !accessQuery.data.hasAccess && meQuery.data?.role !== "admin" && !accessQuery.data?.plan?.includes("yearly") && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1556,7 +1557,6 @@ export default function Dashboard() {
           </span>
           <div className="flex-1" />
           {/* KILL SWITCH — always visible, big red button */}
-          <HelpTip content="KILL SWITCH: Emergency button — stops ALL bots, closes ALL open positions at market price, cancels pending orders. Use only in emergencies." />
           <button
             onClick={() => { if (confirm("⚠️ KILL SWITCH\n\nThis will:\n• STOP all running bots\n• CLOSE all open positions at market\n• Cancel pending orders\n\nContinue?")) killSwitchMutation.mutate({ sessionToken }); }}
             disabled={killSwitchMutation.isPending}
@@ -1605,7 +1605,7 @@ export default function Dashboard() {
 
         {/* ── Trading Mode Toggle (Paper / Live) ─────────────────────────────── */}
         <div className="flex items-center gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-          <span className="text-xs text-white/50 font-medium flex items-center gap-1.5">Trading Mode <HelpTip content="Paper Mode: Simulated trades with no real money — perfect for testing. Live Mode: Real orders placed via your Upstox account. Always test in Paper first before going Live." /></span>
+          <span className="text-xs text-white/50 font-medium">Trading Mode</span>
           <div className="flex rounded-lg overflow-hidden border border-white/20 h-[36px]">
             <button onClick={() => setConfig(c => ({ ...c, mode: "paper" }))} disabled={isRunning}
               className={`px-5 text-sm font-medium transition-colors ${config.mode === "paper" ? "bg-amber-500/30 text-amber-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Paper</button>
@@ -2203,7 +2203,6 @@ export default function Dashboard() {
                     : "border-white/10 bg-white/[0.02]"
               }`}>
                 {/* Header: Slot label + Health + Stop */}
-                {bot.slot === 0 && <HelpTip content="Bot Slot: Each slot runs an independent trading bot on a different instrument. You can run multiple bots simultaneously based on your plan. Each bot scans for signals and trades independently." />}
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
@@ -2228,7 +2227,7 @@ export default function Dashboard() {
                       onClick={() => bot.slot === 0 ? stopMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
                       className="text-red-400/60 hover:text-red-400 text-[10px] flex items-center gap-0.5 transition-colors"
                     >
-                      <Square className="w-2.5 h-2.5" /> Stop <HelpTip content="Stop: Stops only THIS bot slot. Does NOT close open positions — the trade stays open until SL/target hits or you manually close it." />
+                      <Square className="w-2.5 h-2.5" /> Stop
                     </button>
                   )}
                 </div>
@@ -2310,7 +2309,6 @@ export default function Dashboard() {
                       step={10000}
                       className="w-[70px] bg-white/5 border border-white/10 rounded-lg px-1.5 py-1 text-white text-[10px] font-mono focus:outline-none focus:border-white/30 disabled:opacity-50"
                     />
-                    <HelpTip content="Capital (₹): Max amount allocated to this bot slot. Position sizing uses this value. Min ₹5,000, Max ₹50,00,000. Change only when bot has no open trade." />
                     {switchingSlot === bot.slot && (
                       <span className="text-[10px] text-amber-300 animate-pulse">⟳</span>
                     )}
@@ -2691,7 +2689,7 @@ export default function Dashboard() {
           {/* Signal Card */}
           <div className={`lg:col-span-2 rounded-2xl p-5 ${isPowerHourMode ? "bg-orange-500/5 border border-orange-500/20" : "bg-white/5 border border-white/10"}`}>
             <div className="flex items-center justify-between mb-3">
-              <div className="text-xs text-white/40 uppercase tracking-wider flex items-center gap-1.5">Latest Signal <HelpTip content="Signals are generated by the multi-layer engine: Pattern, Trend, Momentum, MACD_BB, VWAP Reversion, and more. Each layer votes independently — a trade opens only when enough layers agree on direction." /></div>
+              <div className="text-xs text-white/40 uppercase tracking-wider">Latest Signal</div>
               {latestSignal?.layer && latestSignal.layer !== "None" && (
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                   latestSignal.layer === "PowerHour"  ? "bg-orange-500/20 border-orange-500/30 text-orange-400" :

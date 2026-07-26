@@ -39,7 +39,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "PremiumRenko" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -113,6 +113,7 @@ export interface BotState {
   dailyLossLimitPct: number;
   stopLossMultiplier: number;
   targetMultiplier: number;
+  slStrategy?: "B" | "D"; // B = wider SL + 1:2 R:R (best P&L), D = wider SL + 1:1.5 R:R (highest win rate)
   trailingSlEnabled: boolean;
   trailingSlPct: number;
   minConfidence: number;
@@ -233,6 +234,9 @@ export interface BotState {
   // Max Pain state
   maxPainStrike?: number;
   maxPainBias?: "UP" | "DOWN" | "NEUTRAL";
+  // Multi-Strategy Engine: per-layer trade counting
+  layerTradesCount: Record<string, number>; // e.g. {"RedBarTheory": 1, "TrendMomentum": 2}
+  tokenReminderSent?: boolean; // prevent duplicate daily reminders
 }
 
 // Shadow mode log entry
@@ -258,84 +262,6 @@ export interface ShadowSummary {
 
 // ── In-memory store ───────────────────────────────────────────────────────────
 const bots = new Map<string, BotState>();
-
-// ── Direction Lock v2 — Exported for unit testing ─────────────────────────────
-export const GROUP1_CORRELATED = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
-
-export interface DirectionLockResult {
-  action: "allow" | "hard_block" | "soft_block" | "override";
-  reason: string;
-  detail: string;
-}
-
-/**
- * Evaluates the direction lock rules for correlated indices.
- * Pure function — no side effects. Returns the decision and reason.
- *
- * Rules:
- *   1. Same underlying → HARD BLOCK
- *   2. Correlated Group 1, confidence > 85% → OVERRIDE (allow with warning)
- *   3. Correlated Group 1, confidence ≤ 85% → SOFT BLOCK
- *   4. Different segments (MCX vs NSE) → ALLOW (no restriction)
- */
-export function evaluateDirectionLock(
-  thisSymbol: string,
-  wantsCE: boolean,
-  signalConfidence: number, // 0-1 scale
-  otherBots: Array<{ symbol: string; openTradeSymbol: string; botSlot: number; status: string }>,
-): DirectionLockResult {
-  const thisUpper = thisSymbol.toUpperCase();
-  if (!GROUP1_CORRELATED.has(thisUpper)) {
-    return { action: "allow", reason: "Not in correlated group", detail: "" };
-  }
-
-  const wantsDirection = wantsCE ? "CE (bullish)" : "PE (bearish)";
-
-  for (const other of otherBots) {
-    if (other.status !== "running") continue;
-    const otherUpper = other.symbol.toUpperCase();
-
-    // Rule 3: Different segments → NO BLOCK
-    if (!GROUP1_CORRELATED.has(otherUpper)) continue;
-
-    const otherTradeSym = other.openTradeSymbol.toUpperCase();
-    const otherHasCE = otherTradeSym.includes("_CE_") || otherTradeSym.includes(" CE") || otherTradeSym.endsWith("CE");
-    const otherHasPE = otherTradeSym.includes("_PE_") || otherTradeSym.includes(" PE") || otherTradeSym.endsWith("PE");
-
-    // Check conflict
-    const isConflict = (wantsCE && otherHasPE) || (!wantsCE && otherHasCE);
-    if (!isConflict) continue;
-
-    const otherDirection = otherHasCE ? "CE (bullish)" : "PE (bearish)";
-    const confidencePct = signalConfidence * 100;
-
-    // Rule 1: SAME underlying → HARD BLOCK
-    if (thisUpper === otherUpper) {
-      return {
-        action: "hard_block",
-        reason: `Same underlying ${thisUpper} — cannot have ${wantsDirection} and ${otherDirection} simultaneously`,
-        detail: `Bot ${other.botSlot + 1} on ${otherUpper} has ${otherDirection} open`,
-      };
-    }
-
-    // Rule 2: Correlated, different underlying
-    if (confidencePct > 85) {
-      return {
-        action: "override",
-        reason: `Correlation override — high confidence counter-signal (${confidencePct.toFixed(0)}% > 85%)`,
-        detail: `${thisUpper} ${wantsDirection} allowed despite ${otherUpper} Bot ${other.botSlot + 1} having ${otherDirection}. ${confidencePct >= 90 ? "Very high confidence — likely genuine reversal" : "Moderate-high confidence — possible divergence"}`,
-      };
-    } else {
-      return {
-        action: "soft_block",
-        reason: `Direction lock: ${otherUpper} has ${otherDirection}, confidence ${confidencePct.toFixed(0)}% ≤ 85%`,
-        detail: `${confidencePct >= 70 ? "Near threshold — possibly noise" : confidencePct >= 50 ? "Moderate confidence — likely noise" : "Low confidence — almost certainly noise"}`,
-      };
-    }
-  }
-
-  return { action: "allow", reason: "No conflicting positions", detail: "" };
-}
 
 // ── Telegram alert helper ─────────────────────────────────────────────────────
 export type AlertCategory = "tradeEntry" | "tradeExit" | "dailySummary" | "criticalAlerts" | "announcements";
@@ -1789,7 +1715,8 @@ export function generateSignalV2(
     }
 
     // Strategy B: Momentum (same as old Layer 4)
-    if (_layerOk("Momentum") && direction === "HOLD" && candles.length >= 5) {
+    // Strategy B: TrendMomentum (3 consecutive same-color candles + RSI/ROC momentum)
+    if ((_layerOk("Momentum") || _layerOk("TrendMomentum")) && direction === "HOLD" && candles.length >= 5) {
       const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
       const distFromEma9_m = Math.abs(price - e9) / e9;
       const distFromVwap_m = Math.abs(price - vwap) / vwap;
@@ -1799,12 +1726,12 @@ export function generateSignalV2(
         direction = "BUY";
         confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 55) * 0.005);
         reason = `[V2:Momentum] RSI(${rsi.toFixed(0)}) | +${(roc3 * 100).toFixed(2)}% in 3c | Above VWAP | pullback`;
-        layer = "Momentum";
+        layer = "TrendMomentum";
       } else if (rsi < 45 && roc3 < -0.001 && price < vwap && nearPullback_m) {
         direction = "SELL";
         confidence = Math.min(0.82, 0.60 + Math.abs(roc3) * 100 + (45 - rsi) * 0.005);
         reason = `[V2:Momentum] RSI(${rsi.toFixed(0)}) | ${(roc3 * 100).toFixed(2)}% in 3c | Below VWAP | pullback`;
-        layer = "Momentum";
+        layer = "TrendMomentum";
       }
     }
 
@@ -2634,52 +2561,25 @@ export function generateOpeningBurstSignal(
   };
 }
 
-// ── Red Bar Theory Signal Layer (Dr. Devendra Pratap's Exact Rules) ──────────────────────
-// PULLBACK-BREAKOUT strategy on Renko charts:
-//   1. Establish trend (EMA 10 filter)
-//   2. Wait for pullback (Red brick in uptrend / Green brick in downtrend)
-//   3. Entry: Green brick closes ABOVE Red brick's HIGH (BUY) / Red brick closes BELOW Green brick's LOW (SELL)
-//   4. SL: Below Red brick's LOW (BUY) / Above Green brick's HIGH (SELL)
-//   5. Target: 1:2 R:R minimum
-// Brick sizes are FIXED per instrument (not ATR-based):
-//   Nifty=10, BankNifty=15, Sensex=30, Gold=50, Silver=500, Crude=10
+// ── Red Bar Theory Signal Layer ──────────────────────────────────────────────────────────
+// Constructs Renko bricks from 1-min candle closes using ATR(14) as adaptive brick size.
+// BUY: 3 consecutive green bricks. SELL: 3 consecutive red bricks.
+// EXIT: first opposite color brick after entry.
 
 interface RenkoBrick {
   open: number;
   close: number;
-  high: number;  // max(open, close) for the brick
-  low: number;   // min(open, close) for the brick
   color: "green" | "red";
 }
 
 /**
- * Get the FIXED Renko brick size for a given instrument symbol.
- * Per Dr. Devendra Pratap Singh's course specifications.
- * Falls back to ATR-based sizing if instrument is unknown.
+ * Build Renko bricks from candle close prices.
+ * Uses ATR(14) as the brick size (adaptive to volatility).
+ * Returns the array of bricks constructed from the price series.
  */
-export function getFixedBrickSize(symbol: string, atrFallback: number): number {
-  const s = (symbol || "").toUpperCase();
-  if (s.includes("BANKNIFTY") || s.includes("NIFTY BANK")) return 15;
-  if (s.includes("FINNIFTY") || s.includes("FIN SERVICE")) return 15;
-  if (s.includes("MIDCPNIFTY") || s.includes("MIDCAP")) return 10;
-  if (s.includes("BANKEX")) return 15;
-  if (s.includes("SENSEX")) return 30;
-  if (s.includes("NIFTY")) return 10;
-  if (s.includes("GOLD")) return 50;
-  if (s.includes("SILVER")) return 500;
-  if (s.includes("CRUDEOIL") || s.includes("CRUDE")) return 10;
-  if (s.includes("NATURALGAS")) return 5;
-  if (s.includes("COPPER")) return 5;
-  // Fallback: use ATR * 0.5 for unknown instruments
-  return Math.max(1, Math.round(atrFallback * 0.5));
-}
-
-/**
- * Build Renko bricks from candle close prices using a FIXED brick size.
- * Each brick has open, close, high, low, and color.
- */
-function buildRenkoBricks(candles: Candle[], brickSize: number): RenkoBrick[] {
-  if (candles.length < 2 || brickSize <= 0) return [];
+function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
+  if (candles.length < 2 || atr <= 0) return [];
+  const brickSize = atr; // ATR(14) adaptive brick size
   const bricks: RenkoBrick[] = [];
   let basePrice = candles[0].close;
 
@@ -2687,12 +2587,13 @@ function buildRenkoBricks(candles: Candle[], brickSize: number): RenkoBrick[] {
     const price = candles[i].close;
     const diff = price - basePrice;
 
+    // Build as many bricks as the price movement allows
     if (diff >= brickSize) {
       const numBricks = Math.floor(diff / brickSize);
       for (let j = 0; j < numBricks; j++) {
         const brickOpen = basePrice + j * brickSize;
         const brickClose = brickOpen + brickSize;
-        bricks.push({ open: brickOpen, close: brickClose, high: brickClose, low: brickOpen, color: "green" });
+        bricks.push({ open: brickOpen, close: brickClose, color: "green" });
       }
       basePrice = basePrice + numBricks * brickSize;
     } else if (diff <= -brickSize) {
@@ -2700,465 +2601,111 @@ function buildRenkoBricks(candles: Candle[], brickSize: number): RenkoBrick[] {
       for (let j = 0; j < numBricks; j++) {
         const brickOpen = basePrice - j * brickSize;
         const brickClose = brickOpen - brickSize;
-        bricks.push({ open: brickOpen, close: brickClose, high: brickOpen, low: brickClose, color: "red" });
+        bricks.push({ open: brickOpen, close: brickClose, color: "red" });
       }
       basePrice = basePrice - numBricks * brickSize;
     }
+    // If |diff| < brickSize, no new brick — price hasn't moved enough
   }
 
   return bricks;
 }
 
 /**
- * Generate Red Bar Theory signal — Dr. Devendra Pratap's EXACT pullback-breakout rules.
- *
- * BUY Setup:
- *   - Uptrend established (price above EMA 10 on Renko, multiple green bricks before)
- *   - Red brick forms (pullback)
- *   - Green brick closes ABOVE the Red brick's HIGH → ENTRY
- *   - SL: Below Red brick's LOW
- *   - Target: 1:2 R:R minimum
- *
- * SELL Setup:
- *   - Downtrend established (price below EMA 10 on Renko, multiple red bricks before)
- *   - Green brick forms (pullback)
- *   - Red brick closes BELOW the Green brick's LOW → ENTRY
- *   - SL: Above Green brick's HIGH
- *   - Target: 1:2 R:R minimum
- *
- * @param candles - 1-minute candle data
- * @param instrumentSymbol - instrument name for fixed brick size lookup
+ * Generate Red Bar Theory signal from candle data.
+ * Entry: 3 consecutive same-color bricks.
+ * Confidence scales with brick count (3 = 70%, 4 = 80%, 5+ = 85%).
  */
 export function generateRenkoSignal(
   candles: Candle[],
-  instrumentSymbol = "",
-  options?: { timestamp?: number; maxDailyTrades?: number; tradesToday?: number },
+  slMultiplier = 1.5,
+  tpMultiplier = 3.0,
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Red Bar Theory: insufficient data", layer: "RedBarTheory" };
   if (!candles || candles.length < 20) return hold;
 
-  // ── Quality Filter 1: TIME FILTER (Dr. Pratap Lesson 4.1 @ 13:34) ──
-  // "subah 9:15 se lekar 9:30, 9:45 tak market mein volatility bahut jyada hoti hai... avoid kariye"
-  if (options?.timestamp) {
-    const ist = new Date(options.timestamp + 5.5 * 60 * 60 * 1000); // UTC → IST
-    const istHour = ist.getUTCHours();
-    const istMin = ist.getUTCMinutes();
-    const istTimeMinutes = istHour * 60 + istMin;
-    if (istTimeMinutes < 585) { // Before 9:45 AM IST
-      return { ...hold, reason: `[Red Bar Theory] Time filter: skipping before 9:45 AM IST (current: ${istHour}:${istMin.toString().padStart(2, '0')})` };
-    }
-    if (istTimeMinutes > 920) { // After 3:20 PM IST
-      return { ...hold, reason: `[Red Bar Theory] Time filter: skipping after 3:20 PM IST` };
-    }
-  }
-
-  // ── Quality Filter 2: TRADE LIMIT (Dr. Pratap Lesson 4.1 @ 18:26) ──
-  // "Din mein sirf ek ya do trade lijiye" (max 1-2 trades per day)
-  if (options?.maxDailyTrades && options?.tradesToday !== undefined) {
-    if (options.tradesToday >= options.maxDailyTrades) {
-      return { ...hold, reason: `[Red Bar Theory] Trade limit: ${options.tradesToday}/${options.maxDailyTrades} trades taken today` };
-    }
-  }
-
   const atr = calcATR(candles, 14);
   if (atr <= 0) return { ...hold, reason: "Red Bar Theory: ATR is 0" };
 
-  // Use FIXED brick size per Dr. Pratap's specifications
-  const brickSize = getFixedBrickSize(instrumentSymbol, atr);
-  const bricks = buildRenkoBricks(candles, brickSize);
-  if (bricks.length < 5) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 5 for trend+pullback+breakout)` };
+  const bricks = buildRenkoBricks(candles, atr);
+  if (bricks.length < 2) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 2)` }; // DEFAULT: 3
 
-  // ── Quality Filter 3: SIDEWAYS MARKET DETECTION (Dr. Pratap Lesson 4.1 @ 18:40) ──
-  // "Agar market sideways hai, ek range mein fasa hua hai, toh koi bhi setup kaam nahi karega"
-  if (bricks.length >= 8) {
-    const last8 = bricks.slice(-8);
-    let colorChanges = 0;
-    for (let i = 1; i < last8.length; i++) {
-      if (last8[i].color !== last8[i - 1].color) colorChanges++;
-    }
-    if (colorChanges >= 5) {
-      return { ...hold, atr, entryPrice: candles[candles.length - 1].close, reason: `[Red Bar Theory] Sideways filter: ${colorChanges} color changes in last 8 bricks — choppy market, skipping` };
+  // Check last N bricks for consecutive same color
+  const lastBricks = bricks.slice(-5); // look at last 5 bricks max
+  let consecutiveGreen = 0;
+  let consecutiveRed = 0;
+
+  // Count consecutive bricks from the end
+  for (let i = lastBricks.length - 1; i >= 0; i--) {
+    if (lastBricks[i].color === "green") {
+      if (consecutiveRed > 0) break; // mixed — stop counting
+      consecutiveGreen++;
+    } else {
+      if (consecutiveGreen > 0) break;
+      consecutiveRed++;
     }
   }
 
-  // ── EMA 10 + EMA 30 Trend Cloud Filter ──
-  const brickCloses = bricks.map(b => b.close);
-  const ema10arr = ema(brickCloses, 10);
-  const ema30arr = ema(brickCloses, 30);
-  if (ema10arr.length === 0) return { ...hold, atr, reason: "Red Bar Theory: EMA calc failed" };
-  const currentEma10 = ema10arr[ema10arr.length - 1];
-  const currentEma30 = ema30arr.length > 0 ? ema30arr[ema30arr.length - 1] : currentEma10;
   const price = candles[candles.length - 1].close;
+  const slPrice_buy = price - atr * slMultiplier;
+  const tpPrice_buy = price + atr * tpMultiplier;
+  const slPrice_sell = price + atr * slMultiplier;
+  const tpPrice_sell = price - atr * tpMultiplier;
 
-  // Determine trend from BOTH EMAs (Trend Cloud confirmation)
-  // Strong uptrend: price > EMA10 AND (EMA10 > EMA30 when we have enough data)
-  // Only enforce EMA30 when we have 30+ bricks (otherwise EMA30 is unreliable)
-  const useEma30 = bricks.length >= 30 && ema30arr.length > 0;
-  const isUptrend = price > currentEma10 && (!useEma30 || currentEma10 >= currentEma30);
-  const isDowntrend = price < currentEma10 && (!useEma30 || currentEma10 <= currentEma30);
-  if (!isUptrend && !isDowntrend) {
-    return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No clear trend — Price: ₹${price.toFixed(1)} | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize}` };
+  // BUG FIX 6: Require 3+ bricks (was 2). 2-brick at 55% = noise.
+  if (consecutiveGreen >= 3) {
+    const confidence = Math.min(0.85, 0.65 + (consecutiveGreen - 3) * 0.10);
+    return {
+      direction: "BUY",
+      confidence,
+      entryPrice: price,
+      slPrice: slPrice_buy,
+      targetPrice: tpPrice_buy,
+      atr,
+      reason: `[Red Bar Theory] ${consecutiveGreen} consecutive green bricks (brick size: ₹${atr.toFixed(1)}) | Strong uptrend`,
+      layer: "RedBarTheory",
+    };
   }
 
-  // ── Scan last bricks for the PULLBACK-BREAKOUT pattern ──
-  // ── BUY SETUP: Scan backwards to find the most recent Red→Green breakout in uptrend ──
-  // Pattern: ...Green(s)...Red(pullback)...Green(breakout above Red HIGH)
-  // The breakout green can be anywhere in the last few bricks (signal valid for up to 3 bricks after breakout)
-  if (isUptrend) {
-    // Find the most recent red brick within the last 6 bricks
-    let redIdx = -1;
-    for (let i = bricks.length - 1; i >= Math.max(0, bricks.length - 6); i--) {
-      if (bricks[i].color === "red") { redIdx = i; break; }
-    }
-    if (redIdx >= 0 && redIdx < bricks.length - 1) {
-      const redBrick = bricks[redIdx];
-      // Check if any green brick AFTER the red closed at or above the red's HIGH
-      // In standard Renko, the first green after red closes exactly at red's high level,
-      // so the breakout is confirmed by the first green brick forming (close >= red.high)
-      let breakoutConfirmed = false;
-      for (let gi = redIdx + 1; gi < bricks.length; gi++) {
-        if (bricks[gi].color !== "green") break;
-        if (bricks[gi].close >= redBrick.high) { breakoutConfirmed = true; break; }
-      }
-      if (breakoutConfirmed) {
-        // ── Quality Filter 4: STRONG MOMENTUM (Dr. Pratap Lesson 4.1 @ 14:26) ──
-        // "Dekhiye kitna strong up move hai" — requires visually strong trend
-        // Minimum 3 green bricks before pullback (up from 2)
-        let greenBeforePullback = 0;
-        for (let i = redIdx - 1; i >= 0 && i >= redIdx - 8; i--) {
-          if (bricks[i].color === "green") greenBeforePullback++;
-          else break;
-        }
-        if (greenBeforePullback >= 3) {
-          // Only signal if the breakout happened recently (within last 3 bricks)
-          const bricksSinceBreakout = bricks.length - 1 - redIdx;
-          if (bricksSinceBreakout <= 3) {
-            const slPrice = redBrick.low - brickSize * 0.5; // SL = Red LOW - 0.5 brick (wider SL V4)
-            const risk = price - slPrice;
-            if (risk > 0) {
-              const targetPrice = price + risk * 2; // 1:2 R:R
-              const confidence = Math.min(0.92, 0.72 + greenBeforePullback * 0.04);
-              return {
-                direction: "BUY",
-                confidence,
-                entryPrice: price,
-                slPrice,
-                targetPrice,
-                atr,
-                reason: `[Red Bar Theory V3] Pullback-Breakout BUY — ${greenBeforePullback} green → 1 red pullback → green above red HIGH (₹${redBrick.high.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2`,
-                layer: "RedBarTheory",
-              };
-            }
-          }
-        }
-      }
-    }
+  // BUG FIX 6: Require 3+ bricks for SELL too.
+  if (consecutiveRed >= 3) {
+    const confidence = Math.min(0.85, 0.65 + (consecutiveRed - 3) * 0.10);
+    return {
+      direction: "SELL",
+      confidence,
+      entryPrice: price,
+      slPrice: slPrice_sell,
+      targetPrice: tpPrice_sell,
+      atr,
+      reason: `[Red Bar Theory] ${consecutiveRed} consecutive red bricks (brick size: ₹${atr.toFixed(1)}) | Strong downtrend`,
+      layer: "RedBarTheory",
+    };
   }
 
-  // ── SELL SETUP: Scan backwards to find the most recent Green→Red breakout in downtrend ──
-  if (isDowntrend) {
-    // Find the most recent green brick within the last 6 bricks
-    let greenIdx = -1;
-    for (let i = bricks.length - 1; i >= Math.max(0, bricks.length - 6); i--) {
-      if (bricks[i].color === "green") { greenIdx = i; break; }
-    }
-    if (greenIdx >= 0 && greenIdx < bricks.length - 1) {
-      const greenBrick = bricks[greenIdx];
-      // Check if any red brick AFTER the green closed at or below the green's LOW
-      let breakoutConfirmedSell = false;
-      for (let ri = greenIdx + 1; ri < bricks.length; ri++) {
-        if (bricks[ri].color !== "red") break;
-        if (bricks[ri].close <= greenBrick.low) { breakoutConfirmedSell = true; break; }
-      }
-      if (breakoutConfirmedSell) {
-        // ── Quality Filter 4: STRONG MOMENTUM for SELL ──
-        // Minimum 3 red bricks before pullback (up from 2)
-        let redBeforePullback = 0;
-        for (let i = greenIdx - 1; i >= 0 && i >= greenIdx - 8; i--) {
-          if (bricks[i].color === "red") redBeforePullback++;
-          else break;
-        }
-        if (redBeforePullback >= 3) {
-          const bricksSinceBreakout = bricks.length - 1 - greenIdx;
-          if (bricksSinceBreakout <= 3) {
-            const slPrice = greenBrick.high + brickSize * 0.5; // SL = Green HIGH + 0.5 brick (wider SL V4)
-            const risk = slPrice - price;
-            if (risk > 0) {
-              const targetPrice = price - risk * 2; // 1:2 R:R
-              const confidence = Math.min(0.92, 0.72 + redBeforePullback * 0.04);
-              return {
-                direction: "SELL",
-                confidence,
-                entryPrice: price,
-                slPrice,
-                targetPrice,
-                atr,
-                reason: `[Red Bar Theory V3] Pullback-Breakout SELL — ${redBeforePullback} red → 1 green pullback → red below green LOW (₹${greenBrick.low.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2`,
-                layer: "RedBarTheory",
-              };
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // ── No valid pullback-breakout pattern found ──
-  const lastColors = bricks.slice(-5).map(b => b.color[0]).join("");
-  return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No pullback-breakout | last5: ${lastColors} | trend: ${isUptrend ? "UP" : "DOWN"} | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize}` };
+  return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${atr.toFixed(1)}` };
 }
 
 /**
- * Check if Red Bar Theory exit condition is met:
- *   - First opposite color brick after entry (momentum stalling)
- *   - Uses the same fixed brick size as entry
+ * Check if Red Bar Theory exit condition is met: first opposite color brick after entry.
+ * Returns true if the trade should be exited based on Red Bar Theory reversal.
  */
-export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL", brickSize: number): { shouldExit: boolean; reason: string } {
-  if (!candles || candles.length < 10 || brickSize <= 0) return { shouldExit: false, reason: "" };
+export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL", atr: number): { shouldExit: boolean; reason: string } {
+  if (!candles || candles.length < 10 || atr <= 0) return { shouldExit: false, reason: "" };
 
-  const bricks = buildRenkoBricks(candles, brickSize);
+  const bricks = buildRenkoBricks(candles, atr);
   if (bricks.length === 0) return { shouldExit: false, reason: "" };
 
   const lastBrick = bricks[bricks.length - 1];
+
   // BUY trade exits on first RED brick; SELL trade exits on first GREEN brick
   if (tradeDirection === "BUY" && lastBrick.color === "red") {
-    return { shouldExit: true, reason: `Red Bar Theory Exit — red brick formed (momentum stalling) | brick close: ₹${lastBrick.close.toFixed(2)}` };
+    return { shouldExit: true, reason: `Red Bar Theory Exit — first red brick after BUY entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
   }
   if (tradeDirection === "SELL" && lastBrick.color === "green") {
-    return { shouldExit: true, reason: `Red Bar Theory Exit — green brick formed (momentum stalling) | brick close: ₹${lastBrick.close.toFixed(2)}` };
+    return { shouldExit: true, reason: `Red Bar Theory Exit — first green brick after SELL entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
   }
+
   return { shouldExit: false, reason: "" };
-}
-
-// ── PremiumRenko Signal Layer (Lesson 7) ─────────────────────────────────────
-// Applies Red Bar Theory DIRECTLY on option premium candles (not the underlying index).
-// Dr. Devendra Pratap Singh's Lesson 7: "Red Bar on Options Chart"
-// Benefit: Sometimes spot gives signal but option premium doesn't move as expected.
-// By analyzing premium directly, we get more accurate entry/exit timing.
-
-/**
- * Get the fixed Renko brick size for OPTION PREMIUM charts.
- * Per Dr. Pratap's Lesson 7 specifications:
- *   - NIFTY options: 10
- *   - BANKNIFTY options: 15
- *   - FINNIFTY options: 10
- *   - SENSEX options: 15
- *   - MCX options: 5 (smaller premiums)
- * Falls back to premium-relative sizing for unknown instruments.
- */
-export function getPremiumBrickSize(instrumentSymbol: string, currentPremium: number): number {
-  const s = (instrumentSymbol || "").toUpperCase();
-  if (s.includes("BANKNIFTY") || s.includes("NIFTY BANK") || s.includes("BANKEX")) return 15;
-  if (s.includes("SENSEX")) return 15;
-  if (s.includes("FINNIFTY") || s.includes("FIN SERVICE")) return 10;
-  if (s.includes("MIDCPNIFTY") || s.includes("MIDCAP")) return 10;
-  if (s.includes("NIFTY")) return 10;
-  if (s.includes("GOLD") || s.includes("SILVER") || s.includes("CRUDE") || s.includes("NATURALGAS") || s.includes("COPPER")) return 5;
-  // Fallback: 3% of premium, minimum 2, maximum 20
-  return Math.max(2, Math.min(20, Math.round(currentPremium * 0.03)));
-}
-
-/**
- * Generate PremiumRenko signal — Dr. Devendra Pratap's Lesson 7.
- * Applies Red Bar Theory rules DIRECTLY on option premium candles.
- *
- * For option buying, we only generate BUY signals (buying CE or PE premium).
- * The direction (CE vs PE) is determined by the option type being tracked.
- *
- * BUY Setup (premium going up):
- *   - Uptrend in premium (price above EMA 10 on premium Renko)
- *   - Red brick forms (premium pullback)
- *   - Green brick closes ABOVE the Red brick's HIGH → ENTRY (buy the option)
- *   - SL: Below Red brick's LOW (premium level)
- *   - Target: 1:2 R:R on premium
- *
- * SELL Setup (premium going up for PE, or shorting — rare for retail):
- *   - Downtrend in premium
- *   - Green brick forms (premium rally/pullback)
- *   - Red brick closes BELOW the Green brick's LOW → premium is falling
- *   - For PE buyers: this means underlying is going UP (PE premium drops)
- *   - This generates a "SELL" signal meaning "exit your PE" or "don't buy PE here"
- *
- * @param premiumCandles - 1-minute candle data of the OPTION PREMIUM (CE or PE)
- * @param instrumentSymbol - underlying instrument name for brick size lookup
- * @param optionType - "CE" or "PE" — determines how we interpret the signal
- */
-export function generatePremiumRenkoSignal(
-  premiumCandles: Candle[],
-  instrumentSymbol = "",
-  optionType: "CE" | "PE" = "CE",
-  options?: { timestamp?: number; maxDailyTrades?: number; tradesToday?: number },
-): Signal {
-  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "PremiumRenko: insufficient data", layer: "PremiumRenko" };
-  if (!premiumCandles || premiumCandles.length < 20) return hold;
-
-  // ── Quality Filter 1: TIME FILTER ──
-  if (options?.timestamp) {
-    const ist = new Date(options.timestamp + 5.5 * 60 * 60 * 1000);
-    const istHour = ist.getUTCHours();
-    const istMin = ist.getUTCMinutes();
-    const istTimeMinutes = istHour * 60 + istMin;
-    if (istTimeMinutes < 585) {
-      return { ...hold, reason: `[PremiumRenko] Time filter: skipping before 9:45 AM IST` };
-    }
-    if (istTimeMinutes > 920) {
-      return { ...hold, reason: `[PremiumRenko] Time filter: skipping after 3:20 PM IST` };
-    }
-  }
-
-  // ── Quality Filter 2: TRADE LIMIT ──
-  if (options?.maxDailyTrades && options?.tradesToday !== undefined) {
-    if (options.tradesToday >= options.maxDailyTrades) {
-      return { ...hold, reason: `[PremiumRenko] Trade limit: ${options.tradesToday}/${options.maxDailyTrades} trades taken today` };
-    }
-  }
-
-  // Current premium price
-  const premium = premiumCandles[premiumCandles.length - 1].close;
-  if (premium <= 0) return { ...hold, reason: "PremiumRenko: premium is 0 or negative" };
-
-  // ATR on premium candles (for fallback brick sizing)
-  const premiumAtr = calcATR(premiumCandles, 14);
-
-  // Use FIXED brick size per Dr. Pratap's Lesson 7 specifications
-  const brickSize = getPremiumBrickSize(instrumentSymbol, premium);
-  const bricks = buildRenkoBricks(premiumCandles, brickSize);
-  if (bricks.length < 5) return { ...hold, atr: premiumAtr, reason: `PremiumRenko: only ${bricks.length} bricks (need 5) | brick: ₹${brickSize}` };
-
-  // ── Quality Filter 3: SIDEWAYS DETECTION ──
-  if (bricks.length >= 8) {
-    const last8 = bricks.slice(-8);
-    let colorChanges = 0;
-    for (let i = 1; i < last8.length; i++) {
-      if (last8[i].color !== last8[i - 1].color) colorChanges++;
-    }
-    if (colorChanges >= 5) {
-      return { ...hold, atr: premiumAtr, entryPrice: premium, reason: `[PremiumRenko] Sideways filter: ${colorChanges} color changes in last 8 bricks — choppy, skipping` };
-    }
-  }
-
-  // ── EMA 10 + EMA 30 Trend Cloud Filter (on premium brick close prices) ──
-  const brickCloses = bricks.map(b => b.close);
-  const ema10arr = ema(brickCloses, 10);
-  const ema30arr = ema(brickCloses, 30);
-  if (ema10arr.length === 0) return { ...hold, atr: premiumAtr, reason: "PremiumRenko: EMA calc failed" };
-  const currentEma10 = ema10arr[ema10arr.length - 1];
-  const currentEma30 = ema30arr.length > 0 ? ema30arr[ema30arr.length - 1] : currentEma10;
-
-  // Determine premium trend from BOTH EMAs (Trend Cloud)
-  // Only enforce EMA30 when we have 30+ bricks (otherwise EMA30 is unreliable)
-  const useEma30 = bricks.length >= 30 && ema30arr.length > 0;
-  const isPremiumUptrend = premium > currentEma10 && (!useEma30 || currentEma10 >= currentEma30);
-  const isPremiumDowntrend = premium < currentEma10 && (!useEma30 || currentEma10 <= currentEma30);
-  if (!isPremiumUptrend && !isPremiumDowntrend) {
-    return { ...hold, atr: premiumAtr, entryPrice: premium, reason: `[PremiumRenko] No clear trend — Premium: ₹${premium.toFixed(1)} | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | bricks: ${bricks.length} | brick: ₹${brickSize}` };
-  }
-
-  // ── BUY SETUP: Premium is in uptrend → pullback-breakout pattern ──
-  // For CE options: premium uptrend = underlying going up → BUY CE
-  // For PE options: premium uptrend = underlying going down → BUY PE
-  // In both cases, we BUY the option when premium is trending up with pullback-breakout
-  if (isPremiumUptrend) {
-    // Find the most recent red brick within the last 6 bricks
-    let redIdx = -1;
-    for (let i = bricks.length - 1; i >= Math.max(0, bricks.length - 6); i--) {
-      if (bricks[i].color === "red") { redIdx = i; break; }
-    }
-    if (redIdx >= 0 && redIdx < bricks.length - 1) {
-      const redBrick = bricks[redIdx];
-      // Check if any green brick AFTER the red closed at or above the red's HIGH
-      let breakoutConfirmed = false;
-      for (let gi = redIdx + 1; gi < bricks.length; gi++) {
-        if (bricks[gi].color !== "green") break;
-        if (bricks[gi].close >= redBrick.high) { breakoutConfirmed = true; break; }
-      }
-      if (breakoutConfirmed) {
-        // ── Quality Filter 4: STRONG MOMENTUM — min 3 green bricks ──
-        let greenBeforePullback = 0;
-        for (let i = redIdx - 1; i >= 0 && i >= redIdx - 8; i--) {
-          if (bricks[i].color === "green") greenBeforePullback++;
-          else break;
-        }
-        if (greenBeforePullback >= 3) {
-          const bricksSinceBreakout = bricks.length - 1 - redIdx;
-          if (bricksSinceBreakout <= 3) {
-            const slPrice = redBrick.low - brickSize * 0.5; // SL = Red LOW - 0.5 brick (wider SL V4)
-            const risk = premium - slPrice;
-            if (risk > 0 && risk < premium * 0.5) { // risk must be < 50% of premium
-              const targetPrice = premium + risk * 2; // 1:2 R:R on premium
-              const confidence = Math.min(0.92, 0.74 + greenBeforePullback * 0.04);
-              // For options, direction is always BUY (we buy CE or PE premium)
-              // The caller determines CE vs PE based on underlying direction
-              return {
-                direction: "BUY",
-                confidence,
-                entryPrice: premium,
-                slPrice,
-                targetPrice,
-                atr: premiumAtr,
-                reason: `[PremiumRenko V3] ${optionType} Premium Pullback-Breakout BUY — ${greenBeforePullback} green → 1 red pullback → green above red HIGH (₹${redBrick.high.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2 | Premium: ₹${premium.toFixed(1)}`,
-                layer: "PremiumRenko",
-              };
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // ── SELL/EXIT SETUP: Premium is in downtrend → pullback-breakout to the downside ──
-  // For CE options: premium downtrend = underlying going down → EXIT CE (or don't enter)
-  // For PE options: premium downtrend = underlying going up → EXIT PE (or don't enter)
-  // We generate a SELL signal meaning "premium is falling — exit or avoid this option"
-  if (isPremiumDowntrend) {
-    // Find the most recent green brick within the last 6 bricks
-    let greenIdx = -1;
-    for (let i = bricks.length - 1; i >= Math.max(0, bricks.length - 6); i--) {
-      if (bricks[i].color === "green") { greenIdx = i; break; }
-    }
-    if (greenIdx >= 0 && greenIdx < bricks.length - 1) {
-      const greenBrick = bricks[greenIdx];
-      // Check if any red brick AFTER the green closed at or below the green's LOW
-      let breakoutConfirmedSell = false;
-      for (let ri = greenIdx + 1; ri < bricks.length; ri++) {
-        if (bricks[ri].color !== "red") break;
-        if (bricks[ri].close <= greenBrick.low) { breakoutConfirmedSell = true; break; }
-      }
-      if (breakoutConfirmedSell) {
-        // ── Quality Filter 4: STRONG MOMENTUM for SELL — min 3 red bricks ──
-        let redBeforePullback = 0;
-        for (let i = greenIdx - 1; i >= 0 && i >= greenIdx - 8; i--) {
-          if (bricks[i].color === "red") redBeforePullback++;
-          else break;
-        }
-        if (redBeforePullback >= 3) {
-          const bricksSinceBreakout = bricks.length - 1 - greenIdx;
-          if (bricksSinceBreakout <= 3) {
-            const slPrice = greenBrick.high + brickSize * 0.5; // SL = Green HIGH + 0.5 brick (wider SL V4)
-            const risk = slPrice - premium;
-            if (risk > 0 && risk < premium * 0.5) {
-              const targetPrice = premium - risk * 2; // 1:2 R:R
-              const confidence = Math.min(0.92, 0.74 + redBeforePullback * 0.04);
-              return {
-                direction: "SELL",
-                confidence,
-                entryPrice: premium,
-                slPrice,
-                targetPrice: Math.max(0, targetPrice), // premium can't go below 0
-                atr: premiumAtr,
-                reason: `[PremiumRenko V3] ${optionType} Premium Breakdown SELL — ${redBeforePullback} red → 1 green pullback → red below green LOW (₹${greenBrick.low.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2 | Premium: ₹${premium.toFixed(1)}`,
-                layer: "PremiumRenko",
-              };
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // ── No valid pullback-breakout pattern found on premium chart ──
-  const lastColors = bricks.slice(-5).map(b => b.color[0]).join("");
-  return { ...hold, atr: premiumAtr, entryPrice: premium, reason: `[PremiumRenko] No pullback-breakout on ${optionType} premium | last5: ${lastColors} | trend: ${isPremiumUptrend ? "UP" : "DOWN"} | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize}` };
 }
 
 // ── Trikal Strategy Signal Layer (Dr. Devendra's Renko Engine Strategy) ─────────────
@@ -4423,15 +3970,9 @@ export async function placeUpstoxOrder(
     }
     // If the error is UDAPI1154 (static IP restriction), retry — Railway load-balances
     // across 3 IPs but only 2 are whitelisted in Upstox. Retrying hits a different IP.
-    // Fix #3: Also retry on timeout/5xx/network errors (not just UDAPI1154)
-    const isRetryable = reason.includes("UDAPI1154") ||
-      reason.includes("timeout") || reason.includes("ETIMEDOUT") || reason.includes("ECONNRESET") ||
-      reason.includes("ECONNABORTED") || reason.includes("socket hang up") ||
-      (axios.isAxiosError(err) && err.response && err.response.status >= 500);
-    if (isRetryable && attempt < MAX_RETRIES) {
-      const delay = reason.includes("UDAPI1154") ? 500 : 1000; // Longer delay for network issues
-      console.log(`[BotEngine] Order failed (retryable: ${reason.slice(0, 60)}), attempt ${attempt}/${MAX_RETRIES}, retrying in ${delay}ms...`);
-      await new Promise(r => setTimeout(r, delay));
+    if (reason.includes("UDAPI1154") && attempt < MAX_RETRIES) {
+      console.log(`[BotEngine] Order hit non-whitelisted IP (attempt ${attempt}/${MAX_RETRIES}), retrying in 500ms...`);
+      await new Promise(r => setTimeout(r, 500));
       continue;
     }
     lastOrderRejectionReason = reason;
@@ -4780,6 +4321,8 @@ async function tick(
     // New trading day detected — reset daily counters
     state.dailyPnl = 0;
     state.tradesCount = 0;
+    state.layerTradesCount = {}; // Reset per-layer trade counts for new day
+    state.tokenReminderSent = false; // Allow token reminder again for new day
     state.hourlyCloseSignalFired = false;
     state.isOpeningTrade = false; // Clear stale mutex from previous day
     state.lastTradeOpenedAt = undefined; // Clear cooldown from previous day
@@ -4793,6 +4336,44 @@ async function tick(
     emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
   }
   state.lastTradingDay = todayStr;
+
+  // ── TOKEN EXPIRY REMINDER: At 6:35 AM IST, check if access token is missing/expired ──
+  // Upstox tokens expire daily at ~6:30 AM IST. This reminder fires once per day.
+  const TOKEN_REMINDER_MINUTE = 6 * 60 + 35; // 6:35 AM IST
+  if (istMin2 >= TOKEN_REMINDER_MINUTE && istMin2 < TOKEN_REMINDER_MINUTE + 5 && !state.tokenReminderSent) {
+    state.tokenReminderSent = true;
+    // Check if access token is present and valid (try a lightweight API call)
+    let tokenExpired = !state.accessToken;
+    if (state.accessToken && !tokenExpired) {
+      try {
+        const testResp = await fetch("https://api.upstox.com/v2/user/profile", {
+          headers: { "Authorization": `Bearer ${state.accessToken}`, "Accept": "application/json" },
+        });
+        if (testResp.status === 401 || testResp.status === 403) {
+          tokenExpired = true;
+        }
+      } catch {
+        // Network error — assume token might be expired
+        tokenExpired = true;
+      }
+    }
+    if (tokenExpired) {
+      const reminderMsg = `⚠️ <b>TOKEN EXPIRED</b>\n\n` +
+        `🕕 Daily Upstox token has expired (6:30 AM reset).\n` +
+        `📊 <b>${state.instrumentLabel}</b>\n\n` +
+        `🔑 Please refresh your access token:\n` +
+        `1. Open Upstox login page\n` +
+        `2. Complete OAuth flow\n` +
+        `3. Bot will auto-detect new token\n\n` +
+        `⏰ Market opens at 9:15 AM — refresh before then!`;
+      sendTelegramAlert(state, reminderMsg, "criticalAlerts");
+      emitActivity(state.sessionToken, "error", `⚠ Token expired — Telegram reminder sent. Refresh before market open (9:15 AM).`);
+      devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — token expired/missing, Telegram alert sent`);
+    } else {
+      devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — token valid ✓`);
+    }
+  }
+
   const isMCX = state.instrumentToken.startsWith("MCX");
   const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
   const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 22; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:22 (3 min buffer before square-off at 15:25)
@@ -5699,6 +5280,8 @@ async function tick(
 
   // Generate signal — extract prev-day OHLC from daily candles for S/R pivot filter
   const slMult = isReEntry ? state.stopLossMultiplier * 0.8 : state.stopLossMultiplier;
+  // V4 SL Strategy override: B = 1:2 R:R, D = 1:1.5 R:R
+  const effectiveTargetMult = state.slStrategy === "D" ? 1.5 : state.slStrategy === "B" ? 2.0 : state.targetMultiplier;
   let signal: Signal;
 
   // Previous trading day candle (index -2 from today = yesterday's candle)
@@ -5744,11 +5327,11 @@ async function tick(
     // Normal scan might be 30-60s, but burst moves happen in 1-2 candles
     state.nextScanAt = Date.now() + 15_000;
   } else if (inPowerHour) {
-    signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, state.targetMultiplier);
+    signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, effectiveTargetMult);
   } else if (inMCXEvening) {
-    signal = generateMCXEveningSignal(state.candles, state.candles5m, isWednesdayCrude, slMult, state.targetMultiplier);
+    signal = generateMCXEveningSignal(state.candles, state.candles5m, isWednesdayCrude, slMult, effectiveTargetMult);
   } else if (inMCXLateSession) {
-    signal = generateMCXLateSessionSignal(state.candles, state.candles5m, slMult, state.targetMultiplier);
+    signal = generateMCXLateSessionSignal(state.candles, state.candles5m, slMult, effectiveTargetMult);
   } else if (inHeroZeroWindow && state.candles.length > 0) {
     // Hero Zero: current price IS the option premium (bot is tracking the option instrument)
     const optionPremium = price;
@@ -5762,13 +5345,13 @@ async function tick(
   } else {
     if (state.useV2Engine) {
       signal = generateSignalV2(
-        state.candles, slMult, state.targetMultiplier, state.minConfidence / 100,
+        state.candles, slMult, effectiveTargetMult, state.minConfidence / 100,
         state.candles5m, prevDayHigh, prevDayLow, prevDayClose,
         state.consecutiveSameDirectionSLs, state.lastSlExitDirection,
         state.enabledLayers || [],
       );
     } else {
-      signal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, false, state.enabledLayers || []);
+      signal = generateSignal(state.candles, slMult, effectiveTargetMult, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, false, state.enabledLayers || []);
     }
 
     // ── Adaptive Regime Switching: auto-toggle Supertrend based on ADX ──────
@@ -5805,51 +5388,59 @@ async function tick(
   }
 
   // ── Multi-Layer Strategy Cascade: if main signal is HOLD, try Red Bar Theory, Trikal, Adeeb ──
+  // ── MULTI-STRATEGY ENGINE: Run ALL 4 layers in PARALLEL, pick best signal ──
+  // Per-layer trade limits (max trades per day per layer)
+  const LAYER_LIMITS: Record<string, number> = {
+    "RedBarTheory": 2,
+    "TrendMomentum": 3,
+    "Momentum": 3, // backward compat alias for TrendMomentum
+    "VWAPReversion": 3,
+    "TrikalStrategy": 2,
+    "Adeeb": 2,
+    "OIFlow": 2,
+    "MaxPainGravity": 2,
+  };
+  const TOTAL_LAYER_LIMIT = 10; // max total trades across all layers per day
+
   if (signal.direction === "HOLD" && state.enabledLayers && state.candles.length >= 28) {
-    // Try Red Bar Theory
+    // Collect ALL layer signals in parallel (not sequential cascade)
+    const candidateSignals: Signal[] = [];
+
+    // Layer 1: RedBarTheory V2 (5 consecutive same-color bricks → reversal entry)
     if (state.enabledLayers.includes("RedBarTheory")) {
-      const rbtSignal = generateRenkoSignal(state.candles, state.instrumentSymbol ?? "");
-      if (rbtSignal.direction !== "HOLD") {
-        signal = rbtSignal;
-        devLog(`[tick] RedBarTheory override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
-      }
-    }
-    // Try PremiumRenko (Lesson 7) — Red Bar Theory on option premium candles
-    // Only fires when: (a) in options mode, (b) optionTradeToken is resolved, (c) access token available
-    if (signal.direction === "HOLD" && state.enabledLayers.includes("PremiumRenko") && isOptionsMode && state.optionTradeToken && state.accessToken) {
       try {
-        // Fetch 1-min premium candles for the resolved option contract
-        const premiumCandles = await fetchUpstoxCandles(state.optionTradeToken, state.accessToken);
-        if (premiumCandles.length >= 20) {
-          const optType: "CE" | "PE" = (state.optionType === "PE") ? "PE" : "CE";
-          const premRenkoSignal = generatePremiumRenkoSignal(premiumCandles, state.instrumentSymbol ?? "", optType);
-          if (premRenkoSignal.direction !== "HOLD") {
-            signal = premRenkoSignal;
-            devLog(`[tick] PremiumRenko override — ${signal.direction} conf=${signal.confidence.toFixed(2)} | ${optType} premium`);
-          }
-        }
-      } catch (premErr) {
-        console.warn(`[tick] PremiumRenko layer error:`, premErr instanceof Error ? premErr.message : String(premErr));
-      }
+        const rbtSignal = generateRenkoSignal(state.candles);
+        if (rbtSignal.direction !== "HOLD") candidateSignals.push(rbtSignal);
+      } catch (e) { console.warn(`[MultiStrategy] RedBarTheory error:`, (e as Error).message); }
     }
-    // Try Trikal Strategy (only if still HOLD)
-    if (signal.direction === "HOLD" && state.enabledLayers.includes("TrikalStrategy")) {
-      const trikalSignal = generateSmartRenkoSignal(state.candles);
-      if (trikalSignal.direction !== "HOLD") {
-        signal = trikalSignal;
-        devLog(`[tick] TrikalStrategy override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
-      }
+
+    // Layer 2: TrendMomentum (3 consecutive same-color candles + RSI/ROC)
+    // Already handled by generateSignalV2 above (regime=TRENDING, layer="TrendMomentum")
+    // If V2 engine produced a TrendMomentum signal but it was overridden by regime logic,
+    // we don't re-run it here — it's already in the main signal path.
+
+    // Layer 3: VWAPReversion (mean reversion at VWAP extremes)
+    // Already handled by generateSignalV2 above (regime=RANGING, layer="VWAPReversion")
+    // Same as TrendMomentum — already in main signal path.
+
+    // Layer 4: TrikalStrategy (smart Renko with multiple confirmations)
+    if (state.enabledLayers.includes("TrikalStrategy")) {
+      try {
+        const trikalSignal = generateSmartRenkoSignal(state.candles);
+        if (trikalSignal.direction !== "HOLD") candidateSignals.push(trikalSignal);
+      } catch (e) { console.warn(`[MultiStrategy] TrikalStrategy error:`, (e as Error).message); }
     }
-    // Try Adeeb Strategy (only if still HOLD)
-    if (signal.direction === "HOLD" && state.enabledLayers.includes("Adeeb")) {
-      const adeebSignal = generateAdeebSignal(state.candles, prevDayHigh, prevDayLow, prevDayClose, 0);
-      if (adeebSignal.direction !== "HOLD") {
-        signal = adeebSignal;
-        devLog(`[tick] Adeeb override — ${signal.direction} conf=${signal.confidence.toFixed(2)}`);
-      }
+
+    // Layer 5: Adeeb Strategy
+    if (state.enabledLayers.includes("Adeeb")) {
+      try {
+        const adeebSignal = generateAdeebSignal(state.candles, prevDayHigh, prevDayLow, prevDayClose, 0);
+        if (adeebSignal.direction !== "HOLD") candidateSignals.push(adeebSignal);
+      } catch (e) { console.warn(`[MultiStrategy] Adeeb error:`, (e as Error).message); }
     }
-    // Try OI Flow Directional Bias (only if still HOLD and in options mode with access token)
-    if (signal.direction === "HOLD" && state.enabledLayers.includes("OIFlow") && isOptionsMode && state.accessToken) {
+
+    // Layer 6: OI Flow Directional Bias (options mode only)
+    if (state.enabledLayers.includes("OIFlow") && isOptionsMode && state.accessToken) {
       try {
         const underlyingForOI = state.underlyingToken || state.instrumentToken;
         let oiAnalytics = getCachedAnalytics(underlyingForOI);
@@ -5861,11 +5452,10 @@ async function tick(
           const isExpOI = oiAnalytics.expiry === todayForOI;
           const oiBias = computeOIFlowBias(oiAnalytics, price, isExpOI);
           if (oiBias.direction !== "NEUTRAL" && oiBias.strength >= 40) {
-            // Strong OI bias — generate a signal
             const atr = state.candles.length >= 14 ? calcATR(state.candles.slice(-14)) : price * 0.005;
             const slDist = atr * slMult;
-            const targetDist = slDist * state.targetMultiplier;
-            signal = {
+            const targetDist = slDist * effectiveTargetMult;
+            candidateSignals.push({
               direction: oiBias.direction,
               confidence: Math.min(0.80, 0.55 + oiBias.strength / 200),
               entryPrice: price,
@@ -5874,16 +5464,16 @@ async function tick(
               atr,
               reason: `[OIFlow] ${oiBias.reason}`,
               layer: "OIFlow" as Signal["layer"],
-            };
-            devLog(`[tick] OIFlow override — ${signal.direction} conf=${signal.confidence.toFixed(2)} strength=${oiBias.strength}`);
+            });
           }
         }
       } catch (oiErr) {
-        console.warn(`[tick] OIFlow layer error:`, oiErr instanceof Error ? oiErr.message : String(oiErr));
+        console.warn(`[MultiStrategy] OIFlow error:`, oiErr instanceof Error ? oiErr.message : String(oiErr));
       }
     }
-    // Try Max Pain Gravity (only if still HOLD, expiry day, options mode)
-    if (signal.direction === "HOLD" && state.enabledLayers.includes("MaxPainGravity") && isOptionsMode && state.accessToken) {
+
+    // Layer 7: Max Pain Gravity (expiry day, options mode only)
+    if (state.enabledLayers.includes("MaxPainGravity") && isOptionsMode && state.accessToken) {
       try {
         const underlyingForMP = state.underlyingToken || state.instrumentToken;
         let mpAnalytics = getCachedAnalytics(underlyingForMP);
@@ -5898,8 +5488,8 @@ async function tick(
             if (mpSignal.direction !== "HOLD" && mpSignal.confidence >= 0.55) {
               const atr = state.candles.length >= 14 ? calcATR(state.candles.slice(-14)) : price * 0.005;
               const slDist = atr * slMult;
-              const targetDist = slDist * state.targetMultiplier;
-              signal = {
+              const targetDist = slDist * effectiveTargetMult;
+              candidateSignals.push({
                 direction: mpSignal.direction,
                 confidence: mpSignal.confidence,
                 entryPrice: price,
@@ -5908,13 +5498,47 @@ async function tick(
                 atr,
                 reason: mpSignal.reason,
                 layer: "MaxPainGravity" as Signal["layer"],
-              };
-              devLog(`[tick] MaxPainGravity override — ${signal.direction} conf=${signal.confidence.toFixed(2)} dist=${mpSignal.distancePct.toFixed(1)}%`);
+              });
             }
           }
         }
       } catch (mpErr) {
-        console.warn(`[tick] MaxPainGravity layer error:`, mpErr instanceof Error ? mpErr.message : String(mpErr));
+        console.warn(`[MultiStrategy] MaxPainGravity error:`, mpErr instanceof Error ? mpErr.message : String(mpErr));
+      }
+    }
+
+    // ── PARALLEL SELECTION: Pick the BEST signal that hasn't exceeded per-layer limit ──
+    if (candidateSignals.length > 0) {
+      // Sort by confidence (highest first)
+      candidateSignals.sort((a, b) => b.confidence - a.confidence);
+
+      // Calculate total layer trades today
+      const totalLayerTrades = Object.values(state.layerTradesCount).reduce((s, v) => s + v, 0);
+
+      for (const candidate of candidateSignals) {
+        const layerKey = candidate.layer === "Momentum" ? "TrendMomentum" : candidate.layer;
+        const layerCount = state.layerTradesCount[layerKey] ?? 0;
+        const layerMax = LAYER_LIMITS[layerKey] ?? 3; // default 3 if not specified
+
+        // Check per-layer limit
+        if (layerCount >= layerMax) {
+          devLog(`[MultiStrategy] ${candidate.layer} skipped — layer limit reached (${layerCount}/${layerMax})`);
+          pushRejectedSignal(state, { direction: candidate.direction as "BUY" | "SELL", layer: candidate.layer, confidence: candidate.confidence, reason: candidate.reason }, `Layer limit: ${layerCount}/${layerMax} for ${layerKey}`);
+          continue;
+        }
+
+        // Check total daily limit
+        if (totalLayerTrades >= TOTAL_LAYER_LIMIT && !state.unlimitedTrades) {
+          devLog(`[MultiStrategy] ${candidate.layer} skipped — total layer limit reached (${totalLayerTrades}/${TOTAL_LAYER_LIMIT})`);
+          pushRejectedSignal(state, { direction: candidate.direction as "BUY" | "SELL", layer: candidate.layer, confidence: candidate.confidence, reason: candidate.reason }, `Total layer limit: ${totalLayerTrades}/${TOTAL_LAYER_LIMIT}`);
+          break; // no point checking more — total is exceeded
+        }
+
+        // This signal passes all limits — use it
+        signal = candidate;
+        devLog(`[MultiStrategy] ✓ Selected: ${signal.layer} ${signal.direction} conf=${signal.confidence.toFixed(2)} (${candidateSignals.length} candidates evaluated)`);
+        emitActivity(state.sessionToken, "signal", `🔀 MultiStrategy: ${signal.layer} selected (${candidateSignals.length} layers evaluated, conf=${(signal.confidence*100).toFixed(0)}%)`);
+        break;
       }
     }
   }
@@ -5928,7 +5552,7 @@ async function tick(
     try {
     const newSignal = signal; // current signal already has P0 ORB freshness gate
     // Generate OLD signal: same params but skip ORB freshness gate
-    const oldSignal = generateSignal(state.candles, slMult, state.targetMultiplier, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, true);
+    const oldSignal = generateSignal(state.candles, slMult, effectiveTargetMult, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, true);
 
     // Determine what NEW logic would decide (including P1 cooldown simulation)
     let newDecision = newSignal.direction === "HOLD" ? "HOLD" : "ENTER";
@@ -6314,81 +5938,42 @@ async function tick(
 
 
   // ── CROSS-BOT DIRECTION LOCK ──────────────────────────────────────────────────────────────
-  // v2 RULES:
-  //   Rule 1: SAME underlying (both bots on NIFTY) → HARD BLOCK opposite direction
-  //   Rule 2: Correlated Group 1 (NIFTY/BANKNIFTY/FINNIFTY/SENSEX/BANKEX/MIDCPNIFTY) →
-  //           Allow opposite ONLY if signal confidence > 85%. Log as "⚠️ Correlation override"
-  //   Rule 3: Different segments (NSE vs MCX, GOLD vs CRUDE) → NO BLOCK at all
-  // Groups: Group 1 = correlated NSE/BSE indices. All MCX (GOLD, SILVER, CRUDEOIL, NATURALGAS, COPPER) are independent.
+  // Correlated NSE/BSE indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, BANKEX, MIDCPNIFTY) MUST
+  // agree on direction. If any bot has a PE open (bearish), block CE entries on all correlated
+  // indices, and vice versa. These indices are 85%+ correlated — opposite positions cancel out.
   if (isOptionsMode) {
-    const GROUP1_CORRELATED = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
+    const CORRELATED_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
     const thisSymbol = (state.instrumentSymbol ?? "").toUpperCase();
-
-    if (GROUP1_CORRELATED.has(thisSymbol)) {
+    if (CORRELATED_SYMBOLS.has(thisSymbol)) {
       const wantsCE = state.optionType === "CE" ? true
         : state.optionType === "PE" ? false
         : signal.direction === "BUY"; // auto: BUY=CE, SELL=PE
-      const wantsDirection = wantsCE ? "CE (bullish)" : "PE (bearish)";
-
-      // Build detailed signal info for logging
-      const lastCandle = state.candles.length > 0 ? state.candles[state.candles.length - 1] : null;
-      const candleInfo = lastCandle
-        ? `O:${lastCandle.open.toFixed(1)} H:${lastCandle.high.toFixed(1)} L:${lastCandle.low.toFixed(1)} C:${lastCandle.close.toFixed(1)} Vol:${lastCandle.volume.toFixed(0)}`
-        : "no candle";
-      const signalDetail = `Strategy: ${signal.layer} | Confidence: ${(signal.confidence * 100).toFixed(0)}% | Direction: ${signal.direction} → ${wantsDirection} | Candle: [${candleInfo}] | Reason: ${signal.reason}`;
 
       for (const [otherKey, otherState] of Array.from(bots.entries())) {
         if (otherKey === state.sessionToken) continue;
         if (otherState.status !== "running") continue;
-        if (!otherState.openTrade) continue;
-
         const otherSymbol = (otherState.instrumentSymbol ?? "").toUpperCase();
-
-        // Rule 3: Different segments → NO BLOCK (MCX instruments are independent)
-        if (!GROUP1_CORRELATED.has(otherSymbol)) continue;
+        if (!CORRELATED_SYMBOLS.has(otherSymbol)) continue;
+        if (!otherState.openTrade) continue;
 
         const otherTradeSym = (otherState.openTrade.symbol ?? "").toUpperCase();
         const otherHasCE = otherTradeSym.includes("_CE_") || otherTradeSym.includes(" CE") || otherTradeSym.endsWith("CE");
         const otherHasPE = otherTradeSym.includes("_PE_") || otherTradeSym.includes(" PE") || otherTradeSym.endsWith("PE");
 
-        // Check if directions conflict
-        const isConflict = (wantsCE && otherHasPE) || (!wantsCE && otherHasCE);
-        if (!isConflict) continue;
-
-        const conflictType = wantsCE ? "CE vs PE" : "PE vs CE";
-        const otherDirection = otherHasCE ? "CE (bullish)" : "PE (bearish)";
-
-        // Rule 1: SAME underlying → HARD BLOCK (no override possible)
-        if (thisSymbol === otherSymbol) {
+        if (wantsCE && otherHasPE) {
           emitActivity(state.sessionToken, "signal",
-            `⊘ HARD BLOCK: Same underlying ${thisSymbol} — cannot have ${conflictType} simultaneously.\n` +
-            `📊 Blocked Signal: ${signalDetail}\n` +
-            `🔒 Existing: ${otherSymbol} Bot ${otherState.botSlot + 1} has ${otherDirection} open`);
+            `⊘ DIRECTION LOCK: Blocked CE entry — ${otherSymbol} (Bot ${otherState.botSlot + 1}) has PE open. Correlated indices must agree.`);
           pushRejectedSignal(state,
             { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
-            `Hard block: same underlying ${thisSymbol} has ${otherDirection} open`);
+            `Direction lock: ${otherSymbol} has PE open, CE blocked`);
           return;
         }
-
-        // Rule 2: Correlated but DIFFERENT underlying → allow if confidence > 85%
-        const confidencePct = signal.confidence * 100;
-        if (confidencePct > 85) {
-          // HIGH CONFIDENCE OVERRIDE — allow the trade but log prominently
+        if (!wantsCE && otherHasCE) {
           emitActivity(state.sessionToken, "signal",
-            `⚠️ CORRELATION OVERRIDE — high confidence counter-signal (${confidencePct.toFixed(0)}% > 85%)\n` +
-            `📊 Allowed Signal: ${signalDetail}\n` +
-            `🔓 Override: ${thisSymbol} ${wantsDirection} allowed despite ${otherSymbol} Bot ${otherState.botSlot + 1} having ${otherDirection}\n` +
-            `💡 Assessment: ${confidencePct >= 90 ? "Very high confidence — likely genuine reversal" : "Moderate-high confidence — possible divergence"}`);
-          // DO NOT return — let the trade proceed
-        } else {
-          // LOW CONFIDENCE → BLOCK (correlated indices should agree)
-          emitActivity(state.sessionToken, "signal",
-            `⊘ DIRECTION LOCK: Blocked ${wantsDirection} — ${otherSymbol} Bot ${otherState.botSlot + 1} has ${otherDirection}. Confidence ${confidencePct.toFixed(0)}% ≤ 85% threshold.\n` +
-            `📊 Blocked Signal: ${signalDetail}\n` +
-            `💡 Assessment: ${confidencePct >= 70 ? "Near threshold — possibly noise, not a genuine reversal" : confidencePct >= 50 ? "Moderate confidence — likely noise" : "Low confidence — almost certainly noise"}`);
+            `⊘ DIRECTION LOCK: Blocked PE entry — ${otherSymbol} (Bot ${otherState.botSlot + 1}) has CE open. Correlated indices must agree.`);
           pushRejectedSignal(state,
             { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
-            `Direction lock: ${otherSymbol} has ${otherDirection}, confidence ${confidencePct.toFixed(0)}% ≤ 85%`);
+            `Direction lock: ${otherSymbol} has CE open, PE blocked`);
           return;
         }
       }
@@ -7011,6 +6596,11 @@ async function tick(
   // CRITICAL: Increment trade counter IMMEDIATELY when mutex is acquired
   // This prevents race conditions where another tick could pass the maxTradesPerDay check
   state.tradesCount += 1;
+  // Multi-Strategy Engine: increment per-layer trade count
+  const layerKey = (signal.layer === "Momentum" ? "TrendMomentum" : signal.layer) || "None";
+  if (layerKey !== "None") {
+    state.layerTradesCount[layerKey] = (state.layerTradesCount[layerKey] ?? 0) + 1;
+  }
   state.lastTradeOpenedAt = Date.now();
   let dbId: number;
   try {
@@ -7027,6 +6617,10 @@ async function tick(
     state.isOpeningTrade = false;
     // Rollback counter on failure
     state.tradesCount -= 1;
+    // Rollback per-layer counter
+    if (layerKey !== "None" && (state.layerTradesCount[layerKey] ?? 0) > 0) {
+      state.layerTradesCount[layerKey] -= 1;
+    }
     state.lastTradeOpenedAt = undefined;
     const errMsg = tradeOpenErr instanceof Error ? tradeOpenErr.message : String(tradeOpenErr);
     state.lastError = `Trade open DB write failed: ${errMsg}`;
@@ -7179,6 +6773,7 @@ export function startBot(
     isMCXEveningMode: false, isMCXLateSessionMode: false, heroZeroMode: false,
     openingBurstMode: false, openingBurstTradeTaken: false,
     alertsSent: new Set<string>(),
+    layerTradesCount: config.layerTradesCount ?? {},
   };
 
   // CRITICAL: Log whether accessToken was passed to startBot
@@ -7358,7 +6953,7 @@ export function startBot(
             maxTradesPerDay: state.maxTradesPerDay,
             dailyLossLimitPct: state.dailyLossLimitPct,
             stopLossMultiplier: state.stopLossMultiplier,
-            targetMultiplier: state.targetMultiplier,
+            targetMultiplier: state.slStrategy === "D" ? 1.5 : 2.0,
             trailingSlEnabled: state.trailingSlEnabled,
             trailingSlPct: state.trailingSlPct,
             minConfidence: state.minConfidence,
@@ -7385,6 +6980,8 @@ export function startBot(
            averagingLossThreshold: state.averagingLossThreshold,
            openingBurstEnabled: state.openingBurstEnabled,
            consecutiveUnderlyingSLs: state.consecutiveUnderlyingSLs, lastUnderlyingSLAt: state.lastUnderlyingSLAt,
+           layerTradesCount: state.layerTradesCount ?? {},
+           tokenReminderSent: state.tokenReminderSent,
          }, onTradeOpen, onTradeClose, state.openTrade ?? undefined, onTick);
         }
       });

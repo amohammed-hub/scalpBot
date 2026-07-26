@@ -103,6 +103,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   nseSummaryCronTaskUid: varchar("nseSummaryCronTaskUid", { length: 128 }),
   // Strategy layer selection (JSON array of enabled layer names)
   enabledLayers: text("enabledLayers"),
+  // SL Strategy: 'B' = wider SL + 1:2 R:R (best P&L), 'D' = wider SL + 1:1.5 R:R (highest win rate)
+  slStrategy: varchar("slStrategy", { length: 8 }).default("B"),
   // Configurable partial profit booking percentages (persisted for restart)
   partial1Pct: float("partial1Pct").default(30),
   partial2Pct: float("partial2Pct").default(60),

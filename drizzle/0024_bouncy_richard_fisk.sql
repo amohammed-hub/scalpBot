@@ -1,0 +1,1 @@
+ALTER TABLE `bot_sessions` ADD `slStrategy` varchar(8) DEFAULT 'B';

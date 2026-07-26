@@ -369,7 +369,7 @@ describe("Fix #1: 5m Trend Gate — Adversarial Scenarios", () => {
       // 5m trend stays "bullish" from the morning rally, blocking all SELL signals
       // EXPECTED AFTER FIX: firstSell should exist within 30 candles of fade start
       if (firstSell) {
-        expect(firstSell.candleIndex).toBeLessThanOrEqual(65);
+        expect(firstSell.candleIndex).toBeLessThanOrEqual(60);
         console.log(`[Scenario 1] First SELL at candle ${firstSell.candleIndex}, confidence: ${firstSell.signal.confidence.toFixed(2)}, layer: ${firstSell.signal.layer}`);
       } else {
         // Document that the system FAILS this scenario currently
