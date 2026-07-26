@@ -260,7 +260,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                       size="sm"
                       variant="outline"
                       className="h-7 text-xs border-purple-500/30 text-purple-300 hover:bg-purple-500/10"
-                      onClick={() => setOverrideModal({ sessionToken: user.sessionToken ?? "", mobile: user.mobile, current: user.extraBotSlots ?? 0 })}
+                      onClick={() => { setOverrideModal({ sessionToken: user.sessionToken ?? "", mobile: user.mobile, current: user.extraBotSlots ?? 0 }); setOverrideValue(user.extraBotSlots ?? 0); }}
                     >
                       <Bot className="w-3 h-3 mr-1" /> Bots
                     </Button>
@@ -283,7 +283,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                 ))}
                 {(!usersQuery.data || usersQuery.data.length === 0) && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-white/30">No users yet</td>
+                    <td colSpan={10} className="px-4 py-8 text-center text-white/30">No users yet</td>
                   </tr>
                 )}
               </tbody>
@@ -989,6 +989,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
     green: "bg-green-500/10 text-green-400 border-green-500/20",
     amber: "bg-amber-500/10 text-amber-400 border-amber-500/20",
     purple: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+    red: "bg-red-500/10 text-red-400 border-red-500/20",
   };
   return (
     <div className={`rounded-xl border p-5 ${colorMap[color] ?? colorMap.teal}`}>

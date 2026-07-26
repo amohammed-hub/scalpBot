@@ -7732,7 +7732,7 @@ export function hotReloadAccessToken(newToken: string, sessionToken?: string, is
 export function getTotalRunningBots(): number {
   let count = 0;
   for (const [, state] of Array.from(bots.entries())) {
-    if (state.status === "running") count++;
+    if (state.status === "running" || state.status === "paused") count++;
   }
   return count;
 }

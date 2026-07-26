@@ -4783,14 +4783,15 @@ export const appRouter = router({
 
         const userActivity: Record<string, { sessionToken: string; bots: any[]; totalTrades: number }> = {};
         for (const s of sessions) {
-          if (!userActivity[s.sessionToken]) {
-            userActivity[s.sessionToken] = {
-              sessionToken: s.sessionToken,
+          const baseToken = s.sessionToken.replace(/-slot[0-9]+$/, "");
+          if (!userActivity[baseToken]) {
+            userActivity[baseToken] = {
+              sessionToken: baseToken,
               bots: [],
-              totalTrades: tradeMap.get(s.sessionToken) ?? 0,
+              totalTrades: tradeMap.get(baseToken) ?? 0,
             };
           }
-          userActivity[s.sessionToken].bots.push({
+          userActivity[baseToken].bots.push({
             status: s.status,
             mode: s.mode,
             symbol: s.instrumentSymbol,
@@ -5070,8 +5071,13 @@ export const appRouter = router({
         if (input.audience === "specific" && input.specificTarget) {
           sessions = [{ sessionToken: input.specificTarget }];
         } else {
-          const allPrefs = await db.select().from(notificationPreferences).where(eq(notificationPreferences.announcements, 1));
-          sessions = allPrefs;
+          // Include ALL users with bot sessions — users without a prefs row default to announcements ON
+          const allBotSessions = await db.select({ sessionToken: botSessions.sessionToken }).from(botSessions);
+          const uniqueTokens = Array.from(new Set(allBotSessions.map((s: any) => s.sessionToken.replace(/-slot[0-9]+$/,"")))) as string[];
+          // Exclude users who explicitly turned OFF announcements
+          const optedOut = await db.select({ sessionToken: notificationPreferences.sessionToken }).from(notificationPreferences).where(eq(notificationPreferences.announcements, 0));
+          const optedOutSet = new Set(optedOut.map((o: any) => o.sessionToken));
+          sessions = uniqueTokens.filter(t => !optedOutSet.has(t)).map(t => ({ sessionToken: t }));
           // Filter by audience if needed
           if (input.audience === "paid" || input.audience === "free") {
             const allSubs = await db.select({ sessionToken: subscriptions.sessionToken, plan: subscriptions.plan, status: subscriptions.status }).from(subscriptions).where(eq(subscriptions.status, "active"));

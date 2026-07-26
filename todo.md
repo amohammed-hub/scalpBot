@@ -1821,3 +1821,11 @@
 - [x] Implement BoxingStrategy layer (1st High/Low + Engulfing + SEMA, V5 params)
 - [x] Add BoxingStrategy to strategy selector (Category A — Proven), enable by default
 - [x] Audit all 4 exit paths: SL, Target, Trailing Stop, Time Exit — all confirmed to call placeUpstoxOrder
+- [x] Admin panel: Fix override modal not pre-filling current bot slots value
+- [x] Admin panel: Fix colSpan mismatch in users table (9→10)
+- [x] Admin panel: Fix StatCard missing "red" color for Revoked stat
+- [x] Admin panel: Fix admin maxBots capped at 3 → now 10 slots for admin
+- [x] Admin panel: Fix paused bots excluded from Active Bots count
+- [x] Admin panel: Fix User Activity grouping slot tokens separately
+- [x] Admin panel: Fix broadcast notification coverage gap (users without prefs row)
+- [x] Admin panel: Fix getTotalRunningBots to include paused bots in System Health

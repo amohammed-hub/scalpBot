@@ -1,4 +1,4 @@
-import { eq, and, desc, gt, count, sql, or, like } from "drizzle-orm";
+import { eq, and, desc, gt, count, sql, or, like, inArray } from "drizzle-orm";
 import { lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -935,7 +935,7 @@ export async function getAllAppUsers() {
           const botRows = await db.select({ count: count() }).from(botSessions)
             .where(and(
               like(botSessions.sessionToken, `${user.sessionToken}%`),
-              eq(botSessions.status, "running")
+              inArray(botSessions.status, ["running", "paused"])
             ));
           runningBots = botRows[0]?.count ?? 0;
         } catch { /* non-fatal */ }
