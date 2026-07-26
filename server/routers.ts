@@ -4273,12 +4273,12 @@ export const appRouter = router({
           try {
             const decoded = jwt.verify(adminToken, process.env.JWT_SECRET || "fallback-secret") as { userId: number; mobile: string; role: string };
            if (decoded.role === "admin" || decoded.mobile === ENV.adminMobile) {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin };
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: 6 };
            }
            // Also check DB for role (handles case where JWT was issued before role promotion)
            const dbUser = await getAppUserById(decoded.userId);
            if (dbUser?.role === "admin") {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin };
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: 6 };
            }
          } catch {}
        }
@@ -4290,7 +4290,7 @@ export const appRouter = router({
             const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
             const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
             if (row && (row.role === "admin" || row.mobile === ENV.adminMobile)) {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin };
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: 6 };
             }
           } catch (e) {
             console.error("[checkAccess] admin sessionToken check failed:", e);

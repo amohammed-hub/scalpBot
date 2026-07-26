@@ -242,7 +242,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                    </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-mono ${(user.runningBots ?? 0) > 0 ? "text-teal-300" : "text-white/30"}`}>
-                        {user.runningBots ?? 0}/{user.role === "admin" ? 10 : (3 + (user.extraBotSlots ?? 0))}
+                        {user.runningBots ?? 0}/{user.role === "admin" ? (user.extraBotSlots || 6) : (3 + (user.extraBotSlots ?? 0))}
                       </span>
                     </td>
                    <td className="px-4 py-3 text-white/50">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</td>

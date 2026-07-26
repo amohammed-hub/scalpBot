@@ -1803,3 +1803,5 @@
 - [x] Interactive walkthrough with react-joyride for first-time users
 - [ ] Walkthrough steps: Bot 1 card → instrument dropdown → Start button → Kill Switch
 - [ ] Trigger on first login only, skip/replay from Settings
+- [x] FIX: EXIT button missing on bot cards — must be RED, only visible with open trade, confirmation dialog, Upstox exit flow
+- [x] FIX: Bot slot count hardcoded to 10 — should be admin-configurable (admin can grant/remove slots for self and users)

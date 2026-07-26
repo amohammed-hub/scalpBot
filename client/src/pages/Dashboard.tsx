@@ -2291,11 +2291,11 @@ export default function Dashboard() {
         ═══════════════════════════════════════════════════════════════════════════ */}
         <div className="text-[10px] text-white/30 mb-1.5 ml-1">Each bot slot runs independently on a different instrument — start/stop individually</div>
         <div data-tour="bot-slots" className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${(() => {
-          const totalSlots = isAdmin ? 10 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
+          const totalSlots = isAdmin ? Math.max(3, (accessQuery.data as any)?.extraBotSlots || 6) : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
           return totalSlots >= 7 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 5 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3";
         })()}`}>
           {((allBots && allBots.length > 0) ? allBots : (() => {
-            const totalSlots = isAdmin ? 10 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
+            const totalSlots = isAdmin ? Math.max(3, (accessQuery.data as any)?.extraBotSlots || 6) : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
             const slots = [];
             for (let i = 0; i < totalSlots; i++) {
               const tok = i === 0 ? sessionToken : `${sessionToken}-slot${i}`;
@@ -2373,18 +2373,40 @@ export default function Dashboard() {
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => bot.slot === 0 ? pauseMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
-                        className="text-amber-400/70 hover:text-amber-400 text-[10px] flex items-center gap-0.5 transition-colors"
+                        className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 text-[10px] font-medium flex items-center gap-0.5 transition-all"
                         title="Pause bot — keeps open trade alive (SL/target still active)"
                       >
                         ⏸ Stop
                       </button>
-                      {bot.openTrade && (
+                      {hasOpenTrade && (
                         <button
-                          onClick={() => bot.slot === 0 ? stopMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
-                          className="text-red-400/70 hover:text-red-400 text-[10px] flex items-center gap-0.5 transition-colors"
+                          onClick={() => {
+                            const ot = bot.openTrade;
+                            const symbol = ot?.symbolLabel || ot?.symbol || (bot as any).instrumentLabel || "position";
+                            const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
+                            const isOpts = ot?.isIndexOptions ?? (bot as any).isIndexOptions ?? false;
+                            let liveP = 0;
+                            if (isOpts) {
+                              liveP = (lpEntry as any)?.optionPremiumPrice ?? (bot as any).optionPremiumPrice ?? 0;
+                            } else {
+                              liveP = lpEntry?.livePrice ?? (bot as any).lastPrice ?? 0;
+                            }
+                            const dir = ot?.direction === "BUY" ? 1 : -1;
+                            const qty = (ot?.quantity ?? 0) - (ot?.bookedQty ?? 0);
+                            const unrealPnl = liveP > 0 ? ((liveP - (ot?.entryPrice ?? 0)) * dir * qty) : 0;
+                            const pnlStr = unrealPnl !== 0 ? `Current P&L: ₹${unrealPnl.toFixed(0)}` : "P&L: calculating...";
+                            if (window.confirm(`Exit ${symbol} at market price?\n${pnlStr}\n\nThis will SELL on Upstox and stop the bot.`)) {
+                              if (bot.slot === 0) {
+                                stopMutation.mutate({ sessionToken });
+                              } else {
+                                stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot });
+                              }
+                            }
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 hover:text-red-300 text-[10px] font-bold flex items-center gap-0.5 transition-all"
                           title="Exit — close open position on Upstox immediately + stop bot"
                         >
-                          <Square className="w-2.5 h-2.5" /> Exit
+                          ■ Exit
                         </button>
                       )}
                     </div>
