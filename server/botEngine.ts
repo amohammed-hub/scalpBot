@@ -3070,6 +3070,13 @@ export function generateORBV8Signal(
   // ── Step 3: VWAP filter ──
   const vwap = calcVWAP(candles);
 
+  // Index instruments (Nifty 50, BankNifty, FinNifty) have volume=0 in Upstox API.
+  // When volume=0, calcVWAP returns last close price, making VWAP comparison meaningless.
+  // The backtest also had volume=0 and effectively bypassed VWAP (filter was no-op).
+  // So we bypass VWAP for index instruments to match backtested behavior.
+  const totalVolume = candles.reduce((sum, c) => sum + c.volume, 0);
+  const isIndexInstrument = totalVolume === 0;
+
   // ── Step 4: EMA21 filter ──
   const closes = candles.map(c => c.close);
   const ema21Current = calcEMA(closes, 21);
@@ -3084,7 +3091,7 @@ export function generateORBV8Signal(
 
   // BUY breakout: 5-min close above ORB High + above VWAP + EMA21 rising
   if (!shortOnlyMode && fiveMinClose > orbHigh) {
-    const aboveVWAP = fiveMinClose > vwap;
+    const aboveVWAP = isIndexInstrument ? true : fiveMinClose > vwap;
     if (aboveVWAP && emaRising) {
       const entryPrice = fiveMinClose;
       const slPrice = entryPrice - slPoints;
@@ -3105,7 +3112,7 @@ export function generateORBV8Signal(
 
   // SELL breakout: 5-min close below ORB Low + below VWAP + EMA21 falling
   if (fiveMinClose < orbLow) {
-    const belowVWAP = fiveMinClose < vwap;
+    const belowVWAP = isIndexInstrument ? true : fiveMinClose < vwap;
     if (belowVWAP && emaFalling) {
       const entryPrice = fiveMinClose;
       const slPrice = entryPrice + slPoints;
