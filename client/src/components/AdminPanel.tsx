@@ -242,8 +242,8 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                    </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-mono ${(user.runningBots ?? 0) > 0 ? "text-teal-300" : "text-white/30"}`}>
-                        {user.runningBots ?? 0}/{user.role === "admin" ? (user.extraBotSlots || 6) : (3 + (user.extraBotSlots ?? 0))}
-                      </span>
+                        {user.runningBots ?? 0}/{user.role === "admin" ? (user.extraBotSlots || 10) : (user.extraBotSlots ?? 3)}
+                     </span>
                     </td>
                    <td className="px-4 py-3 text-white/50">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</td>
                     <td className="px-4 py-3 text-white/50">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString() : "Never"}</td>
@@ -898,9 +898,9 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
           <div className="bg-[#1a1f2e] border border-white/10 rounded-xl p-6 w-full max-w-sm space-y-4">
             <h3 className="text-lg font-semibold text-white">Override Bot Slots</h3>
             <p className="text-sm text-white/50">User: <span className="text-teal-300">{overrideModal.mobile}</span></p>
-            <p className="text-xs text-white/40">Current extra slots: <span className="text-purple-300 font-bold">{overrideModal.current}</span></p>
+            <p className="text-xs text-white/40">Current total slots: <span className="text-purple-300 font-bold">{overrideModal.current}</span></p>
             <div>
-              <label className="text-xs text-white/50 mb-1 block">Set Extra Bot Slots (0-10)</label>
+              <label className="text-xs text-white/50 mb-1 block">Set Total Bot Slots (1-10)</label>
               <Input
                 type="number"
                 min={0}

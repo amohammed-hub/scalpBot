@@ -2308,11 +2308,11 @@ export default function Dashboard() {
         ═══════════════════════════════════════════════════════════════════════════ */}
         <div className="text-[10px] text-white/30 mb-1.5 ml-1">Each bot slot runs independently on a different instrument — start/stop individually</div>
         <div data-tour="bot-slots" className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${(() => {
-          const totalSlots = isAdmin ? 10 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
+          const totalSlots = isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3);
           return totalSlots >= 7 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 5 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3";
         })()}`}>
-          {((allBots && allBots.length > 0) ? allBots.slice(0, isAdmin ? 10 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0)) : (() => {
-            const totalSlots = isAdmin ? 10 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
+          {((allBots && allBots.length > 0) ? allBots.slice(0, isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3)) : (() => {
+            const totalSlots = isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3);
             const slots = [];
             for (let i = 0; i < totalSlots; i++) {
               const tok = i === 0 ? sessionToken : `${sessionToken}-slot${i}`;

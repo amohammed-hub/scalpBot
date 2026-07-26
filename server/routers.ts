@@ -461,7 +461,7 @@ export const appRouter = router({
             const ebRow = Array.isArray(ebRaw) ? ebRaw[0] : ebRaw;
             extraSlots = ebRow?.extraBotSlots ?? 0;
           } catch { /* column may not exist */ }
-          const maxAllowed = limits.maxBots + extraSlots;
+          const maxAllowed = extraSlots > 0 ? extraSlots : limits.maxBots;
           if (runningBots.length >= maxAllowed) {
             throw new Error(`Maximum ${maxAllowed} bot${maxAllowed > 1 ? "s" : ""} allowed on your plan. Stop a running bot first or upgrade for more slots.`);
           }
@@ -2335,8 +2335,8 @@ export const appRouter = router({
                 // Admin: extraBotSlots IS the total (set by admin panel)
                 userMaxSlots = Math.max(3, extra);
               } else {
-                // Regular user: base 3 + extra from referrals
-                userMaxSlots = 3 + extra;
+                // Regular user: extraBotSlots IS the total (set by admin)
+                userMaxSlots = extra > 0 ? extra : 3;
               }
             } else {
               // Fallback: sessionToken might not be in app_users (different UUID per device)
@@ -2355,7 +2355,7 @@ export const appRouter = router({
                   // Regular user - find first non-admin with extraBotSlots
                   const regularUser = users.find((u: any) => u.role !== "admin");
                   if (regularUser) {
-                    userMaxSlots = 3 + (regularUser.extraBotSlots ?? 0);
+                    userMaxSlots = (regularUser.extraBotSlots ?? 0) > 0 ? regularUser.extraBotSlots : 3;
                   }
                 }
               }
@@ -2657,7 +2657,7 @@ export const appRouter = router({
               const ebRow = Array.isArray(ebRaw) ? ebRaw[0] : ebRaw;
               extraSlots = ebRow?.extraBotSlots ?? 0;
             } catch { /* column may not exist */ }
-            const maxAllowed = slotLimits.maxBots + extraSlots;
+            const maxAllowed = extraSlots > 0 ? extraSlots : slotLimits.maxBots;
             if (runningSlotBots.length >= maxAllowed) {
               throw new Error(`Maximum ${maxAllowed} bot${maxAllowed > 1 ? "s" : ""} allowed on your plan. Stop a running bot first or upgrade for more slots.`);
             }
