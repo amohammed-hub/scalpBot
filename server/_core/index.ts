@@ -284,6 +284,10 @@ async function startServer() {
         .set({ accessToken: tokenData.access_token, tokenExpiresAt: expires })
         .where(eq(upstoxCredentials.sessionToken, sessionToken));
 
+      // Hot-reload to all running bots for this session
+      const botsUpdated = hotReloadAccessToken(tokenData.access_token, sessionToken);
+      console.log(`[upstox-callback] Token saved & hot-reloaded to ${botsUpdated} running bot(s) for session ${sessionToken.slice(0, 8)}`);
+
       res.redirect(302, `/upstox-callback?status=success`);
     } catch (err: any) {
       res.redirect(302, `/upstox-callback?status=error&msg=${encodeURIComponent(err.message || 'Unknown error')}`);

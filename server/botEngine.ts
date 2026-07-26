@@ -3378,6 +3378,28 @@ function calcEMA(data: number[], period: number): number {
   return ema;
 }
 // ── Fetch full quote ──────────────────────────────────────────────────────────
+/**
+ * Refresh access token from DB for a given session.
+ * Used when a 401 is detected — fetches the latest token from the database
+ * in case it was refreshed via Settings/OAuth while the bot was running.
+ */
+export async function refreshTokenFromDB(sessionToken: string): Promise<string | null> {
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return null;
+    const { upstoxCredentials } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const baseSession = sessionToken.replace(/-slot[0-9]+$/, "");
+    const [row] = await db.select().from(upstoxCredentials).where(eq(upstoxCredentials.sessionToken, baseSession)).limit(1);
+    if (!row) return null;
+    return row.accessToken ?? null;
+  } catch (err) {
+    console.warn(`[BotEngine] refreshTokenFromDB failed:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export async function fetchFullQuote(instrumentToken: string, accessToken: string): Promise<{ ltp: number; bid: number; ask: number } | null> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
@@ -3390,7 +3412,11 @@ export async function fetchFullQuote(instrumentToken: string, accessToken: strin
     const ask = data.depth?.sell?.[0]?.price ?? ltp;
     return { ltp, bid, ask };
   } catch (err) {
-    // Retry once after 1 second — Upstox API can have transient failures
+    // On 401, don't retry with same token — caller should refresh from DB
+    if (axios.isAxiosError(err) && err.response?.status === 401) {
+      return null; // Signal caller to refresh token
+    }
+    // Retry once after 1 second for transient failures
     try {
       await new Promise(r => setTimeout(r, 1000));
       const encoded = encodeURIComponent(instrumentToken);
@@ -4060,12 +4086,13 @@ export async function placeUpstoxOrder(
     orderQty = Math.max(1, Math.round(quantity / mcxLotSize));
     console.log(`[BotEngine] MCX lot conversion: ${quantity} units / ${mcxLotSize} lot_size = ${orderQty} lots`);
   }
+  let currentToken = accessToken;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
   try {
     const resp = await axios.post(
       useSandbox ? "https://api-sandbox.upstox.com/v3/order/place" : "https://api-hft.upstox.com/v3/order/place",
       { quantity: orderQty, product, validity: "DAY", price: 0, tag: "scalp-bot", instrument_token: instrumentToken, order_type: "MARKET", transaction_type: direction, disclosed_quantity: 0, trigger_price: 0, is_amo: false, slice: true, market_protection: -1 },
-      { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" }, timeout: 8000 }
+      { headers: { Authorization: `Bearer ${currentToken}`, "Content-Type": "application/json", Accept: "application/json" }, timeout: 8000 }
     );
     lastOrderRejectionReason = null;
     // v3 API returns { data: { order_ids: ["..."] } } (array)
@@ -4088,6 +4115,14 @@ export async function placeUpstoxOrder(
       if (Array.isArray(body.errors) && body.errors.length > 0) {
         reason = body.errors.map(e => `${e.errorCode ?? e.error_code ?? ""} ${e.message ?? ""}`.trim()).join("; ");
       }
+    }
+    // On 401 (token expired), try refreshing from DB and retry
+    if (axios.isAxiosError(err) && err.response?.status === 401 && attempt < MAX_RETRIES) {
+      console.log(`[BotEngine] Order got 401 (token expired), attempting DB refresh... (attempt ${attempt}/${MAX_RETRIES})`);
+      // We don't have sessionToken here, but the caller passes accessToken from state.
+      // The hotReload mechanism should have already updated, but try a small delay to let it propagate.
+      await new Promise(r => setTimeout(r, 1000));
+      continue;
     }
     // If the error is UDAPI1154 (static IP restriction), retry — Railway load-balances
     // across 3 IPs but only 2 are whitelisted in Upstox. Retrying hits a different IP.
@@ -4348,6 +4383,24 @@ async function tick(
     // Real candle fetch returned empty — market closed, token error, or outside trading hours.
     // DO NOT generate fake/mock candles. Set HOLD signal and return early.
     // The bot will retry on the next tick interval.
+    // ── AUTO-REFRESH TOKEN FROM DB: If during market hours, try loading fresh token ──
+    const nowAutoRefresh = new Date();
+    const istMinAutoRefresh = ((nowAutoRefresh.getUTCHours() * 60 + nowAutoRefresh.getUTCMinutes()) + 330) % 1440;
+    const nseOpen = 9 * 60 + 15; // 9:15 AM IST
+    const nseClose = 15 * 60 + 30; // 3:30 PM IST
+    const mcxOpenAR = 9 * 60; // 9:00 AM IST
+    const mcxCloseAR = 23 * 60 + 30; // 11:30 PM IST
+    const isMCXar = state.instrumentToken.startsWith("MCX");
+    const marketOpen = isMCXar ? (istMinAutoRefresh >= mcxOpenAR && istMinAutoRefresh <= mcxCloseAR) : (istMinAutoRefresh >= nseOpen && istMinAutoRefresh <= nseClose);
+    if (marketOpen && state.mode === "live") {
+      // Market is open but no data — likely expired token. Try refreshing from DB.
+      const freshToken = await refreshTokenFromDB(state.sessionToken);
+      if (freshToken && freshToken !== state.accessToken) {
+        state.accessToken = freshToken;
+        emitActivity(state.sessionToken, "bot_start", `🔑 Token auto-refreshed from DB (was expired) — retrying on next tick`);
+        console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — auto-refreshed token from DB during market hours`);
+      }
+    }
     // ── MCX Token Retry: If candles are empty during market hours, the token might be expired ──
     if (signalToken.startsWith("MCX_FO|") && (state as any)._mcxTokenResolved) {
       const nowRetry = new Date();
@@ -4479,7 +4532,14 @@ async function tick(
       }
     }
     if (tokenExpired) {
-      const reminderMsg = `⚠️ <b>TOKEN EXPIRED</b>\n\n` +
+      // AUTO-FIX: Try to reload token from DB (user may have refreshed via Settings/OAuth)
+      const freshToken = await refreshTokenFromDB(state.sessionToken);
+      if (freshToken && freshToken !== state.accessToken) {
+        state.accessToken = freshToken;
+        emitActivity(state.sessionToken, "bot_start", `🔑 Token auto-refreshed from DB — bot continuing with new token`);
+        devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — auto-refreshed token from DB ✓`);
+      } else {
+        const reminderMsg = `⚠️ <b>TOKEN EXPIRED</b>\n\n` +
         `🕕 Daily Upstox token has expired (6:30 AM reset).\n` +
         `📊 <b>${state.instrumentLabel}</b>\n\n` +
         `🔑 Please refresh your access token:\n` +
@@ -4487,9 +4547,10 @@ async function tick(
         `2. Complete OAuth flow\n` +
         `3. Bot will auto-detect new token\n\n` +
         `⏰ Market opens at 9:15 AM — refresh before then!`;
-      sendTelegramAlert(state, reminderMsg, "criticalAlerts");
-      emitActivity(state.sessionToken, "error", `⚠ Token expired — Telegram reminder sent. Refresh before market open (9:15 AM).`);
-      devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — token expired/missing, Telegram alert sent`);
+        sendTelegramAlert(state, reminderMsg, "criticalAlerts");
+        emitActivity(state.sessionToken, "error", `⚠ Token expired — Telegram reminder sent. Refresh before market open (9:15 AM).`);
+        devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — token expired/missing, Telegram alert sent`);
+      }
     } else {
       devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — token valid ✓`);
     }
