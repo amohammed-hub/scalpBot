@@ -5245,6 +5245,25 @@ async function tick(
           sendTelegramAlert(state, `🚨 <b>EXIT ORDER FAILED</b> — ${exitReason}\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not place exit order after 2 attempts.\n⚠ CLOSE MANUALLY ON UPSTOX NOW.`, "criticalAlerts");
           return; // do NOT close in DB — trade remains open until manual intervention
         }
+        // ── EXIT ORDER VERIFICATION: Confirm fill before closing in DB ──
+        let exitVerification: { status: string; avgPrice?: number } = { status: "unknown" };
+        for (let vAttempt = 1; vAttempt <= 3; vAttempt++) {
+          await new Promise(r => setTimeout(r, vAttempt === 1 ? 2000 : 2500));
+          exitVerification = await verifyUpstoxOrderStatus(state.accessToken, exitOrderId);
+          if (exitVerification.status === "complete" || exitVerification.status === "traded") break;
+          if (exitVerification.status === "rejected" || exitVerification.status === "cancelled") break;
+        }
+        if (exitVerification.status === "rejected" || exitVerification.status === "cancelled") {
+          state.lastError = `EXIT ORDER REJECTED — close ${trade.symbolLabel} manually on Upstox`;
+          emitActivity(state.sessionToken, "error", `🚨 EXIT ORDER REJECTED (${exitReason}) — ${trade.symbolLabel}. CLOSE MANUALLY.`);
+          sendTelegramAlert(state, `🚨 <b>EXIT ORDER REJECTED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Exchange rejected exit. CLOSE MANUALLY.`, "criticalAlerts");
+          return; // do NOT close in DB
+        }
+        // Use actual fill price from Upstox if available
+        if (exitVerification.avgPrice && exitVerification.avgPrice > 0) {
+          effectivePrice = exitVerification.avgPrice;
+          console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — EXIT verified: actual fill ₹${effectivePrice} (overrides estimate)`);
+        }
       }
       // Track SL hit for re-entry (only on full SL, not BE)
       if (exitReason === "Stop Loss" && trade.partialBooked === 0) {
