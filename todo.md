@@ -1818,3 +1818,6 @@
 - [ ] Implement BoxingStrategy (V5: Engulfing Only, 20% zone, SL=25pts, max 2 trades/day)
 - [ ] Add BoxingStrategy to strategy selector (Category A — Proven, enabled by default)
 - [ ] Deploy BoxingStrategy to Railway before Monday morning
+- [x] Implement BoxingStrategy layer (1st High/Low + Engulfing + SEMA, V5 params)
+- [x] Add BoxingStrategy to strategy selector (Category A — Proven), enable by default
+- [x] Audit all 4 exit paths: SL, Target, Trailing Stop, Time Exit — all confirmed to call placeUpstoxOrder
