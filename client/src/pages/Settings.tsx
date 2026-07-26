@@ -726,7 +726,7 @@ export default function Settings() {
       minConfidence: 60,
       scanIntervalSec: 30,
       useV2Engine: true,
-      enabledLayers: ["Supertrend", "Momentum", "VWAP Pull", "ORB", "Adeeb"],
+      enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko"],
       telegramBotToken: tg.botToken ?? "",
       telegramChatId: tg.chatId ?? "",
       telegramEnabled: tg.enabled ?? false,

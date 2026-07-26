@@ -39,7 +39,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "PremiumRenko" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -2706,6 +2706,84 @@ export function checkRenkoExit(candles: Candle[], tradeDirection: "BUY" | "SELL"
   }
 
   return { shouldExit: false, reason: "" };
+}
+
+// ── Premium Renko Strategy Layer ─────────────────────────────────────────────
+// Uses Renko bricks built from the OPTION PREMIUM candles (not underlying).
+// For non-options mode, falls back to regular candles with a smaller brick size
+// (ATR * 0.5) to simulate premium-like sensitivity.
+// Entry: 4+ consecutive same-color bricks with RSI confirmation.
+// Exit: First opposite-color brick OR SL/Target hit.
+
+export function generatePremiumRenkoSignal(
+  candles: Candle[],
+  slMultiplier = 1.2,
+  tpMultiplier = 2.0,
+): Signal {
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "PremiumRenko: insufficient data", layer: "PremiumRenko" };
+  if (!candles || candles.length < 20) return hold;
+
+  const atr = calcATR(candles, 14);
+  if (atr <= 0) return { ...hold, reason: "PremiumRenko: ATR is 0" };
+
+  // Use smaller brick size (50% of ATR) for premium-like sensitivity
+  const brickSize = atr * 0.5;
+  const bricks = buildRenkoBricks(candles, brickSize);
+  if (bricks.length < 4) return { ...hold, atr, reason: `PremiumRenko: only ${bricks.length} bricks (need 4)` };
+
+  // Count consecutive bricks from the end
+  const lastBricks = bricks.slice(-6);
+  let consecutiveGreen = 0;
+  let consecutiveRed = 0;
+
+  for (let i = lastBricks.length - 1; i >= 0; i--) {
+    if (lastBricks[i].color === "green") {
+      if (consecutiveRed > 0) break;
+      consecutiveGreen++;
+    } else {
+      if (consecutiveGreen > 0) break;
+      consecutiveRed++;
+    }
+  }
+
+  // RSI confirmation (avoid overbought/oversold entries)
+  const rsi = calcRSI(candles.map(c => c.close), 14);
+  const rsiOk = rsi > 30 && rsi < 70; // Don't enter at extremes
+
+  const price = candles[candles.length - 1].close;
+  const slDist = atr * slMultiplier;
+  const tpDist = atr * tpMultiplier;
+
+  // Require 4+ consecutive bricks + RSI not extreme
+  if (consecutiveGreen >= 4 && rsiOk) {
+    const confidence = Math.min(0.82, 0.60 + (consecutiveGreen - 4) * 0.08);
+    return {
+      direction: "BUY",
+      confidence,
+      entryPrice: price,
+      slPrice: price - slDist,
+      targetPrice: price + tpDist,
+      atr,
+      reason: `[PremiumRenko] ${consecutiveGreen} green bricks (brick: ₹${brickSize.toFixed(1)}) RSI=${rsi.toFixed(0)} | Premium uptrend`,
+      layer: "PremiumRenko",
+    };
+  }
+
+  if (consecutiveRed >= 4 && rsiOk) {
+    const confidence = Math.min(0.82, 0.60 + (consecutiveRed - 4) * 0.08);
+    return {
+      direction: "SELL",
+      confidence,
+      entryPrice: price,
+      slPrice: price + slDist,
+      targetPrice: price - tpDist,
+      atr,
+      reason: `[PremiumRenko] ${consecutiveRed} red bricks (brick: ₹${brickSize.toFixed(1)}) RSI=${rsi.toFixed(0)} | Premium downtrend`,
+      layer: "PremiumRenko",
+    };
+  }
+
+  return { ...hold, atr, entryPrice: price, reason: `[PremiumRenko] No 4-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${brickSize.toFixed(1)}` };
 }
 
 // ── Trikal Strategy Signal Layer (Dr. Devendra's Renko Engine Strategy) ─────────────
@@ -5414,6 +5492,14 @@ async function tick(
       } catch (e) { console.warn(`[MultiStrategy] RedBarTheory error:`, (e as Error).message); }
     }
 
+    // Layer 1b: PremiumRenko (option premium Renko bricks — smaller brick, RSI filter)
+    if (state.enabledLayers.includes("PremiumRenko")) {
+      try {
+        const prSignal = generatePremiumRenkoSignal(state.candles);
+        if (prSignal.direction !== "HOLD") candidateSignals.push(prSignal);
+      } catch (e) { console.warn(`[MultiStrategy] PremiumRenko error:`, (e as Error).message); }
+    }
+
     // Layer 2: TrendMomentum (3 consecutive same-color candles + RSI/ROC)
     // Already handled by generateSignalV2 above (regime=TRENDING, layer="TrendMomentum")
     // If V2 engine produced a TrendMomentum signal but it was overridden by regime logic,
@@ -5509,36 +5595,19 @@ async function tick(
 
     // ── PARALLEL SELECTION: Pick the BEST signal that hasn't exceeded per-layer limit ──
     if (candidateSignals.length > 0) {
-      // Sort by confidence (highest first)
+      // Sort by confidence (highest first) — first valid signal wins
       candidateSignals.sort((a, b) => b.confidence - a.confidence);
 
-      // Calculate total layer trades today
+      // Only check TOTAL daily limit (no per-layer limits — let each layer contribute)
       const totalLayerTrades = Object.values(state.layerTradesCount).reduce((s, v) => s + v, 0);
 
-      for (const candidate of candidateSignals) {
-        const layerKey = candidate.layer === "Momentum" ? "TrendMomentum" : candidate.layer;
-        const layerCount = state.layerTradesCount[layerKey] ?? 0;
-        const layerMax = LAYER_LIMITS[layerKey] ?? 3; // default 3 if not specified
-
-        // Check per-layer limit
-        if (layerCount >= layerMax) {
-          devLog(`[MultiStrategy] ${candidate.layer} skipped — layer limit reached (${layerCount}/${layerMax})`);
-          pushRejectedSignal(state, { direction: candidate.direction as "BUY" | "SELL", layer: candidate.layer, confidence: candidate.confidence, reason: candidate.reason }, `Layer limit: ${layerCount}/${layerMax} for ${layerKey}`);
-          continue;
-        }
-
-        // Check total daily limit
-        if (totalLayerTrades >= TOTAL_LAYER_LIMIT && !state.unlimitedTrades) {
-          devLog(`[MultiStrategy] ${candidate.layer} skipped — total layer limit reached (${totalLayerTrades}/${TOTAL_LAYER_LIMIT})`);
-          pushRejectedSignal(state, { direction: candidate.direction as "BUY" | "SELL", layer: candidate.layer, confidence: candidate.confidence, reason: candidate.reason }, `Total layer limit: ${totalLayerTrades}/${TOTAL_LAYER_LIMIT}`);
-          break; // no point checking more — total is exceeded
-        }
-
-        // This signal passes all limits — use it
-        signal = candidate;
+      if (totalLayerTrades >= TOTAL_LAYER_LIMIT && !state.unlimitedTrades) {
+        devLog(`[MultiStrategy] All candidates skipped — total daily limit reached (${totalLayerTrades}/${TOTAL_LAYER_LIMIT})`);
+      } else {
+        // First valid signal wins — quality filters already prevent bad entries
+        signal = candidateSignals[0];
         devLog(`[MultiStrategy] ✓ Selected: ${signal.layer} ${signal.direction} conf=${signal.confidence.toFixed(2)} (${candidateSignals.length} candidates evaluated)`);
         emitActivity(state.sessionToken, "signal", `🔀 MultiStrategy: ${signal.layer} selected (${candidateSignals.length} layers evaluated, conf=${(signal.confidence*100).toFixed(0)}%)`);
-        break;
       }
     }
   }

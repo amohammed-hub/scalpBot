@@ -63,6 +63,7 @@ export function computeLayerStats(
     { layer: "S/R Pivot", test: r => r.includes("Pivot") || r.includes("S/R") },
     { layer: "Institutional", test: r => r.includes("Institutional") || r.includes("footprint") },
     { layer: "Regime", test: r => r.includes("Regime") || r.includes("regime") },
+    { layer: "PremiumRenko", test: r => r.includes("PremiumRenko") || r.includes("Premium Renko") },
   ];
 
   const byLayer = new Map<string, Array<{ pnl: number }>>();

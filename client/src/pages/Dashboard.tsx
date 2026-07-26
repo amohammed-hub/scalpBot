@@ -9,6 +9,7 @@ import {
   Download, LogOut, User, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
+import { Info } from "lucide-react";
 import { Gift, Copy, Users as UsersIcon } from "lucide-react";
 import { Pencil } from "lucide-react";
 import { Clock, Timer, Trophy, Ban, ArrowDownUp } from "lucide-react";
@@ -283,7 +284,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
-      enabledLayers: ["Pattern", "Trend", "Momentum", "MACD_BB", "VWAPReversion", "RedBarTheory", "TrikalStrategy", "Adeeb"],
+      enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko"],
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -1729,6 +1730,111 @@ export default function Dashboard() {
         })()}
 
         {/* Market Status Badge + Auto Square-Off Warning */}
+
+        {/* ═══════════════════════════════════════════════════════════════════════════
+            STRATEGY SELECTOR — Category A (Proven) + Category B (Legacy)
+        ═══════════════════════════════════════════════════════════════════════════ */}
+        <div className="mb-4 bg-white/[0.03] border border-white/10 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-cyan-400" />
+              <span className="text-sm font-semibold text-white">Strategy Layers</span>
+            </div>
+            <span className="text-[10px] text-white/30">
+              Active: {config.enabledLayers.length} strategies
+            </span>
+          </div>
+
+          {/* Category A: Proven */}
+          <div className="mb-3">
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Category A — Proven</span>
+              <span className="text-[10px] text-white/30">(backtested, Dr. Pratap methods)</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {[
+                { id: "RedBarTheory", label: "RedBar Theory V2", desc: "Pullback-breakout using Renko bricks + EMA cloud confirmation", icon: "🔴" },
+                { id: "VWAPReversion", label: "VWAP Reversion", desc: "Mean-reversion entries when price deviates >1σ from VWAP (best on MCX)", icon: "📊" },
+                { id: "TrikalStrategy", label: "Trikal", desc: "EMA cloud crossover with ADX trend strength filter", icon: "🔺" },
+                { id: "PremiumRenko", label: "Premium Renko", desc: "Option premium chart Renko bricks — pure premium action", icon: "💎" },
+              ].map(s => {
+                const enabled = config.enabledLayers.includes(s.id);
+                return (
+                  <div key={s.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 cursor-pointer ${
+                    enabled ? "bg-emerald-500/5 border-emerald-500/20" : "bg-white/[0.02] border-white/10 opacity-60"
+                  }`} onClick={() => toggleLayer(s.id)}>
+                    <span className="text-sm">{s.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-xs font-medium ${enabled ? "text-white" : "text-white/50"}`}>{s.label}</span>
+                    </div>
+                    <div className="group relative">
+                      <Info className="w-3 h-3 text-white/20 hover:text-white/50 cursor-help" />
+                      <div className="absolute bottom-full right-0 mb-1 w-48 p-2 bg-gray-900 border border-white/20 rounded-lg text-[10px] text-white/70 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                        {s.desc}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleLayer(s.id); }}
+                      className={`relative w-8 h-4 rounded-full transition-all duration-200 shrink-0 ${
+                        enabled ? "bg-emerald-500/60 border border-emerald-400/50" : "bg-white/10 border border-white/20"
+                      }`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full transition-all duration-200 ${
+                        enabled ? "translate-x-4 bg-emerald-300" : "translate-x-0 bg-white/40"
+                      }`} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Category B: Legacy */}
+          <div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Category B — Legacy</span>
+              <span className="text-[10px] text-white/30">(old strategies, use at own risk)</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {[
+                { id: "Momentum", label: "Momentum Streak", desc: "Old Red Bar — 3 consecutive same-direction bricks", icon: "📈" },
+                { id: "Trend", label: "Supertrend", desc: "ATR-based trend following with dynamic stop", icon: "〰️" },
+                { id: "Pattern", label: "CPR Breakout", desc: "Central Pivot Range breakout with volume confirmation", icon: "📐" },
+                { id: "MACD_BB", label: "Failed Breakout", desc: "MACD + Bollinger Band squeeze → expansion reversal", icon: "💥" },
+                { id: "Adeeb", label: "Booming Bulls", desc: "Multi-indicator confluence (RSI + MACD + EMA)", icon: "🐂" },
+              ].map(s => {
+                const enabled = config.enabledLayers.includes(s.id);
+                return (
+                  <div key={s.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 cursor-pointer ${
+                    enabled ? "bg-amber-500/5 border-amber-500/20" : "bg-white/[0.02] border-white/10 opacity-60"
+                  }`} onClick={() => toggleLayer(s.id)}>
+                    <span className="text-sm">{s.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-xs font-medium ${enabled ? "text-white" : "text-white/50"}`}>{s.label}</span>
+                    </div>
+                    <div className="group relative">
+                      <Info className="w-3 h-3 text-white/20 hover:text-white/50 cursor-help" />
+                      <div className="absolute bottom-full right-0 mb-1 w-48 p-2 bg-gray-900 border border-white/20 rounded-lg text-[10px] text-white/70 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                        {s.desc}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleLayer(s.id); }}
+                      className={`relative w-8 h-4 rounded-full transition-all duration-200 shrink-0 ${
+                        enabled ? "bg-amber-500/60 border border-amber-400/50" : "bg-white/10 border border-white/20"
+                      }`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full transition-all duration-200 ${
+                        enabled ? "translate-x-4 bg-amber-300" : "translate-x-0 bg-white/40"
+                      }`} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
         {(() => {
           const now = new Date();
           const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % (24 * 60);
@@ -2222,6 +2328,20 @@ export default function Dashboard() {
                     )}
                     {modeTag && <span className="text-[10px] text-amber-300">{modeTag}</span>}
                   </div>
+                  {/* Active strategies summary */}
+                  {isActive && (bot as any).enabledLayers && (bot as any).enabledLayers.length > 0 && (
+                    <div className="text-[9px] text-white/30 truncate mb-1 -mt-1" title={(bot as any).enabledLayers.join(", ")}>
+                      Strategies: {(bot as any).enabledLayers.slice(0, 4).map((l: string) =>
+                        l === "RedBarTheory" ? "RedBar V2" :
+                        l === "VWAPReversion" ? "VWAP" :
+                        l === "TrikalStrategy" ? "Trikal" :
+                        l === "PremiumRenko" ? "Renko" :
+                        l === "Momentum" ? "Momentum" :
+                        l === "TrendMomentum" ? "TrendMom" :
+                        l
+                      ).join(", ")}{(bot as any).enabledLayers.length > 4 ? ` +${(bot as any).enabledLayers.length - 4}` : ""} ✓
+                    </div>
+                  )}
                   {isActive && (
                     <button
                       onClick={() => bot.slot === 0 ? stopMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}

@@ -41,7 +41,7 @@ export function getRecommendedLayers(instrumentLabel: string): string[] {
     }
   }
   // Default: conservative set that works across most instruments
-  return ["RedBarTheory", "TrikalStrategy", "Momentum", "VWAPReversion"];
+  return ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko"];
 }
 
 /**

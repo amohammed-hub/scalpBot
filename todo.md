@@ -1767,3 +1767,26 @@
 - [x] Per-layer trade limits: RBT=2, TrendMomentum=3, VWAP=3, Trikal=2, TOTAL max 10/day
 - [x] Token expiry reminder: cron check at 6:35 AM IST in bot loop, send Telegram if expired
 - [ ] Final Railway deploy verification
+
+## User Request — 3 Things (Jul 26 PM)
+- [ ] Strategy Selector UI: Add "Strategies" section in Dashboard/Settings with toggle switches
+- [ ] Strategy Categories: Category A "Proven" (RedBarTheory V2, VWAPReversion, Trikal, PremiumRenko) ON by default
+- [ ] Strategy Categories: Category B "Legacy" (Momentum Streak, Supertrend, CPR, FailedBreakout, BoomingBulls) OFF by default
+- [ ] Strategy info icons with descriptions for each strategy
+- [ ] Show active strategy list on bot card: "Strategies: RedBar V2, VWAP, Trikal ✓"
+- [ ] Multi-Strategy: Remove per-layer trade limits, keep total max 10/day, first-valid-signal-wins
+- [ ] Add PremiumRenko strategy layer to the engine
+- [x] Multi-user OAuth: Confirm per-user token flow works (answer user's question)
+
+## Multi-Strategy Engine v2 (PDF Request 3)
+- [x] Remove per-layer trade limits — keep only total max 10/day
+- [x] First-valid-signal-wins (highest confidence from all parallel layers)
+- [x] Strategy Selector UI in Dashboard: Category A (Proven) + Category B (Legacy)
+- [x] Category A: RedBarTheory, VWAPReversion, TrikalStrategy, PremiumRenko (ON by default)
+- [x] Category B: Momentum, Trend, Pattern, MACD_BB, Adeeb (OFF by default)
+- [x] Add PremiumRenko strategy layer (half-ATR bricks + RSI filter + 4-brick streak)
+- [x] Active strategy summary on bot cards (shows which layers are running)
+- [x] Toggle switches hot-update running bot layers
+- [x] Update backtestLayerMap defaults to Category A strategies
+- [x] Add PremiumRenko to layerTracker pattern recognition
+- [x] Answer multi-user OAuth question (confirmed per-user token storage)
