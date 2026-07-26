@@ -1809,3 +1809,7 @@
 - [x] BUG FIX: sandboxToken column name mismatch causing DB query crash on Railway (camelCase vs snake_case)
 - [x] CONSOLIDATE MODES: Remove Paper mode, keep only Demo (Sandbox API) + Live (2 modes total)
 - [x] UI: Update mode toggle to show only Demo/Live (remove Paper option)
+- [x] FIX: Token expired for running bots — auto-refresh from DB on 401, hot-reload on OAuth callback
+- [x] FIX: Bot slot allocation — Dashboard showed 10 slots instead of reading user's actual extraBotSlots from DB
+- [x] FIX: allStatus endpoint now queries user's extraBotSlots and limits returned slots accordingly
+- [x] FIX: Frontend slices allBots to user's actual slot limit (admin=max(3,extra), user=3+extra)
