@@ -753,10 +753,10 @@ export default function Dashboard() {
   const pauseMutation = trpc.bot.pause.useMutation({
     onSuccess: () => {
       toast.info("⏸ Bot paused — open trade remains active (SL/target still running).");
-      utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "stopped" } : { status: "stopped" });
+      utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "paused" } : { status: "paused" });
       utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
         if (!old) return old;
-        return old.map((b: any) => b.slot === 0 ? { ...b, status: "stopped" } : b);
+        return old.map((b: any) => b.slot === 0 ? { ...b, status: "paused" } : b);
       });
       setTimeout(() => {
         utils.bot.status.invalidate();
@@ -765,6 +765,22 @@ export default function Dashboard() {
       }, 500);
     },
     onError: (e) => toast.error(`Pause failed: ${e.message}`),
+  });
+  const resumeMutation = trpc.bot.resume.useMutation({
+    onSuccess: () => {
+      toast.success("▶️ Bot resumed — scanning for new signals.");
+      utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "running" } : { status: "running" });
+      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
+        if (!old) return old;
+        return old.map((b: any) => b.slot === 0 ? { ...b, status: "running" } : b);
+      });
+      setTimeout(() => {
+        utils.bot.status.invalidate();
+        utils.bot.liveData.invalidate();
+        utils.multiBots.allStatus.invalidate();
+      }, 500);
+    },
+    onError: (e: any) => toast.error(`Resume failed: ${e.message}`),
   });
 
   const restartMutation = trpc.bot.restart.useMutation({
@@ -2303,7 +2319,8 @@ export default function Dashboard() {
             }
             return slots;
           })()).map((bot: any) => {
-            const isActive = bot.status === "running";
+            const isActive = bot.status === "running" || bot.status === "paused";
+            const isPaused = bot.status === "paused";
             const slotLabel = `Bot ${bot.slot + 1}`;
             const slotClasses = bot.slot === 0
               ? { border: "border-teal-500/30", borderActive: "border-teal-500/40", bg: "bg-teal-500/5", badge: "bg-teal-500/20", text: "text-teal-300", glow: "shadow-[0_0_20px_oklch(0.78_0.18_195/0.06)]" }
@@ -2369,7 +2386,7 @@ export default function Dashboard() {
                       ).join(", ")}{(bot as any).enabledLayers.length > 4 ? ` +${(bot as any).enabledLayers.length - 4}` : ""} ✓
                     </div>
                  )}
-                 {isActive && (
+                 {isActive && !isPaused && (
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => bot.slot === 0 ? pauseMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
@@ -2405,6 +2422,33 @@ export default function Dashboard() {
                           }}
                           className="px-2 py-0.5 rounded-md bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 hover:text-red-300 text-[10px] font-bold flex items-center gap-0.5 transition-all"
                           title="Exit — close open position on Upstox immediately + stop bot"
+                        >
+                          ■ Exit
+                        </button>
+                      )}
+                    </div>
+                 )}
+                 {isPaused && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => resumeMutation.mutate({ sessionToken })}
+                        className="px-2 py-0.5 rounded-md bg-green-500/15 border border-green-500/30 text-green-400 hover:bg-green-500/25 text-[10px] font-medium flex items-center gap-0.5 transition-all"
+                        title="Resume bot — start scanning for new signals again"
+                      >
+                        ▶ Resume
+                      </button>
+                      <span className="text-[9px] text-amber-400/70 italic">⏸ Paused — monitoring SL/target</span>
+                      {hasOpenTrade && (
+                        <button
+                          onClick={() => {
+                            const ot = bot.openTrade;
+                            const symbol = ot?.symbolLabel || ot?.symbol || (bot as any).instrumentLabel || "position";
+                            if (confirm(`EXIT and CLOSE position: ${symbol}?`)) {
+                              stopMutation.mutate({ sessionToken });
+                            }
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 text-[10px] font-medium flex items-center gap-0.5 transition-all"
+                          title="Exit position — places SELL order on Upstox and closes trade"
                         >
                           ■ Exit
                         </button>

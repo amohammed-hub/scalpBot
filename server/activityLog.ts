@@ -17,6 +17,8 @@ export type ActivityEventType =
   | "sl_update"
   | "partial_book"
   | "market_closed"
+  | "bot_pause"
+  | "bot_resume"
   | "error";
 
 export interface ActivityEvent {

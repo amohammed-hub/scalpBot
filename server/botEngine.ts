@@ -4238,7 +4238,9 @@ async function tick(
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
   onTick?: (state: BotState) => Promise<void>,
 ) {
-  if (state.status !== "running") { console.log(`[tick] SKIP — status=${state.status} (${state.sessionToken.slice(0,8)})`); return; }
+  if (state.status !== "running" && state.status !== "paused") { console.log(`[tick] SKIP — status=${state.status} (${state.sessionToken.slice(0,8)})`); return; }
+  // PAUSED bots still tick for SL/target/trailing monitoring — skip if no open trade
+  if (state.status === "paused" && !state.openTrade) { return; }
   // Prevent overlapping ticks: if previous tick is still running (slow network, API timeout), skip
   if (state.tickInProgress) {
     console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — tick skipped (previous still running)`);
@@ -5423,6 +5425,12 @@ async function tick(
   if (nearClose) return;
   // Mutex guard: prevent duplicate trade opens from concurrent ticks
   if (state.isOpeningTrade) return;
+  // ── PAUSED CHECK: Skip signal generation when bot is paused ─────────────────
+  // Paused bots still monitor open trades (SL/target/trailing above), but do NOT open new trades.
+  if (state.status === "paused") {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Bot PAUSED — monitoring open trade only (no new signals)", layer: "None" };
+    return;
+  }
   // Cooldown guard: minimum 2 minutes between trade entries to prevent rapid-fire
   if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < 120_000) {
     return;
@@ -7220,6 +7228,31 @@ export function stopBot(sessionToken: string) {
   bots.delete(sessionToken);
 }
 
+
+/** Pause bot — keeps interval running for SL/target monitoring but blocks new signals */
+export function pauseBot(sessionToken: string) {
+  const state = bots.get(sessionToken);
+  if (!state) return;
+  state.status = "paused";
+  emitActivity(sessionToken, "bot_pause", `Bot PAUSED — monitoring open trade only | Day P&L: ₹${state.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state.tradesCount ?? 0}`);
+  sendTelegramAlert(state,
+    `⏸ <b>BOT PAUSED</b> — ${state.instrumentLabel}\n` +
+    `Open trade: ${state.openTrade ? state.openTrade.symbol + " @ " + state.openTrade.entryPrice.toFixed(2) : "None"}\n` +
+    `Mode: ${state.mode} | Day P&L: ₹${(state.dailyPnl ?? 0).toFixed(0)}`
+  );
+}
+
+/** Resume bot — set status back to running so it generates new signals again */
+export function resumeBot(sessionToken: string) {
+  const state = bots.get(sessionToken);
+  if (!state) return;
+  state.status = "running";
+  emitActivity(sessionToken, "bot_resume", `Bot RESUMED — scanning for signals | Day P&L: ₹${state.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state.tradesCount ?? 0}`);
+  sendTelegramAlert(state,
+    `▶️ <b>BOT RESUMED</b> — ${state.instrumentLabel}\n` +
+    `Mode: ${state.mode} | Day P&L: ₹${(state.dailyPnl ?? 0).toFixed(0)}`
+  );
+}
 export function getBotState(sessionToken: string): BotState | undefined {
   return bots.get(sessionToken);
 }

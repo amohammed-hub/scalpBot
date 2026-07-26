@@ -7,7 +7,7 @@ import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, noti
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -1056,7 +1056,7 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .mutation(async ({ input, ctx }) => {
         await verifySessionOwnership(ctx, input.sessionToken);
-        stopBot(input.sessionToken);
+        pauseBot(input.sessionToken);
         try {
           const { clearActivity } = await import("./activityLog");
           clearActivity(input.sessionToken);
@@ -1065,10 +1065,25 @@ export const appRouter = router({
         if (db) {
           await db
             .update(botSessions)
-            .set({ status: "stopped", stoppedAt: new Date() })
+            .set({ status: "paused", stoppedAt: new Date() })
             .where(eq(botSessions.sessionToken, input.sessionToken));
         }
         // NOTE: We do NOT close open trades — they remain in DB with status='open'
+        return { success: true };
+      }),
+    // RESUME = restart signal generation for a paused bot
+    resume: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
+        resumeBot(input.sessionToken);
+        const db = await getDb();
+        if (db) {
+          await db
+            .update(botSessions)
+            .set({ status: "running" })
+            .where(eq(botSessions.sessionToken, input.sessionToken));
+        }
         return { success: true };
       }),
     // Set carry-forward preference — if true, skip auto square-off at market close
