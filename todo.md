@@ -1838,3 +1838,11 @@
 - [x] Add ORB to strategy selector in Dashboard (Category A — Proven, enabled by default)
 - [x] Update shared/backtestLayerMap.ts — ORB added to NIFTY/BANKNIFTY/FINNIFTY recommended layers
 - [x] Deploy ORB strategy (210 tests passing, 0 TypeScript errors)
+
+## IP Protection — Strip Strategy Details from Non-Admin API Responses
+- [x] Strip strategy layer name from trade history/signals for non-admin users
+- [x] Strip signal reason (internal logic details) from bot status for non-admin users
+- [x] Strip confidence % from signals for non-admin users
+- [x] Strip candle data from API responses for non-admin users
+- [ ] Admin (owner) still sees all details unchanged
+- [ ] Test role-based filtering works correctly

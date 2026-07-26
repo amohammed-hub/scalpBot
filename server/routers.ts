@@ -82,6 +82,42 @@ async function verifySessionOwnership(ctx: any, inputSessionToken: string): Prom
   throw new Error("Unauthorized: session does not belong to you");
 }
 
+// ── IP PROTECTION: Strip strategy details from non-admin API responses ──────────
+// Admin (owner) sees everything. Regular users only see: trade entry, exit, P&L, direction.
+// They do NOT see: strategy layer name, confidence %, signal reason, candle data.
+async function isAdminSessionToken(sessionToken: string): Promise<boolean> {
+  if (!ENV.adminMobile) return false;
+  const db = await getDb();
+  if (!db) return false;
+  try {
+    const baseToken = sessionToken.replace(/-slot[0-9]+$/, "");
+    const [rows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${baseToken} LIMIT 1`);
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row) return false;
+    return row.role === "admin" || row.mobile === ENV.adminMobile;
+  } catch { return false; }
+}
+
+function stripSignalForUser(signal: any): any {
+  if (!signal) return signal;
+  return {
+    direction: signal.direction,
+    entryPrice: signal.entryPrice,
+    slPrice: signal.slPrice,
+    targetPrice: signal.targetPrice,
+    atr: signal.atr,
+    reason: signal.direction === "HOLD" ? "Scanning..." : "Signal active",
+    layer: "None",
+    confidence: 0,
+  };
+}
+
+function stripOpenTradeForUser(trade: any): any {
+  if (!trade) return trade;
+  return { ...trade, signalReason: undefined, signalLayer: undefined, confidence: 0 };
+}
+// ── END IP PROTECTION HELPERS ───────────────────────────────────────────────────
+
 export const appRouter = router({
   system: systemRouter,
 
@@ -302,7 +338,7 @@ export const appRouter = router({
   bot: router({
     status: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const db = await getDb();
         const inMem = getBotState(input.sessionToken);
         let row: typeof botSessions.$inferSelect | null = null;
@@ -327,7 +363,7 @@ export const appRouter = router({
         // still report 'running' — the watchdog restores the in-memory bot within 60s.
         // bot.stop always writes status='stopped' to DB first, so a stopped bot never
         // shows as running.
-        return {
+        const statusResult: any = {
           ...baseRow,
           status: inMem?.status ?? row?.status ?? "stopped",
           // Flag so the UI can show a subtle "reconnecting" hint if desired
@@ -344,6 +380,12 @@ export const appRouter = router({
           // Carry-forward state
           carryForward: inMem?.carryForward ?? false,
         };
+        const isAdmin = await verifyAdminAccess(ctx);
+        if (!isAdmin) {
+          statusResult.lastSignal = stripSignalForUser(statusResult.lastSignal);
+          if (statusResult.openTrade) statusResult.openTrade = stripOpenTradeForUser(statusResult.openTrade);
+        }
+        return statusResult;
       }),
 
     start: publicProcedure
@@ -1049,8 +1091,6 @@ export const appRouter = router({
         }
         return { success: true };
       }),
-
-
     // PAUSE = stop the bot engine but keep open trades alive (SL/target still active in DB)
     pause: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
@@ -1368,7 +1408,8 @@ export const appRouter = router({
 
     liveData: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const isAdmin = await verifyAdminAccess(ctx);
         // Try exact match first, then any running bot for this session prefix
         const state = getBotState(input.sessionToken) ?? getBotStateByPrefix(input.sessionToken);
         if (!state) {
@@ -1436,7 +1477,7 @@ export const appRouter = router({
             })() : null,
           };
         }
-        return {
+        const result: any = {
           price: state.lastPrice,
           bid: state.bidPrice,
           ask: state.askPrice,
@@ -1478,6 +1519,14 @@ export const appRouter = router({
           maxPainStrike: state.maxPainStrike ?? null,
           maxPainBias: state.maxPainBias ?? null,
         };
+        // IP Protection: strip strategy details for non-admin users
+        if (!isAdmin) {
+          result.signal = stripSignalForUser(result.signal);
+          result.candles = [];
+          result.recentRejectedSignals = [];
+          if (result.openTrade) result.openTrade = stripOpenTradeForUser(result.openTrade);
+        }
+        return result;
       }),
 
     forceAverage: publicProcedure
@@ -1520,8 +1569,6 @@ export const appRouter = router({
       .mutation(({ input }) => {
         return clearShadowLog(input.sessionToken);
       }),
-
-
     manualExit: publicProcedure
       .input(z.object({
         sessionToken: sessionTokenSchema,
@@ -1626,8 +1673,6 @@ export const appRouter = router({
         }
       }),
   }),
-
-
   // Trades
   trades: router({
     list: publicProcedure
@@ -1635,7 +1680,7 @@ export const appRouter = router({
         sessionToken: sessionTokenSchema,
         limit: z.number().default(50),
       }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const db = await getDb();
         if (!db) return [];
         // Include trades from all 4 slots: primary + slot1 + slot2 + slot3
@@ -1648,12 +1693,15 @@ export const appRouter = router({
           `${input.sessionToken}-slot4`,
           `${input.sessionToken}-slot5`,
         ];
-        return db
+        const isAdmin = await verifyAdminAccess(ctx);
+        const trades = await db
           .select()
           .from(tradeLog)
           .where(inArray(tradeLog.sessionToken, allTokens))
           .orderBy(desc(tradeLog.enteredAt))
           .limit(input.limit);
+        if (isAdmin) return trades;
+        return trades.map((t: any) => ({ ...t, signalReason: null, confidence: null }));
       }),
 
     openTrade: publicProcedure
@@ -2178,8 +2226,9 @@ export const appRouter = router({
       }),
     exportData: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const db = await getDb();
+        const isAdmin = await verifyAdminAccess(ctx);
         if (!db) return [];
         const { inArray } = await import("drizzle-orm");
         const allTokens = [
@@ -2226,7 +2275,7 @@ export const appRouter = router({
             enteredAt: t.enteredAt,
             exitedAt: t.exitedAt,
           };
-        });
+        }).map((trade: any) => isAdmin ? trade : { ...trade, strategy: "—", confidence: 0 });
       }),
   }),
 
@@ -2320,7 +2369,8 @@ export const appRouter = router({
     // Returns live data for all running bot slots (primary + secondary + tertiary)
     allStatus: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema, isAdmin: z.boolean().default(false) }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const isAdmin = await verifyAdminAccess(ctx);
         const db = await getDb();
         // Determine actual slot count from user's extraBotSlots in DB
         let userMaxSlots = 3; // default for regular users
@@ -2381,7 +2431,7 @@ export const appRouter = router({
           }
         }
         // Merge in-memory state with DB fallback — always return all 3 slots
-        return slotTokens.map(tok => {
+        const slotResults = slotTokens.map(tok => {
           const inMem = getBotState(tok);
           const dbRow = dbRows[tok];
           const slot = tok === input.sessionToken ? 0 : parseInt(tok.match(/-slot(\d+)$/)?.[1] ?? "0", 10);
@@ -2438,6 +2488,15 @@ export const appRouter = router({
             isIndexOptions: inMem?.isIndexOptions ?? dbRow?.isIndexOptions ?? false,
           };
         });
+        // IP Protection: strip strategy details for non-admin users
+        if (!isAdmin) {
+          return slotResults.map((slot: any) => ({
+            ...slot,
+            lastSignal: stripSignalForUser(slot.lastSignal),
+            openTrade: stripOpenTradeForUser(slot.openTrade),
+          }));
+        }
+        return slotResults;
       }),
 
     // Lightweight live price endpoint — fetches only the latest 1-min candle close for each running bot.
@@ -4626,13 +4685,9 @@ export const appRouter = router({
   }),
 
   // ══════════════════════════════════════════════════════════════════════════
-
-
   // Admin Panel
   // ══════════════════════════════════════════════════════════════════════════
   admin: router({
-
-
     login: publicProcedure
       .input(z.object({ password: z.string() }))
       .mutation(async ({ input, ctx }) => {
