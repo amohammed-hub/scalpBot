@@ -2732,9 +2732,33 @@ function buildRenkoBricks(candles: Candle[], brickSize: number): RenkoBrick[] {
 export function generateRenkoSignal(
   candles: Candle[],
   instrumentSymbol = "",
+  options?: { timestamp?: number; maxDailyTrades?: number; tradesToday?: number },
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Red Bar Theory: insufficient data", layer: "RedBarTheory" };
   if (!candles || candles.length < 20) return hold;
+
+  // ── Quality Filter 1: TIME FILTER (Dr. Pratap Lesson 4.1 @ 13:34) ──
+  // "subah 9:15 se lekar 9:30, 9:45 tak market mein volatility bahut jyada hoti hai... avoid kariye"
+  if (options?.timestamp) {
+    const ist = new Date(options.timestamp + 5.5 * 60 * 60 * 1000); // UTC → IST
+    const istHour = ist.getUTCHours();
+    const istMin = ist.getUTCMinutes();
+    const istTimeMinutes = istHour * 60 + istMin;
+    if (istTimeMinutes < 585) { // Before 9:45 AM IST
+      return { ...hold, reason: `[Red Bar Theory] Time filter: skipping before 9:45 AM IST (current: ${istHour}:${istMin.toString().padStart(2, '0')})` };
+    }
+    if (istTimeMinutes > 920) { // After 3:20 PM IST
+      return { ...hold, reason: `[Red Bar Theory] Time filter: skipping after 3:20 PM IST` };
+    }
+  }
+
+  // ── Quality Filter 2: TRADE LIMIT (Dr. Pratap Lesson 4.1 @ 18:26) ──
+  // "Din mein sirf ek ya do trade lijiye" (max 1-2 trades per day)
+  if (options?.maxDailyTrades && options?.tradesToday !== undefined) {
+    if (options.tradesToday >= options.maxDailyTrades) {
+      return { ...hold, reason: `[Red Bar Theory] Trade limit: ${options.tradesToday}/${options.maxDailyTrades} trades taken today` };
+    }
+  }
 
   const atr = calcATR(candles, 14);
   if (atr <= 0) return { ...hold, reason: "Red Bar Theory: ATR is 0" };
@@ -2744,18 +2768,36 @@ export function generateRenkoSignal(
   const bricks = buildRenkoBricks(candles, brickSize);
   if (bricks.length < 5) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 5 for trend+pullback+breakout)` };
 
-  // ── EMA 10 Trend Filter (on brick close prices) ──
+  // ── Quality Filter 3: SIDEWAYS MARKET DETECTION (Dr. Pratap Lesson 4.1 @ 18:40) ──
+  // "Agar market sideways hai, ek range mein fasa hua hai, toh koi bhi setup kaam nahi karega"
+  if (bricks.length >= 8) {
+    const last8 = bricks.slice(-8);
+    let colorChanges = 0;
+    for (let i = 1; i < last8.length; i++) {
+      if (last8[i].color !== last8[i - 1].color) colorChanges++;
+    }
+    if (colorChanges >= 5) {
+      return { ...hold, atr, entryPrice: candles[candles.length - 1].close, reason: `[Red Bar Theory] Sideways filter: ${colorChanges} color changes in last 8 bricks — choppy market, skipping` };
+    }
+  }
+
+  // ── EMA 10 + EMA 30 Trend Cloud Filter ──
   const brickCloses = bricks.map(b => b.close);
   const ema10arr = ema(brickCloses, 10);
-  if (ema10arr.length === 0) return { ...hold, atr, reason: "Red Bar Theory: EMA10 calc failed" };
+  const ema30arr = ema(brickCloses, 30);
+  if (ema10arr.length === 0) return { ...hold, atr, reason: "Red Bar Theory: EMA calc failed" };
   const currentEma10 = ema10arr[ema10arr.length - 1];
+  const currentEma30 = ema30arr.length > 0 ? ema30arr[ema30arr.length - 1] : currentEma10;
   const price = candles[candles.length - 1].close;
 
-  // Determine trend from EMA 10
-  const isUptrend = price > currentEma10;
-  const isDowntrend = price < currentEma10;
+  // Determine trend from BOTH EMAs (Trend Cloud confirmation)
+  // Strong uptrend: price > EMA10 AND (EMA10 > EMA30 when we have enough data)
+  // Only enforce EMA30 when we have 30+ bricks (otherwise EMA30 is unreliable)
+  const useEma30 = bricks.length >= 30 && ema30arr.length > 0;
+  const isUptrend = price > currentEma10 && (!useEma30 || currentEma10 >= currentEma30);
+  const isDowntrend = price < currentEma10 && (!useEma30 || currentEma10 <= currentEma30);
   if (!isUptrend && !isDowntrend) {
-    return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] Price ≈ EMA10 (₹${currentEma10.toFixed(1)}) — no clear trend | brick: ₹${brickSize}` };
+    return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No clear trend — Price: ₹${price.toFixed(1)} | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize}` };
   }
 
   // ── Scan last bricks for the PULLBACK-BREAKOUT pattern ──
@@ -2779,21 +2821,23 @@ export function generateRenkoSignal(
         if (bricks[gi].close >= redBrick.high) { breakoutConfirmed = true; break; }
       }
       if (breakoutConfirmed) {
-        // Verify there was an uptrend BEFORE the pullback (at least 2 green bricks before the red)
+        // ── Quality Filter 4: STRONG MOMENTUM (Dr. Pratap Lesson 4.1 @ 14:26) ──
+        // "Dekhiye kitna strong up move hai" — requires visually strong trend
+        // Minimum 3 green bricks before pullback (up from 2)
         let greenBeforePullback = 0;
         for (let i = redIdx - 1; i >= 0 && i >= redIdx - 8; i--) {
           if (bricks[i].color === "green") greenBeforePullback++;
           else break;
         }
-        if (greenBeforePullback >= 2) {
+        if (greenBeforePullback >= 3) {
           // Only signal if the breakout happened recently (within last 3 bricks)
           const bricksSinceBreakout = bricks.length - 1 - redIdx;
           if (bricksSinceBreakout <= 3) {
-            const slPrice = redBrick.low; // SL below Red brick's LOW
+            const slPrice = redBrick.low - brickSize * 0.5; // SL = Red LOW - 0.5 brick (wider SL V4)
             const risk = price - slPrice;
             if (risk > 0) {
               const targetPrice = price + risk * 2; // 1:2 R:R
-              const confidence = Math.min(0.88, 0.70 + greenBeforePullback * 0.04);
+              const confidence = Math.min(0.92, 0.72 + greenBeforePullback * 0.04);
               return {
                 direction: "BUY",
                 confidence,
@@ -2801,7 +2845,7 @@ export function generateRenkoSignal(
                 slPrice,
                 targetPrice,
                 atr,
-                reason: `[Red Bar Theory] Pullback-Breakout BUY — ${greenBeforePullback} green → 1 red pullback → green above red HIGH (₹${redBrick.high.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2`,
+                reason: `[Red Bar Theory V3] Pullback-Breakout BUY — ${greenBeforePullback} green → 1 red pullback → green above red HIGH (₹${redBrick.high.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2`,
                 layer: "RedBarTheory",
               };
             }
@@ -2827,20 +2871,21 @@ export function generateRenkoSignal(
         if (bricks[ri].close <= greenBrick.low) { breakoutConfirmedSell = true; break; }
       }
       if (breakoutConfirmedSell) {
-        // Verify there was a downtrend BEFORE the pullback (at least 2 red bricks before the green)
+        // ── Quality Filter 4: STRONG MOMENTUM for SELL ──
+        // Minimum 3 red bricks before pullback (up from 2)
         let redBeforePullback = 0;
         for (let i = greenIdx - 1; i >= 0 && i >= greenIdx - 8; i--) {
           if (bricks[i].color === "red") redBeforePullback++;
           else break;
         }
-        if (redBeforePullback >= 2) {
+        if (redBeforePullback >= 3) {
           const bricksSinceBreakout = bricks.length - 1 - greenIdx;
           if (bricksSinceBreakout <= 3) {
-            const slPrice = greenBrick.high; // SL above Green brick's HIGH
+            const slPrice = greenBrick.high + brickSize * 0.5; // SL = Green HIGH + 0.5 brick (wider SL V4)
             const risk = slPrice - price;
             if (risk > 0) {
               const targetPrice = price - risk * 2; // 1:2 R:R
-              const confidence = Math.min(0.88, 0.70 + redBeforePullback * 0.04);
+              const confidence = Math.min(0.92, 0.72 + redBeforePullback * 0.04);
               return {
                 direction: "SELL",
                 confidence,
@@ -2848,7 +2893,7 @@ export function generateRenkoSignal(
                 slPrice,
                 targetPrice,
                 atr,
-                reason: `[Red Bar Theory] Pullback-Breakout SELL — ${redBeforePullback} red → 1 green pullback → red below green LOW (₹${greenBrick.low.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2`,
+                reason: `[Red Bar Theory V3] Pullback-Breakout SELL — ${redBeforePullback} red → 1 green pullback → red below green LOW (₹${greenBrick.low.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2`,
                 layer: "RedBarTheory",
               };
             }
@@ -2942,9 +2987,31 @@ export function generatePremiumRenkoSignal(
   premiumCandles: Candle[],
   instrumentSymbol = "",
   optionType: "CE" | "PE" = "CE",
+  options?: { timestamp?: number; maxDailyTrades?: number; tradesToday?: number },
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "PremiumRenko: insufficient data", layer: "PremiumRenko" };
   if (!premiumCandles || premiumCandles.length < 20) return hold;
+
+  // ── Quality Filter 1: TIME FILTER ──
+  if (options?.timestamp) {
+    const ist = new Date(options.timestamp + 5.5 * 60 * 60 * 1000);
+    const istHour = ist.getUTCHours();
+    const istMin = ist.getUTCMinutes();
+    const istTimeMinutes = istHour * 60 + istMin;
+    if (istTimeMinutes < 585) {
+      return { ...hold, reason: `[PremiumRenko] Time filter: skipping before 9:45 AM IST` };
+    }
+    if (istTimeMinutes > 920) {
+      return { ...hold, reason: `[PremiumRenko] Time filter: skipping after 3:20 PM IST` };
+    }
+  }
+
+  // ── Quality Filter 2: TRADE LIMIT ──
+  if (options?.maxDailyTrades && options?.tradesToday !== undefined) {
+    if (options.tradesToday >= options.maxDailyTrades) {
+      return { ...hold, reason: `[PremiumRenko] Trade limit: ${options.tradesToday}/${options.maxDailyTrades} trades taken today` };
+    }
+  }
 
   // Current premium price
   const premium = premiumCandles[premiumCandles.length - 1].close;
@@ -2958,17 +3025,33 @@ export function generatePremiumRenkoSignal(
   const bricks = buildRenkoBricks(premiumCandles, brickSize);
   if (bricks.length < 5) return { ...hold, atr: premiumAtr, reason: `PremiumRenko: only ${bricks.length} bricks (need 5) | brick: ₹${brickSize}` };
 
-  // ── EMA 10 Trend Filter (on premium brick close prices) ──
+  // ── Quality Filter 3: SIDEWAYS DETECTION ──
+  if (bricks.length >= 8) {
+    const last8 = bricks.slice(-8);
+    let colorChanges = 0;
+    for (let i = 1; i < last8.length; i++) {
+      if (last8[i].color !== last8[i - 1].color) colorChanges++;
+    }
+    if (colorChanges >= 5) {
+      return { ...hold, atr: premiumAtr, entryPrice: premium, reason: `[PremiumRenko] Sideways filter: ${colorChanges} color changes in last 8 bricks — choppy, skipping` };
+    }
+  }
+
+  // ── EMA 10 + EMA 30 Trend Cloud Filter (on premium brick close prices) ──
   const brickCloses = bricks.map(b => b.close);
   const ema10arr = ema(brickCloses, 10);
-  if (ema10arr.length === 0) return { ...hold, atr: premiumAtr, reason: "PremiumRenko: EMA10 calc failed" };
+  const ema30arr = ema(brickCloses, 30);
+  if (ema10arr.length === 0) return { ...hold, atr: premiumAtr, reason: "PremiumRenko: EMA calc failed" };
   const currentEma10 = ema10arr[ema10arr.length - 1];
+  const currentEma30 = ema30arr.length > 0 ? ema30arr[ema30arr.length - 1] : currentEma10;
 
-  // Determine premium trend from EMA 10
-  const isPremiumUptrend = premium > currentEma10;
-  const isPremiumDowntrend = premium < currentEma10;
+  // Determine premium trend from BOTH EMAs (Trend Cloud)
+  // Only enforce EMA30 when we have 30+ bricks (otherwise EMA30 is unreliable)
+  const useEma30 = bricks.length >= 30 && ema30arr.length > 0;
+  const isPremiumUptrend = premium > currentEma10 && (!useEma30 || currentEma10 >= currentEma30);
+  const isPremiumDowntrend = premium < currentEma10 && (!useEma30 || currentEma10 <= currentEma30);
   if (!isPremiumUptrend && !isPremiumDowntrend) {
-    return { ...hold, atr: premiumAtr, entryPrice: premium, reason: `[PremiumRenko] Premium ₹${premium.toFixed(1)} ≈ EMA10 (₹${currentEma10.toFixed(1)}) — no clear trend | brick: ₹${brickSize}` };
+    return { ...hold, atr: premiumAtr, entryPrice: premium, reason: `[PremiumRenko] No clear trend — Premium: ₹${premium.toFixed(1)} | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | bricks: ${bricks.length} | brick: ₹${brickSize}` };
   }
 
   // ── BUY SETUP: Premium is in uptrend → pullback-breakout pattern ──
@@ -2990,20 +3073,20 @@ export function generatePremiumRenkoSignal(
         if (bricks[gi].close >= redBrick.high) { breakoutConfirmed = true; break; }
       }
       if (breakoutConfirmed) {
-        // Verify there was an uptrend BEFORE the pullback (at least 2 green bricks before the red)
+        // ── Quality Filter 4: STRONG MOMENTUM — min 3 green bricks ──
         let greenBeforePullback = 0;
         for (let i = redIdx - 1; i >= 0 && i >= redIdx - 8; i--) {
           if (bricks[i].color === "green") greenBeforePullback++;
           else break;
         }
-        if (greenBeforePullback >= 2) {
+        if (greenBeforePullback >= 3) {
           const bricksSinceBreakout = bricks.length - 1 - redIdx;
           if (bricksSinceBreakout <= 3) {
-            const slPrice = redBrick.low; // SL below Red brick's LOW (premium level)
+            const slPrice = redBrick.low - brickSize * 0.5; // SL = Red LOW - 0.5 brick (wider SL V4)
             const risk = premium - slPrice;
             if (risk > 0 && risk < premium * 0.5) { // risk must be < 50% of premium
               const targetPrice = premium + risk * 2; // 1:2 R:R on premium
-              const confidence = Math.min(0.90, 0.72 + greenBeforePullback * 0.04);
+              const confidence = Math.min(0.92, 0.74 + greenBeforePullback * 0.04);
               // For options, direction is always BUY (we buy CE or PE premium)
               // The caller determines CE vs PE based on underlying direction
               return {
@@ -3013,7 +3096,7 @@ export function generatePremiumRenkoSignal(
                 slPrice,
                 targetPrice,
                 atr: premiumAtr,
-                reason: `[PremiumRenko] ${optionType} Premium Pullback-Breakout BUY — ${greenBeforePullback} green → 1 red pullback → green above red HIGH (₹${redBrick.high.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2 | Premium: ₹${premium.toFixed(1)}`,
+                reason: `[PremiumRenko V3] ${optionType} Premium Pullback-Breakout BUY — ${greenBeforePullback} green → 1 red pullback → green above red HIGH (₹${redBrick.high.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2 | Premium: ₹${premium.toFixed(1)}`,
                 layer: "PremiumRenko",
               };
             }
@@ -3042,20 +3125,20 @@ export function generatePremiumRenkoSignal(
         if (bricks[ri].close <= greenBrick.low) { breakoutConfirmedSell = true; break; }
       }
       if (breakoutConfirmedSell) {
-        // Verify there was a downtrend BEFORE the pullback (at least 2 red bricks before the green)
+        // ── Quality Filter 4: STRONG MOMENTUM for SELL — min 3 red bricks ──
         let redBeforePullback = 0;
         for (let i = greenIdx - 1; i >= 0 && i >= greenIdx - 8; i--) {
           if (bricks[i].color === "red") redBeforePullback++;
           else break;
         }
-        if (redBeforePullback >= 2) {
+        if (redBeforePullback >= 3) {
           const bricksSinceBreakout = bricks.length - 1 - greenIdx;
           if (bricksSinceBreakout <= 3) {
-            const slPrice = greenBrick.high; // SL above Green brick's HIGH (premium level)
+            const slPrice = greenBrick.high + brickSize * 0.5; // SL = Green HIGH + 0.5 brick (wider SL V4)
             const risk = slPrice - premium;
             if (risk > 0 && risk < premium * 0.5) {
               const targetPrice = premium - risk * 2; // 1:2 R:R
-              const confidence = Math.min(0.90, 0.72 + redBeforePullback * 0.04);
+              const confidence = Math.min(0.92, 0.74 + redBeforePullback * 0.04);
               return {
                 direction: "SELL",
                 confidence,
@@ -3063,7 +3146,7 @@ export function generatePremiumRenkoSignal(
                 slPrice,
                 targetPrice: Math.max(0, targetPrice), // premium can't go below 0
                 atr: premiumAtr,
-                reason: `[PremiumRenko] ${optionType} Premium Breakdown SELL — ${redBeforePullback} red → 1 green pullback → red below green LOW (₹${greenBrick.low.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2 | Premium: ₹${premium.toFixed(1)}`,
+                reason: `[PremiumRenko V3] ${optionType} Premium Breakdown SELL — ${redBeforePullback} red → 1 green pullback → red below green LOW (₹${greenBrick.low.toFixed(1)}) | EMA10: ₹${currentEma10.toFixed(1)} | EMA30: ₹${currentEma30.toFixed(1)} | brick: ₹${brickSize} | R:R 1:2 | Premium: ₹${premium.toFixed(1)}`,
                 layer: "PremiumRenko",
               };
             }

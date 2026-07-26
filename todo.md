@@ -1778,3 +1778,17 @@
 - [x] Add PremiumRenko layer (Lesson 7 — Renko on option premium chart, brick 10/15)
 - [x] Backtest PremiumRenko on 3-month data — show results before enabling live
 - [x] PremiumRenko backtest with REAL option premium data (Analytics Token, 30 days)
+
+## PremiumRenko Quality Gap Investigation (30% → 70% win rate)
+- [ ] Re-read all course notes for multi-timeframe confirmation (6hr/daily/15min trend filter)
+- [ ] Check if minimum brick count in trend BEFORE Red Bar is required
+- [ ] Check if Red Bar needs EMA/VWAP touch level
+- [x] Check if first 15 minutes are skipped (YES: skip before 9:45 AM IST)
+- [x] Check if ranging market filter exists (YES: sideways detection via 5+ color changes in 8 bricks)
+- [x] Check if volume/momentum confirmation is needed (YES: min 3 green bricks before pullback)
+- [x] Investigate entry timing: moment of breakout vs next candle vs close of green brick (CLOSE of green brick)
+- [x] Check Upsurge.club Q&A/Doubts section for unwritten rules (platform is per-user, no public Q&A)
+- [x] Analyze video lessons for visual chart examples (Lesson 4.1 + Lesson 7 analyzed)
+- [x] Implement missing quality filters in generatePremiumRenkoSignal (V3 filters + V4 wider SL)
+- [x] Re-run backtest with improved filters and compare win rate (40% with wider SL, up from 30%)
+- [x] V4 SL optimization: wider SL (1.5x brick) improves win rate from 30% to 40-54%

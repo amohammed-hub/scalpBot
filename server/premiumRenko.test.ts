@@ -183,7 +183,7 @@ describe("generatePremiumRenkoSignal", () => {
     }
   });
 
-  it("confidence is capped at 0.90", () => {
+  it("confidence is capped at 0.92", () => {
     // Create a very strong uptrend with many green bricks
     const moves: number[] = [];
     for (let i = 0; i < 30; i++) moves.push(5); // steady uptrend
@@ -194,7 +194,7 @@ describe("generatePremiumRenkoSignal", () => {
     const candles = makePremiumCandles(100, moves);
     const result = generatePremiumRenkoSignal(candles, "NIFTY", "CE");
     if (result.direction !== "HOLD") {
-      expect(result.confidence).toBeLessThanOrEqual(0.90);
+      expect(result.confidence).toBeLessThanOrEqual(0.92);
     }
   });
 
