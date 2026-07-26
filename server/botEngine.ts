@@ -39,7 +39,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "PremiumRenko" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "PremiumRenko" | "BoxingStrategy" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -237,6 +237,14 @@ export interface BotState {
   // Multi-Strategy Engine: per-layer trade counting
   layerTradesCount: Record<string, number>; // e.g. {"RedBarTheory": 1, "TrendMomentum": 2}
   tokenReminderSent?: boolean; // prevent duplicate daily reminders
+  // Boxing Strategy state (daily)
+  boxingState?: {
+    firstHigh: number;
+    firstLow: number;
+    boxFormed: boolean;
+    boxFormedAt: number; // IST minute when box was locked
+    tradesToday: number;
+  };
 }
 
 // Shadow mode log entry
@@ -2782,8 +2790,168 @@ export function generatePremiumRenkoSignal(
       layer: "PremiumRenko",
     };
   }
-
   return { ...hold, atr, entryPrice: price, reason: `[PremiumRenko] No 4-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${brickSize.toFixed(1)}` };
+}
+
+// ── Boxing Strategy Layer (1st High/Low + Engulfing Pattern + SEMA) ─────────────
+// Source: Backtested V5 variant — 1 year NIFTY data, PF 1.38, 92% profitable months.
+// Logic:
+//   1. First 15 candles (9:15-9:30): Record high and low → "the Box"
+//   2. Top 20% of box = SELL zone, Bottom 20% = BUY zone
+//   3. After 9:30, watch for ENGULFING patterns in either zone
+//   4. BUY: Bullish engulfing in bottom 20% zone → entry on close
+//   5. SELL: Bearish engulfing in top 20% zone → entry on close
+//   6. SL: 25 points fixed (NIFTY), 35 points (BANKNIFTY)
+//   7. Target: Opposite end of the box
+//   8. Filter: Skip if box width < 15 points (narrow/choppy day)
+//   9. Max 2 trades per day from this strategy
+//  10. Works on BUY and SELL side
+export function generateBoxingSignal(
+  candles: Candle[],
+  state: { boxingState?: BotState["boxingState"]; instrumentLabel: string },
+): Signal {
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "BoxingStrategy: waiting", layer: "BoxingStrategy" };
+
+  if (!candles || candles.length < 16) return { ...hold, reason: "[Boxing] Insufficient candles (need 16+)" };
+
+  const price = candles[candles.length - 1].close;
+  const atr = calcATR(candles.slice(-14));
+
+  // Determine IST time from the latest candle timestamp
+  const latestTs = candles[candles.length - 1].timestamp;
+  const istDate = new Date(latestTs + 330 * 60000);
+  const istMin = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
+
+  // ── Step 1: Form the Box from first 15 candles (9:15-9:30 IST = minutes 555-570) ──
+  if (!state.boxingState || !state.boxingState.boxFormed) {
+    // Need to wait until 9:30 (istMin >= 570) to lock the box
+    if (istMin < 570) {
+      return { ...hold, reason: `[Boxing] Forming box... (${istMin - 555}/15 min done)` };
+    }
+
+    // Find candles from 9:15-9:30 (timestamps where IST minute is 555-570)
+    let boxHigh = -Infinity;
+    let boxLow = Infinity;
+    for (const c of candles) {
+      const cIst = new Date(c.timestamp + 330 * 60000);
+      const cMin = cIst.getUTCHours() * 60 + cIst.getUTCMinutes();
+      if (cMin >= 555 && cMin < 570) {
+        if (c.high > boxHigh) boxHigh = c.high;
+        if (c.low < boxLow) boxLow = c.low;
+      }
+    }
+
+    if (boxHigh === -Infinity || boxLow === Infinity) {
+      return { ...hold, reason: "[Boxing] No candles found in 9:15-9:30 window" };
+    }
+
+    const boxWidth = boxHigh - boxLow;
+    if (boxWidth < 15) {
+      // Too narrow — skip today
+      state.boxingState = { firstHigh: boxHigh, firstLow: boxLow, boxFormed: true, boxFormedAt: istMin, tradesToday: 99 };
+      return { ...hold, reason: `[Boxing] Box too narrow (${boxWidth.toFixed(1)} pts < 15) — skipping today` };
+    }
+
+    state.boxingState = { firstHigh: boxHigh, firstLow: boxLow, boxFormed: true, boxFormedAt: istMin, tradesToday: 0 };
+  }
+
+  const { firstHigh, firstLow, tradesToday } = state.boxingState;
+  const boxWidth = firstHigh - firstLow;
+
+  // Max 2 trades per day
+  if (tradesToday >= 2) {
+    return { ...hold, entryPrice: price, reason: `[Boxing] Daily limit reached (${tradesToday}/2 trades)` };
+  }
+
+  // Only trade after 9:30 IST (minute 570)
+  if (istMin < 570) {
+    return { ...hold, reason: "[Boxing] Waiting for box to form (before 9:30)" };
+  }
+
+  // Stop trading after 3:00 PM (minute 900) — too close to close
+  if (istMin >= 900) {
+    return { ...hold, entryPrice: price, reason: "[Boxing] Past 3:00 PM — no new entries" };
+  }
+
+  // ── Step 2: Define zones ──
+  const zoneSize = boxWidth * 0.20;
+  const buyZoneTop = firstLow + zoneSize;    // Bottom 20%
+  const sellZoneBottom = firstHigh - zoneSize; // Top 20%
+
+  // ── Step 3: Check for Engulfing patterns ──
+  // Need at least 2 candles to detect engulfing
+  if (candles.length < 2) return { ...hold, reason: "[Boxing] Need 2+ candles for pattern" };
+
+  const curr = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+
+  // Bullish Engulfing: current green candle body fully engulfs previous red candle body
+  const isBullishEngulfing = prev.close < prev.open && // prev is red
+    curr.close > curr.open && // curr is green
+    curr.open <= prev.close && // curr open at/below prev close
+    curr.close >= prev.open;   // curr close at/above prev open
+
+  // Bearish Engulfing: current red candle body fully engulfs previous green candle body
+  const isBearishEngulfing = prev.close > prev.open && // prev is green
+    curr.close < curr.open && // curr is red
+    curr.open >= prev.close && // curr open at/above prev close
+    curr.close <= prev.open;   // curr close at/below prev open
+
+  // ── Step 4: SEMA (5-period EMA) confirmation ──
+  // Price should be crossing above SEMA for BUY, below for SELL
+  const semaLen = 5;
+  if (candles.length < semaLen + 1) return { ...hold, reason: "[Boxing] Need more candles for SEMA" };
+  let sema = candles[candles.length - semaLen - 1].close;
+  const semaK = 2 / (semaLen + 1);
+  for (let i = candles.length - semaLen; i < candles.length; i++) {
+    sema = candles[i].close * semaK + sema * (1 - semaK);
+  }
+  const priceAboveSEMA = price > sema;
+  const priceBelowSEMA = price < sema;
+
+  // ── Step 5: Generate signals ──
+  // Determine SL based on instrument (25 for NIFTY, 35 for BANKNIFTY)
+  const isBankNifty = state.instrumentLabel.toLowerCase().includes("bank");
+  const slPoints = isBankNifty ? 35 : 25;
+
+  // BUY: Price in bottom 20% zone + Bullish Engulfing + price above SEMA
+  if (price <= buyZoneTop && price >= firstLow - slPoints && isBullishEngulfing && priceAboveSEMA) {
+    const entryPrice = curr.close;
+    const slPrice = entryPrice - slPoints;
+    const targetPrice = firstHigh; // Opposite end of box
+
+    return {
+      direction: "BUY",
+      confidence: 0.72,
+      entryPrice,
+      slPrice,
+      targetPrice,
+      atr,
+      reason: `[Boxing] BUY — Bullish Engulfing in bottom zone | Box: ${firstLow.toFixed(0)}-${firstHigh.toFixed(0)} (${boxWidth.toFixed(0)}pts) | SL: ${slPoints}pts | Target: ${(targetPrice - entryPrice).toFixed(0)}pts`,
+      layer: "BoxingStrategy",
+    };
+  }
+
+  // SELL: Price in top 20% zone + Bearish Engulfing + price below SEMA
+  if (price >= sellZoneBottom && price <= firstHigh + slPoints && isBearishEngulfing && priceBelowSEMA) {
+    const entryPrice = curr.close;
+    const slPrice = entryPrice + slPoints;
+    const targetPrice = firstLow; // Opposite end of box
+
+    return {
+      direction: "SELL",
+      confidence: 0.72,
+      entryPrice,
+      slPrice,
+      targetPrice,
+      atr,
+      reason: `[Boxing] SELL — Bearish Engulfing in top zone | Box: ${firstLow.toFixed(0)}-${firstHigh.toFixed(0)} (${boxWidth.toFixed(0)}pts) | SL: ${slPoints}pts | Target: ${(entryPrice - targetPrice).toFixed(0)}pts`,
+      layer: "BoxingStrategy",
+    };
+  }
+
+  // No signal
+  return { ...hold, entryPrice: price, reason: `[Boxing] Watching... Box: ${firstLow.toFixed(0)}-${firstHigh.toFixed(0)} | Price: ${price.toFixed(0)} | Zone: ${price <= buyZoneTop ? "BUY zone" : price >= sellZoneBottom ? "SELL zone" : "mid-range"}` };
 }
 
 // ── Trikal Strategy Signal Layer (Dr. Devendra's Renko Engine Strategy) ─────────────
@@ -4506,6 +4674,7 @@ async function tick(
     state.lastError = null;
     state.alertsSent.clear(); // BUG-8 FIX: Clear daily alerts so Power Hour/MCX alerts re-fire each day
     state.openingBurstTradeTaken = false; // Reset Opening Burst for new day
+    state.boxingState = undefined; // Reset Boxing Strategy for new day
     state.dailyLossAcknowledged = false; // Reset so new day's losses trigger pause correctly
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
     resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
@@ -5608,6 +5777,7 @@ async function tick(
     "Adeeb": 2,
     "OIFlow": 2,
     "MaxPainGravity": 2,
+    "BoxingStrategy": 2,
   };
   const TOTAL_LAYER_LIMIT = 10; // max total trades across all layers per day
 
@@ -5629,6 +5799,17 @@ async function tick(
         const prSignal = generatePremiumRenkoSignal(state.candles);
         if (prSignal.direction !== "HOLD") candidateSignals.push(prSignal);
       } catch (e) { console.warn(`[MultiStrategy] PremiumRenko error:`, (e as Error).message); }
+    }
+    // Layer 1c: BoxingStrategy (1st High/Low + Engulfing + SEMA — backtested PF 1.38)
+    if (state.enabledLayers.includes("BoxingStrategy")) {
+      try {
+        const boxSignal = generateBoxingSignal(state.candles, state);
+        if (boxSignal.direction !== "HOLD") {
+          // Increment boxing trades counter
+          if (state.boxingState) state.boxingState.tradesToday += 1;
+          candidateSignals.push(boxSignal);
+        }
+      } catch (e) { console.warn(`[MultiStrategy] BoxingStrategy error:`, (e as Error).message); }
     }
 
     // Layer 2: TrendMomentum (3 consecutive same-color candles + RSI/ROC)

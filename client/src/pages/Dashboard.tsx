@@ -285,7 +285,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
-      enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko"],
+      enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko", "BoxingStrategy"],
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -1792,6 +1792,7 @@ export default function Dashboard() {
                 { id: "VWAPReversion", label: "VWAP Reversion", desc: "Mean-reversion entries when price deviates >1σ from VWAP (best on MCX)", icon: "📊" },
                 { id: "TrikalStrategy", label: "Trikal", desc: "EMA cloud crossover with ADX trend strength filter", icon: "🔺" },
                 { id: "PremiumRenko", label: "Premium Renko", desc: "Option premium chart Renko bricks — pure premium action", icon: "💎" },
+                { id: "BoxingStrategy", label: "Boxing (1H/1L)", desc: "1st High/Low box + Engulfing pattern reversal at support/resistance zones", icon: "🥊" },
               ].map(s => {
                 const enabled = config.enabledLayers.includes(s.id);
                 return (
@@ -2380,6 +2381,7 @@ export default function Dashboard() {
                         l === "VWAPReversion" ? "VWAP" :
                         l === "TrikalStrategy" ? "Trikal" :
                         l === "PremiumRenko" ? "Renko" :
+                        l === "BoxingStrategy" ? "Boxing" :
                         l === "Momentum" ? "Momentum" :
                         l === "TrendMomentum" ? "TrendMom" :
                         l

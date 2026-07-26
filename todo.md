@@ -1792,7 +1792,7 @@
 - [x] Answer multi-user OAuth question (confirmed per-user token storage)
 
 ## PDF Request 4 (Jul 26 evening)
-- [ ] Fix Stop/Exit buttons: STOP (pause, keep trade alive) + EXIT (close position + stop bot)
+- [x] Fix Stop/Exit buttons: STOP (pause, keep trade alive) + EXIT (close position + stop bot)
 - [ ] Both buttons visible when bot has open trade
 - [ ] Increase maxBots to 10 for admin account
 - [ ] Frontend renders all 10 bot slots (currently capped at 6)
@@ -1813,3 +1813,8 @@
 - [x] FIX: Bot slot allocation — Dashboard showed 10 slots instead of reading user's actual extraBotSlots from DB
 - [x] FIX: allStatus endpoint now queries user's extraBotSlots and limits returned slots accordingly
 - [x] FIX: Frontend slices allBots to user's actual slot limit (admin=max(3,extra), user=3+extra)
+- [ ] AUDIT: Verify all 4 exit paths (SL, Target, Trailing Stop, Time Exit) place real Upstox SELL orders
+- [ ] FIX: Any exit path that only closes in DB without placing Upstox order
+- [ ] Implement BoxingStrategy (V5: Engulfing Only, 20% zone, SL=25pts, max 2 trades/day)
+- [ ] Add BoxingStrategy to strategy selector (Category A — Proven, enabled by default)
+- [ ] Deploy BoxingStrategy to Railway before Monday morning
