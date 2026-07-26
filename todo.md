@@ -1790,3 +1790,16 @@
 - [x] Update backtestLayerMap defaults to Category A strategies
 - [x] Add PremiumRenko to layerTracker pattern recognition
 - [x] Answer multi-user OAuth question (confirmed per-user token storage)
+
+## PDF Request 4 (Jul 26 evening)
+- [ ] Fix Stop/Exit buttons: STOP (pause, keep trade alive) + EXIT (close position + stop bot)
+- [ ] Both buttons visible when bot has open trade
+- [ ] Increase maxBots to 10 for admin account
+- [ ] Frontend renders all 10 bot slots (currently capped at 6)
+- [ ] Admin Panel → Users tab: add "Active Bots" column showing "running/max" format (e.g. "2/3")
+- [ ] Higher Timeframe Filter: fetch 1h candles from Upstox alongside 1m candles
+- [ ] HTF logic: if 1h EMA10 > EMA30 → only BUY; if EMA10 < EMA30 → only SELL
+- [ ] HTF toggle in strategy settings (ON by default, can be toggled off)
+- [x] Interactive walkthrough with react-joyride for first-time users
+- [ ] Walkthrough steps: Bot 1 card → instrument dropdown → Start button → Kill Switch
+- [ ] Trigger on first login only, skip/replay from Settings

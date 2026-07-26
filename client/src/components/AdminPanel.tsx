@@ -204,8 +204,9 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Status</th>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Plan</th>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Days Left</th>
-                  <th className="text-left px-4 py-3 text-white/50 font-medium">Role</th>
-                  <th className="text-left px-4 py-3 text-white/50 font-medium">Joined</th>
+                 <th className="text-left px-4 py-3 text-white/50 font-medium">Role</th>
+                  <th className="text-left px-4 py-3 text-white/50 font-medium">Active Bots</th>
+                 <th className="text-left px-4 py-3 text-white/50 font-medium">Joined</th>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Last Login</th>
                   <th className="text-left px-4 py-3 text-white/50 font-medium">Actions</th>
                 </tr>
@@ -234,12 +235,17 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
                         </span>
                       ) : <span className="text-white/20">—</span>}
                     </td>
+                   <td className="px-4 py-3">
+                     <span className={`px-2 py-0.5 rounded text-xs ${user.role === "admin" ? "bg-red-500/20 text-red-300" : "bg-white/10 text-white/60"}`}>
+                       {user.role}
+                     </span>
+                   </td>
                     <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs ${user.role === "admin" ? "bg-red-500/20 text-red-300" : "bg-white/10 text-white/60"}`}>
-                        {user.role}
+                      <span className={`text-xs font-mono ${(user.runningBots ?? 0) > 0 ? "text-teal-300" : "text-white/30"}`}>
+                        {user.runningBots ?? 0}/{user.role === "admin" ? 10 : (3 + (user.extraBotSlots ?? 0))}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-white/50">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</td>
+                   <td className="px-4 py-3 text-white/50">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</td>
                     <td className="px-4 py-3 text-white/50">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString() : "Never"}</td>
                     <td className="px-4 py-3 space-x-2">
                     <Button

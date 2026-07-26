@@ -3334,6 +3334,49 @@ export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?
   } catch { return []; }
 }
 
+// ── Fetch 1-hour (60min) candles from Upstox for Higher Timeframe Filter ─────
+export async function fetchUpstox1hCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
+  try {
+    const encoded = encodeURIComponent(instrumentToken);
+    const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/60minute`;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    const resp = await axios.get(url, { headers, timeout: 8000 });
+    const candles = resp.data?.data?.candles ?? [];
+    return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse();
+  } catch { return []; }
+}
+
+// ── Higher Timeframe Filter: EMA10/EMA30 on 1h candles ───────────────────────
+// Returns "bullish" if EMA10 > EMA30, "bearish" if EMA10 < EMA30, "neutral" if insufficient data
+let htfCache: { token: string; trend: "bullish" | "bearish" | "neutral"; fetchedAt: number } | null = null;
+
+export async function getHigherTimeframeTrend(instrumentToken: string, accessToken?: string): Promise<"bullish" | "bearish" | "neutral"> {
+  // Cache for 15 minutes to avoid excessive API calls
+  if (htfCache && htfCache.token === instrumentToken && (Date.now() - htfCache.fetchedAt) < 15 * 60 * 1000) {
+    return htfCache.trend;
+  }
+  const candles = await fetchUpstox1hCandles(instrumentToken, accessToken);
+  if (candles.length < 30) return "neutral"; // Need at least 30 candles for EMA30
+  const closes = candles.map(c => c.close);
+  // Calculate EMA10
+  const ema10 = calcEMA(closes, 10);
+  // Calculate EMA30
+  const ema30 = calcEMA(closes, 30);
+  const trend: "bullish" | "bearish" | "neutral" = ema10 > ema30 ? "bullish" : ema10 < ema30 ? "bearish" : "neutral";
+  htfCache = { token: instrumentToken, trend, fetchedAt: Date.now() };
+  return trend;
+}
+
+function calcEMA(data: number[], period: number): number {
+  if (data.length < period) return data[data.length - 1] ?? 0;
+  const k = 2 / (period + 1);
+  let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < data.length; i++) {
+    ema = data[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
 // ── Fetch full quote ──────────────────────────────────────────────────────────
 export async function fetchFullQuote(instrumentToken: string, accessToken: string): Promise<{ ltp: number; bid: number; ask: number } | null> {
   try {
@@ -5939,6 +5982,21 @@ async function tick(
     emitActivity(state.sessionToken, "signal", `⊘ HourlyClose signal skipped (already fired today)`);
     pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "HourlyClose already fired today");
     return;
+  // ── HIGHER TIMEFRAME FILTER: EMA10/EMA30 on 1h candles ────────────────────
+  // Only trade in the direction of the 1h trend (skip if neutral/insufficient data)
+  if (state.accessToken && state.instrumentToken) {
+    try {
+      const htfTrend = await getHigherTimeframeTrend(state.instrumentToken, state.accessToken ?? undefined);
+      if (htfTrend !== "neutral") {
+        const sigDir = signal.direction as "BUY" | "SELL";
+        if ((htfTrend === "bullish" && sigDir === "SELL") || (htfTrend === "bearish" && sigDir === "BUY")) {
+          emitActivity(state.sessionToken, "signal", `⊘ HTF Filter: ${sigDir} rejected — 1h trend is ${htfTrend} (EMA10 ${htfTrend === "bullish" ? ">" : "<"} EMA30)`);
+          pushRejectedSignal(state, { direction: sigDir, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `HTF filter: 1h trend is ${htfTrend}, ${sigDir} blocked`);
+          return;
+        }
+      }
+    } catch { /* non-fatal — allow trade if HTF fetch fails */ }
+  }
   }
 
   // ── VRP REGIME FILTER + OI FLOW + MAX PAIN GRAVITY GATE ─────────────────────

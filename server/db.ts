@@ -1,4 +1,4 @@
-import { eq, and, desc, gt, count, sql, or } from "drizzle-orm";
+import { eq, and, desc, gt, count, sql, or, like } from "drizzle-orm";
 import { lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -928,7 +928,19 @@ export async function getAllAppUsers() {
         subStatus = "active";
       }
       const daysLeft = sub.expiresAt > now ? Math.ceil((sub.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : 0;
-      return { ...user, subStatus, subPlan: sub.plan, subExpiresAt: sub.expiresAt, daysLeft };
+      // Count running bots for this user
+      let runningBots = 0;
+      if (user.sessionToken) {
+        try {
+          const botRows = await db.select({ count: count() }).from(botSessions)
+            .where(and(
+              like(botSessions.sessionToken, `${user.sessionToken}%`),
+              eq(botSessions.status, "running")
+            ));
+          runningBots = botRows[0]?.count ?? 0;
+        } catch { /* non-fatal */ }
+      }
+      return { ...user, subStatus, subPlan: sub.plan, subExpiresAt: sub.expiresAt, daysLeft, runningBots };
     }));
     return enriched;
   } catch {

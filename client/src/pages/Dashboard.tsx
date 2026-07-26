@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { AdminPanel } from "@/components/AdminPanel";
+import { DashboardTour } from "@/components/DashboardTour";
 import { useLocation, Link } from "wouter";
 import CandlestickChart from "@/components/CandlestickChart";
 import {
@@ -749,6 +750,23 @@ export default function Dashboard() {
     onError: (e) => toast.error(`Failed to stop bot: ${e.message}`),
   });
 
+  const pauseMutation = trpc.bot.pause.useMutation({
+    onSuccess: () => {
+      toast.info("⏸ Bot paused — open trade remains active (SL/target still running).");
+      utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "stopped" } : { status: "stopped" });
+      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
+        if (!old) return old;
+        return old.map((b: any) => b.slot === 0 ? { ...b, status: "stopped" } : b);
+      });
+      setTimeout(() => {
+        utils.bot.status.invalidate();
+        utils.bot.liveData.invalidate();
+        utils.multiBots.allStatus.invalidate();
+      }, 500);
+    },
+    onError: (e) => toast.error(`Pause failed: ${e.message}`),
+  });
+
   const restartMutation = trpc.bot.restart.useMutation({
     onSuccess: (data: any) => {
       toast.success(`Bot restarted — ${data?.instrumentLabel ?? "Bot"}`);
@@ -1219,6 +1237,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col md:flex-row">
+      <DashboardTour />
       {/* ── Name Prompt Dialog ────────────────────────────────────────────────── */}
       {showNamePrompt && (
         <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1605,7 +1624,7 @@ export default function Dashboard() {
       )}
 
         {/* ── Trading Mode Toggle (Paper / Live) ─────────────────────────────── */}
-        <div className="flex items-center gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+        <div data-tour="mode-toggle" className="flex items-center gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
           <span className="text-xs text-white/50 font-medium">Trading Mode</span>
           <div className="flex rounded-lg overflow-hidden border border-white/20 h-[36px]">
             <button onClick={() => setConfig(c => ({ ...c, mode: "paper" }))} disabled={isRunning}
@@ -1734,7 +1753,7 @@ export default function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════════════════
             STRATEGY SELECTOR — Category A (Proven) + Category B (Legacy)
         ═══════════════════════════════════════════════════════════════════════════ */}
-        <div className="mb-4 bg-white/[0.03] border border-white/10 rounded-2xl p-4">
+        <div data-tour="strategy-selector" className="mb-4 bg-white/[0.03] border border-white/10 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-cyan-400" />
@@ -2271,12 +2290,12 @@ export default function Dashboard() {
             REDESIGNED BOT SLOT CARDS — 3 cards with clear Realized vs Unrealized
         ═══════════════════════════════════════════════════════════════════════════ */}
         <div className="text-[10px] text-white/30 mb-1.5 ml-1">Each bot slot runs independently on a different instrument — start/stop individually</div>
-        <div className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${(() => {
-          const totalSlots = isAdmin ? 6 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
-          return totalSlots >= 5 ? "lg:grid-cols-3 xl:grid-cols-6" : totalSlots >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3";
+        <div data-tour="bot-slots" className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${(() => {
+          const totalSlots = isAdmin ? 10 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
+          return totalSlots >= 7 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 5 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3";
         })()}`}>
           {((allBots && allBots.length > 0) ? allBots : (() => {
-            const totalSlots = isAdmin ? 6 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
+            const totalSlots = isAdmin ? 10 : 3 + ((accessQuery.data as any)?.extraBotSlots ?? 0);
             const slots = [];
             for (let i = 0; i < totalSlots; i++) {
               const tok = i === 0 ? sessionToken : `${sessionToken}-slot${i}`;
@@ -2294,9 +2313,17 @@ export default function Dashboard() {
                   ? { border: "border-amber-500/30", borderActive: "border-amber-500/40", bg: "bg-amber-500/5", badge: "bg-amber-500/20", text: "text-amber-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_65/0.06)]" }
                   : bot.slot === 3
                     ? { border: "border-rose-500/30", borderActive: "border-rose-500/40", bg: "bg-rose-500/5", badge: "bg-rose-500/20", text: "text-rose-300", glow: "shadow-[0_0_20px_oklch(0.7_0.18_15/0.06)]" }
-                    : bot.slot === 4
-                      ? { border: "border-sky-500/30", borderActive: "border-sky-500/40", bg: "bg-sky-500/5", badge: "bg-sky-500/20", text: "text-sky-300", glow: "shadow-[0_0_20px_oklch(0.75_0.15_230/0.06)]" }
-                      : { border: "border-emerald-500/30", borderActive: "border-emerald-500/40", bg: "bg-emerald-500/5", badge: "bg-emerald-500/20", text: "text-emerald-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_160/0.06)]" };
+                   : bot.slot === 4
+                     ? { border: "border-sky-500/30", borderActive: "border-sky-500/40", bg: "bg-sky-500/5", badge: "bg-sky-500/20", text: "text-sky-300", glow: "shadow-[0_0_20px_oklch(0.75_0.15_230/0.06)]" }
+                      : bot.slot === 5
+                        ? { border: "border-emerald-500/30", borderActive: "border-emerald-500/40", bg: "bg-emerald-500/5", badge: "bg-emerald-500/20", text: "text-emerald-300", glow: "shadow-[0_0_20px_oklch(0.78_0.17_160/0.06)]" }
+                        : bot.slot === 6
+                          ? { border: "border-indigo-500/30", borderActive: "border-indigo-500/40", bg: "bg-indigo-500/5", badge: "bg-indigo-500/20", text: "text-indigo-300", glow: "shadow-[0_0_20px_oklch(0.7_0.15_260/0.06)]" }
+                          : bot.slot === 7
+                            ? { border: "border-pink-500/30", borderActive: "border-pink-500/40", bg: "bg-pink-500/5", badge: "bg-pink-500/20", text: "text-pink-300", glow: "shadow-[0_0_20px_oklch(0.7_0.18_340/0.06)]" }
+                            : bot.slot === 8
+                              ? { border: "border-cyan-500/30", borderActive: "border-cyan-500/40", bg: "bg-cyan-500/5", badge: "bg-cyan-500/20", text: "text-cyan-300", glow: "shadow-[0_0_20px_oklch(0.78_0.15_200/0.06)]" }
+                              : { border: "border-orange-500/30", borderActive: "border-orange-500/40", bg: "bg-orange-500/5", badge: "bg-orange-500/20", text: "text-orange-300", glow: "shadow-[0_0_20px_oklch(0.75_0.17_50/0.06)]" };
             const hasOpenTrade = !!bot.openTrade;
             const modeTag = bot.openingBurstMode ? "🚀 Opening Burst" : bot.isPowerHourMode ? "⚡ Power Hour" : bot.isMCXEveningMode ? "🌙 MCX Evening" : bot.isMCXLateSessionMode ? "🌃 MCX Late" : bot.heroZeroMode ? "🦸 Hero Zero" : null;
 
@@ -2341,16 +2368,28 @@ export default function Dashboard() {
                         l
                       ).join(", ")}{(bot as any).enabledLayers.length > 4 ? ` +${(bot as any).enabledLayers.length - 4}` : ""} ✓
                     </div>
-                  )}
-                  {isActive && (
-                    <button
-                      onClick={() => bot.slot === 0 ? stopMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
-                      className="text-red-400/60 hover:text-red-400 text-[10px] flex items-center gap-0.5 transition-colors"
-                    >
-                      <Square className="w-2.5 h-2.5" /> Stop
-                    </button>
-                  )}
-                </div>
+                 )}
+                 {isActive && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => bot.slot === 0 ? pauseMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
+                        className="text-amber-400/70 hover:text-amber-400 text-[10px] flex items-center gap-0.5 transition-colors"
+                        title="Pause bot — keeps open trade alive (SL/target still active)"
+                      >
+                        ⏸ Stop
+                      </button>
+                      {bot.openTrade && (
+                        <button
+                          onClick={() => bot.slot === 0 ? stopMutation.mutate({ sessionToken }) : stopSecondaryMutation.mutate({ sessionToken, slot: bot.slot })}
+                          className="text-red-400/70 hover:text-red-400 text-[10px] flex items-center gap-0.5 transition-colors"
+                          title="Exit — close open position on Upstox immediately + stop bot"
+                        >
+                          <Square className="w-2.5 h-2.5" /> Exit
+                        </button>
+                      )}
+                    </div>
+                 )}
+               </div>
 
                 {/* Instrument name */}
                 {isActive ? (
@@ -2573,7 +2612,7 @@ export default function Dashboard() {
                     {showScanner !== bot.slot ? (
                       <>
                         <div className="flex gap-2">
-                          <select value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
+                          <select data-tour="instrument-select" value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none">
                            <option value="NIFTY">NIFTY</option>
@@ -2593,7 +2632,7 @@ export default function Dashboard() {
                             min={5000} max={5000000} step={5000}
                             className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none" />
                         </div>
-                        <button onClick={() => handleQuickStart(bot.slot)} disabled={bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending}
+                        <button data-tour="start-button" onClick={() => handleQuickStart(bot.slot)} disabled={bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending}
                           className="w-full text-[10px] py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50">
                           {(bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending) ? "⏳" : `▶ Start (${config.mode === "live" ? "Live" : "Paper"})`}
                         </button>

@@ -1031,6 +1031,27 @@ export const appRouter = router({
         return { success: true };
       }),
 
+
+    // PAUSE = stop the bot engine but keep open trades alive (SL/target still active in DB)
+    pause: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
+        stopBot(input.sessionToken);
+        try {
+          const { clearActivity } = await import("./activityLog");
+          clearActivity(input.sessionToken);
+        } catch { /* non-fatal */ }
+        const db = await getDb();
+        if (db) {
+          await db
+            .update(botSessions)
+            .set({ status: "stopped", stoppedAt: new Date() })
+            .where(eq(botSessions.sessionToken, input.sessionToken));
+        }
+        // NOTE: We do NOT close open trades — they remain in DB with status='open'
+        return { success: true };
+      }),
     // Set carry-forward preference — if true, skip auto square-off at market close
     setCarryForward: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema, carryForward: z.boolean() }))
@@ -5139,12 +5160,12 @@ import { sendTelegramMessage } from "./botEngine";
 
 // Helper: get all slot tokens for a session (includes slot3 for admin)
 function getSlotTokens(sessionToken: string, includeSlot3 = true): string[] {
-  // Dynamic slot generation: base 3 slots + up to 3 extra (for admin/referral bonus)
+  // Dynamic slot generation: base 3 slots + up to 7 extra (for admin/referral bonus)
   const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
   if (includeSlot3) {
-    tokens.push(`${sessionToken}-slot3`);
-    tokens.push(`${sessionToken}-slot4`);
-    tokens.push(`${sessionToken}-slot5`);
+    for (let i = 3; i <= 9; i++) {
+      tokens.push(`${sessionToken}-slot${i}`);
+    }
   }
   return tokens;
 }
