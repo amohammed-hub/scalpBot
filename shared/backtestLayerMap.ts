@@ -8,12 +8,12 @@
 
 export const PROFITABLE_LAYERS_BY_INSTRUMENT: Record<string, string[]> = {
   // NSE Indices — marginal edge, only keep strategies with PF > 1.05
-  "NIFTY": ["Pattern", "Momentum", "RedBarTheory", "Adeeb"],
-  "Nifty 50": ["Pattern", "Momentum", "RedBarTheory", "Adeeb"],
-  "BANKNIFTY": ["Momentum", "RedBarTheory", "TrikalStrategy"],
-  "Nifty Bank": ["Momentum", "RedBarTheory", "TrikalStrategy"],
-  "FINNIFTY": ["Pattern", "TrikalStrategy", "RedBarTheory", "MACD_BB"],
-  "Nifty Fin Service": ["Pattern", "TrikalStrategy", "RedBarTheory", "MACD_BB"],
+  "NIFTY": ["BoxingStrategy", "ORB", "Pattern", "Momentum", "RedBarTheory", "Adeeb"],
+  "Nifty 50": ["BoxingStrategy", "ORB", "Pattern", "Momentum", "RedBarTheory", "Adeeb"],
+  "BANKNIFTY": ["BoxingStrategy", "ORB", "Momentum", "RedBarTheory", "TrikalStrategy"],
+  "Nifty Bank": ["BoxingStrategy", "ORB", "Momentum", "RedBarTheory", "TrikalStrategy"],
+  "FINNIFTY": ["BoxingStrategy", "ORB", "Pattern", "TrikalStrategy", "RedBarTheory", "MACD_BB"],
+  "Nifty Fin Service": ["BoxingStrategy", "ORB", "Pattern", "TrikalStrategy", "RedBarTheory", "MACD_BB"],
   
   // MCX — strong edge, include all profitable strategies (PF > 1.4)
   "GOLD": ["VWAPReversion", "TrikalStrategy", "Trend", "RedBarTheory", "Momentum", "MACD_BB", "Pattern", "Adeeb"],
@@ -47,4 +47,4 @@ export function getRecommendedLayers(instrumentLabel: string): string[] {
 /**
  * Strategies that should NEVER be auto-enabled (negative PnL across all instruments)
  */
-export const DISABLED_STRATEGIES = ["Breakout", "ORB"];
+export const DISABLED_STRATEGIES = ["Breakout"];

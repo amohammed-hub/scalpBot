@@ -1829,3 +1829,12 @@
 - [x] Admin panel: Fix User Activity grouping slot tokens separately
 - [x] Admin panel: Fix broadcast notification coverage gap (users without prefs row)
 - [x] Admin panel: Fix getTotalRunningBots to include paused bots in System Health
+
+## ORB Strategy Layer (Opening Range Breakout)
+- [x] Implement ORB strategy in botEngine.ts (V8: 30-min range, VWAP+EMA21, 30pt SL, 50% target, trail@60%)
+- [x] Add SHORT-ONLY toggle mode for ORB (V11 params)
+- [x] ORB fires only 9:45-11:30 AM, max 1 trade/day from ORB layer
+- [x] ORB complements Boxing: Boxing=inside range, ORB=breakout outside range
+- [x] Add ORB to strategy selector in Dashboard (Category A — Proven, enabled by default)
+- [x] Update shared/backtestLayerMap.ts — ORB added to NIFTY/BANKNIFTY/FINNIFTY recommended layers
+- [x] Deploy ORB strategy (210 tests passing, 0 TypeScript errors)

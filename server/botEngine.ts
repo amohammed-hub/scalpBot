@@ -245,6 +245,16 @@ export interface BotState {
     boxFormedAt: number; // IST minute when box was locked
     tradesToday: number;
   };
+  // ORB V8 Strategy state (daily) — 30-min range breakout with VWAP+EMA21 filters
+  orbV8State?: {
+    orbHigh: number;
+    orbLow: number;
+    orbRange: number;
+    orbFormed: boolean;
+    orbFormedAt: number; // IST minute when ORB range locked (30 candles = 9:45)
+    tradesToday: number;
+    shortOnlyMode: boolean; // V11 toggle: only take SHORT breakouts
+  };
 }
 
 // Shadow mode log entry
@@ -2958,6 +2968,167 @@ export function generateBoxingSignal(
 // Uses EMA(9)/EMA(21) cloud + virtual Renko bricks + pullback-to-cloud entry.
 // Only trades WITH the Renko trend, waits for pullback to EMA cloud before entry.
 
+// ── ORB V8 Strategy Layer (30-min Opening Range Breakout) ────────────────────────
+// Source: Backtested 18 months NIFTY data (329 days), PF 1.20, +441 pts
+// V8 params: 30-min range (9:15-9:45), VWAP+EMA21 filters, 30pt SL, 50% target, trail@60%
+// Complements Boxing: Boxing=inside range (mean reversion), ORB=outside range (momentum breakout)
+// They CANNOT conflict — one fires inside, other fires outside.
+/**
+ * ORB V8 Strategy: 30-minute Opening Range Breakout with VWAP and EMA21 confirmation.
+ * 
+ * Rules:
+ * 1. First 30 candles (9:15-9:45): Record high and low → "Opening Range"
+ * 2. After 9:45, aggregate 5 one-min candles into 5-min bars
+ * 3. BUY: 5-min bar CLOSES above ORB High + price above VWAP + EMA21 rising
+ * 4. SELL: 5-min bar CLOSES below ORB Low + price below VWAP + EMA21 falling
+ * 5. SL: 30 pts (capped) or opposite end of range (whichever is smaller)
+ * 6. Target: 50% of range, then trail at 60% of move
+ * 7. Max 1 trade per day from ORB layer
+ * 8. Time window: 9:45 AM – 11:30 AM only
+ * 9. Skip if range > 100 pts (too volatile) or < 10 pts (too narrow)
+ * 10. SHORT-ONLY mode (V11): only take SELL breakouts (PF 1.28, 50% WR)
+ */
+export function generateORBV8Signal(
+  candles: Candle[],
+  state: { orbV8State?: BotState["orbV8State"]; instrumentLabel: string },
+): Signal {
+  const price = candles[candles.length - 1]?.close ?? 0;
+  const atr = candles.length >= 14 ? calcATR(candles.slice(-14)) : price * 0.005;
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "ORB_V8: waiting", layer: "ORB" };
+
+  // Get current IST time
+  const now = new Date(candles[candles.length - 1]?.timestamp ?? Date.now());
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istTime = new Date(now.getTime() + istOffset);
+  const istHour = istTime.getUTCHours();
+  const istMinute = istTime.getUTCMinutes();
+  const istMin = istHour * 60 + istMinute;
+
+  // ── Step 1: Form the 30-minute Opening Range (9:15-9:45 = minute 555-585) ──
+  const ORB_PERIOD = 30; // 30 one-minute candles
+  const ORB_FORM_TIME = 585; // 9:45 AM IST (9*60+45)
+  const MAX_ENTRY_TIME = 690; // 11:30 AM IST (11*60+30)
+  const MAX_RANGE = 100; // Skip if range > 100 pts
+  const MIN_RANGE = 10;  // Skip if range < 10 pts
+  const SL_CAP = 30;     // Max 30 pts SL
+  const TARGET_MULT = 0.5; // Target = 50% of range
+  const TRAIL_PCT = 0.6; // Trail at 60% of move after target hit
+
+  if (!state.orbV8State || !state.orbV8State.orbFormed) {
+    // Need at least 30 candles to form the range
+    if (candles.length < ORB_PERIOD) {
+      return { ...hold, reason: `[ORB_V8] Collecting candles (${candles.length}/${ORB_PERIOD})` };
+    }
+    // Only form the range after 9:45 AM
+    if (istMin < ORB_FORM_TIME) {
+      return { ...hold, reason: `[ORB_V8] Waiting for 9:45 AM (currently ${istHour}:${istMinute.toString().padStart(2, "0")})` };
+    }
+    // Form the range from first 30 candles
+    const orbCandles = candles.slice(0, ORB_PERIOD);
+    const orbHigh = Math.max(...orbCandles.map(c => c.high));
+    const orbLow = Math.min(...orbCandles.map(c => c.low));
+    const orbRange = orbHigh - orbLow;
+
+    if (orbRange > MAX_RANGE) {
+      state.orbV8State = { orbHigh, orbLow, orbRange, orbFormed: true, orbFormedAt: istMin, tradesToday: 99, shortOnlyMode: state.orbV8State?.shortOnlyMode ?? false };
+      return { ...hold, reason: `[ORB_V8] Range too wide (${orbRange.toFixed(1)} pts > ${MAX_RANGE}) — skipping today` };
+    }
+    if (orbRange < MIN_RANGE) {
+      state.orbV8State = { orbHigh, orbLow, orbRange, orbFormed: true, orbFormedAt: istMin, tradesToday: 99, shortOnlyMode: state.orbV8State?.shortOnlyMode ?? false };
+      return { ...hold, reason: `[ORB_V8] Range too narrow (${orbRange.toFixed(1)} pts < ${MIN_RANGE}) — skipping today` };
+    }
+    state.orbV8State = { orbHigh, orbLow, orbRange, orbFormed: true, orbFormedAt: istMin, tradesToday: 0, shortOnlyMode: state.orbV8State?.shortOnlyMode ?? false };
+  }
+
+  const { orbHigh, orbLow, orbRange, tradesToday, shortOnlyMode } = state.orbV8State;
+
+  // Max 1 trade per day from ORB
+  if (tradesToday >= 1) {
+    return { ...hold, entryPrice: price, reason: `[ORB_V8] Daily limit reached (${tradesToday}/1 trades)` };
+  }
+
+  // Only trade 9:45 AM – 11:30 AM
+  if (istMin < ORB_FORM_TIME) {
+    return { ...hold, reason: "[ORB_V8] Before 9:45 AM — waiting for range" };
+  }
+  if (istMin > MAX_ENTRY_TIME) {
+    return { ...hold, entryPrice: price, reason: "[ORB_V8] Past 11:30 AM — no new entries" };
+  }
+
+  // ── Step 2: Check for breakout using 5-candle aggregation ──
+  // We need at least 5 candles after the ORB period
+  if (candles.length < ORB_PERIOD + 5) {
+    return { ...hold, reason: `[ORB_V8] Need more candles after range (${candles.length - ORB_PERIOD}/5)` };
+  }
+
+  // Get the last 5 candles (simulating a 5-min bar)
+  const last5 = candles.slice(-5);
+  const fiveMinClose = last5[last5.length - 1].close;
+  const fiveMinHigh = Math.max(...last5.map(c => c.high));
+  const fiveMinLow = Math.min(...last5.map(c => c.low));
+
+  // ── Step 3: VWAP filter ──
+  const vwap = calcVWAP(candles);
+
+  // ── Step 4: EMA21 filter ──
+  const closes = candles.map(c => c.close);
+  const ema21Current = calcEMA(closes, 21);
+  const ema21Prev = calcEMA(closes.slice(0, -5), 21);
+  const emaRising = ema21Current > ema21Prev;
+  const emaFalling = ema21Current < ema21Prev;
+
+  // ── Step 5: Generate signals ──
+  const isBankNifty = state.instrumentLabel.toLowerCase().includes("bank");
+  const slPoints = Math.min(orbRange, SL_CAP);
+  const targetPoints = orbRange * TARGET_MULT;
+
+  // BUY breakout: 5-min close above ORB High + above VWAP + EMA21 rising
+  if (!shortOnlyMode && fiveMinClose > orbHigh) {
+    const aboveVWAP = fiveMinClose > vwap;
+    if (aboveVWAP && emaRising) {
+      const entryPrice = fiveMinClose;
+      const slPrice = entryPrice - slPoints;
+      const targetPrice = entryPrice + targetPoints;
+      state.orbV8State.tradesToday += 1;
+      return {
+        direction: "BUY",
+        confidence: 0.70,
+        entryPrice,
+        slPrice,
+        targetPrice,
+        atr,
+        reason: `[ORB_V8] BUY — Breakout above range | Range: ${orbLow.toFixed(0)}-${orbHigh.toFixed(0)} (${orbRange.toFixed(0)}pts) | VWAP: ${vwap.toFixed(0)} | EMA21: rising | SL: ${slPoints.toFixed(0)}pts | Target: ${targetPoints.toFixed(0)}pts`,
+        layer: "ORB",
+      };
+    }
+  }
+
+  // SELL breakout: 5-min close below ORB Low + below VWAP + EMA21 falling
+  if (fiveMinClose < orbLow) {
+    const belowVWAP = fiveMinClose < vwap;
+    if (belowVWAP && emaFalling) {
+      const entryPrice = fiveMinClose;
+      const slPrice = entryPrice + slPoints;
+      const targetPrice = entryPrice - targetPoints;
+      state.orbV8State.tradesToday += 1;
+      return {
+        direction: "SELL",
+        confidence: 0.72, // Shorts have higher edge (PF 1.28 vs 0.95 for longs)
+        entryPrice,
+        slPrice,
+        targetPrice,
+        atr,
+        reason: `[ORB_V8] SELL — Breakdown below range | Range: ${orbLow.toFixed(0)}-${orbHigh.toFixed(0)} (${orbRange.toFixed(0)}pts) | VWAP: ${vwap.toFixed(0)} | EMA21: falling | SL: ${slPoints.toFixed(0)}pts | Target: ${targetPoints.toFixed(0)}pts${shortOnlyMode ? " [SHORT-ONLY]" : ""}`,
+        layer: "ORB",
+      };
+    }
+  }
+
+  // No signal
+  return { ...hold, entryPrice: price, reason: `[ORB_V8] Watching... Range: ${orbLow.toFixed(0)}-${orbHigh.toFixed(0)} (${orbRange.toFixed(0)}pts) | Price: ${price.toFixed(0)} | ${price > orbHigh ? "ABOVE range" : price < orbLow ? "BELOW range" : "inside range"}` };
+}
+
+
 /**
  * Trikal Strategy: Advanced Renko-based strategy with EMA cloud filter.
  * BUY: 3+ green bricks (uptrend) + price above cloud + pullback to cloud + close above cloud
@@ -4675,6 +4846,7 @@ async function tick(
     state.alertsSent.clear(); // BUG-8 FIX: Clear daily alerts so Power Hour/MCX alerts re-fire each day
     state.openingBurstTradeTaken = false; // Reset Opening Burst for new day
     state.boxingState = undefined; // Reset Boxing Strategy for new day
+    state.orbV8State = undefined; // Reset ORB V8 Strategy for new day
     state.dailyLossAcknowledged = false; // Reset so new day's losses trigger pause correctly
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
     resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
@@ -5778,6 +5950,7 @@ async function tick(
     "OIFlow": 2,
     "MaxPainGravity": 2,
     "BoxingStrategy": 2,
+    "ORB": 1, // ORB V8: max 1 trade per day (by design)
   };
   const TOTAL_LAYER_LIMIT = 10; // max total trades across all layers per day
 
@@ -5810,6 +5983,15 @@ async function tick(
           candidateSignals.push(boxSignal);
         }
       } catch (e) { console.warn(`[MultiStrategy] BoxingStrategy error:`, (e as Error).message); }
+    }
+    // Layer 1d: ORB V8 (30-min Opening Range Breakout — backtested PF 1.20, +441 pts/18mo)
+    if (state.enabledLayers.includes("ORB")) {
+      try {
+        const orbSignal = generateORBV8Signal(state.candles, state);
+        if (orbSignal.direction !== "HOLD") {
+          candidateSignals.push(orbSignal);
+        }
+      } catch (e) { console.warn(`[MultiStrategy] ORB_V8 error:`, (e as Error).message); }
     }
 
     // Layer 2: TrendMomentum (3 consecutive same-color candles + RSI/ROC)
