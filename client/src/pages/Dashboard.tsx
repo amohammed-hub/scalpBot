@@ -42,7 +42,7 @@ interface BotConfig {
   instrumentToken: string;
   instrumentSymbol: string;
   instrumentLabel: string;
-  mode: "paper" | "sandbox" | "live";
+  mode: "demo" | "live";
   capital: number;
   riskPerTradePct: number;
   maxTradesPerDay: number;
@@ -274,7 +274,7 @@ export default function Dashboard() {
       instrumentToken: INSTRUMENTS[0].token,
       instrumentSymbol: INSTRUMENTS[0].symbol,
       instrumentLabel: INSTRUMENTS[0].label,
-      mode: "paper",
+      mode: "demo",
       capital: 100000,
       riskPerTradePct: 1.0,
       maxTradesPerDay: 5,
@@ -700,10 +700,10 @@ export default function Dashboard() {
   );
 
   // ── Paper Costs ──────────────────────────────────────────────────────────────
-  const { data: paperCosts } = trpc.paperCosts.get.useQuery(undefined, { staleTime: 30000 });
+  const { data: demoCosts } = trpc.demoCosts.get.useQuery(undefined, { staleTime: 30000 });
   const [localBrokerage, setLocalBrokerage] = useState(20);
   const [localSlippage, setLocalSlippage] = useState(0.05);
-  useEffect(() => { if (paperCosts) { setLocalBrokerage(paperCosts.brokerage); setLocalSlippage(paperCosts.slippagePct); } }, [paperCosts]);
+  useEffect(() => { if (demoCosts) { setLocalBrokerage(demoCosts.brokerage); setLocalSlippage(demoCosts.slippagePct); } }, [demoCosts]);
 
   // ── Mutations ────────────────────────────────────────────────────────────────
   const startMutation = trpc.bot.start.useMutation({
@@ -883,7 +883,7 @@ export default function Dashboard() {
   });
 
   // Paper Costs Update
-  const updatePaperCostsMutation = trpc.paperCosts.update.useMutation({
+  const updateDemoCostsMutation = trpc.demoCosts.update.useMutation({
     onSuccess: () => toast.success("Paper costs updated."),
     onError: (e) => toast.error(`Update failed: ${e.message}`),
   });
@@ -1273,8 +1273,8 @@ export default function Dashboard() {
             <h2 className="text-2xl font-bold text-white">Subscription Required</h2>
             <p className="text-white/60 text-sm leading-relaxed">
               {accessQuery.data.trialUsed
-                ? "Your free trial has expired. Subscribe to continue using ScalpBot for live and paper trading."
-                : "Start your 2-day free trial to explore ScalpBot with paper trading on NSE (NIFTY/BANKNIFTY). No payment required."}
+                ? "Your free trial has expired. Subscribe to continue using ScalpBot for live and demo trading."
+                : "Start your 2-day free trial to explore ScalpBot with demo trading on NSE (NIFTY/BANKNIFTY). No payment required."}
             </p>
             <div className="flex flex-col gap-3">
               {!accessQuery.data.trialUsed && (
@@ -1558,8 +1558,8 @@ export default function Dashboard() {
               : tokenStatus === "missing" ? <><ShieldOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">No Token</span></>
               : <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token?</span></>}
            </button>
-            <Badge variant="outline" className={`border-none text-sm px-3 py-1.5 font-bold ${config.mode === "paper" ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : config.mode === "sandbox" ? "bg-blue-500/20 text-blue-400 border-blue-500/30" : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"}`}>
-              {config.mode === "paper" ? "🟡 PAPER MODE" : config.mode === "sandbox" ? "🔵 SANDBOX" : "🟢 LIVE"}
+            <Badge variant="outline" className={`border-none text-sm px-3 py-1.5 font-bold ${config.mode === "demo" ? "bg-blue-500/20 text-blue-400 border-blue-500/30" : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"}`}>
+              {config.mode === "demo" ? "🔵 DEMO" : "🟢 LIVE"}
             </Badge>
           </div>
         </div>
@@ -1572,8 +1572,8 @@ export default function Dashboard() {
           </div>
           <div className="w-px h-4 bg-white/10" />
           {/* Mode indicator */}
-          <span className={`font-bold ${config.mode === "paper" ? "text-amber-400" : "text-emerald-400"}`}>
-            {config.mode === "paper" ? "PAPER MODE — No real money" : config.mode === "sandbox" ? "🔵 SANDBOX — Real API, fake money" : "⚡ LIVE — Real trades"}
+          <span className={`font-bold ${config.mode === "demo" ? "text-blue-400" : "text-emerald-400"}`}>
+            {config.mode === "demo" ? "🔵 DEMO — Real API, fake money" : "⚡ LIVE — Real trades"}
           </span>
           <div className="flex-1" />
           {/* KILL SWITCH — always visible, big red button */}
@@ -1613,28 +1613,26 @@ export default function Dashboard() {
 
         {activeTab === "command" && (<>
        {/* Token warning */}
-      {tokenStatus !== "valid" && (config.mode === "live" || config.mode === "sandbox") && !showReminder && (
+      {tokenStatus !== "valid" && config.mode === "live" && !showReminder && (
         <div className="mb-4 flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
           <ShieldOff className="w-4 h-4 shrink-0" />
           <span><strong>Live mode requires an Access Token.</strong>{" "}
             <button onClick={() => navigate("/settings")} className="underline hover:opacity-80">Go to Settings to add it</button>
-            {" "}— or switch to Paper mode.
+            {" "}— or switch to Demo mode.
           </span>
         </div>
       )}
 
-        {/* ── Trading Mode Toggle (Paper / Live) ─────────────────────────────── */}
+        {/* ── Trading Mode Toggle (Demo / Live) ─────────────────────────────── */}
         <div data-tour="mode-toggle" className="flex items-center gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
           <span className="text-xs text-white/50 font-medium">Trading Mode</span>
          <div className="flex rounded-lg overflow-hidden border border-white/20 h-[36px]">
-            <button onClick={() => setConfig(c => ({ ...c, mode: "paper" }))} disabled={isRunning}
-              className={`px-5 text-sm font-medium transition-colors ${config.mode === "paper" ? "bg-amber-500/30 text-amber-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Paper</button>
-            <button onClick={() => setConfig(c => ({ ...c, mode: "sandbox" }))} disabled={isRunning}
-              className={`px-5 text-sm font-medium transition-colors ${config.mode === "sandbox" ? "bg-blue-500/30 text-blue-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Sandbox</button>
+            <button onClick={() => setConfig(c => ({ ...c, mode: "demo" }))} disabled={isRunning}
+              className={`px-5 text-sm font-medium transition-colors ${config.mode === "demo" ? "bg-blue-500/30 text-blue-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Demo</button>
             <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning}
               className={`px-5 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>
           </div>
-          <span className="text-xs text-white/30 ml-auto">{config.mode === "paper" ? "Simulated trades, no real money" : config.mode === "sandbox" ? "🔵 Upstox Sandbox — real API, fake money" : "⚠ Real orders via Upstox"}</span>
+          <span className="text-xs text-white/30 ml-auto">{config.mode === "demo" ? "Upstox Sandbox — real API, fake money" : "⚠ Real orders via Upstox"}</span>
         </div>
 
         {/* Opening Burst Quick Toggle — 4 contextual states */}
@@ -3269,7 +3267,7 @@ export default function Dashboard() {
             {/* Trade details row */}
             <div className="flex items-center gap-6 text-xs text-white/40">
               <span>Qty: <span className="text-white">{activeTrade.quantity}</span></span>
-              <span>Mode: <span className={activeTrade.mode === "paper" ? "text-amber-400" : "text-red-400"}>{activeTrade.mode}</span></span>
+              <span>Mode: <span className={activeTrade.mode === "demo" ? "text-amber-400" : "text-red-400"}>{activeTrade.mode}</span></span>
               {activeTrade.confidence && <span>Confidence: <span className="text-teal-400">{(activeTrade.confidence * 100).toFixed(0)}%</span></span>}
               {(activeTrade as any).signalLayer && (
                 <span>Layer: <span className="text-purple-400">{(activeTrade as any).signalLayer}</span></span>
@@ -3541,7 +3539,7 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td className="py-2.5 pr-4">
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${t.mode === "paper" ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{t.mode}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${t.mode === "demo" ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{t.mode}</span>
                         </td>
                         <td className="py-2.5 pr-4 text-xs text-white/50 whitespace-nowrap">
                           {t.enteredAt ? new Date(t.enteredAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"}

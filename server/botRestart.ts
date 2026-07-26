@@ -155,7 +155,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
   // Build onTradeOpen callback
   const onTradeOpen = async (trade: {
     symbol: string; symbolLabel: string; instrumentToken: string;
-    direction: "BUY" | "SELL"; mode: "paper" | "sandbox" | "live";
+    direction: "BUY" | "SELL"; mode: "demo" | "live";
     entryPrice: number; quantity: number; slPrice: number; targetPrice: number;
     atr: number; confidence: number; status: "open" | "closed" | "cancelled";
     upstoxOrderId?: string; signalReason: string; enteredAt: Date;
@@ -353,7 +353,7 @@ export async function restartRunningBots(): Promise<void> {
       const todayDate = new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
       const isStale = tradeDate < todayDate;
       // Check if trade is MCX: either instrumentToken starts with MCX, or symbol contains MCX commodity names
-      // (paper trades use PAPER_OPT| prefix, so we also check the symbol)
+      // (demo trades use PAPER_OPT| prefix, so we also check the symbol)
       const mcxCommodities = ["CRUDEOIL", "CRUDE", "GOLD", "SILVER", "NATURALGAS", "COPPER", "ZINC", "LEAD", "ALUMINIUM", "NICKEL"];
       const symbolUpper = (t.symbol ?? "").toUpperCase();
       const isMCX = (t.instrumentToken ?? "").startsWith("MCX") || mcxCommodities.some(c => symbolUpper.includes(c));
@@ -405,11 +405,11 @@ export async function restartRunningBots(): Promise<void> {
                   if (q && q.ltp > 0) {
                     exitPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
                     resolved = true;
-                    console.log(`[BotRestart] Resolved paper trade #${t.id} ${t.symbol} → real token ${resolvedToken} → exit ₹${exitPrice.toFixed(2)}`);
+                    console.log(`[BotRestart] Resolved demo trade #${t.id} ${t.symbol} → real token ${resolvedToken} → exit ₹${exitPrice.toFixed(2)}`);
                   }
                 }
               } catch (resolveErr) {
-                console.warn(`[BotRestart] Could not resolve paper trade #${t.id} ${t.symbol}:`, resolveErr);
+                console.warn(`[BotRestart] Could not resolve demo trade #${t.id} ${t.symbol}:`, resolveErr);
               }
               if (!resolved) {
                 // Fallback: close at entry price (0 P&L on remaining) — safe default

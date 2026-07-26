@@ -9,13 +9,13 @@ export interface TierLimits {
   maxTradesPerDay: number; // 0 = unlimited
   mcxAccess: boolean;
   maxBots: number; // 0 = unlimited
-  liveTrading: boolean; // false = paper only (trial)
+  liveTrading: boolean; // false = demo only (trial)
   telegram: boolean;
   backtester: boolean;
   customStrategy: boolean;
   shadowMode: boolean;
   heroZeroScanner: boolean;
-  paperTrading: boolean;
+  demoTrading: boolean;
   pnlAnalytics: boolean;
 }
 
@@ -30,7 +30,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     customStrategy: false,
     shadowMode: false,
     heroZeroScanner: true,
-    paperTrading: true,
+    demoTrading: true,
     pnlAnalytics: true,
   },
   monthly: {
@@ -43,7 +43,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     customStrategy: false,
     shadowMode: false,
     heroZeroScanner: true,
-    paperTrading: true,
+    demoTrading: true,
     pnlAnalytics: true,
   },
   quarterly: {
@@ -56,7 +56,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     customStrategy: false,
     shadowMode: false,
     heroZeroScanner: true,
-    paperTrading: true,
+    demoTrading: true,
     pnlAnalytics: true,
   },
   half_yearly: {
@@ -69,7 +69,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     customStrategy: true,
     shadowMode: true,
     heroZeroScanner: true,
-    paperTrading: true,
+    demoTrading: true,
     pnlAnalytics: true,
   },
   yearly: {
@@ -82,7 +82,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     customStrategy: true,
     shadowMode: true,
     heroZeroScanner: true,
-    paperTrading: true,
+    demoTrading: true,
     pnlAnalytics: true,
   },
   admin: {
@@ -95,7 +95,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     customStrategy: true,
     shadowMode: true,
     heroZeroScanner: true,
-    paperTrading: true,
+    demoTrading: true,
     pnlAnalytics: true,
   },
 };

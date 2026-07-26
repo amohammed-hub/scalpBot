@@ -146,7 +146,7 @@ export default function HeroZeroScanner() {
       instrumentToken: candidate.instrumentKey,
       instrumentSymbol: `${underlying}${candidate.strikePrice}${candidate.optionType}`,
       instrumentLabel: `${underlying} ${candidate.strikePrice} ${candidate.optionType} (Hero Zero)`,
-      mode: "paper",
+      mode: "demo",
       capital: 50000,
       riskPerTradePct: 1.0,
       maxTradesPerDay: 3,

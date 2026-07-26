@@ -74,8 +74,8 @@ describe("Live Mode Safety Guard", () => {
     expect(tradeBlocked).toBe(false);
   });
 
-  it("should allow paper trade when mode=paper (no accessToken needed)", () => {
-    const state = { mode: "paper" as const, accessToken: null };
+  it("should allow demo trade when mode=demo (no accessToken needed)", () => {
+    const state = { mode: "demo" as const, accessToken: null };
     
     let tradeBlocked = false;
     let liveOrderAttempted = false;

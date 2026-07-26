@@ -73,7 +73,7 @@ interface Credentials {
   apiKey: string;
   apiSecret: string;
   accessToken: string;
-  sandboxToken: string;
+  demoToken: string;
   redirectUri: string;
   tokenSavedAt?: number;
 }
@@ -90,9 +90,9 @@ function loadCreds(): Credentials {
   try {
     const saved = JSON.parse(localStorage.getItem(LS_CREDS) ?? "null");
     if (saved) return saved;
-    return { apiKey: "", apiSecret: "", accessToken: "", sandboxToken: "", redirectUri: getCallbackUrl() };
+    return { apiKey: "", apiSecret: "", accessToken: "", demoToken: "", redirectUri: getCallbackUrl() };
   } catch {
-    return { apiKey: "", apiSecret: "", accessToken: "", sandboxToken: "", redirectUri: getCallbackUrl() };
+    return { apiKey: "", apiSecret: "", accessToken: "", demoToken: "", redirectUri: getCallbackUrl() };
   }
 }
 
@@ -658,7 +658,7 @@ export default function Settings() {
 
   const handleClear = () => {
     localStorage.removeItem(LS_CREDS);
-    setCreds({ apiKey: "", apiSecret: "", accessToken: "", sandboxToken: "", redirectUri: getCallbackUrl() });
+    setCreds({ apiKey: "", apiSecret: "", accessToken: "", demoToken: "", redirectUri: getCallbackUrl() });
     toast.info("Credentials cleared.");
   };
 
@@ -717,7 +717,7 @@ export default function Settings() {
       instrumentLabel: atmLabel,
       isIndexOptions: true,
       underlyingToken: instr.instrumentToken,
-      mode: "paper",
+      mode: "demo",
       capital: mcxCapital,
       riskPerTradePct: 1.5,
       maxTradesPerDay: 4,
@@ -1139,14 +1139,14 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* ── Sandbox Token ───────────────────────────────────────── */}
+        {/* ── Demo Token ───────────────────────────────────────── */}
         <div className="bg-white/5 border border-blue-500/20 rounded-2xl mt-6 p-5 space-y-3">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
               <span className="text-blue-400 text-sm font-bold">S</span>
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Upstox Sandbox Token</h3>
+              <h3 className="text-sm font-semibold text-white">Upstox Demo Token</h3>
               <p className="text-xs text-white/50">For testing with real API calls but fake money (valid 30 days)</p>
             </div>
           </div>
@@ -1154,29 +1154,29 @@ export default function Settings() {
             <label className="text-xs text-white/60">Sandbox Access Token</label>
             <input
               type="password"
-              placeholder="Paste your sandbox token from Upstox Developer Console"
-              value={creds.sandboxToken || ""}
-              onChange={(e) => setCreds({ ...creds, sandboxToken: e.target.value })}
+              placeholder="Paste your demo token from Upstox Developer Console"
+              value={creds.demoToken || ""}
+              onChange={(e) => setCreds({ ...creds, demoToken: e.target.value })}
               className="w-full bg-white/5 border border-white/10 text-white placeholder:text-white/30 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500/50"
             />
-            <p className="text-[10px] text-white/40">Go to Upstox Developer Console → Your App → Generate Sandbox Token</p>
+            <p className="text-[10px] text-white/40">Go to Upstox Developer Console → Your App → Generate Demo Token</p>
             <button
-              disabled={!creds.sandboxToken}
+              disabled={!creds.demoToken}
               onClick={async () => {
                 try {
                   const sessionToken = localStorage.getItem("sessionToken") || localStorage.getItem(LS_SESSION);
-                  if (!sessionToken || !creds.sandboxToken) return;
-                  const res = await fetch("/api/trpc/saveSandboxToken", {
+                  if (!sessionToken || !creds.demoToken) return;
+                  const res = await fetch("/api/trpc/saveDemoToken", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ sessionToken, sandboxToken: creds.sandboxToken }),
+                    body: JSON.stringify({ sessionToken, demoToken: creds.demoToken }),
                   });
                   if (res.ok) {
                     const toSave = { ...creds };
                     localStorage.setItem(LS_CREDS, JSON.stringify(toSave));
                     toast.success("Sandbox token saved! You can now use Sandbox mode.");
                   } else {
-                    toast.error("Failed to save sandbox token.");
+                    toast.error("Failed to save demo token.");
                   }
                 } catch (e) {
                   toast.error("Error: " + String(e));
@@ -1185,7 +1185,7 @@ export default function Settings() {
               className="flex items-center gap-2 w-full py-2.5 px-4 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-400 rounded-xl text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Save className="w-4 h-4" />
-              Save Sandbox Token
+              Save Demo Token
             </button>
           </div>
         </div>

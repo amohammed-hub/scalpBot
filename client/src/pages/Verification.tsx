@@ -163,7 +163,7 @@ export default function Verification() {
             ) : !metrics ? (
               <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-12 text-center">
                 <p className="text-zinc-400 text-lg mb-2">No trading data yet</p>
-                <p className="text-zinc-500 text-sm">Start the bot in paper mode and let it run for a few days to collect precision data.</p>
+                <p className="text-zinc-500 text-sm">Start the bot in demo mode and let it run for a few days to collect precision data.</p>
               </div>
             ) : (
               <>
@@ -271,7 +271,7 @@ export default function Verification() {
                       <p className="text-sm text-zinc-400">
                         {precisionScore >= 60
                           ? `Precision score of ${precisionScore}% meets the threshold for paid subscriptions. Your bot has demonstrated consistent profitability.`
-                          : `Precision score of ${precisionScore}% is below the 60% threshold. Continue paper trading to improve metrics before offering subscriptions.`
+                          : `Precision score of ${precisionScore}% is below the 60% threshold. Continue demo trading to improve metrics before offering subscriptions.`
                         }
                       </p>
                     </div>

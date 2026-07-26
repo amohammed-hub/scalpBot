@@ -10,7 +10,7 @@ import {
   canOpenNewTrade,
   recordTradeClose,
   isCooldownActive,
-  applyPaperCosts,
+  applyDemoCosts,
 } from "./riskManager";
 import { computeLayerStats, isLayerDisabled, setLayerOverride, resetAllLayerOverrides } from "./layerTracker";
 import { STRATEGY_PRESETS, getPreset } from "./presets";
@@ -21,7 +21,7 @@ function makeBotState(overrides: Record<string, unknown> = {}): BotState {
   return {
     sessionToken: "test-session",
     status: "running",
-    mode: "paper",
+    mode: "demo",
     instrumentToken: "NSE_INDEX|Nifty 50",
     instrumentSymbol: "NIFTY",
     instrumentLabel: "Nifty 50",
@@ -215,7 +215,7 @@ describe("Risk Manager — Cooldown (2-candle wait)", () => {
 describe("Risk Manager — Paper Cost Simulation", () => {
   it("deducts brokerage and slippage from gross P&L", () => {
     // rawPnl=1000, entry=500, exit=510, qty=10, brokerage=20, slippage=0.05%
-    const netPnl = applyPaperCosts(1000, 500, 510, 10, 20, 0.05);
+    const netPnl = applyDemoCosts(1000, 500, 510, 10, 20, 0.05);
     // slippage = (500*0.0005*10) + (510*0.0005*10) = 2.5 + 2.55 = 5.05; total = 25.05
     expect(netPnl).toBeLessThan(1000);
     expect(netPnl).toBeCloseTo(1000 - 25.05, 1);
@@ -223,7 +223,7 @@ describe("Risk Manager — Paper Cost Simulation", () => {
 
   it("uses default ₹20 brokerage and 0.05% slippage", () => {
     // rawPnl=500, entry=100, exit=100, qty=10 → slippage = 0.5+0.5=1; brokerage=20; total=21
-    const netPnl = applyPaperCosts(500, 100, 100, 10);
+    const netPnl = applyDemoCosts(500, 100, 100, 10);
     expect(netPnl).toBeCloseTo(500 - 21, 1);
   });
 });

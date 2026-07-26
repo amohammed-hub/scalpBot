@@ -419,17 +419,17 @@ export async function executeKillSwitch(
 
 // ── Slippage & Brokerage for Paper Mode ──────────────────────────────────────
 // BUG-11 fix: Per-session paper cost config
-const paperCostBySession = new Map<string, { brokerage: number; slippagePct: number }>();
-const defaultPaperCost = { brokerage: 20, slippagePct: 0.05 };
-let _paperCostLoadedFromDb = false;
+const demoCostBySession = new Map<string, { brokerage: number; slippagePct: number }>();
+const defaultDemoCost = { brokerage: 20, slippagePct: 0.05 };
+let _demoCostLoadedFromDb = false;
 
-export function getPaperCostConfig(sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
-  return paperCostBySession.get(sessionToken) ?? defaultPaperCost;
+export function getDemoCostConfig(sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
+  return demoCostBySession.get(sessionToken) ?? defaultDemoCost;
 }
 
-export async function setPaperCostConfig(brokerage: number, slippagePct: number, sessionToken: string = "default"): Promise<{ brokerage: number; slippagePct: number }> {
+export async function setDemoCostConfig(brokerage: number, slippagePct: number, sessionToken: string = "default"): Promise<{ brokerage: number; slippagePct: number }> {
   const config = { brokerage, slippagePct };
-  paperCostBySession.set(sessionToken, config);
+  demoCostBySession.set(sessionToken, config);
   // Persist to DB so it survives Railway restarts
   try {
     const { getDb } = await import("./db");
@@ -452,10 +452,10 @@ export async function setPaperCostConfig(brokerage: number, slippagePct: number,
   return config;
 }
 
-/** Load paper costs from DB on startup (call once during init) */
-export async function loadPaperCostsFromDb(): Promise<void> {
-  if (_paperCostLoadedFromDb) return;
-  _paperCostLoadedFromDb = true;
+/** Load demo costs from DB on startup (call once during init) */
+export async function loadDemoCostsFromDb(): Promise<void> {
+  if (_demoCostLoadedFromDb) return;
+  _demoCostLoadedFromDb = true;
   try {
     const { getDb } = await import("./db");
     const { adminSettings } = await import("../drizzle/schema");
@@ -468,7 +468,7 @@ export async function loadPaperCostsFromDb(): Promise<void> {
         try {
           const config = JSON.parse(row.value);
           if (typeof config.brokerage === "number" && typeof config.slippagePct === "number") {
-            paperCostBySession.set(sessionToken, config);
+            demoCostBySession.set(sessionToken, config);
           }
         } catch {}
       }
@@ -479,7 +479,7 @@ export async function loadPaperCostsFromDb(): Promise<void> {
   }
 }
 
-export function applyPaperCosts(
+export function applyDemoCosts(
   rawPnl: number,
   entryPrice: number,
   exitPrice: number,

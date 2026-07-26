@@ -12,7 +12,7 @@ import { getCurrentSession, getSessionDefault, type TradingSession } from "../sh
 import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
 import {
   getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
-  recordTradeClose, isCooldownActive, applyPaperCosts, getPaperCostConfig, resetDailyState,
+  recordTradeClose, isCooldownActive, applyDemoCosts, getDemoCostConfig, resetDailyState,
   recordDirectionalLoss, recordDirectionalWin, isDirectionBlocked, resetDirectionStreak,
 } from "./riskManager";
 import { fetchIndiaVix } from "./riskManager";
@@ -63,7 +63,7 @@ export interface OpenTrade {
   symbolLabel: string;
   instrumentToken: string;
   direction: "BUY" | "SELL";
-  mode: "paper" | "sandbox" | "live";
+  mode: "demo" | "live";
   entryPrice: number;
   quantity: number;
   slPrice: number;
@@ -86,8 +86,8 @@ export interface OpenTrade {
   heroZeroPremiumEntry?: number; // premium paid for OTM option
   // Options mode: when true, exit price must be fetched from option chain, not underlying price
   isIndexOptions?: boolean;
-  optionMockKey?: string; // e.g. "BNF_CE" or "BNF_PE" for paper mode premium lookup
-  entryUnderlyingPrice?: number; // underlying index price at trade entry (for paper mode delta P&L drift)
+  optionMockKey?: string; // e.g. "BNF_CE" or "BNF_PE" for demo mode premium lookup
+  entryUnderlyingPrice?: number; // underlying index price at trade entry (for demo mode delta P&L drift)
   signalReason?: string; // full signal reason string
   signalLayer?: string; // extracted layer name e.g. "Breakout", "MCXEvening"
   carryForward?: boolean; // user chose to hold overnight
@@ -102,7 +102,7 @@ export interface BotState {
   sessionToken: string;
   sessionId: number;
   status: "running" | "stopped" | "paused" | "error";
-  mode: "paper" | "sandbox" | "live";
+  mode: "demo" | "live";
   instrumentToken: string;
   instrumentSymbol: string;
   instrumentLabel: string;
@@ -2153,8 +2153,8 @@ export function generateMCXEveningSignal(
   const pricePos = dayRange > 0 ? (price - dayLow) / dayRange : 0.5;
 
   // Volume: US open surge (last 30 candles vs day avg)
-  // MCX futures return real volume, but in paper mode (mock candles) volume may be 0.
-  // When all volume is 0 (paper mode / thin market), bypass the volSurge check by treating it as 1.2.
+  // MCX futures return real volume, but in demo mode (mock candles) volume may be 0.
+  // When all volume is 0 (demo mode / thin market), bypass the volSurge check by treating it as 1.2.
   const avgDayVol = candles1m.reduce((a, c) => a + c.volume, 0) / candles1m.length;
   const last30Vol = candles1m.slice(-30).reduce((a, c) => a + c.volume, 0) / 30;
   const allVolumeZero = avgDayVol === 0 && last30Vol === 0;
@@ -3416,7 +3416,7 @@ const mockPrices: Record<string, number> = {
   NIFTY_FUT: 24820, BNF_FUT: 53250,
   MCX_GOLD: 117700, MCX_SILVER: 98500, MCX_CRUDEOIL: 6650, MCX_NATGAS: 310,
   MCX_COPPER: 850, MCX_ZINC: 275, MCX_ALUMINIUM: 235, MCX_LEAD: 190, MCX_NICKEL: 1580,
-  // MCX option premiums (paper-mode mock prices)
+  // MCX option premiums (demo-mode mock prices)
   MCX_GOLD_CE: 320, MCX_GOLD_PE: 280,
   MCX_SILVER_CE: 1800, MCX_SILVER_PE: 1500,
   MCX_CRUDE_CE: 85, MCX_CRUDE_PE: 70,
@@ -3895,7 +3895,7 @@ export async function resolveAtmMcxOptionToken(
           }
           // LAST RESORT: If premium fetch failed OR all premiums are 0,
           // pick the nearest ATM strike anyway. For live mode, Upstox fills at market price.
-          // For paper mode, estimate premium based on distance from ATM.
+          // For demo mode, estimate premium based on distance from ATM.
           const bestNoQuote = near.find(c => !excludeStrikes.includes(c.strike_price ?? 0));
           if (bestNoQuote) {
             const expDate = new Date(bestNoQuote.expiry!);
@@ -4325,7 +4325,7 @@ async function tick(
 
   // Fetch candles + quote
   // The Upstox intraday candle API works WITHOUT authentication for NSE_INDEX and MCX_FO tokens.
-  // Paper mode uses real candle data from Upstox — no access token needed.
+  // Demo mode uses real candle data from Upstox — no access token needed.
   // Diagnostic: log signalToken on first few ticks to verify MCX resolution worked
   if ((state.tickCount ?? 0) <= 3 && signalToken.startsWith("MCX_FO|")) {
     console.log(`[BotEngine] CANDLE-FETCH tick#${state.tickCount ?? 0} session=${state.sessionToken.slice(0,8)} signalToken=${signalToken} underlying=${state.underlyingToken ?? "none"}`);
@@ -4630,8 +4630,8 @@ async function tick(
         if (ltpMovePct < 0.005) {
           // LTP within 0.5% of entry = no real movement = illiquid/frozen
           bestExitPrice = entryPx; // P&L stays at 0 until real movement happens
-        } else if (state.mode === "paper") {
-          // Paper mode: LTP only — no phantom bid inflation
+        } else if (state.mode === "demo") {
+          // Demo mode: LTP only — no phantom bid inflation
           bestExitPrice = optQuote.ltp;
         } else {
           // Live mode: use bid (real exit price) but sanity-check against LTP
@@ -4687,7 +4687,7 @@ async function tick(
         }
       }
     } else {
-      // Paper mode (no access token): cannot fetch real option quote.
+      // Demo mode (no access token): cannot fetch real option quote.
       // Freeze P&L at entry (show 0) — delta approximation is unreliable and gives fake P&L.
       const entryPremium = state.openTrade.entryPrice;
       effectivePrice = entryPremium; // P&L = 0 — no real quote available
@@ -4731,8 +4731,8 @@ async function tick(
       return; // Skip square-off — trade stays open
     }
    const trade = state.openTrade;
-   if ((trade.mode === "live" || trade.mode === "sandbox") && state.accessToken) {
-     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", (trade.quantity - (trade.bookedQty ?? 0)), state.lotSize, state.mode === "sandbox");
+   if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
+     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", (trade.quantity - (trade.bookedQty ?? 0)), state.lotSize, state.mode === "demo");
       if (!sqOffId) {
         state.lastError = `Auto square-off REJECTED — close ${trade.symbolLabel} manually on Upstox`;
         emitActivity(state.sessionToken, "error", `⚠ AUTO SQUARE-OFF FAILED — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
@@ -4742,10 +4742,10 @@ async function tick(
    }
     const sqRemaining = trade.quantity - (trade.bookedQty ?? 0);
     let pnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * sqRemaining : (trade.entryPrice - effectivePrice) * sqRemaining;
-    // v3: paper-mode brokerage + slippage simulation
-    if (trade.mode === "paper") {
-      const pc = getPaperCostConfig(state.sessionToken);
-      pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, sqRemaining, pc.brokerage, pc.slippagePct);
+    // v3: demo-mode brokerage + slippage simulation
+    if (trade.mode === "demo") {
+      const pc = getDemoCostConfig(state.sessionToken);
+      pnl = applyDemoCosts(pnl, trade.entryPrice, effectivePrice, sqRemaining, pc.brokerage, pc.slippagePct);
     }
     if (trade.bookedPnlAddedToDaily) {
       state.dailyPnl += pnl;
@@ -4838,8 +4838,8 @@ async function tick(
       if (heroExit) {
         const heroRemQty = trade.quantity - (trade.bookedQty ?? 0);
         let pnl = (effectivePrice - trade.entryPrice) * heroRemQty;
-        if ((trade.mode === "live" || trade.mode === "sandbox") && state.accessToken) {
-          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", heroRemQty, state.lotSize, state.mode === "sandbox");
+        if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
+          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", heroRemQty, state.lotSize, state.mode === "demo");
           if (!heroOrderId2) {
             state.lastError = `Hero Zero exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
             emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
@@ -4847,10 +4847,10 @@ async function tick(
             return; // do NOT close trade in DB — position still open
           }
         }
-        // v3: paper-mode brokerage + slippage simulation
-        if (trade.mode === "paper") {
-          const pc = getPaperCostConfig(state.sessionToken);
-          pnl = applyPaperCosts(pnl, trade.entryPrice, effectivePrice, heroRemQty, pc.brokerage, pc.slippagePct);
+        // v3: demo-mode brokerage + slippage simulation
+        if (trade.mode === "demo") {
+          const pc = getDemoCostConfig(state.sessionToken);
+          pnl = applyDemoCosts(pnl, trade.entryPrice, effectivePrice, heroRemQty, pc.brokerage, pc.slippagePct);
         }
         if (trade.bookedPnlAddedToDaily) {
           state.dailyPnl += pnl;
@@ -4884,8 +4884,8 @@ async function tick(
        const bookPnl = trade.direction === "BUY"
          ? (trade.partial1RPrice - trade.entryPrice) * bookQty
          : (trade.entryPrice - trade.partial1RPrice) * bookQty;
-       if ((trade.mode === "live" || trade.mode === "sandbox") && state.accessToken) {
-          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "sandbox");
+       if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
+          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "demo");
           if (!partialOrderId) {
             state.lastError = `Partial 1R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 1R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
@@ -4938,8 +4938,8 @@ async function tick(
       const bookPnl = trade.direction === "BUY"
         ? (trade.partial2RPrice - trade.entryPrice) * bookQty
         : (trade.entryPrice - trade.partial2RPrice) * bookQty;
-       if ((trade.mode === "live" || trade.mode === "sandbox") && state.accessToken) {
-          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "sandbox");
+       if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
+          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "demo");
           if (!partialOrderId) {
             state.lastError = `Partial 2R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 2R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
@@ -5088,7 +5088,7 @@ async function tick(
           avgQty = Math.max(lotSize, Math.floor(avgQty / lotSize) * lotSize); // Round to lot size
 
           // For live mode: place the order first
-          if ((trade.mode === "live" || trade.mode === "sandbox") && state.accessToken) {
+          if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
            const avgOrderDir = trade.direction; // Same direction as original trade
             // Margin check before averaging
             const avgOrderValue = avgPrice * avgQty;
@@ -5101,7 +5101,7 @@ async function tick(
               trade.averageCount = 1; // Prevent retry spam
               return;
             }
-            const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty, state.lotSize, state.mode === "sandbox");
+            const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty, state.lotSize, state.mode === "demo");
             if (!avgOrderId) {
               // Order failed — don't average, just log
               console.warn(`[BotEngine] ${state.sessionToken} — AVERAGING order REJECTED by Upstox`);
@@ -5245,13 +5245,13 @@ async function tick(
       // Use remaining quantity (after partial booking) for P&L on the remaining position
       const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
       let remainPnl = trade.direction === "BUY" ? (effectivePrice - trade.entryPrice) * remainingQty : (trade.entryPrice - effectivePrice) * remainingQty;
-      // v3: paper-mode brokerage + slippage simulation
-      if (trade.mode === "paper") {
-        const pc = getPaperCostConfig(state.sessionToken);
-        remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, effectivePrice, remainingQty, pc.brokerage, pc.slippagePct);
+      // v3: demo-mode brokerage + slippage simulation
+      if (trade.mode === "demo") {
+        const pc = getDemoCostConfig(state.sessionToken);
+        remainPnl = applyDemoCosts(remainPnl, trade.entryPrice, effectivePrice, remainingQty, pc.brokerage, pc.slippagePct);
       }
       const totalPnl  = remainPnl + trade.bookedPnl;
-      if ((trade.mode === "live" || trade.mode === "sandbox") && state.accessToken) {
+      if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
         // ── POSITION SYNC: Fetch actual Upstox position qty to handle duplicate order scenarios ──
         // If the bot placed duplicate orders (due to past bugs), the actual Upstox position
@@ -5275,11 +5275,11 @@ async function tick(
         } catch (posErr) {
           console.warn(`[BotEngine] Position sync failed, using bot's qty (${remainingQty}):`, posErr instanceof Error ? posErr.message : String(posErr));
         }
-        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "sandbox");
+        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "demo");
         if (!exitOrderId) {
           // Retry once after 2 seconds — network blip or brief Upstox outage
           await new Promise(r => setTimeout(r, 2000));
-          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "sandbox");
+          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "demo");
         }
         if (!exitOrderId) {
           // Both attempts failed — keep trade open, alert user to close manually
@@ -5292,7 +5292,7 @@ async function tick(
         let exitVerification: { status: string; avgPrice?: number } = { status: "unknown" };
         for (let vAttempt = 1; vAttempt <= 3; vAttempt++) {
           await new Promise(r => setTimeout(r, vAttempt === 1 ? 2000 : 2500));
-          exitVerification = await verifyUpstoxOrderStatus(state.accessToken, exitOrderId, state.mode === "sandbox");
+          exitVerification = await verifyUpstoxOrderStatus(state.accessToken, exitOrderId, state.mode === "demo");
           if (exitVerification.status === "complete" || exitVerification.status === "traded") break;
           if (exitVerification.status === "rejected" || exitVerification.status === "cancelled") break;
         }
@@ -6167,7 +6167,7 @@ async function tick(
       } else {
         // MCX futures token resolve failed.
         // Skip the trade in ALL cases when a token is present — the token is likely expired.
-        // Only use mock premiums when there is NO token at all (no-token paper mode).
+        // Only use mock premiums when there is NO token at all (no-token demo mode).
         console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping trade.`);
         emitActivity(state.sessionToken, "error", `⚠ MCX futures resolve failed for ${symbol} — cannot find active futures contract. Upstox instruments API may be down or token expired. Refresh token in Settings.`);
         // Don't return — let trade continue with estimated premium below
@@ -6213,10 +6213,10 @@ async function tick(
 
     if (!resolved) {
       // Option resolve failed.
-      // In paper mode WITH a token: the token is likely expired — skip the trade, do NOT use fake mock premiums.
-      // In paper mode WITHOUT a token: fall back to mock premium (handled by the else-if block below).
+      // In demo mode WITH a token: the token is likely expired — skip the trade, do NOT use fake mock premiums.
+      // In demo mode WITHOUT a token: fall back to mock premium (handled by the else-if block below).
       // In live mode: always skip.
-      if (state.mode === "live" || state.mode === "sandbox" || state.accessToken) {
+      if (state.mode === "live" || state.mode === "demo" || state.accessToken) {
         // Compute what the bot WOULD have bought for the activity log
         const symSkip = state.instrumentSymbol.toUpperCase();
         let strikeStepSkip = 50;
@@ -6227,12 +6227,12 @@ async function tick(
         else if (symSkip.includes("BANK")) strikeStepSkip = 100;
         const estimatedStrike = state.lastPrice > 0 ? Math.round(state.lastPrice / strikeStepSkip) * strikeStepSkip : 0;
         const wouldBuy = `${state.instrumentLabel} ${estimatedStrike} ${ceOrPe}`;
-        const reason = (state.mode === "live" || state.mode === "sandbox") ? "live mode — cannot trade without confirmed contract" : "option contract lookup failed (price quote OK → token valid, but no matching option contracts found for this expiry)";
+        const reason = (state.mode === "live" || state.mode === "demo") ? "live mode — cannot trade without confirmed contract" : "option contract lookup failed (price quote OK → token valid, but no matching option contracts found for this expiry)";
         console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option (${reason}). Skipping trade.`);
         emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Would buy ${wouldBuy} but option contract lookup failed. Underlying price ₹${state.lastPrice.toFixed(2)} fetched OK (token valid). Issue: no live option contracts matched for ${resolvedUnderlying}. Check: is this contract expired? Try refreshing token or restarting bot.`);
         return;
       }
-      // Paper mode with no token: SKIP the trade (never use mock prices — they create fake trades)
+      // Demo mode with no token: SKIP the trade (never use mock prices — they create fake trades)
       console.warn(`[BotEngine] ${state.sessionToken} — No access token, cannot resolve option. Skipping trade.`);
       emitActivity(state.sessionToken, "error", `⚠ SKIPPED: No Upstox access token — cannot get real option prices. Go to Settings → connect your Upstox account.`);
       return;
@@ -6515,7 +6515,7 @@ async function tick(
   // The direction (BUY/SELL) in the trade log refers to the underlying signal direction.
   // The actual order placed is always a BUY of the option contract.
   let orderId: string | undefined;
-  if ((state.mode === "live" || state.mode === "sandbox") && state.accessToken) {
+  if ((state.mode === "live" || state.mode === "demo") && state.accessToken) {
     // ── TOKEN VALIDATION: Cross-check resolved token before placing order ──────
     // The Upstox option chain API sometimes returns mismatched instrument_key for a strike.
     // Validate the token's actual strike matches what we resolved.
@@ -6551,7 +6551,7 @@ async function tick(
       return;
     }
     console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — PLACING LIVE ORDER: ${tradeInstrumentToken} ${orderDirection} qty=${quantity}`);
-    const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity, state.lotSize, state.mode === "sandbox");
+    const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity, state.lotSize, state.mode === "demo");
     if (!oid) {
       // CRITICAL: if the order was rejected by Upstox, do NOT record a phantom trade.
       // Log the failure and skip this tick entirely.
@@ -6584,7 +6584,7 @@ async function tick(
     let verification: { status: string; rejectionReason?: string; filledQty?: number; avgPrice?: number } = { status: "unknown" };
     for (let attempt = 1; attempt <= 3; attempt++) {
       await new Promise(r => setTimeout(r, attempt === 1 ? 2500 : 3000)); // 2.5s first, then 3s
-      verification = await verifyUpstoxOrderStatus(state.accessToken, orderId, state.mode === "sandbox");
+      verification = await verifyUpstoxOrderStatus(state.accessToken, orderId, state.mode === "demo");
       console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Order ${orderId} verify attempt ${attempt}/3: status=${verification.status} | filled=${verification.filledQty} | avgPrice=${verification.avgPrice} | reason=${verification.rejectionReason ?? "none"}`);
       // Definitive answers — stop retrying
       if (verification.status === "complete" || verification.status === "traded" ||
@@ -6630,8 +6630,8 @@ async function tick(
       console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ✅ Using ACTUAL fill price from Upstox: ₹${actualFillPrice} (overrides candle estimate)`);
     }
     emitActivity(state.sessionToken, "signal", `✅ Order FILLED & VERIFIED: ${orderId} @ ₹${actualFillPrice ?? "market"} (actual Upstox fill price)`);
-  } else if ((state.mode === "live" || state.mode === "sandbox") && !state.accessToken) {
-    // CRITICAL FIX: If mode is "live" but accessToken is null, do NOT silently record a paper trade.
+  } else if ((state.mode === "live" || state.mode === "demo") && !state.accessToken) {
+    // CRITICAL FIX: If mode is "live" but accessToken is null, do NOT silently record a demo trade.
     // This was the root cause of "trades on dashboard but not in Upstox" bug.
     state.lastError = `LIVE mode but no access token — cannot place real order. Refresh your Upstox token.`;
     emitActivity(state.sessionToken, "error", `🚨 BLOCKED: Bot is in LIVE mode but has no Upstox access token. Trade NOT placed. Go to Settings → refresh your token.`);
@@ -6775,7 +6775,7 @@ async function tick(
     return;
   }
 
-  // Determine mock key for paper-mode option premium lookup at exit time
+  // Determine mock key for demo-mode option premium lookup at exit time
   // Must match the same logic used at entry time above
   let optionMockKey: string | undefined;
   if (isOptionsMode) {
@@ -6804,7 +6804,7 @@ async function tick(
     partial1RPrice, partial2RPrice, partialBooked: 0, bookedQty: 0, bookedPnl: 0,
     isHeroZero: signal.isHeroZero, heroZeroPremiumEntry: signal.isHeroZero ? signal.entryPrice : undefined,
     isIndexOptions: isOptionsMode, optionMockKey,
-    entryUnderlyingPrice: isOptionsMode ? price : undefined, // underlying price at entry for paper mode delta drift
+    entryUnderlyingPrice: isOptionsMode ? price : undefined, // underlying price at entry for demo mode delta drift
     signalReason: signalLabel, signalLayer: signal.layer,
   };
 
@@ -6878,7 +6878,7 @@ async function tick(
 
 export type TradeInsert = {
   symbol: string; symbolLabel: string; instrumentToken: string;
-  direction: "BUY" | "SELL"; mode: "paper" | "sandbox" | "live";
+  direction: "BUY" | "SELL"; mode: "demo" | "live";
   entryPrice: number; quantity: number; slPrice: number; targetPrice: number;
   atr: number; confidence: number; status: "open" | "closed" | "cancelled";
   upstoxOrderId?: string; signalReason: string; enteredAt: Date;
@@ -6936,7 +6936,7 @@ export function startBot(
     if (!token.startsWith("PAPER_OPT|")) {
       state.optionTradeToken = token;
     } else if (state.accessToken) {
-      // Paper mode with PAPER_OPT token: try to re-resolve the real option token
+      // Demo mode with PAPER_OPT token: try to re-resolve the real option token
       // so we can fetch live quotes for accurate P&L display
       // MUST resolve synchronously before starting tick interval
       state._pendingOptionResolve = (async () => {
@@ -7227,7 +7227,7 @@ export async function forceAverageDown(sessionToken: string): Promise<{ success:
   avgQty = Math.max(lotSize, Math.floor(avgQty / lotSize) * lotSize);
   
   // For live mode: place the order
-  if ((trade.mode === "live" || trade.mode === "sandbox") && state.accessToken) {
+  if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
     // Margin check before manual averaging
     const manualAvgOrderValue = avgPrice * avgQty;
     const isMcxManualAvg = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
@@ -7238,7 +7238,7 @@ export async function forceAverageDown(sessionToken: string): Promise<{ success:
       sendTelegramAlert(state, `🚫 <b>MARGIN BLOCK (Manual AVG)</b>\n${trade.symbolLabel}\nNeed: ₹${manualAvgOrderValue.toFixed(0)} | Available: ₹${manualAvgMargin.toFixed(0)}`, "criticalAlerts");
       return { success: false, error: `Insufficient margin: need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)}` };
     }
-    const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction, avgQty, state.lotSize, state.mode === "sandbox");
+    const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction, avgQty, state.lotSize, state.mode === "demo");
     if (!avgOrderId) {
       trade.averageCount = 1; // Prevent retry spam
       return { success: false, error: "Upstox order rejected" };

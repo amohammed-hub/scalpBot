@@ -16,8 +16,8 @@ import {
   computeMarketRiskScore, getCachedRiskScore, getStoplossGuardState,
   updateStoplossGuard, checkPortfolioDrawdown, resetPortfolioHalt,
   getPortfolioStatus, canOpenNewTrade, executeKillSwitch,
-  recordTradeClose, isCooldownActive, applyPaperCosts, resetDailyState,
-  getPaperCostConfig, setPaperCostConfig,
+  recordTradeClose, isCooldownActive, applyDemoCosts, resetDailyState,
+  getDemoCostConfig, setDemoCostConfig,
   fetchIndiaVix,
 } from "./riskManager";
 import { fetchOptionsAnalytics, getCachedAnalytics, selectSmartStrike, checkOiConfluence } from "./optionsAnalytics";
@@ -177,10 +177,10 @@ export const appRouter = router({
         console.log(`[saveAccessToken] Token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
         return { success: true };
       }),
-    saveSandboxToken: publicProcedure
+    saveDemoToken: publicProcedure
       .input(z.object({
         sessionToken: sessionTokenSchema,
-        sandboxToken: z.string().min(1),
+        demoToken: z.string().min(1),
       }))
       .mutation(async ({ input, ctx }) => {
         await verifySessionOwnership(ctx, input.sessionToken);
@@ -189,11 +189,11 @@ export const appRouter = router({
         const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
         await db
           .update(upstoxCredentials)
-          .set({ sandboxToken: input.sandboxToken, tokenExpiresAt: expires })
+          .set({ sandboxToken: input.demoToken, tokenExpiresAt: expires })
           .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
-        // Hot-reload: update all running sandbox bots with the new token
-        const botsUpdated = hotReloadAccessToken(input.sandboxToken, input.sessionToken, true);
-        console.log(`[saveSandboxToken] Sandbox token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
+        // Hot-reload: update all running demo bots with the new token
+        const botsUpdated = hotReloadAccessToken(input.demoToken, input.sessionToken, true);
+        console.log(`[saveDemoToken] Sandbox token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
         return { success: true };
       }),
 
@@ -352,7 +352,7 @@ export const appRouter = router({
         instrumentToken: z.string().default("NSE_EQ|INE009A01021"),
         instrumentSymbol: z.string().default("RELIANCE"),
         instrumentLabel: z.string().default("Reliance Industries"),
-        mode: z.enum(["paper", "sandbox", "live"]).default("paper"),
+        mode: z.enum(["demo", "live"]).default("demo"),
         capital: z.number().default(100000),
         riskPerTradePct: z.number().default(1.0),
         maxTradesPerDay: z.number().default(5),
@@ -470,7 +470,7 @@ export const appRouter = router({
 
         // Load access token for BOTH paper and live modes.
         // Paper mode uses it for real market data (candles, quotes) but skips actual order placement.
-        // This ensures paper trades reflect real prices — not fake mock values.
+        // This ensures demo trades reflect real prices — not fake mock values.
         let accessToken: string | null = null;
         const baseTokenForCreds2 = input.sessionToken.replace(/-slot\d+$/, "");
         const creds = await db
@@ -479,7 +479,7 @@ export const appRouter = router({
           .where(eq(upstoxCredentials.sessionToken, baseTokenForCreds2))
           .limit(1);
         if (creds.length > 0 && creds[0].accessToken) {
-          accessToken = input.mode === "sandbox" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
+          accessToken = input.mode === "demo" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
         }
 
         // FALLBACK: Only allow credential migration for verified admin sessions.
@@ -546,12 +546,12 @@ export const appRouter = router({
         }
 
         if (input.mode === "live") {
-          // Paper-trade safety gate: require at least 3 closed paper trades before going live
+          // Demo-trade safety gate: require at least 3 closed demo trades before going live
           // Admin bypass: admin account can skip this gate
           if (!isAdminSession) {
-            // Count paper trades across ALL slots for this user (base session + any slot suffix)
+            // Count demo trades across ALL slots for this user (base session + any slot suffix)
             const baseSession = input.sessionToken.replace(/-slot\d+$/, "");
-            const paperTradeRows = await db
+            const demoTradeRows = await db
               .select({ count: count() })
               .from(tradeLog)
               .where(and(
@@ -559,13 +559,13 @@ export const appRouter = router({
                   eq(tradeLog.sessionToken, baseSession),
                   like(tradeLog.sessionToken, `${baseSession}-slot%`),
                 ),
-                eq(tradeLog.mode, "paper"),
+                eq(tradeLog.mode, "demo"),
                 eq(tradeLog.status, "closed"),
               ));
-            const paperTradeCount = paperTradeRows[0]?.count ?? 0;
-            if (paperTradeCount < 3) {
+            const demoTradeCount = demoTradeRows[0]?.count ?? 0;
+            if (demoTradeCount < 3) {
               throw new Error(
-                `Safety gate: Complete at least 3 paper trades before going live. You have ${paperTradeCount} closed paper trade(s) across all slots. This protects you from going live without verifying the bot works correctly.`
+                `Safety gate: Complete at least 3 demo trades before going live. You have ${demoTradeCount} closed demo trade(s) across all slots. This protects you from going live without verifying the bot works correctly.`
               );
             }
           }
@@ -611,7 +611,7 @@ export const appRouter = router({
           const slDist0 = Math.abs((t.entryPrice ?? 0) - (t.slPrice ?? 0));
           const p1 = t.partial1RPrice ?? (t.direction === "BUY" ? t.entryPrice + slDist0 : t.entryPrice - slDist0);
           const p2 = t.partial2RPrice ?? (t.direction === "BUY" ? t.entryPrice + slDist0 * 2 : t.entryPrice - slDist0 * 2);
-          // Derive optionMockKey from symbol so paper-mode exit price uses option premium, not spot
+          // Derive optionMockKey from symbol so demo-mode exit price uses option premium, not spot
           let restoredOptionMockKey: string | undefined;
           if (input.isIndexOptions) {
             const sym0 = (t.symbol ?? "").toUpperCase();
@@ -754,7 +754,7 @@ export const appRouter = router({
           symbolLabel: string;
           instrumentToken: string;
           direction: "BUY" | "SELL";
-          mode: "paper" | "sandbox" | "live";
+          mode: "demo" | "live";
           entryPrice: number;
           quantity: number;
           slPrice: number;
@@ -1145,9 +1145,9 @@ export const appRouter = router({
             .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken) {
-            accessToken = row.mode === "sandbox" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
+            accessToken = row.mode === "demo" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
           }
-          if ((row.mode === "live" || row.mode === "sandbox") && !accessToken) {
+          if ((row.mode === "live" || row.mode === "demo") && !accessToken) {
             throw new Error("No Upstox access token. Connect your account first.");
           }
         }
@@ -1179,7 +1179,7 @@ export const appRouter = router({
           symbolLabel: openTradeRows[0].symbolLabel ?? openTradeRows[0].symbol,
           instrumentToken: openTradeRows[0].instrumentToken ?? row.instrumentToken ?? "",
           direction: openTradeRows[0].direction as "BUY" | "SELL",
-          mode: openTradeRows[0].mode as "paper" | "live",
+          mode: openTradeRows[0].mode as "demo" | "live",
           entryPrice: openTradeRows[0].entryPrice,
           quantity: openTradeRows[0].quantity,
           slPrice: openTradeRows[0].slPrice ?? 0,
@@ -1247,7 +1247,7 @@ export const appRouter = router({
             sessionToken: input.sessionToken,
             sessionId,
             status: "running",
-            mode: row.mode ?? "paper",
+            mode: row.mode ?? "demo",
             instrumentToken: row.instrumentToken ?? "NSE_EQ|INE009A01021",
             instrumentSymbol: row.instrumentSymbol ?? "RELIANCE",
             instrumentLabel: row.instrumentLabel ?? "Reliance Industries",
@@ -1534,17 +1534,17 @@ export const appRouter = router({
           ? (input.exitPrice - trade.entryPrice) * remainingQty
           : (trade.entryPrice - input.exitPrice) * remainingQty;
 
-        // Apply paper-mode brokerage + slippage (consistent with auto-exit paths)
-        if (trade.mode === "paper") {
-          const pc = getPaperCostConfig();
-          remainPnl = applyPaperCosts(remainPnl, trade.entryPrice, input.exitPrice, remainingQty, pc.brokerage, pc.slippagePct);
+        // Apply demo-mode brokerage + slippage (consistent with auto-exit paths)
+        if (trade.mode === "demo") {
+          const pc = getDemoCostConfig();
+          remainPnl = applyDemoCosts(remainPnl, trade.entryPrice, input.exitPrice, remainingQty, pc.brokerage, pc.slippagePct);
         }
         // Include already-booked partial profits in total P&L
         const pnl = remainPnl + (trade.bookedPnl ?? 0);
 
         // Place real exit order in live mode
         let orderId: string | null = null;
-        if (trade.mode === "live" || trade.mode === "sandbox") {
+        if (trade.mode === "live" || trade.mode === "demo") {
           // Use trade's own sessionToken for credential lookup (handles cross-session fallback)
           const creds = await db
             .select()
@@ -2374,7 +2374,7 @@ export const appRouter = router({
             // Candle readiness: how many 1m candles collected vs 20 needed to trade
             candlesCount: inMem?.candles?.length ?? 0,
             // hasRealData: true when bot has loaded real candles from Upstox API.
-            // The Upstox intraday candle API works without auth, so paper mode also gets real data.
+            // The Upstox intraday candle API works without auth, so demo mode also gets real data.
             // We consider data "real" when candles have been loaded (count > 0) OR access token is present.
             hasRealData: !!(inMem?.accessToken) || (inMem?.candles?.length ?? 0) > 0,
             // Current option premium price (for unrealised P&L calculation in slot cards)
@@ -2497,7 +2497,7 @@ export const appRouter = router({
         instrumentToken: z.string(),
         instrumentSymbol: z.string(),
         instrumentLabel: z.string(),
-        mode: z.enum(["paper", "sandbox", "live"]).default("paper"),
+        mode: z.enum(["demo", "live"]).default("demo"),
         capital: z.number().default(50000),
         riskPerTradePct: z.number().default(1.0),
         maxTradesPerDay: z.number().default(5),
@@ -2630,7 +2630,7 @@ export const appRouter = router({
             .where(eq(upstoxCredentials.sessionToken, baseTokenForCreds))
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken) {
-            accessToken = input.mode === "sandbox" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
+            accessToken = input.mode === "demo" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
           }
           // FALLBACK: Only admin can use the fallback credential lookup
           if (!accessToken) {
@@ -4183,7 +4183,7 @@ export const appRouter = router({
 
   // ── Paper-to-Live Readiness ──────────────────────────────────────────────────
   readiness: router({
-    /** Evaluate paper-mode performance against go-live thresholds */
+    /** Evaluate demo-mode performance against go-live thresholds */
     check: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .query(async ({ input }) => {
@@ -4193,7 +4193,7 @@ export const appRouter = router({
         const tokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
         const trades = await db.select({ pnl: tradeLog.pnl, mode: tradeLog.mode, entryPrice: tradeLog.entryPrice, quantity: tradeLog.quantity })
           .from(tradeLog)
-          .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed"), eq(tradeLog.mode, "paper")))
+          .where(and(inArray(tradeLog.sessionToken, tokens), eq(tradeLog.status, "closed"), eq(tradeLog.mode, "demo")))
           .orderBy(desc(tradeLog.exitedAt))
           .limit(100);
 
@@ -4232,14 +4232,14 @@ export const appRouter = router({
   }),
 
   // ── Paper Costs Config ───────────────────────────────────────────────────────
-  paperCosts: router({
-    /** Get current paper cost settings */
-    get: publicProcedure.query(() => getPaperCostConfig("default")),
+  demoCosts: router({
+    /** Get current demo cost settings */
+    get: publicProcedure.query(() => getDemoCostConfig("default")),
 
-    /** Update paper cost settings */
+    /** Update demo cost settings */
     update: publicProcedure
       .input(z.object({ brokerage: z.number().min(0).max(200).default(20), slippagePct: z.number().min(0).max(1).default(0.05) }))
-      .mutation(async ({ input }) => await setPaperCostConfig(input.brokerage, input.slippagePct, "default")),
+      .mutation(async ({ input }) => await setDemoCostConfig(input.brokerage, input.slippagePct, "default")),
   }),
 
   // ── Precision Verification ──────────────────────────────────────────────────
