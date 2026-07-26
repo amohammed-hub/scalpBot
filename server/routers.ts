@@ -2307,7 +2307,25 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema, isAdmin: z.boolean().default(false) }))
       .query(async ({ input }) => {
         const db = await getDb();
-        const slotTokens = getSlotTokens(input.sessionToken, input.isAdmin);
+        // Determine actual slot count from user's extraBotSlots in DB
+        let userMaxSlots = 3; // default for regular users
+        if (db) {
+          try {
+            const [userRows]: any = await db.execute(sql`SELECT role, extraBotSlots FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            const userRow = Array.isArray(userRows) ? userRows[0] : userRows;
+            if (userRow) {
+              const extra = userRow.extraBotSlots ?? 0;
+              if (userRow.role === "admin" || input.isAdmin) {
+                // Admin: extraBotSlots IS the total (set by admin panel)
+                userMaxSlots = Math.max(3, extra);
+              } else {
+                // Regular user: base 3 + extra from referrals
+                userMaxSlots = 3 + extra;
+              }
+            }
+          } catch { /* fallback to 3 */ }
+        }
+        const slotTokens = getSlotTokens(input.sessionToken, userMaxSlots);
         // Load DB rows for all 3 slot tokens in one pass
         const dbRows: Record<string, typeof botSessions.$inferSelect> = {};
         const nowMs_ = Date.now(); const istOff_ = 5.5 * 60 * 60 * 1000; const istN_ = new Date(nowMs_ + istOff_); istN_.setUTCHours(0, 0, 0, 0); const todayStart = new Date(istN_.getTime() - istOff_);
@@ -5178,13 +5196,13 @@ export type AppRouter = typeof appRouter;
 import { sendTelegramMessage } from "./botEngine";
 
 // Helper: get all slot tokens for a session (includes slot3 for admin)
-function getSlotTokens(sessionToken: string, includeSlot3 = true): string[] {
-  // Dynamic slot generation: base 3 slots + up to 7 extra (for admin/referral bonus)
-  const tokens = [sessionToken, `${sessionToken}-slot1`, `${sessionToken}-slot2`];
-  if (includeSlot3) {
-    for (let i = 3; i <= 9; i++) {
-      tokens.push(`${sessionToken}-slot${i}`);
-    }
+function getSlotTokens(sessionToken: string, includeSlot3: boolean | number = true): string[] {
+  // Dynamic slot generation: limited by maxSlots parameter
+  // includeSlot3 is now treated as maxSlots when it's a number, or boolean for backward compat
+  const maxSlots = typeof includeSlot3 === "number" ? includeSlot3 : (includeSlot3 ? 10 : 3);
+  const tokens: string[] = [];
+  for (let i = 0; i < maxSlots; i++) {
+    tokens.push(i === 0 ? sessionToken : `${sessionToken}-slot${i}`);
   }
   return tokens;
 }
