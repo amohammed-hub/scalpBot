@@ -155,7 +155,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
   // Build onTradeOpen callback
   const onTradeOpen = async (trade: {
     symbol: string; symbolLabel: string; instrumentToken: string;
-    direction: "BUY" | "SELL"; mode: "paper" | "live";
+    direction: "BUY" | "SELL"; mode: "paper" | "sandbox" | "live";
     entryPrice: number; quantity: number; slPrice: number; targetPrice: number;
     atr: number; confidence: number; status: "open" | "closed" | "cancelled";
     upstoxOrderId?: string; signalReason: string; enteredAt: Date;

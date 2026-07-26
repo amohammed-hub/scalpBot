@@ -1805,3 +1805,4 @@
 - [ ] Trigger on first login only, skip/replay from Settings
 - [x] FIX: EXIT button missing on bot cards — must be RED, only visible with open trade, confirmation dialog, Upstox exit flow
 - [x] FIX: Bot slot count hardcoded to 10 — should be admin-configurable (admin can grant/remove slots for self and users)
+- [ ] Add Upstox Sandbox mode as 3rd trading mode (Paper/Sandbox/Live) — Sandbox uses Upstox sandbox API with real execution flow but fake money

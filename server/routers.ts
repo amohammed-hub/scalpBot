@@ -177,6 +177,25 @@ export const appRouter = router({
         console.log(`[saveAccessToken] Token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
         return { success: true };
       }),
+    saveSandboxToken: publicProcedure
+      .input(z.object({
+        sessionToken: sessionTokenSchema,
+        sandboxToken: z.string().min(1),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+        await db
+          .update(upstoxCredentials)
+          .set({ sandboxToken: input.sandboxToken, tokenExpiresAt: expires })
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
+        // Hot-reload: update all running sandbox bots with the new token
+        const botsUpdated = hotReloadAccessToken(input.sandboxToken, input.sessionToken, true);
+        console.log(`[saveSandboxToken] Sandbox token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
+        return { success: true };
+      }),
 
     exchangeCode: publicProcedure
       .input(z.object({
@@ -333,7 +352,7 @@ export const appRouter = router({
         instrumentToken: z.string().default("NSE_EQ|INE009A01021"),
         instrumentSymbol: z.string().default("RELIANCE"),
         instrumentLabel: z.string().default("Reliance Industries"),
-        mode: z.enum(["paper", "live"]).default("paper"),
+        mode: z.enum(["paper", "sandbox", "live"]).default("paper"),
         capital: z.number().default(100000),
         riskPerTradePct: z.number().default(1.0),
         maxTradesPerDay: z.number().default(5),
@@ -460,7 +479,7 @@ export const appRouter = router({
           .where(eq(upstoxCredentials.sessionToken, baseTokenForCreds2))
           .limit(1);
         if (creds.length > 0 && creds[0].accessToken) {
-          accessToken = creds[0].accessToken;
+          accessToken = input.mode === "sandbox" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
         }
 
         // FALLBACK: Only allow credential migration for verified admin sessions.
@@ -735,7 +754,7 @@ export const appRouter = router({
           symbolLabel: string;
           instrumentToken: string;
           direction: "BUY" | "SELL";
-          mode: "paper" | "live";
+          mode: "paper" | "sandbox" | "live";
           entryPrice: number;
           quantity: number;
           slPrice: number;
@@ -1126,9 +1145,9 @@ export const appRouter = router({
             .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken) {
-            accessToken = creds[0].accessToken;
+            accessToken = row.mode === "sandbox" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
           }
-          if (row.mode === "live" && !accessToken) {
+          if ((row.mode === "live" || row.mode === "sandbox") && !accessToken) {
             throw new Error("No Upstox access token. Connect your account first.");
           }
         }
@@ -1525,7 +1544,7 @@ export const appRouter = router({
 
         // Place real exit order in live mode
         let orderId: string | null = null;
-        if (trade.mode === "live") {
+        if (trade.mode === "live" || trade.mode === "sandbox") {
           // Use trade's own sessionToken for credential lookup (handles cross-session fallback)
           const creds = await db
             .select()
@@ -2478,7 +2497,7 @@ export const appRouter = router({
         instrumentToken: z.string(),
         instrumentSymbol: z.string(),
         instrumentLabel: z.string(),
-        mode: z.enum(["paper", "live"]).default("paper"),
+        mode: z.enum(["paper", "sandbox", "live"]).default("paper"),
         capital: z.number().default(50000),
         riskPerTradePct: z.number().default(1.0),
         maxTradesPerDay: z.number().default(5),
@@ -2611,7 +2630,7 @@ export const appRouter = router({
             .where(eq(upstoxCredentials.sessionToken, baseTokenForCreds))
             .limit(1);
           if (creds.length > 0 && creds[0].accessToken) {
-            accessToken = creds[0].accessToken;
+            accessToken = input.mode === "sandbox" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
           }
           // FALLBACK: Only admin can use the fallback credential lookup
           if (!accessToken) {
