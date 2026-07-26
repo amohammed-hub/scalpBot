@@ -20,7 +20,7 @@ const strategies = [
 const highlights = [
   "No coding skills required",
   "80+ technical indicators",
-  "Paper trading available",
+  "Demo trading available",
   "Multiple simultaneous strategies",
   "SEBI-registered RA strategies",
   "Capital stays in your account",

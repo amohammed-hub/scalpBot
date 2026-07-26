@@ -47,7 +47,7 @@ export default function Terms() {
               <li>Maintaining the security of your Upstox API credentials</li>
               <li>Monitoring your open positions and account balance</li>
               <li>Ensuring compliance with all applicable laws and SEBI regulations</li>
-              <li>Using Paper Trade mode before deploying live capital</li>
+              <li>Using Demo mode before deploying live capital</li>
               <li>Setting appropriate risk limits and stop-losses</li>
             </ul>
           </section>

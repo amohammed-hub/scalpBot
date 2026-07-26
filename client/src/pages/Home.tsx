@@ -167,7 +167,7 @@ export default function Home() {
             View Plans & Pricing
           </Button>
         </div>
-        <p className="text-white/40 text-sm mt-4">No credit card required. Paper trading on NSE included in trial.</p>
+        <p className="text-white/40 text-sm mt-4">No credit card required. Demo trading on NSE included in trial.</p>
       </div>
 
       {/* Features */}
@@ -176,7 +176,7 @@ export default function Home() {
           {[
             { icon: Bot, title: "Secure & Private", desc: "Your Upstox API credentials are encrypted at rest on the server. Only used for automated trading — never shared with third parties.", color: "teal" },
             { icon: Shield, title: "Built-in Risk Management", desc: "ATR-based dynamic stop-loss, daily loss limit circuit breaker, 1% risk rule, and max trades per day — all enforced automatically.", color: "amber" },
-            { icon: TrendingUp, title: "Paper Trade First", desc: "Test your strategy with simulated trades before risking real money. Switch to live mode only when you're confident.", color: "purple" },
+            { icon: TrendingUp, title: "Demo Trade First", desc: "Test your strategy with simulated trades before risking real money. Switch to live mode only when you're confident.", color: "purple" },
           ].map((f) => (
             <div key={f.title} className="bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-teal-500/40 transition-colors">
               <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${f.color === "teal" ? "bg-teal-500/20" : f.color === "amber" ? "bg-amber-500/20" : "bg-purple-500/20"}`}>
@@ -225,7 +225,7 @@ export default function Home() {
                 <span className="text-white/40 text-sm">/month</span>
               </div>
               <ul className="space-y-2.5 text-left mb-6">
-                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Live + Paper Trading</li>
+                <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Live + Demo Trading</li>
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> NSE + MCX Markets</li>
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> 3 Parallel Bots</li>
                 <li className="flex items-center gap-2 text-sm text-white/70"><Check className="w-4 h-4 text-teal-400 shrink-0" /> Hero Zero Scanner</li>
@@ -301,7 +301,7 @@ export default function Home() {
         {/* Disclaimer */}
         <div className="mt-16 bg-amber-500/10 border border-amber-500/30 rounded-xl p-5 text-center">
           <p className="text-amber-400/80 text-sm">
-            <strong className="text-amber-400">Disclaimer:</strong> This is an educational tool. Trading involves significant risk. Always start with Paper Trade mode. Past performance does not guarantee future results. Not SEBI-registered financial advice.
+            <strong className="text-amber-400">Disclaimer:</strong> This is an educational tool. Trading involves significant risk. Always start with Demo mode. Past performance does not guarantee future results. Not SEBI-registered financial advice.
           </p>
         </div>
       </div>

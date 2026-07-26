@@ -259,7 +259,7 @@ export default function Dashboard() {
   const startTrialMutation = trpc.subscription.startTrial.useMutation({
     onSuccess: (data) => {
       if (data.success) {
-        toast.success("2-day free trial activated! Paper trading NSE only.");
+        toast.success("2-day free trial activated! Demo trading NSE only.");
         accessQuery.refetch();
       } else {
         toast.error(data.error || "Could not start trial");
@@ -699,7 +699,7 @@ export default function Dashboard() {
     { refetchInterval: 15000, staleTime: 10000 }
   );
 
-  // ── Paper Costs ──────────────────────────────────────────────────────────────
+  // ── Demo Costs ──────────────────────────────────────────────────────────────
   const { data: demoCosts } = trpc.demoCosts.get.useQuery(undefined, { staleTime: 30000 });
   const [localBrokerage, setLocalBrokerage] = useState(20);
   const [localSlippage, setLocalSlippage] = useState(0.05);
@@ -882,9 +882,9 @@ export default function Dashboard() {
     onError: (e: { message: string }) => toast.error(`Preset failed: ${e.message}`),
   });
 
-  // Paper Costs Update
+  // Demo Costs Update
   const updateDemoCostsMutation = trpc.demoCosts.update.useMutation({
-    onSuccess: () => toast.success("Paper costs updated."),
+    onSuccess: () => toast.success("Demo costs updated."),
     onError: (e) => toast.error(`Update failed: ${e.message}`),
   });
 
@@ -1300,7 +1300,7 @@ export default function Dashboard() {
               </button>
             </div>
             <p className="text-white/30 text-xs">
-              Trial: Paper trade NSE only | No MCX | No live trading
+              Trial: Demo trade NSE only | No MCX | No live trading
             </p>
           </div>
         </div>
@@ -1313,7 +1313,7 @@ export default function Dashboard() {
             <ShieldCheck className="w-4 h-4 shrink-0" />
             <span>
               <strong>Free Trial</strong> — {accessQuery.data.daysLeft} day{accessQuery.data.daysLeft !== 1 ? "s" : ""} remaining.
-              Paper trading NSE only.
+              Demo trading NSE only.
             </span>
           </div>
           <button onClick={() => navigate("/")} className="shrink-0 text-xs bg-white/20 hover:bg-white/30 px-3 py-1 rounded-md transition-colors">
@@ -2656,7 +2656,7 @@ export default function Dashboard() {
                         </div>
                         <button data-tour="start-button" onClick={() => handleQuickStart(bot.slot)} disabled={bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending}
                           className="w-full text-[10px] py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors disabled:opacity-50">
-                          {(bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending) ? "⏳" : `▶ Start (${config.mode === "live" ? "Live" : "Paper"})`}
+                          {(bot.slot === 0 ? startMutation.isPending : startSecondaryMutation.isPending) ? "⏳" : `▶ Start (${config.mode === "live" ? "Live" : "Demo"})`}
                         </button>
                       </>
                     ) : (
@@ -3051,7 +3051,7 @@ export default function Dashboard() {
                     {unrealizedPnl >= 0 ? "+" : ""}₹{unrealizedPnl.toFixed(0)}
                   </span>
                 )}
-                {/* Deep-link to Upstox chart — works for both paper and live */}
+                {/* Deep-link to Upstox chart — works for both demo and live */}
                 <button
                   onClick={() => {
                     const token = (inMemOpenTrade as any)?.optionTradeToken || (activeTrade as any).instrumentToken || config.instrumentToken || "";
@@ -3339,7 +3339,7 @@ export default function Dashboard() {
               <span className="font-semibold text-white">Trade Log</span>
             </div>
             <div className="flex items-center gap-4 text-sm">
-              <span className="text-[10px] text-white/25 hidden lg:inline">Paper trades unless Live mode + valid token</span>
+              <span className="text-[10px] text-white/25 hidden lg:inline">Demo trades unless Live mode + valid token</span>
               <span className="text-white/40">Total: <span className="text-white">{showAllTrades ? (allStats?.totalTrades ?? 0) : (todayStats?.todayTrades ?? 0)}</span></span>
               <span className="text-emerald-400">Wins: {showAllTrades ? (allStats?.wins ?? 0) : (todayStats?.wins ?? 0)}</span>
               <span className="text-red-400">Losses: {showAllTrades ? (allStats?.losses ?? 0) : (todayStats?.losses ?? 0)}</span>
@@ -3506,7 +3506,7 @@ export default function Dashboard() {
                     return (
                       <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                         <td className="py-2.5 pr-4 font-medium text-white text-xs">
-                          {/* Symbol — clickable link to Upstox order if live, or portfolio if paper */}
+                          {/* Symbol — clickable link to Upstox order if live, or portfolio if demo */}
                          <a
                            href="#"
                             onClick={(e) => {

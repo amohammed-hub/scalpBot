@@ -923,7 +923,7 @@ export default function Settings() {
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-start gap-2 mb-4">
                 <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <p className="text-amber-300/90 text-xs">
-                  <strong>Important:</strong> The Access Token expires every day at midnight. You must repeat these steps each morning before starting Live trading. Paper trading works without a token.
+                  <strong>Important:</strong> The Access Token expires every day at midnight. You must repeat these steps each morning before starting Live trading. Demo trading works without a token.
                 </p>
               </div>
 
@@ -1476,7 +1476,7 @@ export default function Settings() {
               ))}
             </div>
             <p className="text-xs text-white/30">
-              Bots start in <strong className="text-white/50">Paper mode</strong>. Monitor on the Dashboard → Parallel Bots panel. Switch to Live after verifying signals.
+              Bots start in <strong className="text-white/50">Demo mode</strong>. Monitor on the Dashboard → Parallel Bots panel. Switch to Live after verifying signals.
             </p>
           </div>
           )}
