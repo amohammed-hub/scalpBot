@@ -649,7 +649,7 @@ export default function Dashboard() {
 
   // Multi-bot: all 3 slots
   const { data: allBots } = trpc.multiBots.allStatus.useQuery(
-    { sessionToken, isAdmin: meQuery.data?.role === "admin" || (accessQuery.data as any)?.extraBotSlots > 0 },
+    { sessionToken, isAdmin: meQuery.data?.role === "admin" || accessQuery.data?.isAdmin === true },
     { refetchInterval: 3000, staleTime: 1000 }
   );
   // Lightweight live price polling — updates every 5 seconds independently of scan interval

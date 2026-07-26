@@ -2311,7 +2311,8 @@ export const appRouter = router({
         let userMaxSlots = 3; // default for regular users
         if (db) {
           try {
-            const [userRows]: any = await db.execute(sql`SELECT role, extraBotSlots FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            // Try finding user by sessionToken in app_users first
+            let [userRows]: any = await db.execute(sql`SELECT role, extraBotSlots FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
             const userRow = Array.isArray(userRows) ? userRows[0] : userRows;
             if (userRow) {
               const extra = userRow.extraBotSlots ?? 0;
@@ -2321,6 +2322,27 @@ export const appRouter = router({
               } else {
                 // Regular user: base 3 + extra from referrals
                 userMaxSlots = 3 + extra;
+              }
+            } else {
+              // Fallback: sessionToken might not be in app_users (different UUID per device)
+              // Check if this sessionToken exists in upstox_credentials and find the linked user
+              const [credRows]: any = await db.execute(sql`SELECT sessionToken FROM upstox_credentials WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+              const credRow = Array.isArray(credRows) ? credRows[0] : credRows;
+              if (credRow) {
+                // This sessionToken has credentials - check all app_users to find admin
+                const [allUsers]: any = await db.execute(sql`SELECT role, extraBotSlots FROM app_users ORDER BY id ASC LIMIT 5`);
+                const users = Array.isArray(allUsers) ? allUsers : [];
+                // Find the admin user (Mohammed Anas) or match by input.isAdmin
+                const adminUser = users.find((u: any) => u.role === "admin");
+                if (input.isAdmin && adminUser) {
+                  userMaxSlots = Math.max(3, adminUser.extraBotSlots ?? 4);
+                } else {
+                  // Regular user - find first non-admin with extraBotSlots
+                  const regularUser = users.find((u: any) => u.role !== "admin");
+                  if (regularUser) {
+                    userMaxSlots = 3 + (regularUser.extraBotSlots ?? 0);
+                  }
+                }
               }
             }
           } catch { /* fallback to 3 */ }
@@ -4310,12 +4332,17 @@ export const appRouter = router({
           try {
             const decoded = jwt.verify(adminToken, process.env.JWT_SECRET || "fallback-secret") as { userId: number; mobile: string; role: string };
            if (decoded.role === "admin" || decoded.mobile === ENV.adminMobile) {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: 6 };
+              // Read actual extraBotSlots from DB instead of hardcoding
+              let adminExtra = 4;
+              try { const db_ = await getDb(); if (db_) { const [r]: any = await db_.execute(sql`SELECT extraBotSlots FROM app_users WHERE id = ${decoded.userId} LIMIT 1`); const row_ = Array.isArray(r) ? r[0] : r; if (row_) adminExtra = row_.extraBotSlots ?? 4; } } catch {}
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: adminExtra };
            }
            // Also check DB for role (handles case where JWT was issued before role promotion)
            const dbUser = await getAppUserById(decoded.userId);
            if (dbUser?.role === "admin") {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: 6 };
+              let adminExtra = 4;
+              try { const db_ = await getDb(); if (db_) { const [r]: any = await db_.execute(sql`SELECT extraBotSlots FROM app_users WHERE id = ${decoded.userId} LIMIT 1`); const row_ = Array.isArray(r) ? r[0] : r; if (row_) adminExtra = row_.extraBotSlots ?? 4; } } catch {}
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: adminExtra };
            }
          } catch {}
        }
@@ -4324,10 +4351,10 @@ export const appRouter = router({
         const db = await getDb();
         if (db) {
           try {
-            const [rawRows]: any = await db.execute(sql`SELECT role, mobile FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
+            const [rawRows]: any = await db.execute(sql`SELECT role, mobile, extraBotSlots FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
             const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
             if (row && (row.role === "admin" || row.mobile === ENV.adminMobile)) {
-              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: 6 };
+              return { hasAccess: true, plan: "yearly", daysLeft: 999, trialUsed: false, isAdmin: true, tierLimits: TIER_LIMITS.admin, extraBotSlots: row.extraBotSlots ?? 4 };
             }
           } catch (e) {
             console.error("[checkAccess] admin sessionToken check failed:", e);
