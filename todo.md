@@ -1861,3 +1861,11 @@
 - [x] Add Force Reset button on Dashboard (clears paused state, monitoring flags, stale position)
 - [x] Add bot.forceReset tRPC procedure (server-side force-clear of all stuck states)
 - [x] Fix "Paused — monitoring SL/target" label to only show "monitoring SL/target" when there IS an open trade
+
+## Critical Fix — Partial Booking Blocking Target Exit
+- [x] ROOT CAUSE: Partial 1R booking calculates 50% of qty (e.g. 30 for qty=60) but lot size is 60 → Upstox rejects → code returns early → target exit NEVER reached
+- [x] FIX: Round bookQty to nearest lot size multiple; if < 1 lot, skip partial and let full target exit handle it
+- [x] FIX: Partial booking failure no longer returns early — marks partialBooked and falls through to target/SL check
+- [x] FIX: Same fix applied to partial 2R booking (same blocking bug)
+- [x] Safety net in placeUpstoxOrder: auto-correct NSE F&O qty to nearest lot size multiple
+- [ ] Cleanup orphaned bot sessions from previous deployments on server startup

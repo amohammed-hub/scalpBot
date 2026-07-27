@@ -4431,6 +4431,12 @@ export async function placeUpstoxOrder(
   if (isMcx && mcxLotSize && mcxLotSize > 0) {
     orderQty = Math.max(1, Math.round(quantity / mcxLotSize));
     console.log(`[BotEngine] MCX lot conversion: ${quantity} units / ${mcxLotSize} lot_size = ${orderQty} lots`);
+  } else if (isFnO && mcxLotSize && mcxLotSize > 0 && orderQty % mcxLotSize !== 0) {
+    // Safety net: ensure NSE F&O qty is a valid lot size multiple
+    // Prevents UDAPI1104 "Quantity should be multiple of lot size" errors
+    const correctedQty = Math.max(mcxLotSize, Math.round(orderQty / mcxLotSize) * mcxLotSize);
+    console.warn(`[BotEngine] ⚠ NSE F&O qty correction: ${orderQty} → ${correctedQty} (lot size ${mcxLotSize})`);
+    orderQty = correctedQty;
   }
   let currentToken = accessToken;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -5299,7 +5305,16 @@ async function tick(
         (trade.direction === "BUY" ? effectivePrice >= trade.partial1RPrice : effectivePrice <= trade.partial1RPrice);
      if (hit1R) {
        // Book 50% of position at 1R
-       const bookQty = Math.max(1, Math.floor(trade.quantity * 0.5));
+       const rawBookQty = Math.floor(trade.quantity * 0.5);
+       const effectiveLotSize = state.lotSize || 1;
+       // Round bookQty DOWN to nearest lot size multiple — Upstox rejects non-multiples
+       const bookQty = Math.floor(rawBookQty / effectiveLotSize) * effectiveLotSize;
+       if (bookQty < effectiveLotSize) {
+         // 50% of position is less than 1 lot — skip partial booking, let full target exit handle it
+         // Mark as "booked" with 0 qty so we don't retry every tick
+         trade.partialBooked = 1;
+         console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — SKIP partial 1R: 50% of ${trade.quantity} = ${rawBookQty} < lot size ${effectiveLotSize}. Full exit at target instead.`);
+       } else {
        const bookPnl = trade.direction === "BUY"
          ? (trade.partial1RPrice - trade.entryPrice) * bookQty
          : (trade.entryPrice - trade.partial1RPrice) * bookQty;
@@ -5309,9 +5324,12 @@ async function tick(
             state.lastError = `Partial 1R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 1R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
             sendTelegramAlert(state, `🚨 <b>PARTIAL BOOKING FAILED (1R)</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not book 50% profit. Will retry.`, "criticalAlerts");
-            return; // do NOT update bookedQty/bookedPnl — order didn't execute
+            // Don't return — fall through to target/SL exit check below
+            // This prevents partial booking failures from blocking target exits
+            trade.partialBooked = 1; // Mark as attempted so we don't retry every tick
+            console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — Partial 1R order failed, skipping partial booking. Will proceed to target/SL check.`);
           }
-       }
+          else {
        trade.bookedQty += bookQty;
         trade.bookedPnl += bookPnl;
         trade.partialBooked = 1;
@@ -5328,6 +5346,9 @@ async function tick(
           `✅ Locked: ₹${bookPnl.toFixed(0)} | SL moved to Breakeven\n` +
           `🎯 Remaining: ${trade.quantity - trade.bookedQty} qty | Next target: 2R`,
         );
+          }
+       }
+      }
         // Persist partial booking state to DB so it survives server restarts
         // Fire-and-forget DB persist (non-blocking to avoid slowing the tick)
         (async () => {
@@ -5353,7 +5374,15 @@ async function tick(
        (trade.direction === "BUY" ? effectivePrice >= trade.partial2RPrice : effectivePrice <= trade.partial2RPrice);
     if (hit2R) {
       // Book another 25% (half of remaining) at 2R
-       const bookQty = Math.max(1, Math.floor((trade.quantity - trade.bookedQty) * 0.5));
+       const rawBookQty2 = Math.floor((trade.quantity - trade.bookedQty) * 0.5);
+       const effectiveLotSize2 = state.lotSize || 1;
+       // Round bookQty DOWN to nearest lot size multiple
+       const bookQty = Math.floor(rawBookQty2 / effectiveLotSize2) * effectiveLotSize2;
+       if (bookQty < effectiveLotSize2) {
+         // Remaining 25% is less than 1 lot — skip partial booking, let full target exit handle it
+         trade.partialBooked = 2;
+         console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — SKIP partial 2R: 25% of remaining = ${rawBookQty2} < lot size ${effectiveLotSize2}. Full exit at target instead.`);
+       } else {
       const bookPnl = trade.direction === "BUY"
         ? (trade.partial2RPrice - trade.entryPrice) * bookQty
         : (trade.entryPrice - trade.partial2RPrice) * bookQty;
@@ -5363,9 +5392,11 @@ async function tick(
             state.lastError = `Partial 2R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 2R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
             sendTelegramAlert(state, `🚨 <b>PARTIAL BOOKING FAILED (2R)</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Could not book 25% profit. Will retry.`, "criticalAlerts");
-            return; // do NOT update bookedQty/bookedPnl — order didn't execute
+            // Don't return — fall through to target/SL exit check below
+            trade.partialBooked = 2; // Mark as attempted so we don't retry every tick
+            console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — Partial 2R order failed, skipping. Will proceed to target/SL check.`);
           }
-       }
+          else {
        trade.bookedQty += bookQty;
         trade.bookedPnl += bookPnl;
         trade.partialBooked = 2;
@@ -5382,6 +5413,9 @@ async function tick(
           `✅ Locked: ₹${bookPnl.toFixed(0)} | Total locked: ₹${trade.bookedPnl.toFixed(0)}\n` +
           `🛑 SL moved to 1R | Trailing ${trade.quantity - trade.bookedQty} qty to target`,
         );
+          }
+       }
+      }
         // Persist partial booking state to DB so it survives server restarts
         // Fire-and-forget DB persist (non-blocking to avoid slowing the tick)
         (async () => {
