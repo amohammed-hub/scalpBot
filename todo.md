@@ -1893,3 +1893,10 @@
 - [x] FIX: verifyUpstoxOrderStatus returns instant "complete" for demo orders
 - [x] FIX: checkUpstoxMargin returns null (unlimited) for DEMO_NO_TOKEN
 - [x] FIX: Option resolution fallback for demo mode — uses estimated strike + simulated premium instead of skipping trade
+
+## Fake Copper Trade + Bot 5 Not Activating (27 Jul — Afternoon)
+- [x] FIX: Bot 5 not activating — slot zod schema max was 3, changed to 9 (admin has 10 slots)
+- [x] FIX: Fake trade entry price bug — actualFillPrice fallback used filledQty (QUANTITY) as price. Now validates avgPrice > 0.5, no filledQty fallback.
+- [x] FIX: Phantom trade auto-cleanup at startup — any open trade with entry < ₹1 is auto-closed as phantom
+- [x] FIX: Added Force Close button to Open Positions table (admin only) for manual phantom cleanup
+- [x] FIX: Session auto-switch overriding user instruments — _userManualInstrument was NEVER set. Now set to true in startBot() so user's explicit instrument choice is never overridden.

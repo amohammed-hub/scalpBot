@@ -346,9 +346,23 @@ export async function restartRunningBots(): Promise<void> {
     const now = new Date();
     const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % 1440;
     const openTrades = await db.select().from(tradeLog).where(eq(tradeLog.status, "open"));
-    for (const t of openTrades) {
-      const enteredAt = t.enteredAt ? new Date(t.enteredAt) : null;
+   for (const t of openTrades) {
+     const enteredAt = t.enteredAt ? new Date(t.enteredAt) : null;
       if (!enteredAt) continue;
+      // PHANTOM TRADE DETECTION: If entry price is impossibly low (< ₹1), it was never actually filled.
+      // These are ghost trades from the old actualFillPrice bug (filledQty used as price).
+      if (t.entryPrice < 1.0) {
+        console.log(`[BotRestart] 🚨 PHANTOM TRADE #${t.id} (${t.symbolLabel ?? t.symbol}) — entry ₹${t.entryPrice} is impossible. Auto-closing as phantom.`);
+        await db.update(tradeLog).set({
+          status: "closed",
+          exitPrice: 0,
+          pnl: 0,
+          pnlPct: 0,
+          exitReason: "Phantom trade — never filled on Upstox (entry < ₹1)",
+          exitedAt: now,
+        }).where(eq(tradeLog.id, t.id));
+        continue;
+      }
       const tradeDate = new Date(enteredAt.getTime() + 330 * 60000).toISOString().slice(0, 10);
       const todayDate = new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
       const isStale = tradeDate < todayDate;

@@ -2651,9 +2651,9 @@ export const appRouter = router({
     // Start a secondary bot on a different instrument
     startSecondary: publicProcedure
       .input(z.object({
-        sessionToken: sessionTokenSchema,
-        slot: z.number().min(1).max(3).default(1),
-        instrumentToken: z.string(),
+       sessionToken: sessionTokenSchema,
+        slot: z.number().min(1).max(9).default(1),
+       instrumentToken: z.string(),
         instrumentSymbol: z.string(),
         instrumentLabel: z.string(),
         mode: z.enum(["demo", "live"]).default("demo"),
@@ -3053,7 +3053,7 @@ export const appRouter = router({
       }),
 
     stopSecondary: publicProcedure
-      .input(z.object({ sessionToken: sessionTokenSchema, slot: z.number().min(1).max(3) }))
+      .input(z.object({ sessionToken: sessionTokenSchema, slot: z.number().min(1).max(9) }))
       .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
         await verifySessionOwnership(ctx, input.sessionToken);

@@ -2257,8 +2257,9 @@ export default function Dashboard() {
                         <th className="text-right py-1.5 px-1 font-medium">Entry</th>
                         <th className="text-right py-1.5 px-1 font-medium">Current</th>
                         <th className="text-right py-1.5 px-1 font-medium">P&L</th>
-                        <th className="text-right py-1.5 px-1 font-medium">Duration</th>
-                      </tr>
+                       <th className="text-right py-1.5 px-1 font-medium">Duration</th>
+                        {isAdmin && <th className="text-right py-1.5 px-1 font-medium"></th>}
+                     </tr>
                     </thead>
                     <tbody>
                       {positions.map((pos, idx) => {
@@ -2312,8 +2313,23 @@ export default function Dashboard() {
                             <td className={`py-1.5 px-1 text-right font-bold tabular-nums ${isPos ? "text-emerald-400" : "text-red-400"}`}>
                               {isPos ? "+" : ""}₹{pos.pnl.toFixed(0)}
                             </td>
-                            <td className="py-1.5 px-1 text-right text-white/40 tabular-nums">{durationStr}</td>
-                          </tr>
+                           <td className="py-1.5 px-1 text-right text-white/40 tabular-nums">{durationStr}</td>
+                            {isAdmin && (
+                              <td className="py-1.5 px-1 text-right">
+                                <button
+                                  className="text-[9px] bg-red-500/20 text-red-300 hover:bg-red-500/40 px-1.5 py-0.5 rounded border border-red-500/30 transition-colors"
+                                  title="Force close this position in DB (phantom/stale trade)"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!confirm(`Force close ${pos.symbol}? This marks it as closed in DB.`)) return;
+                                    closeAllOpenMutation.mutate({ sessionToken: `${sessionToken}${pos.slot > 0 ? `-slot${pos.slot}` : ""}` });
+                                  }}
+                                >
+                                  <XCircle className="w-3 h-3 inline" />
+                                </button>
+                              </td>
+                            )}
+                         </tr>
                         );
                       })}
                     </tbody>

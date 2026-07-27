@@ -7195,11 +7195,16 @@ async function tick(
       return;
     }
 
-    // ORDER CONFIRMED FILLED — use ACTUAL fill price from Upstox (not candle estimate)
-    const actualFillPrice = verification.avgPrice ?? verification.filledQty ?? optionPremiumForSizing;
-    if (actualFillPrice && actualFillPrice > 0) {
+   // ORDER CONFIRMED FILLED — use ACTUAL fill price from Upstox (not candle estimate)
+    // Use ONLY avgPrice from Upstox (never filledQty which is a QUANTITY not a price)
+    // Also validate: avgPrice must be > 0.5 to avoid sandbox garbage values like ₹0.05 or ₹3.23
+    const rawFillPrice = verification.avgPrice;
+    const actualFillPrice = (rawFillPrice && rawFillPrice > 0.5) ? rawFillPrice : optionPremiumForSizing;
+    if (actualFillPrice && actualFillPrice > 0.5) {
       signal.entryPrice = actualFillPrice;
-      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ✅ Using ACTUAL fill price from Upstox: ₹${actualFillPrice} (overrides candle estimate)`);
+      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ✅ Using ACTUAL fill price from Upstox: ₹${actualFillPrice} (raw avgPrice: ${rawFillPrice}, optionPremium: ${optionPremiumForSizing})`);
+    } else {
+      console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ⚠️ Invalid fill price from Upstox (avgPrice=${rawFillPrice}). Using optionPremium estimate: ₹${optionPremiumForSizing}`);
     }
     emitActivity(state.sessionToken, "signal", `✅ Order FILLED & VERIFIED: ${orderId} @ ₹${actualFillPrice ?? "market"} (actual Upstox fill price)`);
   } else if ((state.mode === "live" || state.mode === "demo") && !state.accessToken) {
@@ -7498,6 +7503,8 @@ export function startBot(
     layerTradesCount: config.layerTradesCount ?? {},
   };
 
+  // Mark that user explicitly chose this instrument — prevent session auto-switch from overriding
+  (state as any)._userManualInstrument = true;
   // CRITICAL: Log whether accessToken was passed to startBot
   console.log(`[BotEngine] startBot: session=${config.sessionToken.slice(0, 8)}... mode=${config.mode} accessToken=${config.accessToken ? `SET (${config.accessToken.slice(0, 8)}...)` : "NULL ⚠"} instrument=${config.instrumentSymbol}`);
   if (config.mode === "live" && !config.accessToken) {
