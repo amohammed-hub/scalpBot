@@ -1869,3 +1869,9 @@
 - [x] FIX: Same fix applied to partial 2R booking (same blocking bug)
 - [x] Safety net in placeUpstoxOrder: auto-correct NSE F&O qty to nearest lot size multiple
 - [ ] Cleanup orphaned bot sessions from previous deployments on server startup
+
+## Critical Bugs — User Report (27 Jul)
+- [x] BUG #1: Stuck "Paused — monitoring SL/target" with no open position (auto-resume sanity check + Force Reset button)
+- [x] BUG #2: Anti-duplicate cooldown NOT working — FIXED: Added per-instrument cooldown Map (instrumentCooldowns). 30-min gap enforced between trades on same symbol. Check inserted after cross-bot direction lock. Set at trade entry. Cleared at daily reset. Console log: "DUPLICATE CHECK: ${symbol} last entry was ${minutesAgo} min ago, cooldown is 30"
+- [x] BUG #3: Time exit killing profitable trades — FIXED: At 20min, if P&L positive → activate trailing stop (50% of current profit locked in), do NOT exit. If P&L negative/flat → exit as before. Hard exit at 35min regardless. Opening Burst unchanged (10min strict).
+- [x] BUG #4: Direction flip-flopping — FIXED: Added 30-min direction lock in riskManager.ts. Once a bot picks a direction, it locks for 30min. Flip allowed early only if previous direction hit SL (confirming reversal). lockDirection() at entry, recordDirectionExit() at all exit paths, isDirectionFlipBlocked() check before entry.

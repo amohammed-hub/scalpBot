@@ -501,8 +501,74 @@ export function resetDailyState(sessionToken?: string): void {
   if (sessionToken) {
     stoplossGuardBySession.set(sessionToken, { ...defaultSlGuard });
     cooldowns.delete(sessionToken);
+    directionFlipLocks.delete(sessionToken);
   } else {
     stoplossGuardBySession.clear();
     cooldowns.clear();
+    directionFlipLocks.clear();
   }
+}
+
+// ── Direction Flip-Flop Lock ────────────────────────────────────────────────
+// BUG #4 FIX: Once a bot picks a direction (BUY CE or BUY PE), it LOCKS that
+// direction for 30 minutes. Cannot flip to opposite within that window.
+// After 30 min, opposite direction allowed ONLY if previous direction's trade hit SL
+// (confirming genuine reversal).
+interface DirectionFlipLock {
+  direction: "BUY" | "SELL"; // last trade direction
+  lockedAt: number;          // timestamp when direction was locked
+  lastExitWasSL: boolean;    // true if the last trade in this direction hit SL
+}
+const directionFlipLocks = new Map<string, DirectionFlipLock>();
+
+const DIRECTION_FLIP_LOCK_MS = 30 * 60 * 1000; // 30 minutes
+
+/** Call when a trade is opened to lock the direction */
+export function lockDirection(sessionToken: string, direction: "BUY" | "SELL"): void {
+  directionFlipLocks.set(sessionToken, {
+    direction,
+    lockedAt: Date.now(),
+    lastExitWasSL: false,
+  });
+}
+
+/** Call when a trade exits — record whether it was an SL exit */
+export function recordDirectionExit(sessionToken: string, direction: "BUY" | "SELL", wasSL: boolean): void {
+  const lock = directionFlipLocks.get(sessionToken);
+  if (lock && lock.direction === direction) {
+    lock.lastExitWasSL = wasSL;
+  }
+}
+
+/** Check if a direction flip is blocked. Returns { blocked, remainingMin, reason } */
+export function isDirectionFlipBlocked(sessionToken: string, newDirection: "BUY" | "SELL"): { blocked: boolean; remainingMin: number; reason: string } {
+  const lock = directionFlipLocks.get(sessionToken);
+  if (!lock) return { blocked: false, remainingMin: 0, reason: "" };
+  // Same direction as last trade — always allowed
+  if (lock.direction === newDirection) return { blocked: false, remainingMin: 0, reason: "" };
+  // Opposite direction — check if within 30-min lock window
+  const elapsed = Date.now() - lock.lockedAt;
+  if (elapsed >= DIRECTION_FLIP_LOCK_MS) {
+    // 30 min passed — allow flip ONLY if previous direction hit SL (confirming reversal)
+    if (lock.lastExitWasSL) {
+      return { blocked: false, remainingMin: 0, reason: "" };
+    }
+    // After 30 min without SL confirmation, still allow (lock expired)
+    return { blocked: false, remainingMin: 0, reason: "" };
+  }
+  // Within 30 min — block unless previous direction hit SL
+  if (lock.lastExitWasSL) {
+    return { blocked: false, remainingMin: 0, reason: "" }; // SL confirms reversal, allow flip
+  }
+  const remainMin = Math.ceil((DIRECTION_FLIP_LOCK_MS - elapsed) / 60000);
+  return {
+    blocked: true,
+    remainingMin: remainMin,
+    reason: `Direction locked to ${lock.direction} for ${remainMin}min (no SL confirmation for reversal)`,
+  };
+}
+
+/** Reset direction flip lock for a session */
+export function resetDirectionFlipLock(sessionToken: string): void {
+  directionFlipLocks.delete(sessionToken);
 }

@@ -15,6 +15,7 @@ import {
   recordTradeClose, isCooldownActive, applyDemoCosts, getDemoCostConfig, resetDailyState,
   recordDirectionalLoss, recordDirectionalWin, isDirectionBlocked, resetDirectionStreak,
 } from "./riskManager";
+import { lockDirection, recordDirectionExit, isDirectionFlipBlocked, resetDirectionFlipLock } from "./riskManager";
 import { fetchIndiaVix } from "./riskManager";
 
 // Production log suppression — hide strategy details in production logs
@@ -280,6 +281,9 @@ export interface ShadowSummary {
 
 // ── In-memory store ───────────────────────────────────────────────────────────
 const bots = new Map<string, BotState>();
+
+// Per-instrument cooldown: blocks re-entry on the same instrument within 30 minutes
+const instrumentCooldowns = new Map<string, number>(); // symbol → last entry timestamp (ms)
 
 // ── Telegram alert helper ─────────────────────────────────────────────────────
 export type AlertCategory = "tradeEntry" | "tradeExit" | "dailySummary" | "criticalAlerts" | "announcements";
@@ -4819,7 +4823,8 @@ async function tick(
         }
         state.capitalUsed = 0; // BUG 26: Release capital on close
         state.openTrade = null;
-        if (pnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX3); else recordDirectionalWin(state.sessionToken, trade.direction);
+        if (pnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX3); recordDirectionExit(state.sessionToken, trade.direction, false); }
+        else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
         await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
         emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
         console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
@@ -4869,8 +4874,10 @@ async function tick(
     state.boxingState = undefined; // Reset Boxing Strategy for new day
     state.orbV8State = undefined; // Reset ORB V8 Strategy for new day
     state.dailyLossAcknowledged = false; // Reset so new day's losses trigger pause correctly
+    instrumentCooldowns.clear(); // Reset per-instrument cooldowns for new day
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
     resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
+    resetDirectionFlipLock(state.sessionToken); // Clear direction flip-flop lock for new day
     emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
   }
   state.lastTradingDay = todayStr;
@@ -5181,7 +5188,8 @@ async function tick(
     state.capitalUsed = 0; // BUG 26: Release capital on close
     recordTradeClose(state.sessionToken, state.scanIntervalSec);
     const sqTotalPnl = pnl + trade.bookedPnl;
-    if (sqTotalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
+    if (sqTotalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
+    else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
     await onTradeClose(trade.dbId, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
     emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${sqTotalPnl >= 0 ? "+" : ""}₹${sqTotalPnl.toFixed(0)}`, { price: effectivePrice, pnl: sqTotalPnl });
@@ -5237,7 +5245,8 @@ async function tick(
     }
     state.openTrade = null;
     state.capitalUsed = 0; // BUG 26: Release capital on close
-    if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
+    if (totalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
+    else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
     await onTradeClose(trade.dbId, exitPx, totalPnl, "Market Closed — Auto Square-Off (midnight wraparound fix)");
     emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: exitPx, pnl: totalPnl });
     sendTelegramAlert(state,
@@ -5285,7 +5294,8 @@ async function tick(
         state.openTrade = null;
         state.capitalUsed = 0; // BUG 26: Release capital on close
         recordTradeClose(state.sessionToken, state.scanIntervalSec);
-        if (pnl + trade.bookedPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
+        if (pnl + trade.bookedPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
+        else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
         await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
         console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
         return;
@@ -5649,27 +5659,55 @@ async function tick(
     }
 
     // ── Full exit: SL or Target ───────────────────────────────────────────────
-    let exitReason: string | null = null;
+   let exitReason: string | null = null;
     const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
     // ── TIME-BASED EXIT: Exit if trade is stagnant/losing after max hold time ──
-    // For options: theta decay kills you if you hold too long without movement.
-    // Exit if: (1) trade is older than 45 minutes, AND (2) trade is in loss or flat.
-    // This prevents holding losing options that slowly bleed to zero (theta decay).
-    // Max hold: 20 minutes for all trades (scalping — no point holding longer).
-    // Opening Burst: strict 10-minute limit (moves happen in 2-3 min, don't hold long)
-    const MAX_HOLD_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : 20;
-    if (!exitReason && trade.isIndexOptions && tradeAgeMs > MAX_HOLD_MINUTES * 60 * 1000) {
+    // BUG #3 FIX: Time exit should NOT kill profitable trades.
+    // At 20 min: if profitable → activate trailing stop (50% of profit), do NOT exit.
+    // At 35 min: HARD exit regardless of P&L (absolute max hold for scalping).
+    // Opening Burst: strict 10-minute limit (moves happen in 2-3 min, always exit).
+    const SOFT_TIME_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : 20;
+    const HARD_TIME_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : 35;
+    if (!exitReason && trade.isIndexOptions && tradeAgeMs > SOFT_TIME_MINUTES * 60 * 1000) {
       const currentPnlPerUnit = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
         : trade.entryPrice - effectivePrice;
       // Opening Burst: ALWAYS exit at time limit (win or lose, done)
-      // Regular trades: exit only if in loss or barely profitable
       if (trade.signalLayer === "OpeningBurst") {
-        exitReason = `Opening Burst Time Exit (${MAX_HOLD_MINUTES}min) — close at market`;
+        exitReason = `Opening Burst Time Exit (${SOFT_TIME_MINUTES}min) — close at market`;
         emitActivity(state.sessionToken, "signal", `🚀⏰ Opening Burst time limit: held ${Math.floor(tradeAgeMs / 60000)}min — closing at market | P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}`);
-      } else if (currentPnlPerUnit < trade.entryPrice * 0.05) {
-        exitReason = `Time Exit (${MAX_HOLD_MINUTES}min) — no momentum`;
+      } else if (tradeAgeMs > HARD_TIME_MINUTES * 60 * 1000) {
+        // HARD EXIT at 35 minutes — absolute max hold regardless of P&L
+        exitReason = `Hard Time Exit (${HARD_TIME_MINUTES}min) — max hold reached`;
+        emitActivity(state.sessionToken, "signal", `⏰ Hard time exit: held ${Math.floor(tradeAgeMs / 60000)}min — max hold reached | P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}`);
+      } else if (currentPnlPerUnit <= 0) {
+        // LOSING/FLAT at 20 min → exit immediately (theta decay will kill it)
+        exitReason = `Time Exit (${SOFT_TIME_MINUTES}min) — no momentum`;
         emitActivity(state.sessionToken, "signal", `⏰ Time-based exit: held ${Math.floor(tradeAgeMs / 60000)}min with P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)} — cutting losses`);
+      } else {
+        // PROFITABLE at 20 min → activate trailing stop at 50% of current profit
+        // Trail SL = entry + 50% of current profit (locks in half the gains)
+        const trailBuffer = currentPnlPerUnit * 0.50;
+        const trailSl = trade.direction === "BUY"
+          ? trade.entryPrice + trailBuffer
+          : trade.entryPrice - trailBuffer;
+        // Only tighten the SL, never loosen it
+        if (trade.direction === "BUY" && trailSl > trade.currentSl) {
+          trade.currentSl = trailSl;
+          if (!state.alertsSent.has("time_trail_activated")) {
+            state.alertsSent.add("time_trail_activated");
+            emitActivity(state.sessionToken, "signal", `⏰✅ Time trail activated: held ${Math.floor(tradeAgeMs / 60000)}min IN PROFIT (₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}) — trailing SL moved to ₹${trailSl.toFixed(2)} (locks 50% profit)`);
+            console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — TIME TRAIL: profitable at ${Math.floor(tradeAgeMs / 60000)}min, SL tightened to ₹${trailSl.toFixed(2)} (50% of ₹${currentPnlPerUnit.toFixed(2)} profit/unit)`);
+          }
+        } else if (trade.direction === "SELL" && trailSl < trade.currentSl) {
+          trade.currentSl = trailSl;
+          if (!state.alertsSent.has("time_trail_activated")) {
+            state.alertsSent.add("time_trail_activated");
+            emitActivity(state.sessionToken, "signal", `⏰✅ Time trail activated: held ${Math.floor(tradeAgeMs / 60000)}min IN PROFIT (₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}) — trailing SL moved to ₹${trailSl.toFixed(2)} (locks 50% profit)`);
+            console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — TIME TRAIL: profitable at ${Math.floor(tradeAgeMs / 60000)}min, SL tightened to ₹${trailSl.toFixed(2)} (50% of ₹${currentPnlPerUnit.toFixed(2)} profit/unit)`);
+          }
+        }
+        // Don't set exitReason — let the trade continue with tightened SL
       }
     }
 
@@ -5789,6 +5827,8 @@ async function tick(
       state.capitalUsed = 0; // BUG 26: Release capital on close
       recordTradeClose(state.sessionToken, state.scanIntervalSec);
       if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
+      // BUG #4: Record direction exit for flip-flop lock (SL confirms reversal)
+      recordDirectionExit(state.sessionToken, trade.direction, exitReason === "Stop Loss");
       // P2: Reset underlying cooldown on a winning trade
       if (totalPnl >= 0) {
         state.consecutiveUnderlyingSLs = 0;
@@ -6459,6 +6499,19 @@ async function tick(
     return;
   }
 
+  // ── DIRECTION FLIP-FLOP LOCK (BUG #4): 30-min lock after direction change ──────────────
+  // Once a bot picks a direction (BUY/CE or SELL/PE), it cannot flip to the opposite
+  // direction within 30 minutes unless the previous direction's trade hit SL (confirming reversal).
+  const flipCheck = isDirectionFlipBlocked(state.sessionToken, signal.direction as "BUY" | "SELL");
+  if (flipCheck.blocked) {
+    emitActivity(state.sessionToken, "signal",
+      `⊘ DIRECTION FLIP BLOCKED: ${signal.direction} rejected — ${flipCheck.reason}`);
+    pushRejectedSignal(state,
+      { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
+      `Direction flip blocked: ${flipCheck.remainingMin}min remaining`);
+    return;
+  }
+
   if (signal.layer === "HourlyClose" && state.hourlyCloseSignalFired) {
     emitActivity(state.sessionToken, "signal", `⊘ HourlyClose signal skipped (already fired today)`);
     pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "HourlyClose already fired today");
@@ -6604,6 +6657,25 @@ async function tick(
           return;
         }
       }
+    }
+  }
+
+  // ── PER-INSTRUMENT COOLDOWN (30 min between trades on same instrument) ────────────────────
+  const INSTRUMENT_COOLDOWN_MS = 30 * 60 * 1000;
+  const cooldownSymbol = (state.instrumentSymbol ?? "").toUpperCase();
+  const lastEntryOnInstrument = instrumentCooldowns.get(cooldownSymbol);
+  if (lastEntryOnInstrument) {
+    const elapsedMs = Date.now() - lastEntryOnInstrument;
+    const minutesAgo = (elapsedMs / 60000).toFixed(1);
+    console.log(`[DUPLICATE CHECK] ${cooldownSymbol} last entry was ${minutesAgo} min ago, cooldown is 30`);
+    if (elapsedMs < INSTRUMENT_COOLDOWN_MS) {
+      const remainMin = Math.ceil((INSTRUMENT_COOLDOWN_MS - elapsedMs) / 60000);
+      emitActivity(state.sessionToken, "signal",
+        `⊘ INSTRUMENT COOLDOWN: ${cooldownSymbol} traded ${minutesAgo}min ago — waiting ${remainMin}min before next entry`);
+      pushRejectedSignal(state,
+        { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
+        `Instrument cooldown: ${remainMin}min remaining`);
+      return;
     }
   }
 
@@ -7238,6 +7310,10 @@ async function tick(
     state.layerTradesCount[layerKey] = (state.layerTradesCount[layerKey] ?? 0) + 1;
   }
   state.lastTradeOpenedAt = Date.now();
+  // Record per-instrument cooldown (30 min gap between trades on same symbol)
+  instrumentCooldowns.set((state.instrumentSymbol ?? "").toUpperCase(), Date.now());
+  // Lock direction for 30 min (BUG #4: prevent flip-flopping)
+  lockDirection(state.sessionToken, signal.direction as "BUY" | "SELL");
   let dbId: number;
   try {
     dbId = await onTradeOpen({
