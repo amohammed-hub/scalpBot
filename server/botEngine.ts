@@ -190,6 +190,8 @@ export interface BotState {
   dailyLossAcknowledged?: boolean;
   // Carry-forward: if true, skip auto square-off at market close and keep trade open overnight
   carryForward?: boolean;
+  // Track consecutive quote failures for open option trades — auto-close after threshold
+  optionQuoteFailCount?: number;
   // Pending option token resolution promise (awaited before first tick)
   _pendingOptionResolve?: Promise<void>;
   // Averaging settings (configurable from frontend)
@@ -4412,10 +4414,18 @@ async function checkUpstoxMargin(accessToken: string, isMcx: boolean): Promise<n
       timeout: 5000,
     });
     const data = resp.data?.data;
-    if (isMcx) {
-      return data?.commodity?.available_margin ?? null;
+    // IMPORTANT: Since July 19, 2025, Upstox returns COMBINED funds (equity + commodity)
+    // in the equity object. The commodity object always returns 0.
+    // See: https://upstox.com/developer/api-documentation/announcements/fund-margin-api-change/
+    // Always use equity.available_margin regardless of segment.
+    const margin = data?.equity?.available_margin ?? null;
+    console.log(`[BotEngine] MARGIN API: equity.available=${data?.equity?.available_margin} commodity.available=${data?.commodity?.available_margin} | using=${margin} | isMcx=${isMcx}`);
+    if (margin === 0 && isMcx) {
+      // If equity margin is also 0, try commodity as last resort (pre-July 2025 accounts)
+      const commodityMargin = data?.commodity?.available_margin;
+      if (commodityMargin && commodityMargin > 0) return commodityMargin;
     }
-    return data?.equity?.available_margin ?? null;
+    return margin;
   } catch (err) {
     console.warn(`[BotEngine] Margin check API failed (proceeding with order):`, err instanceof Error ? err.message : err);
     return null; // Don't block trading if margin API is down
@@ -5141,6 +5151,21 @@ async function tick(
             effectivePrice = entryPremium;
             state.optionPremiumPrice = entryPremium;
             console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. No last known price — freezing at entry ₹${entryPremium.toFixed(2)}.`);
+            // Track consecutive failures — auto-close trade if option token is expired/invalid
+            state.optionQuoteFailCount = (state.optionQuoteFailCount ?? 0) + 1;
+            if (state.optionQuoteFailCount >= 10) {
+              console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — EXPIRED OPTION DETECTED: ${realOptToken} failed ${state.optionQuoteFailCount} consecutive quote fetches. Auto-closing phantom trade.`);
+              // Force-close this phantom trade at entry price (0 P&L)
+              const phantomTrade = state.openTrade!;
+              // Record the close in DB via the onTradeClose callback
+              await onTradeClose(phantomTrade.dbId, phantomTrade.entryPrice, 0, "Expired Option — Auto Close");
+              state.openTrade = null;
+              state.capitalUsed = 0;
+              state.optionTradeToken = undefined;
+              state.optionQuoteFailCount = 0;
+              emitActivity(state.sessionToken, "trade_close", `⚠️ Auto-closed expired option (${realOptToken}) — quote failed 10× consecutively. Phantom trade removed.`);
+              return; // Exit tick early — trade is now closed
+            }
           }
         }
       }

@@ -1911,9 +1911,11 @@
 - [x] FIX: TOTAL_LAYER_LIMIT increased for MCX bots (10 vs 6 for NSE) — more strategies can fire per day
 
 ## CRITICAL: Phantom Price + MCX Not Trading + NSE Accuracy (27 Jul — 4:30 PM)
-- [ ] BUG: Copper PE showing ₹496.60 current price (entry ₹3.23) — impossible phantom price, P&L +₹12L is fake
-- [ ] BUG: MCX bot not triggering any LIVE trades despite being "running"
-- [ ] BUG: NSE had worst day — PF 0.36, 26% WR, -₹4978 realized. Need accuracy improvement.
-- [ ] FIX: effectivePrice sanity check — cap at 5× entry for options (no option goes from ₹3 to ₹496 in one session)
-- [ ] FIX: MCX live trade triggering — investigate why signals aren't converting to orders
-- [ ] FIX: NSE signal quality — tighten confidence threshold, add momentum confirmation
+- [x] BUG: Copper PE showing ₹496.60 current price (entry ₹3.23) — FIXED: livePrices endpoint had no sanity check + Dashboard delta fallback created phantom P&L
+- [x] BUG: MCX bot not triggering any LIVE trades despite being "running" — ROOT CAUSE: checkUpstoxMargin() read `data.commodity.available_margin` which Upstox set to ZERO since July 19, 2025. All MCX trades blocked by "need ₹X, have ₹0". FIXED: now uses `data.equity.available_margin` (combined funds).
+- [x] BUG: NSE had worst day — PF 0.36, 26% WR — ROOT CAUSE: HTF filter (1h EMA10/EMA30) was DEAD CODE (nested inside unreachable block after a return statement). All counter-trend trades went through unfiltered. FIXED: moved outside the guard.
+- [x] FIX: effectivePrice sanity check — added leak detection in livePrices endpoint (ratio > 10 = freeze) + removed all 3 delta fallback instances in Dashboard.tsx
+- [x] FIX: MCX live trade triggering — margin check now uses equity.available_margin (combined) instead of commodity.available_margin (always 0)
+- [x] FIX: NSE signal quality — HTF filter now active, blocks counter-trend signals when 1h EMA10 < EMA30
+- [x] FIX: Stale Copper PE trade — added auto-close after 10 consecutive option quote failures (expired token MCX_FO|571343)
+- [x] FIX: Added diagnostic logging to margin API response for Railway debugging
