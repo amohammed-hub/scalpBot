@@ -4807,11 +4807,20 @@ async function tick(
     state.lastTickAt = Date.now();
     // Log to activity so the user can see the bot is alive and waiting for market data
     emitActivity(state.sessionToken, "signal",
-      `⏳ Waiting for market data — token: ${signalToken} | Next scan in ${state.scanIntervalSec}s`);
-    if (onTick) onTick(state).catch(() => {});
-    // CRITICAL: If market is closed and there is an open trade, force square-off NOW.
-    // This handles the case where server restarts after market close — candles are empty
-    // but open trades must not carry overnight.
+    `⏳ Waiting for market data — token: ${signalToken} | Next scan in ${state.scanIntervalSec}s`);
+  if (onTick) onTick(state).catch(() => {});
+    // PHANTOM TRADE AUTO-DETECTION: If entry price is impossibly low (< ₹5), this trade
+    // was never actually filled on Upstox. Close it immediately.
+    if (state.openTrade && state.openTrade.entryPrice < 5.0) {
+      console.warn(`[PHANTOM] ${state.sessionToken.slice(0,8)} — Detected phantom trade: ${state.openTrade.symbolLabel} entry ₹${state.openTrade.entryPrice}. Auto-closing.`);
+      emitActivity(state.sessionToken, "trade_close", `🚫 PHANTOM TRADE DETECTED: ${state.openTrade.symbolLabel} entry ₹${state.openTrade.entryPrice} — never filled on Upstox. Auto-closing as phantom.`);
+      try { await onTradeClose(state.openTrade.dbId, 0, 0, "Phantom — entry < ₹5, never filled on Upstox"); } catch (e) { console.error("[PHANTOM] DB close failed:", e); }
+      state.openTrade = null;
+      state.optionPremiumPrice = undefined;
+    }
+  // CRITICAL: If market is closed and there is an open trade, force square-off NOW.
+  // This handles the case where server restarts after market close — candles are empty
+  // but open trades must not carry overnight.
     if (state.openTrade) {
       const now3 = new Date();
       const istMin3 = ((now3.getUTCHours() * 60 + now3.getUTCMinutes()) + 330) % 1440;
