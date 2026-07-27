@@ -5539,7 +5539,7 @@ async function tick(
     // Logic: After trade is in profit by ≥ 0.5×ATR, exit on first opposite-color Renko brick.
     // This captures the bulk of a trend move and exits at the first sign of reversal.
     // Original SL/Target still apply as safety nets.
-    if (state.candles && state.candles.length >= 10 && trade.atr > 0) {
+    if (false && state.candles && state.candles.length >= 10 && trade.atr > 0) {
       const currentPnlForRenko = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
         : trade.entryPrice - effectivePrice;
