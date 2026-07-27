@@ -1116,13 +1116,23 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .mutation(async ({ input, ctx }) => {
         await verifySessionOwnership(ctx, input.sessionToken);
-        resumeBot(input.sessionToken);
-        const db = await getDb();
-        if (db) {
-          await db
-            .update(botSessions)
-            .set({ status: "running" })
-            .where(eq(botSessions.sessionToken, input.sessionToken));
+        const inMemory = getBotState(input.sessionToken);
+        if (inMemory) {
+          resumeBot(input.sessionToken);
+        } else {
+          // Bot not in memory — might have been dropped. Try to restart it via watchdog
+          console.warn(`[Resume] Bot ${input.sessionToken.slice(0,8)} not in memory — updating DB status to running for watchdog pickup`);
+        }
+        try {
+          const db = await getDb();
+          if (db) {
+            await db
+              .update(botSessions)
+              .set({ status: "running" })
+              .where(eq(botSessions.sessionToken, input.sessionToken));
+          }
+        } catch (dbErr) {
+          console.error(`[Resume] DB update failed:`, dbErr);
         }
         return { success: true };
       }),

@@ -767,12 +767,16 @@ export default function Dashboard() {
     onError: (e) => toast.error(`Pause failed: ${e.message}`),
   });
   const resumeMutation = trpc.bot.resume.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       toast.success("▶️ Bot resumed — scanning for new signals.");
-      utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "running" } : { status: "running" });
+      // Update bot.status for primary bot
+      if (variables.sessionToken === sessionToken) {
+        utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "running" } : { status: "running" });
+      }
+      // Update allStatus for the correct slot
       utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
         if (!old) return old;
-        return old.map((b: any) => b.slot === 0 ? { ...b, status: "running" } : b);
+        return old.map((b: any) => b.sessionToken === variables.sessionToken ? { ...b, status: "running" } : b);
       });
       setTimeout(() => {
         utils.bot.status.invalidate();
@@ -2433,11 +2437,11 @@ export default function Dashboard() {
                     </div>
                  )}
                  {isPaused && (
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => resumeMutation.mutate({ sessionToken })}
-                        className="px-2 py-0.5 rounded-md bg-green-500/15 border border-green-500/30 text-green-400 hover:bg-green-500/25 text-[10px] font-medium flex items-center gap-0.5 transition-all"
-                        title="Resume bot — start scanning for new signals again"
+                   <div className="flex items-center gap-1.5">
+                     <button
+                        onClick={() => resumeMutation.mutate({ sessionToken: bot.sessionToken })}
+                       className="px-2 py-0.5 rounded-md bg-green-500/15 border border-green-500/30 text-green-400 hover:bg-green-500/25 text-[10px] font-medium flex items-center gap-0.5 transition-all"
+                       title="Resume bot — start scanning for new signals again"
                       >
                         ▶ Resume
                       </button>

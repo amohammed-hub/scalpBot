@@ -1850,3 +1850,10 @@
 ## Bug Fixes
 - [x] Fix demo-trade safety gate: admin bypass now checks BOTH isAdminSession AND isAdminViaCookie
 - [x] Fix trust proxy: add app.set("trust proxy", 1) for Cloud Run/Railway deployment
+- [x] Fix Resume button passing wrong sessionToken for slot bots (used base token instead of bot.sessionToken)
+- [x] Fix "Unable to transform response" on Resume — split mutations to non-batched httpLink via splitLink
+- [x] Fix resumeBot not resetting consecutiveRejections counter (bot stays broken after resume)
+- [x] Increase auto-pause threshold from 3 to 5 consecutive rejections (transient IP errors shouldn't pause)
+- [x] Don't count IP restriction (UDAPI1154) errors toward pause threshold (they're transient)
+- [x] Fix resume onSuccess handler to update correct slot in allStatus cache
+- [x] Make resume procedure resilient — handle bot not in memory, wrap DB update in try-catch

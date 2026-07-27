@@ -7001,9 +7001,18 @@ async function tick(
       // CRITICAL: Set cooldown to prevent infinite retry loop.
       // Without this, the bot retries every tick (3-5 sec) and floods Upstox with failed orders.
       state.lastTradeOpenedAt = Date.now(); // Triggers 2-min cooldown before next attempt
-      // Track consecutive rejections — pause bot after 3 to prevent margin drain
+      // Track consecutive rejections — pause bot after 5 to prevent margin drain
+      // (Increased from 3 to 5: IP-based rejections are transient and shouldn't cause permanent pause)
       state.consecutiveRejections = (state.consecutiveRejections ?? 0) + 1;
-      if (state.consecutiveRejections >= 3) {
+      // Don't count IP restriction errors (UDAPI1154) toward pause threshold — they're transient
+      const isIpRestriction = rejReason?.includes("UDAPI1154");
+      if (isIpRestriction) {
+        // IP restriction is transient — don't increment, just cooldown
+        state.consecutiveRejections = Math.max(0, (state.consecutiveRejections ?? 1) - 1);
+        emitActivity(state.sessionToken, "signal", `⚠ IP restriction (UDAPI1154) — transient, will retry in 2 min. Not counting toward pause threshold.`);
+        return;
+      }
+      if (state.consecutiveRejections >= 5) {
         state.status = "paused";
         state.lastError = `Bot PAUSED: ${state.consecutiveRejections} consecutive order rejections. Likely insufficient margin. Add funds or reduce position size, then restart.`;
         emitActivity(state.sessionToken, "error", `🛑 Bot AUTO-PAUSED after ${state.consecutiveRejections} consecutive order rejections. Reason: ${rejReason ?? "unknown"}. Add funds or restart manually.`);
@@ -7044,7 +7053,7 @@ async function tick(
       sendTelegramAlert(state, `🚨 <b>ORDER REJECTED BY EXCHANGE</b>\n📊 ${tradeLabel} ${orderDirection}\n❌ ${verification.rejectionReason ?? "unknown"}\n🆔 ${orderId}\n\n⚠️ Check Upstox order book.`, "criticalAlerts");
       state.lastTradeOpenedAt = Date.now(); // Cooldown
       state.consecutiveRejections = (state.consecutiveRejections ?? 0) + 1;
-      if (state.consecutiveRejections >= 3) {
+      if (state.consecutiveRejections >= 5) {
         state.status = "paused";
         state.lastError = `Bot PAUSED: ${state.consecutiveRejections} consecutive exchange rejections.`;
         emitActivity(state.sessionToken, "error", `🛑 Bot AUTO-PAUSED after ${state.consecutiveRejections} exchange rejections. Last: ${verification.rejectionReason ?? "unknown"}`);
@@ -7617,6 +7626,10 @@ export function resumeBot(sessionToken: string) {
   const state = bots.get(sessionToken);
   if (!state) return;
   state.status = "running";
+  // Reset rejection counters so bot can try placing orders again
+  state.consecutiveRejections = 0;
+  state.lastError = null;
+  state.isOpeningTrade = false; // Clear stale mutex
   emitActivity(sessionToken, "bot_resume", `Bot RESUMED — scanning for signals | Day P&L: ₹${state.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state.tradesCount ?? 0}`);
   sendTelegramAlert(state,
     `▶️ <b>BOT RESUMED</b> — ${state.instrumentLabel}\n` +
