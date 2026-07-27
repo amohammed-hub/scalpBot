@@ -1875,3 +1875,13 @@
 - [x] BUG #2: Anti-duplicate cooldown NOT working — FIXED: Added per-instrument cooldown Map (instrumentCooldowns). 30-min gap enforced between trades on same symbol. Check inserted after cross-bot direction lock. Set at trade entry. Cleared at daily reset. Console log: "DUPLICATE CHECK: ${symbol} last entry was ${minutesAgo} min ago, cooldown is 30"
 - [x] BUG #3: Time exit killing profitable trades — FIXED: At 20min, if P&L positive → activate trailing stop (50% of current profit locked in), do NOT exit. If P&L negative/flat → exit as before. Hard exit at 35min regardless. Opening Burst unchanged (10min strict).
 - [x] BUG #4: Direction flip-flopping — FIXED: Added 30-min direction lock in riskManager.ts. Once a bot picks a direction, it locks for 30min. Flip allowed early only if previous direction hit SL (confirming reversal). lockDirection() at entry, recordDirectionExit() at all exit paths, isDirectionFlipBlocked() check before entry.
+- [x] BUG #4: Direction flip-flopping — FIXED: Added 30-min direction lock in riskManager.ts. Once a bot picks a direction, it locks for 30min. Flip allowed early only if previous direction hit SL (confirming reversal). lockDirection() at entry, recordDirectionExit() at all exit paths, isDirectionFlipBlocked() check before entry.
+
+## Time Exit & Overtrading Fix (27 Jul — Post-Backtest)
+- [x] Implement Variant C (no time exit) — removed ALL time-based exits except Opening Burst 10min. Exit ONLY on SL/Target/Trail.
+- [x] Fix overtrading (29 trades/day): TOTAL_LAYER_LIMIT reduced 10→6, per-layer limits reduced, HARD CAP of 8 trades/slot/day (even admin cannot bypass)
+- [x] Backtest: Time-exit variants (A=20min all, B=smart, C=no time) — Variant C confirmed best (highest PF, lowest DD)
+- [x] Backtest: Trailing stop variants (Current/A/B/C/D) — TEST D (Red brick exit) is the clear winner:
+  - NIFTY: D → PF 0.96, P&L -453pts, Target 24%, DD 1203 (vs Current PF 0.73, P&L -2255, Target 3.2%, DD 2443)
+  - BANKNIFTY: D → PF 1.08, P&L +2279pts, Target 25.1%, DD 2666 (vs Current PF 0.69, P&L -7077, Target 1.6%, DD 7452)
+  - TEST C (no trail) also profitable on BANKNIFTY: PF 1.00, P&L +62pts, Target 31.3%

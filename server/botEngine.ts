@@ -5661,54 +5661,15 @@ async function tick(
     // ── Full exit: SL or Target ───────────────────────────────────────────────
    let exitReason: string | null = null;
     const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
-    // ── TIME-BASED EXIT: Exit if trade is stagnant/losing after max hold time ──
-    // BUG #3 FIX: Time exit should NOT kill profitable trades.
-    // At 20 min: if profitable → activate trailing stop (50% of profit), do NOT exit.
-    // At 35 min: HARD exit regardless of P&L (absolute max hold for scalping).
-    // Opening Burst: strict 10-minute limit (moves happen in 2-3 min, always exit).
-    const SOFT_TIME_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : 20;
-    const HARD_TIME_MINUTES = trade.signalLayer === "OpeningBurst" ? 10 : 35;
-    if (!exitReason && trade.isIndexOptions && tradeAgeMs > SOFT_TIME_MINUTES * 60 * 1000) {
+    // ── TIME-BASED EXIT: VARIANT C — No time exit at all ──
+    // Exit ONLY on SL, Target, or Trailing Stop (matches backtest assumption).
+    // Exception: Opening Burst strategy has strict 10-min limit (moves happen in 2-3 min).
+    if (!exitReason && trade.isIndexOptions && trade.signalLayer === "OpeningBurst" && tradeAgeMs > 10 * 60 * 1000) {
       const currentPnlPerUnit = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
         : trade.entryPrice - effectivePrice;
-      // Opening Burst: ALWAYS exit at time limit (win or lose, done)
-      if (trade.signalLayer === "OpeningBurst") {
-        exitReason = `Opening Burst Time Exit (${SOFT_TIME_MINUTES}min) — close at market`;
-        emitActivity(state.sessionToken, "signal", `🚀⏰ Opening Burst time limit: held ${Math.floor(tradeAgeMs / 60000)}min — closing at market | P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}`);
-      } else if (tradeAgeMs > HARD_TIME_MINUTES * 60 * 1000) {
-        // HARD EXIT at 35 minutes — absolute max hold regardless of P&L
-        exitReason = `Hard Time Exit (${HARD_TIME_MINUTES}min) — max hold reached`;
-        emitActivity(state.sessionToken, "signal", `⏰ Hard time exit: held ${Math.floor(tradeAgeMs / 60000)}min — max hold reached | P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}`);
-      } else if (currentPnlPerUnit <= 0) {
-        // LOSING/FLAT at 20 min → exit immediately (theta decay will kill it)
-        exitReason = `Time Exit (${SOFT_TIME_MINUTES}min) — no momentum`;
-        emitActivity(state.sessionToken, "signal", `⏰ Time-based exit: held ${Math.floor(tradeAgeMs / 60000)}min with P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)} — cutting losses`);
-      } else {
-        // PROFITABLE at 20 min → activate trailing stop at 50% of current profit
-        // Trail SL = entry + 50% of current profit (locks in half the gains)
-        const trailBuffer = currentPnlPerUnit * 0.50;
-        const trailSl = trade.direction === "BUY"
-          ? trade.entryPrice + trailBuffer
-          : trade.entryPrice - trailBuffer;
-        // Only tighten the SL, never loosen it
-        if (trade.direction === "BUY" && trailSl > trade.currentSl) {
-          trade.currentSl = trailSl;
-          if (!state.alertsSent.has("time_trail_activated")) {
-            state.alertsSent.add("time_trail_activated");
-            emitActivity(state.sessionToken, "signal", `⏰✅ Time trail activated: held ${Math.floor(tradeAgeMs / 60000)}min IN PROFIT (₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}) — trailing SL moved to ₹${trailSl.toFixed(2)} (locks 50% profit)`);
-            console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — TIME TRAIL: profitable at ${Math.floor(tradeAgeMs / 60000)}min, SL tightened to ₹${trailSl.toFixed(2)} (50% of ₹${currentPnlPerUnit.toFixed(2)} profit/unit)`);
-          }
-        } else if (trade.direction === "SELL" && trailSl < trade.currentSl) {
-          trade.currentSl = trailSl;
-          if (!state.alertsSent.has("time_trail_activated")) {
-            state.alertsSent.add("time_trail_activated");
-            emitActivity(state.sessionToken, "signal", `⏰✅ Time trail activated: held ${Math.floor(tradeAgeMs / 60000)}min IN PROFIT (₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}) — trailing SL moved to ₹${trailSl.toFixed(2)} (locks 50% profit)`);
-            console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — TIME TRAIL: profitable at ${Math.floor(tradeAgeMs / 60000)}min, SL tightened to ₹${trailSl.toFixed(2)} (50% of ₹${currentPnlPerUnit.toFixed(2)} profit/unit)`);
-          }
-        }
-        // Don't set exitReason — let the trade continue with tightened SL
-      }
+      exitReason = `Opening Burst Time Exit (10min) — close at market`;
+      emitActivity(state.sessionToken, "signal", `🚀⏰ Opening Burst time limit: held ${Math.floor(tradeAgeMs / 60000)}min — closing at market | P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}`);
     }
 
     // SAFETY GUARD: For options trades where effectivePrice is frozen at entry (no real quote available),
@@ -5873,6 +5834,16 @@ async function tick(
     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Max trades reached (${state.tradesCount}/${state.maxTradesPerDay})`, layer: "None" };
     return;
   }
+  // HARD ABSOLUTE CAP: 8 trades per slot per day — NO BYPASS, even for admin/unlimitedTrades.
+  // User reported 29 trades in one day which is overtrading. This is the safety net.
+  const ABSOLUTE_MAX_TRADES_PER_SLOT = 8;
+  if (state.tradesCount >= ABSOLUTE_MAX_TRADES_PER_SLOT && !state.openTrade) {
+    if ((state.tickCount ?? 0) % 20 === 1) {
+      console.warn(`[tick] ⚠ HARD CAP: ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${ABSOLUTE_MAX_TRADES_PER_SLOT} — absolute daily limit`);
+    }
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `HARD CAP: Max ${ABSOLUTE_MAX_TRADES_PER_SLOT} trades/day reached (${state.tradesCount})`, layer: "None" };
+    return;
+  }
 
   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
   // 1. StoplossGuard: pause after 3 consecutive SLs in last 20 trades (checked globally)
@@ -6030,18 +6001,21 @@ async function tick(
   // ── MULTI-STRATEGY ENGINE: Run ALL 4 layers in PARALLEL, pick best signal ──
   // Per-layer trade limits (max trades per day per layer)
   const LAYER_LIMITS: Record<string, number> = {
-    "RedBarTheory": 2,
-    "TrendMomentum": 3,
-    "Momentum": 3, // backward compat alias for TrendMomentum
-    "VWAPReversion": 3,
-    "TrikalStrategy": 2,
-    "Adeeb": 2,
-    "OIFlow": 2,
-    "MaxPainGravity": 2,
-    "BoxingStrategy": 2,
+    "RedBarTheory": 2,     // max 2 RedBar trades per day
+    "TrendMomentum": 2,    // reduced from 3 → 2
+    "Momentum": 2,         // backward compat alias for TrendMomentum
+    "VWAPReversion": 2,    // reduced from 3 → 2
+    "TrikalStrategy": 1,   // reduced from 2 → 1
+    "Adeeb": 1,            // reduced from 2 → 1
+    "OIFlow": 1,           // reduced from 2 → 1
+    "MaxPainGravity": 1,   // reduced from 2 → 1
+    "BoxingStrategy": 1,   // reduced from 2 → 1
     "ORB": 1, // ORB V8: max 1 trade per day (by design)
   };
-  const TOTAL_LAYER_LIMIT = 10; // max total trades across all layers per day
+  // HARD CAP: max 6 trades per day per bot slot across ALL strategies.
+  // This is a HARD limit — even unlimitedTrades cannot bypass it.
+  // User reported 29 trades in one day which is way too many.
+  const TOTAL_LAYER_LIMIT = 6;
 
   if (signal.direction === "HOLD" && state.enabledLayers && state.candles.length >= 28) {
     // Collect ALL layer signals in parallel (not sequential cascade)
@@ -6184,7 +6158,8 @@ async function tick(
       // Only check TOTAL daily limit (no per-layer limits — let each layer contribute)
       const totalLayerTrades = Object.values(state.layerTradesCount).reduce((s, v) => s + v, 0);
 
-      if (totalLayerTrades >= TOTAL_LAYER_LIMIT && !state.unlimitedTrades) {
+      if (totalLayerTrades >= TOTAL_LAYER_LIMIT) {
+        // HARD CAP: 6 trades/day/slot — even admin unlimitedTrades cannot bypass this
         devLog(`[MultiStrategy] All candidates skipped — total daily limit reached (${totalLayerTrades}/${TOTAL_LAYER_LIMIT})`);
       } else {
         // First valid signal wins — quality filters already prevent bad entries
