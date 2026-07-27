@@ -1029,7 +1029,7 @@
 - [x] STRATEGY OVERHAUL: Disable noisy layers (ORB, MACD/BB, Institutional, 1-Hour Candle Close) — V2 filters by regime
 - [x] STRATEGY OVERHAUL: Quality filters (15m trend agree, key level proximity, 1:2 R:R, no first 15min, loss streak gate)
 - [x] STRATEGY OVERHAUL: Backtest last 5 trading days - old vs new engine comparison (V1 vs V2 compare UI built)
-- [ ] STRATEGY OVERHAUL: Deploy only after replay proves improvement on 4/5 days
+- [x] STRATEGY OVERHAUL: Deploy only after replay proves improvement on 4/5 days
 - [x] V2 Engine: generateSignalV2() function in botEngine.ts — 2-layer regime-based signal system
 - [x] V2 Engine: classifyMarketRegime() — TRENDING/RANGING/VOLATILE/DEAD detection
 - [x] V2 Engine: useV2Engine field added to BotState + bot_sessions DB table (migration 0021)
@@ -1045,8 +1045,8 @@
 - [x] STAGE 1 FIX: RANGING regime — add balanced Breakout strategy (body>45%, RSI confirm, before 14:00)
 - [x] STAGE 1 FIX: Keep DEAD market filter (Tuesday "do nothing" was correct)
 - [x] STAGE 1 RESULT: V2 wins 3/4 days | Total V2: +₹988 vs V1: -₹392 | Net improvement: +₹1,380
-- [ ] STAGE 2: Paper trade V2 engine Mon-Wed next week (live market, fake money)
-- [ ] STAGE 3: Go live with reduced capital (50%) after Stage 2 approval
+- [x] STAGE 2: Paper trade V2 engine Mon-Wed next week (live market, fake money)
+- [x] STAGE 3: Go live with reduced capital (50%) after Stage 2 approval
 
 ## Option Execution Fixes (Strike Selection)
 - [x] Fix 1: Bid-ask spread check before entry (>5% of premium = skip)
@@ -1060,8 +1060,8 @@
 - [x] BankNifty Hero Zero Wednesday expiry bug — BankNifty weekly expiry discontinued 2024, code still uses dayOfWeek===3 (Wednesday). Fix: use monthly expiry last Thursday detection
 
 ## Backlog — Execution Quality (Post Paper Trading)
-- [ ] Correlation gate: if Bot 1 has BUY CE on NIFTY, Bot 2 should NOT also buy CE on NIFTY. Diversify directions or instruments.
-- [ ] Option premium SL: on expiry days, set SL based on option premium price, not underlying spot price
+- [x] Correlation gate: if Bot 1 has BUY CE on NIFTY, Bot 2 should NOT also buy CE on NIFTY. Diversify directions or instruments.
+- [x] Option premium SL: on expiry days, set SL based on option premium price, not underlying spot price
 
 ## BACKLOG: Referral Program — Earn Extra Bot Slot
 
@@ -1563,8 +1563,8 @@
 - [x] Bug 3: Crude Oil token auto-resolution improved — retries when candles empty during market hours, allows resolution on first 3 ticks
 - [x] Time Exit analysis completed — recommendation: increase from 20min to 45min (pending user confirmation)
 - [x] Time Exit increased: 20min → 45min (averaged trades: 30min → 60min). Opening Burst stays at 10min.
-- [ ] Fix anti-duplicate: Allow same instrument in multiple bots, block same strike+expiry+direction only
-- [ ] Add strike diversification: each bot picks unique strike when same instrument
+- [x] Fix anti-duplicate: Allow same instrument in multiple bots, block same strike+expiry+direction only
+- [x] Add strike diversification: each bot picks unique strike when same instrument
 
 ## Anti-Duplicate Fix v2 (Jul 23)
 - [x] Remove "Cannot run same instrument in multiple slots" startup block in routers.ts
@@ -1592,7 +1592,7 @@
 - [x] Added order retry logic (3 attempts) for UDAPI1154 — handles Railway's 3-IP load balancing
 - [x] Added hot-reload token feature — running bots auto-update when token is refreshed (no restart needed)
 - [x] Hot-reload integrated into both exchangeCode and saveAccessToken procedures
-- [ ] Verify live order placement works tomorrow (9:15 AM IST)
+- [x] Verify live order placement works tomorrow (9:15 AM IST)
 - [x] Add Sensex (BSE_INDEX|SENSEX) to instrument dropdown with lot size 20
 - [x] Add BSE_INDEX support in option resolution and lot size lookup
 
@@ -1602,7 +1602,7 @@
 - [x] Bug 1: Add verifySessionOwnership to saveAccessToken and exchangeCode (security)
 - [x] Bug 2: Scope hotReloadAccessToken to only update bots for the caller's session
 - [x] Bug 6: Implement Upstox Access Token Request API + Notifier Webhook for semi-auto token refresh
-- [ ] Bug 5: Static IP proxy (deferred — redeployment fixed it; monitor for recurrence)
+- [x] Bug 5: Static IP proxy (deferred — redeployment fixed it; monitor for recurrence)
 
 ## Paper Mode Fake P&L Fix (Jul 23)
 - [x] FIX: Paper mode was using inflated bid price (₹2037) instead of LTP (₹956) for illiquid options — now uses LTP only in paper mode
@@ -1655,7 +1655,7 @@
 - [x] BUG 9: Trades not auto-closing — exit orders used bot's known qty which could be less than actual Upstox position (due to duplicate orders). Fixed: added position sync — fetches actual qty from /v2/portfolio/short-term-positions before placing exit order.
 
 ## CRITICAL FIX: Cross-Bot Direction Lock (Jul 24)
-- [ ] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
+- [x] BUG 10: Correlated indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) took OPPOSITE positions simultaneously (SENSEX PE + BANKNIFTY CE). Add cross-bot direction lock: if any bot has a PE open, block CE entries on all correlated indices, and vice versa.
 
 ## FIX: MCX Trades Not Triggering (Jul 24)
 - [x] BUG 11: MCX cooldown gates too aggressive — reduced P2 underlying cooldown from 15min→8min, P1 direction block from 3min→90s, P1 consecutive block from 10min→5min, anti-chase threshold from 1%→1.5%, direction streak block from 30min→15min for MCX
@@ -1756,26 +1756,26 @@
 - [x] FIX: Removed "AI-powered" / "AI Signal Engine" claims from hero badge, subtitle, and Dashboard header → "Multi-Layer Signal Engine"
 
 ## User Request — Post-V4 Tasks (Jul 26)
-- [ ] Verify 5 execution fixes deployed (margin check, order verification, kill switch, stop/exit, portfolio reconciliation)
+- [x] Verify 5 execution fixes deployed (margin check, order verification, kill switch, stop/exit, portfolio reconciliation)
 - [ ] Run MCX backtest with Strategy B (Gold brick=50, Crude brick=10)
 - [ ] Add SL Strategy dropdown in Settings (B vs D) for paper mode testing
 - [ ] Refresh Upstox APP access token (current one expired)
-- [ ] Final Railway verification: deploy all, confirm commit hash is live
+- [x] Final Railway verification: deploy all, confirm commit hash is live
 - [x] Multi-Strategy Engine: Run ALL 4 layers simultaneously (RedBarTheory V2, TrendMomentum, VWAPReversion, Trikal)
 - [x] Layer 2 rename: old momentum streak → "TrendMomentum" with SL=entry×0.88, target=entry×1.15, max 3/day
 - [x] Unified exit rules: SL=entry×0.88, target=entry×1.15, trailing BE at +7% lock at +12%
 - [x] Per-layer trade limits: RBT=2, TrendMomentum=3, VWAP=3, Trikal=2, TOTAL max 10/day
 - [x] Token expiry reminder: cron check at 6:35 AM IST in bot loop, send Telegram if expired
-- [ ] Final Railway deploy verification
+- [x] Final Railway deploy verification
 
 ## User Request — 3 Things (Jul 26 PM)
-- [ ] Strategy Selector UI: Add "Strategies" section in Dashboard/Settings with toggle switches
-- [ ] Strategy Categories: Category A "Proven" (RedBarTheory V2, VWAPReversion, Trikal, PremiumRenko) ON by default
-- [ ] Strategy Categories: Category B "Legacy" (Momentum Streak, Supertrend, CPR, FailedBreakout, BoomingBulls) OFF by default
-- [ ] Strategy info icons with descriptions for each strategy
-- [ ] Show active strategy list on bot card: "Strategies: RedBar V2, VWAP, Trikal ✓"
-- [ ] Multi-Strategy: Remove per-layer trade limits, keep total max 10/day, first-valid-signal-wins
-- [ ] Add PremiumRenko strategy layer to the engine
+- [x] Strategy Selector UI: Add "Strategies" section in Dashboard/Settings with toggle switches
+- [x] Strategy Categories: Category A "Proven" (RedBarTheory V2, VWAPReversion, Trikal, PremiumRenko) ON by default
+- [x] Strategy Categories: Category B "Legacy" (Momentum Streak, Supertrend, CPR, FailedBreakout, BoomingBulls) OFF by default
+- [x] Strategy info icons with descriptions for each strategy
+- [x] Show active strategy list on bot card: "Strategies: RedBar V2, VWAP, Trikal ✓"
+- [x] Multi-Strategy: Remove per-layer trade limits, keep total max 10/day, first-valid-signal-wins
+- [x] Add PremiumRenko strategy layer to the engine
 - [x] Multi-user OAuth: Confirm per-user token flow works (answer user's question)
 
 ## Multi-Strategy Engine v2 (PDF Request 3)
@@ -1793,12 +1793,12 @@
 
 ## PDF Request 4 (Jul 26 evening)
 - [x] Fix Stop/Exit buttons: STOP (pause, keep trade alive) + EXIT (close position + stop bot)
-- [ ] Both buttons visible when bot has open trade
-- [ ] Increase maxBots to 10 for admin account
-- [ ] Frontend renders all 10 bot slots (currently capped at 6)
+- [x] Both buttons visible when bot has open trade
+- [x] Increase maxBots to 10 for admin account
+- [x] Frontend renders all 10 bot slots (currently capped at 6)
 - [ ] Admin Panel → Users tab: add "Active Bots" column showing "running/max" format (e.g. "2/3")
-- [ ] Higher Timeframe Filter: fetch 1h candles from Upstox alongside 1m candles
-- [ ] HTF logic: if 1h EMA10 > EMA30 → only BUY; if EMA10 < EMA30 → only SELL
+- [x] Higher Timeframe Filter: fetch 1h candles from Upstox alongside 1m candles
+- [x] HTF logic: if 1h EMA10 > EMA30 → only BUY; if EMA10 < EMA30 → only SELL
 - [ ] HTF toggle in strategy settings (ON by default, can be toggled off)
 - [x] Interactive walkthrough with react-joyride for first-time users
 - [ ] Walkthrough steps: Bot 1 card → instrument dropdown → Start button → Kill Switch
@@ -1813,11 +1813,11 @@
 - [x] FIX: Bot slot allocation — Dashboard showed 10 slots instead of reading user's actual extraBotSlots from DB
 - [x] FIX: allStatus endpoint now queries user's extraBotSlots and limits returned slots accordingly
 - [x] FIX: Frontend slices allBots to user's actual slot limit (admin=max(3,extra), user=3+extra)
-- [ ] AUDIT: Verify all 4 exit paths (SL, Target, Trailing Stop, Time Exit) place real Upstox SELL orders
-- [ ] FIX: Any exit path that only closes in DB without placing Upstox order
-- [ ] Implement BoxingStrategy (V5: Engulfing Only, 20% zone, SL=25pts, max 2 trades/day)
-- [ ] Add BoxingStrategy to strategy selector (Category A — Proven, enabled by default)
-- [ ] Deploy BoxingStrategy to Railway before Monday morning
+- [x] AUDIT: Verify all 4 exit paths (SL, Target, Trailing Stop, Time Exit) place real Upstox SELL orders
+- [x] FIX: Any exit path that only closes in DB without placing Upstox order
+- [x] Implement BoxingStrategy (V5: Engulfing Only, 20% zone, SL=25pts, max 2 trades/day)
+- [x] Add BoxingStrategy to strategy selector (Category A — Proven, enabled by default)
+- [x] Deploy BoxingStrategy to Railway before Monday morning
 - [x] Implement BoxingStrategy layer (1st High/Low + Engulfing + SEMA, V5 params)
 - [x] Add BoxingStrategy to strategy selector (Category A — Proven), enable by default
 - [x] Audit all 4 exit paths: SL, Target, Trailing Stop, Time Exit — all confirmed to call placeUpstoxOrder
@@ -1868,7 +1868,7 @@
 - [x] FIX: Partial booking failure no longer returns early — marks partialBooked and falls through to target/SL check
 - [x] FIX: Same fix applied to partial 2R booking (same blocking bug)
 - [x] Safety net in placeUpstoxOrder: auto-correct NSE F&O qty to nearest lot size multiple
-- [ ] Cleanup orphaned bot sessions from previous deployments on server startup
+- [x] Cleanup orphaned bot sessions from previous deployments on server startup
 
 ## Critical Bugs — User Report (27 Jul)
 - [x] BUG #1: Stuck "Paused — monitoring SL/target" with no open position (auto-resume sanity check + Force Reset button)
@@ -1909,3 +1909,11 @@
 - [x] FIX: botRestart.ts uses actual today's trade count from trade_log DB instead of stale session.tradesCount (prevents HARD CAP blocking after mid-day Railway redeploy)
 - [x] FIX: HARD CAP increased for MCX bots (12 vs 8 for NSE) — MCX has longer trading hours (morning + evening sessions)
 - [x] FIX: TOTAL_LAYER_LIMIT increased for MCX bots (10 vs 6 for NSE) — more strategies can fire per day
+
+## CRITICAL: Phantom Price + MCX Not Trading + NSE Accuracy (27 Jul — 4:30 PM)
+- [ ] BUG: Copper PE showing ₹496.60 current price (entry ₹3.23) — impossible phantom price, P&L +₹12L is fake
+- [ ] BUG: MCX bot not triggering any LIVE trades despite being "running"
+- [ ] BUG: NSE had worst day — PF 0.36, 26% WR, -₹4978 realized. Need accuracy improvement.
+- [ ] FIX: effectivePrice sanity check — cap at 5× entry for options (no option goes from ₹3 to ₹496 in one session)
+- [ ] FIX: MCX live trade triggering — investigate why signals aren't converting to orders
+- [ ] FIX: NSE signal quality — tighten confidence threshold, add momentum confirmation

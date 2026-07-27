@@ -6576,6 +6576,8 @@ async function tick(
     emitActivity(state.sessionToken, "signal", `⊘ HourlyClose signal skipped (already fired today)`);
     pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "HourlyClose already fired today");
     return;
+  }
+
   // ── HIGHER TIMEFRAME FILTER: EMA10/EMA30 on 1h candles ────────────────────
   // Only trade in the direction of the 1h trend (skip if neutral/insufficient data)
   if (state.accessToken && state.instrumentToken) {
@@ -6590,7 +6592,6 @@ async function tick(
         }
       }
     } catch { /* non-fatal — allow trade if HTF fetch fails */ }
-  }
   }
 
   // ── VRP REGIME FILTER + OI FLOW + MAX PAIN GRAVITY GATE ─────────────────────

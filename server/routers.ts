@@ -2573,17 +2573,34 @@ export const appRouter = router({
             // For options bots: fetch real option premium price (no delta approximation)
             let optPremium = bot.optionPremiumPrice ?? 0;
             if (bot.isIndexOptions && bot.openTrade) {
-              // Priority 1: Fetch real option quote if we have a resolved token
-              if (bot.optionTradeToken && bot.accessToken && !bot.optionTradeToken.startsWith("PAPER_OPT|")) {
-                try {
-                  const optQuote = await fetchFullQuote(bot.optionTradeToken, bot.accessToken);
-                  if (optQuote && optQuote.ltp > 0) {
-                    const bestPriceQ = optQuote.ltp;
-                    optPremium = bestPriceQ;
-                    bot.optionPremiumPrice = optPremium;
-                  }
-                } catch { /* non-fatal */ }
-              }
+             // Priority 1: Fetch real option quote if we have a resolved token
+             if (bot.optionTradeToken && bot.accessToken && !bot.optionTradeToken.startsWith("PAPER_OPT|")) {
+               try {
+                 const optQuote = await fetchFullQuote(bot.optionTradeToken, bot.accessToken);
+                 if (optQuote && optQuote.ltp > 0) {
+                    // ═══ SANITY CHECK: Underlying price leak detection ═══
+                    // If LTP is 10× entry, it's the underlying futures price, not the option premium
+                    const entryPx = bot.openTrade.entryPrice ?? 0;
+                    const leakRatio = entryPx > 0 ? optQuote.ltp / entryPx : 1;
+                    if (leakRatio > 10) {
+                      // Underlying price leaked — clear bad token, freeze at entry
+                      console.warn(`[livePrices] UNDERLYING LEAK: ${bot.optionTradeToken} returned LTP ₹${optQuote.ltp.toFixed(2)} which is ${leakRatio.toFixed(0)}× entry ₹${entryPx.toFixed(2)}. Clearing token.`);
+                      bot.optionTradeToken = undefined;
+                      optPremium = entryPx > 0 ? entryPx : (bot.optionPremiumPrice ?? 0);
+                      bot.optionPremiumPrice = optPremium;
+                    } else if (leakRatio > 5) {
+                      // Suspicious but not definitive — cap at 5× entry
+                      console.warn(`[livePrices] SANITY CAP: LTP ₹${optQuote.ltp.toFixed(2)} is ${leakRatio.toFixed(1)}× entry ₹${entryPx.toFixed(2)}. Capping.`);
+                      optPremium = entryPx * 5;
+                      bot.optionPremiumPrice = optPremium;
+                    } else {
+                      const bestPriceQ = optQuote.ltp;
+                      optPremium = bestPriceQ;
+                      bot.optionPremiumPrice = optPremium;
+                    }
+                 }
+               } catch { /* non-fatal */ }
+             }
               // Priority 1.5: No resolved token yet — try to resolve from trade symbol on-the-fly
               if (optPremium === 0 && !bot.optionTradeToken && bot.accessToken && bot.openTrade) {
                 try {
@@ -2594,29 +2611,41 @@ export const appRouter = router({
                   const underlyingToken = bot.underlyingToken ?? bot.instrumentToken;
                   if (exactStrike > 0) {
                     // For MCX options: use resolveAtmMcxOptionToken with strike filter
-                    if (underlyingToken.startsWith("MCX_FO|")) {
-                      const resolved = await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, bot.accessToken);
-                      if (resolved?.token) {
-                        bot.optionTradeToken = resolved.token;
-                        const q = await fetchFullQuote(resolved.token, bot.accessToken);
-                        if (q && q.ltp > 0) {
-                          const bestPrice = q.ltp;
-                          optPremium = bestPrice;
+                   if (underlyingToken.startsWith("MCX_FO|")) {
+                     const resolved = await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, bot.accessToken);
+                     if (resolved?.token) {
+                       bot.optionTradeToken = resolved.token;
+                       const q = await fetchFullQuote(resolved.token, bot.accessToken);
+                       if (q && q.ltp > 0) {
+                          const entryPxMcx = bot.openTrade!.entryPrice ?? 0;
+                          const mcxLeakRatio = entryPxMcx > 0 ? q.ltp / entryPxMcx : 1;
+                          if (mcxLeakRatio <= 10) {
+                            optPremium = q.ltp;
+                            bot.optionPremiumPrice = optPremium;
+                          } else {
+                            console.warn(`[livePrices] MCX LEAK: resolved token ${resolved.token} LTP ₹${q.ltp} is ${mcxLeakRatio.toFixed(0)}× entry. Ignoring.`);
+                            bot.optionTradeToken = undefined; // clear bad token
+                          }
+                       }
+                     }
+                   } else {
+                   const resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, bot.accessToken);
+                   if (resolvedToken) {
+                     bot.optionTradeToken = resolvedToken;
+                     const q = await fetchFullQuote(resolvedToken, bot.accessToken);
+                     if (q && q.ltp > 0) {
+                        const entryPxNse = bot.openTrade!.entryPrice ?? 0;
+                        const nseLeakRatio = entryPxNse > 0 ? q.ltp / entryPxNse : 1;
+                        if (nseLeakRatio <= 10) {
+                          optPremium = q.ltp;
                           bot.optionPremiumPrice = optPremium;
+                        } else {
+                          console.warn(`[livePrices] NSE LEAK: resolved token ${resolvedToken} LTP ₹${q.ltp} is ${nseLeakRatio.toFixed(0)}× entry. Ignoring.`);
+                          bot.optionTradeToken = undefined;
                         }
-                      }
-                    } else {
-                    const resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, bot.accessToken);
-                    if (resolvedToken) {
-                      bot.optionTradeToken = resolvedToken;
-                      const q = await fetchFullQuote(resolvedToken, bot.accessToken);
-                      if (q && q.ltp > 0) {
-                        const bestPrice = q.ltp;
-                        optPremium = bestPrice;
-                        bot.optionPremiumPrice = optPremium;
-                      }
-                    }
-                    }
+                     }
+                   }
+                   }
                   }
                } catch { /* non-fatal */ }
              }

@@ -2068,26 +2068,28 @@ export default function Dashboard() {
           const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 99 : 0);
           const todayWinRate = todayClosed.length > 0 ? (todayWins.length / todayClosed.length) * 100 : 0;
 
-          // Total unrealized across all open positions (all slots)
-          let totalUnrealized = unrealizedPnl ?? 0;
-          (allBots ?? []).forEach((bot: any) => {
-            if (bot.slot === 0) return; // primary already counted
-            const ot = bot.openTrade;
-            if (!ot) return;
-            const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
-            const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
-            let liveP = 0;
-            if (isOpts) {
-              liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
-              if (liveP === 0 && ot.entryUnderlyingPrice && (lpEntry?.livePrice ?? bot.lastPrice) > 0) {
-                const curU = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                const move = curU - ot.entryUnderlyingPrice;
-                const isCall = (ot.symbol ?? "").includes("CE") || (ot.symbolLabel ?? "").includes(" CE");
-                liveP = Math.max(0.05, ot.entryPrice + (isCall ? move * 0.5 : -move * 0.5));
+         // Total unrealized across all open positions (all slots)
+         let totalUnrealized = unrealizedPnl ?? 0;
+         (allBots ?? []).forEach((bot: any) => {
+           if (bot.slot === 0) return; // primary already counted
+           const ot = bot.openTrade;
+           if (!ot) return;
+           const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
+           const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
+           let liveP = 0;
+           if (isOpts) {
+             liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
+              // No delta fallback — show 0 P&L until real quote arrives
+              if (liveP === 0) {
+                liveP = ot.entryPrice;
               }
-            } else {
-              liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-            }
+              // SANITY: Cap at 10× entry
+              if (liveP > ot.entryPrice * 10) {
+                liveP = ot.entryPrice;
+              }
+           } else {
+             liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+           }
             if (liveP > 0) {
               const dir = ot.direction === "BUY" ? 1 : -1;
               totalUnrealized += (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0));
@@ -2197,26 +2199,30 @@ export default function Dashboard() {
                   optionTradeToken: (inMemOpenTrade as any)?.optionTradeToken ?? null,
                 });
               }
-              // Secondary slots
-              (allBots ?? []).forEach((bot: any) => {
-                if (bot.slot === 0) return;
-                const ot = bot.openTrade;
-                if (!ot) return;
-                // Check both openTrade-level AND bot-level isIndexOptions (handles legacy/DB-restored trades)
-                const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
-                const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
-                let liveP = 0;
-                if (isOpts) {
-                  liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
-                  if (liveP === 0 && ot.entryUnderlyingPrice && (lpEntry?.livePrice ?? bot.lastPrice) > 0) {
-                    const curU = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                    const move = curU - ot.entryUnderlyingPrice;
-                    const isCall = (ot.symbol ?? "").includes("CE") || (ot.symbolLabel ?? "").includes(" CE");
-                    liveP = Math.max(0.05, ot.entryPrice + (isCall ? move * 0.5 : -move * 0.5));
+             // Secondary slots
+             (allBots ?? []).forEach((bot: any) => {
+               if (bot.slot === 0) return;
+               const ot = bot.openTrade;
+               if (!ot) return;
+               // Check both openTrade-level AND bot-level isIndexOptions (handles legacy/DB-restored trades)
+               const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
+               const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
+               let liveP = 0;
+               if (isOpts) {
+                 liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
+                  // REMOVED: Delta-style synthetic fallback that computed fake option premiums
+                  // from underlying price movement. This caused phantom P&L (e.g., ₹3 entry → ₹496 current).
+                  // If no real optionPremiumPrice is available, show entry price (P&L = 0).
+                  if (liveP === 0) {
+                    liveP = ot.entryPrice;
                   }
-                } else {
-                  liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                }
+                  // SANITY: Cap at 10× entry to prevent underlying price leak
+                  if (liveP > ot.entryPrice * 10) {
+                    liveP = ot.entryPrice;
+                  }
+               } else {
+                 liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+               }
                 if (liveP > 0) {
                   const dir = ot.direction === "BUY" ? 1 : -1;
                   positions.push({
@@ -2621,23 +2627,25 @@ export default function Dashboard() {
                   <div className={`rounded-lg border p-2.5 mb-2 ${
                     bot.openTrade.direction === "BUY" ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"
                   }`}>
-                    <div className="text-[10px] text-white/50 mb-1 font-medium">● IN TRADE</div>
-                    {(() => {
-                      const ot = bot.openTrade;
-                      const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
-                      const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
-                      let liveP = 0;
-                      if (isOpts) {
-                        liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
-                        if (liveP === 0 && ot.entryUnderlyingPrice && (lpEntry?.livePrice ?? bot.lastPrice) > 0) {
-                          const curU = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                          const move = curU - ot.entryUnderlyingPrice;
-                          const isCall = (ot.symbol ?? "").includes("CE") || (ot.symbolLabel ?? "").includes(" CE");
-                          liveP = Math.max(0.05, ot.entryPrice + (isCall ? move * 0.5 : -move * 0.5));
+                   <div className="text-[10px] text-white/50 mb-1 font-medium">● IN TRADE</div>
+                   {(() => {
+                     const ot = bot.openTrade;
+                     const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
+                     const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
+                     let liveP = 0;
+                     if (isOpts) {
+                       liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
+                        // No delta fallback — show 0 P&L until real quote arrives
+                        if (liveP === 0) {
+                          liveP = ot.entryPrice;
                         }
-                      } else {
-                        liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                      }
+                        // SANITY: Cap at 10× entry
+                        if (liveP > ot.entryPrice * 10) {
+                          liveP = ot.entryPrice;
+                        }
+                     } else {
+                       liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
+                     }
                       const dir = ot.direction === "BUY" ? 1 : -1;
                       const unrealised = liveP > 0 ? (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0)) : 0;
                       const symbolShort = ot.symbolLabel ?? ot.symbol ?? "";
