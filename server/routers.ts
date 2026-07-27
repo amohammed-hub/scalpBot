@@ -4624,7 +4624,12 @@ export const appRouter = router({
         const clientIp = (ctx as any).req?.headers?.["x-forwarded-for"]?.split(",")[0]?.trim()
           || (ctx as any).req?.socket?.remoteAddress
           || undefined;
-        return sendOtp(mobile, clientIp);
+        try {
+          return await sendOtp(mobile, clientIp);
+        } catch (err: any) {
+          console.error("[sendOtp] Error:", err?.message ?? err);
+          return { success: false, message: err?.message ?? "Failed to send OTP. Please try again." };
+        }
       }),
 
     verifyOtp: publicProcedure
