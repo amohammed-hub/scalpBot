@@ -5851,9 +5851,11 @@ async function tick(
     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Max trades reached (${state.tradesCount}/${state.maxTradesPerDay})`, layer: "None" };
     return;
   }
-  // HARD ABSOLUTE CAP: 8 trades per slot per day — NO BYPASS, even for admin/unlimitedTrades.
-  // User reported 29 trades in one day which is overtrading. This is the safety net.
-  const ABSOLUTE_MAX_TRADES_PER_SLOT = 8;
+  // HARD ABSOLUTE CAP per slot per day — NO BYPASS, even for admin/unlimitedTrades.
+  // MCX gets higher cap (12) because it trades across morning+evening sessions (longer hours).
+  // NSE/indices get 8 to prevent overtrading.
+  const isMcxBot = state.instrumentToken?.startsWith("MCX_FO") || state.instrumentSymbol?.startsWith("MCX_");
+  const ABSOLUTE_MAX_TRADES_PER_SLOT = isMcxBot ? 12 : 8;
   if (state.tradesCount >= ABSOLUTE_MAX_TRADES_PER_SLOT && !state.openTrade) {
     if ((state.tickCount ?? 0) % 20 === 1) {
       console.warn(`[tick] ⚠ HARD CAP: ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${ABSOLUTE_MAX_TRADES_PER_SLOT} — absolute daily limit`);
@@ -6031,8 +6033,9 @@ async function tick(
   };
   // HARD CAP: max 6 trades per day per bot slot across ALL strategies.
   // This is a HARD limit — even unlimitedTrades cannot bypass it.
-  // User reported 29 trades in one day which is way too many.
-  const TOTAL_LAYER_LIMIT = 6;
+  // MCX gets higher limit (10) due to longer trading hours (morning + evening sessions).
+  const isMcxInstrument = state.instrumentToken?.startsWith("MCX_FO") || state.instrumentSymbol?.startsWith("MCX_");
+  const TOTAL_LAYER_LIMIT = isMcxInstrument ? 10 : 6;
 
   if (signal.direction === "HOLD" && state.enabledLayers && state.candles.length >= 28) {
     // Collect ALL layer signals in parallel (not sequential cascade)

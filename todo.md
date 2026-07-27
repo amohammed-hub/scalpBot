@@ -1900,3 +1900,10 @@
 - [x] FIX: Phantom trade auto-cleanup at startup — any open trade with entry < ₹1 is auto-closed as phantom
 - [x] FIX: Added Force Close button to Open Positions table (admin only) for manual phantom cleanup
 - [x] FIX: Session auto-switch overriding user instruments — _userManualInstrument was NEVER set. Now set to true in startBot() so user's explicit instrument choice is never overridden.
+
+## MCX No Trades Triggered — Root Cause Fix (27 Jul — Evening)
+- [x] ROOT CAUSE: enabledLayers was null in DB for bots started before backtestLayerMap was added. Multi-strategy cascade (7 layers) NEVER fired — only V1 generator ran (very conservative, EMA crossover only).
+- [x] FIX: botRestart.ts now auto-assigns getRecommendedLayers() when enabledLayers is null — ensures all MCX bots get VWAPReversion, TrikalStrategy, RedBarTheory, Momentum, MACD_BB, Trend, Pattern layers.
+- [x] FIX: botRestart.ts uses actual today's trade count from trade_log DB instead of stale session.tradesCount (prevents HARD CAP blocking after mid-day Railway redeploy)
+- [x] FIX: HARD CAP increased for MCX bots (12 vs 8 for NSE) — MCX has longer trading hours (morning + evening sessions)
+- [x] FIX: TOTAL_LAYER_LIMIT increased for MCX bots (10 vs 6 for NSE) — more strategies can fire per day

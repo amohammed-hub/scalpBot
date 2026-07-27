@@ -15,6 +15,7 @@ import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc, gte } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
+import { getRecommendedLayers } from "../shared/backtestLayerMap";
 import axios from "axios";
 
 // Type alias for a row from botSessions (Drizzle infers this)
@@ -270,6 +271,17 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     }
   }
 
+  // Count ACTUAL today's trades from DB — session.tradesCount may be stale after mid-day redeploy
+  const todayTradesRows = await db
+    .select({ id: tradeLog.id })
+    .from(tradeLog)
+    .where(and(
+      eq(tradeLog.sessionToken, session.sessionToken),
+      gte(tradeLog.enteredAt, todayStartUTC)
+    ));
+  const actualTodayTradesCount = todayTradesRows.length;
+  console.log(`[BotRestart] ${session.sessionToken.slice(0,8)} actual today trades: ${actualTodayTradesCount} (DB session.tradesCount was ${session.tradesCount})`);
+
   startBot(
     {
       sessionToken: session.sessionToken,
@@ -289,7 +301,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       trailingSlPct: session.trailingSlPct ?? 0.5,
       minConfidence: session.minConfidence ?? 60,
       scanIntervalSec: session.scanIntervalSec ?? 60,
-      tradesCount: session.tradesCount ?? 0,
+      tradesCount: actualTodayTradesCount,
       dailyPnl: restoredDailyPnl,
       accessToken,
       telegramBotToken: session.telegramBotToken ?? null,
@@ -303,7 +315,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
      optionType: (session.optionType ?? undefined) as "CE" | "PE" | "auto" | undefined,
      consecutiveTickErrors: 0,
       capitalUsed: 0,
-     enabledLayers: session.enabledLayers ? (() => { try { return JSON.parse(session.enabledLayers!); } catch { return undefined; } })() : undefined,
+     enabledLayers: session.enabledLayers ? (() => { try { return JSON.parse(session.enabledLayers!); } catch { return undefined; } })() : getRecommendedLayers(session.instrumentLabel ?? session.instrumentSymbol ?? ""),
       partial1Pct: session.partial1Pct ?? 30,
       partial2Pct: session.partial2Pct ?? 60,
       carryForward: existingOpenTrade ? !!(openTradeRows[0]?.carryForward) : false,
