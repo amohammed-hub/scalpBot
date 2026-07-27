@@ -4444,7 +4444,7 @@ export async function placeUpstoxOrder(
     return fakeOrderId;
   }
 
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 10;
   // ── PRODUCT TYPE: MCX and F&O use "D" (NRML/Delivery), equity uses "I" (Intraday) ──
   // Upstox API docs: F&O examples all use product "D". MCX options REQUIRE "D".
   // Using "I" for MCX options causes exchange rejection (ghost trades).
