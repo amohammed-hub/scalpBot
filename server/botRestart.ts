@@ -494,6 +494,13 @@ export async function restartRunningBots(): Promise<void> {
       await restartSingleSession(session);
     } catch (err) {
       console.error(`[BotRestart] ❌ Failed to restart session ${session.sessionToken.slice(0, 8)}:`, err);
+      // Mark failed-to-restart sessions as stopped so they don't accumulate as orphans
+      try {
+        await db.update(botSessions).set({ status: "stopped" }).where(eq(botSessions.id, session.id));
+        console.log(`[BotRestart] Marked orphaned session ${session.sessionToken.slice(0, 8)} as stopped (restart failed)`);
+      } catch (markErr) {
+        console.error(`[BotRestart] Could not mark orphaned session:`, markErr);
+      }
     }
   }
 }

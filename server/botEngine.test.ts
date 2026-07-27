@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateSignal, generatePowerHourSignal, generateMCXEveningSignal, generateMCXLateSessionSignal, generateHeroZeroSignal } from "./botEngine";
+import { checkRenkoExit, buildRenkoBricks } from "./botEngine";
 import type { Candle } from "./botEngine";
 
 function makeCandles(count: number, basePrice = 2000, trend: "up" | "down" | "flat" = "flat"): Candle[] {
@@ -669,5 +670,130 @@ describe("calcInstitutionalFootprint", () => {
     if (result.detected) {
       expect(result.direction).toBe("SELL");
     }
+  });
+});
+
+// ── TEST D: Red Brick Exit (Renko-based trailing exit) ──────────────────────
+describe("TEST D — Red Brick Exit (checkRenkoExit)", () => {
+  function makeTrendCandles(count: number, basePrice: number, direction: "up" | "down", stepSize: number): Candle[] {
+    const candles: Candle[] = [];
+    let price = basePrice;
+    for (let i = 0; i < count; i++) {
+      price += direction === "up" ? stepSize : -stepSize;
+      candles.push({
+        open: price - stepSize * 0.3,
+        high: price + stepSize * 0.5,
+        low: price - stepSize * 0.5,
+        close: price,
+        volume: 100000,
+        timestamp: Date.now() - (count - i) * 60000,
+      });
+    }
+    return candles;
+  }
+
+  it("returns shouldExit=false when candles are insufficient", () => {
+    const candles = makeTrendCandles(5, 100, "up", 2);
+    const result = checkRenkoExit(candles, "BUY", 10);
+    expect(result.shouldExit).toBe(false);
+  });
+
+  it("returns shouldExit=false when ATR is 0 or negative", () => {
+    const candles = makeTrendCandles(20, 100, "up", 2);
+    expect(checkRenkoExit(candles, "BUY", 0).shouldExit).toBe(false);
+    expect(checkRenkoExit(candles, "BUY", -5).shouldExit).toBe(false);
+  });
+
+  it("exits BUY trade when red brick forms (price reversal)", () => {
+    // Start with uptrend then reverse down
+    const upCandles = makeTrendCandles(15, 100, "up", 3); // price goes 103→145
+    const downCandles = makeTrendCandles(10, 145, "down", 4); // price drops 141→101
+    const allCandles = [...upCandles, ...downCandles];
+    const atr = 10; // brick size = 10
+    const result = checkRenkoExit(allCandles, "BUY", atr);
+    expect(result.shouldExit).toBe(true);
+    expect(result.reason).toContain("red brick");
+  });
+
+  it("exits SELL trade when green brick forms (price reversal)", () => {
+    // Start with downtrend then reverse up
+    const downCandles = makeTrendCandles(15, 200, "down", 3); // price goes 197→155
+    const upCandles = makeTrendCandles(10, 155, "up", 4); // price goes 159→195
+    const allCandles = [...downCandles, ...upCandles];
+    const atr = 10;
+    const result = checkRenkoExit(allCandles, "SELL", atr);
+    expect(result.shouldExit).toBe(true);
+    expect(result.reason).toContain("green brick");
+  });
+
+  it("does NOT exit BUY trade when trend continues up (no red brick)", () => {
+    // Pure uptrend — should NOT exit
+    const candles = makeTrendCandles(30, 100, "up", 2);
+    const atr = 10;
+    const result = checkRenkoExit(candles, "BUY", atr);
+    expect(result.shouldExit).toBe(false);
+  });
+
+  it("does NOT exit SELL trade when trend continues down (no green brick)", () => {
+    // Pure downtrend — should NOT exit
+    const candles = makeTrendCandles(30, 200, "down", 2);
+    const atr = 10;
+    const result = checkRenkoExit(candles, "SELL", atr);
+    expect(result.shouldExit).toBe(false);
+  });
+});
+
+describe("buildRenkoBricks", () => {
+  it("builds correct number of green bricks for uptrend", () => {
+    // Price moves from 100 to 150 with ATR=10 → should build 5 green bricks
+    const candles: Candle[] = [
+      { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 2000 },
+      { open: 100, high: 155, low: 99, close: 150, volume: 1000, timestamp: Date.now() - 1000 },
+    ];
+    const bricks = buildRenkoBricks(candles, 10);
+    expect(bricks.length).toBe(5);
+    expect(bricks.every(b => b.color === "green")).toBe(true);
+  });
+
+  it("builds correct number of red bricks for downtrend", () => {
+    // Price moves from 200 to 160 with ATR=10 → should build 4 red bricks
+    const candles: Candle[] = [
+      { open: 200, high: 202, low: 198, close: 200, volume: 1000, timestamp: Date.now() - 2000 },
+      { open: 200, high: 201, low: 158, close: 160, volume: 1000, timestamp: Date.now() - 1000 },
+    ];
+    const bricks = buildRenkoBricks(candles, 10);
+    expect(bricks.length).toBe(4);
+    expect(bricks.every(b => b.color === "red")).toBe(true);
+  });
+
+  it("builds mixed bricks for reversal pattern", () => {
+    // Price: 100 → 130 → 100 (up 3 bricks, down 3 bricks)
+    const candles: Candle[] = [
+      { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 3000 },
+      { open: 100, high: 135, low: 99, close: 130, volume: 1000, timestamp: Date.now() - 2000 },
+      { open: 130, high: 131, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 1000 },
+    ];
+    const bricks = buildRenkoBricks(candles, 10);
+    const greenCount = bricks.filter(b => b.color === "green").length;
+    const redCount = bricks.filter(b => b.color === "red").length;
+    expect(greenCount).toBe(3);
+    expect(redCount).toBe(3);
+    // Last brick should be red (reversal)
+    expect(bricks[bricks.length - 1].color).toBe("red");
+  });
+
+  it("returns empty array for insufficient candles", () => {
+    const candles: Candle[] = [
+      { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() },
+    ];
+    expect(buildRenkoBricks(candles, 10)).toEqual([]);
+  });
+
+  it("returns empty array for zero ATR", () => {
+    const candles: Candle[] = [
+      { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 1000 },
+      { open: 100, high: 120, low: 99, close: 120, volume: 1000, timestamp: Date.now() },
+    ];
+    expect(buildRenkoBricks(candles, 0)).toEqual([]);
   });
 });

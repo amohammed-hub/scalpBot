@@ -1885,6 +1885,8 @@
   - NIFTY: D → PF 0.96, P&L -453pts, Target 24%, DD 1203 (vs Current PF 0.73, P&L -2255, Target 3.2%, DD 2443)
   - BANKNIFTY: D → PF 1.08, P&L +2279pts, Target 25.1%, DD 2666 (vs Current PF 0.69, P&L -7077, Target 1.6%, DD 7452)
   - TEST C (no trail) also profitable on BANKNIFTY: PF 1.00, P&L +62pts, Target 31.3%
+- [x] IMPLEMENT TEST D: Red Brick Exit in production exit loop — uses buildRenkoBricks() on trade candles, exits on first opposite-color brick after 0.5×ATR profit buffer
+- [x] Orphaned bot session cleanup: mark failed-to-restart sessions as 'stopped' in DB on server startup
 
 ## RCA — 27 Jul 2026 Trading Failures
 - [x] FIX: Demo mode must work WITHOUT Upstox access token (simulate trades locally, no API call)
