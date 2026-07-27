@@ -4585,8 +4585,16 @@ async function tick(
   onTick?: (state: BotState) => Promise<void>,
 ) {
   if (state.status !== "running" && state.status !== "paused") { console.log(`[tick] SKIP — status=${state.status} (${state.sessionToken.slice(0,8)})`); return; }
-  // PAUSED bots still tick for SL/target/trailing monitoring — skip if no open trade
-  if (state.status === "paused" && !state.openTrade) { return; }
+  // SANITY CHECK: Paused bots with NO open trade have nothing to monitor.
+  // Auto-resume them instead of staying stuck in "Paused — monitoring SL/target" forever.
+  if (state.status === "paused" && !state.openTrade) {
+    state.status = "running";
+    state.consecutiveRejections = 0;
+    state.lastError = null;
+    state.isOpeningTrade = false;
+    emitActivity(state.sessionToken, "bot_resume", `🔄 Auto-resumed: was paused with no open position (nothing to monitor). Scanning for signals.`);
+    console.log(`[tick] AUTO-RESUME — ${state.sessionToken.slice(0,8)} was paused with no open trade, resuming to scan.`);
+  }
   // Prevent overlapping ticks: if previous tick is still running (slow network, API timeout), skip
   if (state.tickInProgress) {
     console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — tick skipped (previous still running)`);

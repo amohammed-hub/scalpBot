@@ -1857,3 +1857,7 @@
 - [x] Don't count IP restriction (UDAPI1154) errors toward pause threshold (they're transient)
 - [x] Fix resume onSuccess handler to update correct slot in allStatus cache
 - [x] Make resume procedure resilient — handle bot not in memory, wrap DB update in try-catch
+- [x] Add sanity check in tick: auto-resume paused bots with no open trade (nothing to monitor)
+- [x] Add Force Reset button on Dashboard (clears paused state, monitoring flags, stale position)
+- [x] Add bot.forceReset tRPC procedure (server-side force-clear of all stuck states)
+- [x] Fix "Paused — monitoring SL/target" label to only show "monitoring SL/target" when there IS an open trade

@@ -787,6 +787,22 @@ export default function Dashboard() {
     onError: (e: any) => toast.error(`Resume failed: ${e.message}`),
   });
 
+  const forceResetMutation = trpc.bot.forceReset.useMutation({
+    onSuccess: (_data, variables) => {
+      toast.success("🔧 Force reset — bot is now scanning for signals.");
+      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
+        if (!old) return old;
+        return old.map((b: any) => b.sessionToken === variables.sessionToken ? { ...b, status: "running", openTrade: null } : b);
+      });
+      setTimeout(() => {
+        utils.bot.status.invalidate();
+        utils.bot.liveData.invalidate();
+        utils.multiBots.allStatus.invalidate();
+      }, 500);
+    },
+    onError: (e: any) => toast.error(`Force reset failed: ${e.message}`),
+  });
+
   const restartMutation = trpc.bot.restart.useMutation({
     onSuccess: (data: any) => {
       toast.success(`Bot restarted — ${data?.instrumentLabel ?? "Bot"}`);
@@ -2445,7 +2461,18 @@ export default function Dashboard() {
                       >
                         ▶ Resume
                       </button>
-                      <span className="text-[9px] text-amber-400/70 italic">⏸ Paused — monitoring SL/target</span>
+                      <button
+                        onClick={() => {
+                          if (confirm("Force Reset will clear ALL bot state (paused, monitoring, stale position). Continue?")) {
+                            forceResetMutation.mutate({ sessionToken: bot.sessionToken });
+                          }
+                        }}
+                        className="px-2 py-0.5 rounded-md bg-orange-500/15 border border-orange-500/30 text-orange-400 hover:bg-orange-500/25 text-[10px] font-medium flex items-center gap-0.5 transition-all"
+                        title="Force Reset — clears paused state, monitoring flags, and stale position reference"
+                      >
+                        🔧 Reset
+                      </button>
+                      <span className="text-[9px] text-amber-400/70 italic">⏸ Paused{hasOpenTrade ? " — monitoring SL/target" : ""}</span>
                       {hasOpenTrade && (
                         <button
                           onClick={() => {
