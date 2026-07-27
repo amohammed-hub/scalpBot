@@ -555,9 +555,14 @@ export const appRouter = router({
         }
 
         // REFUSE to start bot in ANY mode without access token.
-        // Mock prices create fake trades (₹85 crude, ₹280 gold) that confuse the user.
-        if (!accessToken) {
+        // Mock prices create fake trades (₹85 crude, ₹280 gold) that confuse the user in live mode.
+        // But demo mode should work WITHOUT access token — simulate trades locally.
+        if (!accessToken && input.mode === "live") {
           throw new Error("No Upstox access token found. Go to Settings → paste your Access Token or use 'Get Token Automatically'. Token expires daily — refresh it each morning before 9:15 AM.");
+        }
+        // Demo mode: if no token, use a placeholder so candle fetching still works (Upstox historical API is public)
+        if (!accessToken && input.mode === "demo") {
+          accessToken = "DEMO_NO_TOKEN";
         }
 
         // ── MCX Token Resolution at Bot Start ──────────────────────────────────

@@ -4402,6 +4402,10 @@ export function getLastOrderRejectionReason(): string | null {
 // Returns available margin for the relevant segment (equity or commodity).
 // Returns null if API call fails (we proceed with order in that case — don't block on API failure).
 async function checkUpstoxMargin(accessToken: string, isMcx: boolean): Promise<number | null> {
+  // Demo mode: skip real margin check — return null (unlimited) so demo trades always go through
+  if (accessToken === "DEMO_NO_TOKEN" || !accessToken) {
+    return null;
+  }
   try {
     const resp = await axios.get("https://api.upstox.com/v2/user/get-funds-and-margin", {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
@@ -4421,6 +4425,15 @@ async function checkUpstoxMargin(accessToken: string, isMcx: boolean): Promise<n
 export async function placeUpstoxOrder(
   accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number, mcxLotSize?: number, useSandbox?: boolean,
 ): Promise<string | null> {
+  // ── DEMO MODE: Simulate order locally — do NOT call Upstox sandbox API ──
+  // The sandbox API is unreliable, requires a separate sandbox token, and often rejects orders.
+  // For demo mode, we just return a fake orderId immediately. The trade is tracked in our DB.
+  if (useSandbox) {
+    const fakeOrderId = `DEMO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    console.log(`[BotEngine] 🎮 DEMO ORDER: ${instrumentToken} ${direction} qty=${quantity} → fakeId=${fakeOrderId}`);
+    return fakeOrderId;
+  }
+
   const MAX_RETRIES = 3;
   // ── PRODUCT TYPE: MCX and F&O use "D" (NRML/Delivery), equity uses "I" (Intraday) ──
   // Upstox API docs: F&O examples all use product "D". MCX options REQUIRE "D".
@@ -4501,6 +4514,10 @@ export async function placeUpstoxOrder(
 export async function verifyUpstoxOrderStatus(
   accessToken: string, orderId: string, useSandbox?: boolean
 ): Promise<{ status: string; rejectionReason?: string; filledQty?: number; avgPrice?: number }> {
+  // Demo mode: fake orders are always "complete" instantly
+  if (useSandbox || orderId.startsWith("DEMO-")) {
+    return { status: "complete", filledQty: undefined, avgPrice: undefined };
+  }
   try {
     const resp = await axios.get(
       useSandbox ? `https://api-sandbox.upstox.com/v3/order/details?order_id=${orderId}` : `https://api.upstox.com/v2/order/details?order_id=${orderId}`,
@@ -6744,7 +6761,7 @@ async function tick(
       // In demo mode WITH a token: the token is likely expired — skip the trade, do NOT use fake mock premiums.
       // In demo mode WITHOUT a token: fall back to mock premium (handled by the else-if block below).
       // In live mode: always skip.
-      if (state.mode === "live" || state.mode === "demo" || state.accessToken) {
+      if (state.mode === "live" || (state.mode === "demo" && state.accessToken && state.accessToken !== "DEMO_NO_TOKEN")) {
         // Compute what the bot WOULD have bought for the activity log
         const symSkip = state.instrumentSymbol.toUpperCase();
         let strikeStepSkip = 50;
@@ -6755,15 +6772,31 @@ async function tick(
         else if (symSkip.includes("BANK")) strikeStepSkip = 100;
         const estimatedStrike = state.lastPrice > 0 ? Math.round(state.lastPrice / strikeStepSkip) * strikeStepSkip : 0;
         const wouldBuy = `${state.instrumentLabel} ${estimatedStrike} ${ceOrPe}`;
-        const reason = (state.mode === "live" || state.mode === "demo") ? "live mode — cannot trade without confirmed contract" : "option contract lookup failed (price quote OK → token valid, but no matching option contracts found for this expiry)";
+        const reason = "live mode — cannot trade without confirmed contract";
         console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option (${reason}). Skipping trade.`);
         emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Would buy ${wouldBuy} but option contract lookup failed. Underlying price ₹${state.lastPrice.toFixed(2)} fetched OK (token valid). Issue: no live option contracts matched for ${resolvedUnderlying}. Check: is this contract expired? Try refreshing token or restarting bot.`);
         return;
       }
-      // Demo mode with no token: SKIP the trade (never use mock prices — they create fake trades)
-      console.warn(`[BotEngine] ${state.sessionToken} — No access token, cannot resolve option. Skipping trade.`);
-      emitActivity(state.sessionToken, "error", `⚠ SKIPPED: No Upstox access token — cannot get real option prices. Go to Settings → connect your Upstox account.`);
-      return;
+      // Demo mode with DEMO_NO_TOKEN: simulate option trade using estimated strike and premium from candle data
+      const symDemo = state.instrumentSymbol.toUpperCase();
+      let strikeStepDemo = 50;
+      if (symDemo.includes("GOLD")) strikeStepDemo = 100;
+      else if (symDemo.includes("SILVER")) strikeStepDemo = 1000;
+      else if (symDemo.includes("CRUDE") || symDemo.includes("OIL")) strikeStepDemo = 50;
+      else if (symDemo.includes("NATGAS") || symDemo.includes("GAS")) strikeStepDemo = 5;
+      else if (symDemo.includes("BANK")) strikeStepDemo = 100;
+      const demoStrike = state.lastPrice > 0 ? Math.round(state.lastPrice / strikeStepDemo) * strikeStepDemo : 0;
+      // Estimate ATM premium as ~1.5% of underlying price (rough approximation for demo)
+      const demoPremium = state.lastPrice * 0.015;
+      tradeInstrumentToken = `PAPER_OPT|${resolvedUnderlying}|${demoStrike}|${ceOrPe}`;
+      tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${demoStrike}`;
+      resolvedExpiry = "DEMO";
+      tradeLabel = `${state.instrumentLabel} ${demoStrike} ${ceOrPe} (Demo)`;
+      optionPremiumForSizing = demoPremium;
+      state.optionTradeToken = tradeInstrumentToken;
+      state.optionPremiumPrice = demoPremium;
+      emitActivity(state.sessionToken, "signal", `🎮 DEMO: Simulated ${ceOrPe} @ strike ${demoStrike} | Est. premium ₹${demoPremium.toFixed(2)}`);
+      console.log(`[BotEngine] ${state.sessionToken} — DEMO option: ${ceOrPe} @ ${demoStrike}, est. premium ₹${demoPremium.toFixed(2)}`);
     } else {
       tradeInstrumentToken = resolved.token;
       tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${resolved.strike}`;
@@ -6796,10 +6829,12 @@ async function tick(
     }
     } // end !optionPremiumForSizing guard
   } else if (isOptionsMode && !state.accessToken) {
-    // No access token — SKIP the trade entirely (never use mock prices)
-    console.warn(`[BotEngine] ${state.sessionToken} — Options mode but no access token. Skipping trade.`);
-    emitActivity(state.sessionToken, "error", `⚠ SKIPPED: No Upstox access token — cannot resolve option contract or get real prices. Connect your account in Settings.`);
-    return;
+    // No access token at all (not even DEMO_NO_TOKEN) — SKIP the trade entirely
+    if (state.mode === "live") {
+      console.warn(`[BotEngine] ${state.sessionToken} — Options mode but no access token. Skipping trade.`);
+      emitActivity(state.sessionToken, "error", `⚠ SKIPPED: No Upstox access token — cannot resolve option contract or get real prices. Connect your account in Settings.`);
+      return;
+    }
   }
 
   // ── SAFETY NET: Skip if no option premium resolved ─────────────────────────────
