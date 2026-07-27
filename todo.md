@@ -1844,5 +1844,9 @@
 - [x] Strip signal reason (internal logic details) from bot status for non-admin users
 - [x] Strip confidence % from signals for non-admin users
 - [x] Strip candle data from API responses for non-admin users
-- [ ] Admin (owner) still sees all details unchanged
-- [ ] Test role-based filtering works correctly
+- [x] Admin (owner) still sees all details unchanged
+- [x] Test role-based filtering works correctly
+
+## Bug Fixes
+- [x] Fix demo-trade safety gate: admin bypass now checks BOTH isAdminSession AND isAdminViaCookie
+- [x] Fix trust proxy: add app.set("trust proxy", 1) for Cloud Run/Railway deployment

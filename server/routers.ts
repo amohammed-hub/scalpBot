@@ -590,7 +590,7 @@ export const appRouter = router({
         if (input.mode === "live") {
           // Demo-trade safety gate: require at least 3 closed demo trades before going live
           // Admin bypass: admin account can skip this gate
-          if (!isAdminSession) {
+          if (!isAdminSession && !isAdminViaCookie) {
             // Count demo trades across ALL slots for this user (base session + any slot suffix)
             const baseSession = input.sessionToken.replace(/-slot\d+$/, "");
             const demoTradeRows = await db
