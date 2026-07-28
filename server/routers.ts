@@ -421,10 +421,11 @@ export const appRouter = router({
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
-       unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
-       openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
-        crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
-        adaptiveRegimeEnabled: z.boolean().default(true), // Adaptive Regime Switching (default ON)
+        unlimitedTrades: z.boolean().default(false), // Legacy workflow option; hard safety barriers remain non-bypassable
+        openingBurstEnabled: z.boolean().default(false),
+        crudeOilCorrelation: z.boolean().default(false),
+        adaptiveRegimeEnabled: z.boolean().default(false),
+        renkoExitEnabled: z.boolean().default(false),
       }))
      .mutation(async ({ input, ctx }) => {
       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
@@ -703,10 +704,22 @@ export const appRouter = router({
         }
 
         const existing = await db
-          .select({ id: botSessions.id })
+          .select()
           .from(botSessions)
           .where(eq(botSessions.sessionToken, input.sessionToken))
           .limit(1);
+        const existingIsToday = !!existing[0]?.startedAt && new Date(existing[0].startedAt).getTime() >= todayStart.getTime();
+        const restoredLayerTradesCount: Record<string, number> = (() => {
+          if (!existingIsToday || !existing[0]?.layerTradesCount) return {};
+          try {
+            const parsed = JSON.parse(existing[0].layerTradesCount);
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+          } catch {
+            return {};
+          }
+        })();
+        const restoredConsecutiveUnderlyingSLs = existingIsToday ? (existing[0]?.consecutiveUnderlyingSLs ?? 0) : 0;
+        const restoredLastUnderlyingSLAt = existingIsToday ? (existing[0]?.lastUnderlyingSLAt ?? null) : null;
 
         let sessionId: number;
         if (existing.length > 0) {
@@ -738,7 +751,7 @@ export const appRouter = router({
               isIndexOptions: input.isIndexOptions,
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
-              enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
+              enabledLayers: JSON.stringify(input.enabledLayers ?? []),
              slStrategy: input.slStrategy ?? "B",
              partial1Pct: input.partial1Pct,
              partial2Pct: input.partial2Pct,
@@ -748,9 +761,8 @@ export const appRouter = router({
              unlimitedTrades: input.unlimitedTrades,
              openingBurstEnabled: input.openingBurstEnabled,
              crudeOilCorrelation: input.crudeOilCorrelation,
-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
-            layerTradesCount: {},
+             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+             renkoExitEnabled: input.renkoExitEnabled ?? false,
            })
            .where(eq(botSessions.sessionToken, input.sessionToken));
        } else {
@@ -778,7 +790,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions,
               underlyingToken: input.underlyingToken ?? null,
               optionType: input.optionType ?? null,
-              enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,
+              enabledLayers: JSON.stringify(input.enabledLayers ?? []),
               slStrategy: input.slStrategy ?? "B",
               partial1Pct: input.partial1Pct,
               partial2Pct: input.partial2Pct,
@@ -788,9 +800,11 @@ export const appRouter = router({
               unlimitedTrades: input.unlimitedTrades,
               openingBurstEnabled: input.openingBurstEnabled,
               crudeOilCorrelation: input.crudeOilCorrelation,
-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
-            layerTradesCount: {},
+              adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+              renkoExitEnabled: input.renkoExitEnabled ?? false,
+              consecutiveUnderlyingSLs: 0,
+              lastUnderlyingSLAt: null,
+              layerTradesCount: JSON.stringify({}),
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -935,7 +949,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions,
             underlyingToken: input.underlyingToken,
             optionType: input.optionType,
-           enabledLayers: input.enabledLayers,
+           enabledLayers: input.enabledLayers ?? [],
            slStrategy: input.slStrategy ?? "B",
            consecutiveTickErrors: 0,
             capitalUsed: 0,
@@ -948,9 +962,11 @@ export const appRouter = router({
             unlimitedTrades: input.unlimitedTrades,
             openingBurstEnabled: input.openingBurstEnabled,
             crudeOilCorrelation: input.crudeOilCorrelation,
-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
-            layerTradesCount: {},
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+            renkoExitEnabled: input.renkoExitEnabled ?? false,
+            consecutiveUnderlyingSLs: restoredConsecutiveUnderlyingSLs,
+            lastUnderlyingSLAt: restoredLastUnderlyingSLAt,
+            layerTradesCount: restoredLayerTradesCount,
           },
           onTradeOpen,
           onTradeClose,
@@ -969,8 +985,11 @@ export const appRouter = router({
               currentSl: tickState.openTrade?.currentSl ?? null,
               // Staleness detection — Dashboard shows warning if this is too old
               lastTickAt: Date.now(),
-              // Persist optionTradeToken so it survives server restarts (prevents underlying price leak)
+              // Persist option and risk state so deploy restarts cannot reset same-day safety controls.
               optionTradeToken: (tickState as any).optionTradeToken ?? null,
+              layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),
+              consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,
+              lastUnderlyingSLAt: tickState.lastUnderlyingSLAt ?? null,
             }).where(eq(botSessions.sessionToken, tickState.sessionToken));
           },
         );
@@ -1263,6 +1282,18 @@ export const appRouter = router({
           ));
         const todayCount = todayTrades.length;
         const restoredPnl = todayTrades.reduce((s: number, t: { pnl: number | null }) => s + (t.pnl ?? 0), 0);
+        const rowIsToday = !!row.startedAt && new Date(row.startedAt).getTime() >= todayStart.getTime();
+        const resumeLayerTradesCount: Record<string, number> = (() => {
+          if (!rowIsToday || !row.layerTradesCount) return {};
+          try {
+            const parsed = JSON.parse(row.layerTradesCount);
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+          } catch {
+            return {};
+          }
+        })();
+        const resumeConsecutiveUnderlyingSLs = rowIsToday ? (row.consecutiveUnderlyingSLs ?? 0) : 0;
+        const resumeLastUnderlyingSLAt = rowIsToday ? (row.lastUnderlyingSLAt ?? null) : null;
         // Restore open trade if any
         const openTradeRows = await db
           .select()
@@ -1326,7 +1357,15 @@ export const appRouter = router({
           const capital = row.capital ?? 100000;
           await dbInner.update(tradeLog).set({ status: "closed", exitPrice, pnl, pnlPct: (pnl / capital) * 100, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
           const state = getBotState(input.sessionToken);
-          if (state) await dbInner.update(botSessions).set({ tradesCount: state.tradesCount, dailyPnl: state.dailyPnl, status: state.status, lastError: state.lastError }).where(eq(botSessions.sessionToken, input.sessionToken));
+          if (state) await dbInner.update(botSessions).set({
+            tradesCount: state.tradesCount,
+            dailyPnl: state.dailyPnl,
+            status: state.status,
+            lastError: state.lastError,
+            layerTradesCount: JSON.stringify(state.layerTradesCount ?? {}),
+            consecutiveUnderlyingSLs: state.consecutiveUnderlyingSLs ?? 0,
+            lastUnderlyingSLAt: state.lastUnderlyingSLAt ?? null,
+          }).where(eq(botSessions.sessionToken, input.sessionToken));
           // Refresh StoplossGuard state from last 20 closed trades (same as bot.start path)
           try {
             const recentRows = await dbInner
@@ -1372,6 +1411,8 @@ export const appRouter = router({
             isIndexOptions: row.isIndexOptions ?? false,
             underlyingToken: row.underlyingToken ?? undefined,
            optionType: (row.optionType as "CE" | "PE" | "auto" | undefined) ?? undefined,
+           enabledLayers: row.enabledLayers ? (() => { try { const parsed = JSON.parse(row.enabledLayers); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : [],
+           slStrategy: row.slStrategy === "D" ? "D" : "B",
            consecutiveTickErrors: 0,
             capitalUsed: 0,
            partial1Pct: row.partial1Pct ?? 30,
@@ -1383,9 +1424,11 @@ export const appRouter = router({
            unlimitedTrades: row.unlimitedTrades ?? false,
            openingBurstEnabled: row.openingBurstEnabled ?? false,
            crudeOilCorrelation: row.crudeOilCorrelation ?? false,
-           adaptiveRegimeEnabled: (row as any).adaptiveRegimeEnabled ?? true,
-           consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
-            layerTradesCount: {},
+           adaptiveRegimeEnabled: row.adaptiveRegimeEnabled ?? false,
+           renkoExitEnabled: row.renkoExitEnabled ?? false,
+           consecutiveUnderlyingSLs: resumeConsecutiveUnderlyingSLs,
+           lastUnderlyingSLAt: resumeLastUnderlyingSLAt,
+           layerTradesCount: resumeLayerTradesCount,
          },
          onTradeOpen,
          onTradeClose,
@@ -1399,6 +1442,9 @@ export const appRouter = router({
               lastSignalAt: tickState.lastSignal ? new Date() : undefined,
               currentSl: tickState.openTrade?.currentSl ?? null, lastTickAt: Date.now(),
               optionTradeToken: (tickState as any).optionTradeToken ?? null,
+              layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),
+              consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,
+              lastUnderlyingSLAt: tickState.lastUnderlyingSLAt ?? null,
             }).where(eq(botSessions.sessionToken, tickState.sessionToken));
           },
         );
@@ -2712,12 +2758,16 @@ export const appRouter = router({
         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
         openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
         crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
-        adaptiveRegimeEnabled: z.boolean().default(true), // Adaptive Regime Switching (default ON)
+        adaptiveRegimeEnabled: z.boolean().default(false), // Fail-safe: enable adaptive switching only when explicitly selected
+        renkoExitEnabled: z.boolean().default(false), // Experimental exit remains off unless explicitly selected
         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
         await verifySessionOwnership(ctx, input.sessionToken);
+        if (!Array.isArray(input.enabledLayers) || input.enabledLayers.length === 0) {
+          throw new Error("Select at least one strategy before starting a secondary bot.");
+        }
 
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
@@ -2924,10 +2974,29 @@ export const appRouter = router({
         const slotTodayCount = slotTodayCountRows[0]?.count ?? 0;
         // Insert or update a bot session for this slot
         const existing = await db
-          .select({ id: botSessions.id, lastPrice: botSessions.lastPrice })
+          .select({
+            id: botSessions.id,
+            lastPrice: botSessions.lastPrice,
+            startedAt: botSessions.startedAt,
+            layerTradesCount: botSessions.layerTradesCount,
+            consecutiveUnderlyingSLs: botSessions.consecutiveUnderlyingSLs,
+            lastUnderlyingSLAt: botSessions.lastUnderlyingSLAt,
+          })
           .from(botSessions)
           .where(eq(botSessions.sessionToken, slotToken))
           .limit(1);
+        const slotSessionIsToday = !!existing[0]?.startedAt && new Date(existing[0].startedAt).getTime() >= slotTodayStart.getTime();
+        const slotRestoredLayerTradesCount: Record<string, number> = (() => {
+          if (!slotSessionIsToday || !existing[0]?.layerTradesCount) return {};
+          try {
+            const parsed = JSON.parse(existing[0].layerTradesCount);
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+          } catch {
+            return {};
+          }
+        })();
+        const slotRestoredConsecutiveUnderlyingSLs = slotSessionIsToday ? (existing[0]?.consecutiveUnderlyingSLs ?? 0) : 0;
+        const slotRestoredLastUnderlyingSLAt = slotSessionIsToday ? (existing[0]?.lastUnderlyingSLAt ?? null) : null;
         let sessionId: number;
         if (existing.length > 0) {
           sessionId = existing[0].id;
@@ -2947,7 +3016,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions ?? false,
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(), stoppedAt: null, lastError: null,
-           enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
+           enabledLayers: JSON.stringify(input.enabledLayers),
            slStrategy: input.slStrategy ?? "B",
            partial1Pct: input.partial1Pct,
            partial2Pct: input.partial2Pct,
@@ -2957,9 +3026,11 @@ export const appRouter = router({
            unlimitedTrades: input.unlimitedTrades ?? false,
            openingBurstEnabled: input.openingBurstEnabled ?? false,
            crudeOilCorrelation: input.crudeOilCorrelation,
-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
-           consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
-            layerTradesCount: {},
+           adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+           renkoExitEnabled: input.renkoExitEnabled ?? false,
+           consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
+           lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
+           layerTradesCount: JSON.stringify(slotRestoredLayerTradesCount),
          }).where(eq(botSessions.sessionToken, slotToken));
        } else {
           const result = await db.insert(botSessions).values({
@@ -2976,7 +3047,7 @@ export const appRouter = router({
             isIndexOptions: input.isIndexOptions ?? false,
             underlyingToken: input.underlyingToken ?? null,
             startedAt: new Date(),
-            enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),
+            enabledLayers: JSON.stringify(input.enabledLayers),
             slStrategy: input.slStrategy ?? "B",
             partial1Pct: input.partial1Pct,
             partial2Pct: input.partial2Pct,
@@ -2986,9 +3057,11 @@ export const appRouter = router({
             unlimitedTrades: input.unlimitedTrades ?? false,
             openingBurstEnabled: input.openingBurstEnabled ?? false,
             crudeOilCorrelation: input.crudeOilCorrelation,
-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
-            layerTradesCount: {},
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+            renkoExitEnabled: input.renkoExitEnabled ?? false,
+            consecutiveUnderlyingSLs: 0,
+            lastUnderlyingSLAt: null,
+            layerTradesCount: JSON.stringify({}),
           });
           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);
         }
@@ -3017,6 +3090,9 @@ export const appRouter = router({
               dailyPnl: slotState.dailyPnl,
               status: slotState.status,
               lastError: slotState.lastError,
+              layerTradesCount: JSON.stringify(slotState.layerTradesCount ?? {}),
+              consecutiveUnderlyingSLs: slotState.consecutiveUnderlyingSLs ?? 0,
+              lastUnderlyingSLAt: slotState.lastUnderlyingSLAt ?? null,
             }).where(eq(botSessions.sessionToken, slotToken));
           }
           // Refresh StoplossGuard from recent slot trades (parity with primary path)
@@ -3059,9 +3135,11 @@ export const appRouter = router({
           unlimitedTrades: input.unlimitedTrades,
           openingBurstEnabled: input.openingBurstEnabled,
           crudeOilCorrelation: input.crudeOilCorrelation,
-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
-            layerTradesCount: {},
+          adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+          renkoExitEnabled: input.renkoExitEnabled ?? false,
+          consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
+          lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
+          layerTradesCount: slotRestoredLayerTradesCount,
         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {
           const db = await getDb();
           if (!db) return;
@@ -3075,6 +3153,9 @@ export const appRouter = router({
             currentSl: tickState.openTrade?.currentSl ?? null,
             lastTickAt: Date.now(),
             optionTradeToken: (tickState as any).optionTradeToken ?? null,
+            layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),
+            consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,
+            lastUnderlyingSLAt: tickState.lastUnderlyingSLAt ?? null,
           }).where(eq(botSessions.sessionToken, tickState.sessionToken));
         });
 

@@ -116,6 +116,12 @@ export const botSessions = mysqlTable("bot_sessions", {
   unlimitedTrades: boolean("unlimitedTrades").default(false),
   openingBurstEnabled: boolean("openingBurstEnabled").default(false),
   crudeOilCorrelation: boolean("crudeOilCorrelation").default(false),
+  // Restart-critical strategy and safety state. Defaults are fail-safe for existing rows.
+  adaptiveRegimeEnabled: boolean("adaptiveRegimeEnabled").default(false),
+  renkoExitEnabled: boolean("renkoExitEnabled").default(false),
+  layerTradesCount: text("layerTradesCount"),
+  consecutiveUnderlyingSLs: int("consecutiveUnderlyingSLs").default(0),
+  lastUnderlyingSLAt: bigint("lastUnderlyingSLAt", { mode: "number" }),
   // Persisted option trade token — survives server restarts (prevents underlying price leak)
   optionTradeToken: varchar("optionTradeToken", { length: 128 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

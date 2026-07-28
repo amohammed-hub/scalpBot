@@ -258,6 +258,27 @@ async function initDb() {
           console.log("[Database] Migration complete: useV2Engine column added");
         }
       }
+      // Restart-safety fields: Railway runs `pnpm start` directly, so keep startup migrations idempotent.
+      const restartSafetyColumns = [
+        ["adaptiveRegimeEnabled", "boolean DEFAULT false"],
+        ["renkoExitEnabled", "boolean DEFAULT false"],
+        ["layerTradesCount", "text"],
+        ["consecutiveUnderlyingSLs", "int DEFAULT 0"],
+        ["lastUnderlyingSLAt", "bigint"],
+      ] as const;
+      for (const [columnName, sqlType] of restartSafetyColumns) {
+        try {
+          await pool.execute(`SELECT \`${columnName}\` FROM \`bot_sessions\` LIMIT 1`);
+        } catch (e: any) {
+          if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+            console.log(`[Database] Auto-migrating: adding ${columnName} to bot_sessions`);
+            await pool.execute(`ALTER TABLE \`bot_sessions\` ADD COLUMN \`${columnName}\` ${sqlType}`);
+            console.log(`[Database] Migration complete: ${columnName} column added`);
+          } else {
+            throw e;
+          }
+        }
+      }
       // Check nseSummaryCronTaskUid column on bot_sessions (migration 0022)
       try {
         await pool.execute("SELECT `nseSummaryCronTaskUid` FROM `bot_sessions` LIMIT 1");

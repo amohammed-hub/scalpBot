@@ -211,8 +211,10 @@ export interface BotState {
   shadowLog?: ShadowLogEntry[];
   // V2 engine: when true, use generateSignalV2 (regime-based) instead of V1
   useV2Engine?: boolean;
-  // Unlimited trades: admin-only, bypasses maxTradesPerDay limit
+  // Legacy admin mode: may relax non-risk workflow limits, but must never bypass hard safety barriers
   unlimitedTrades?: boolean;
+  // Renko profit-lock exit is explicit and disabled by default
+  renkoExitEnabled?: boolean;
   // Opening Burst Strategy (9:15-9:25 AM)
   openingBurstMode?: boolean;
   openingBurstTradeTaken?: boolean; // true after burst trade taken today (reset daily)
@@ -887,11 +889,17 @@ export function generateSignal(
   prevDayLow = 0,
   prevDayClose = 0,
   skipOrbFreshnessGate = false, // Shadow mode: skip P0 ORB freshness gate to simulate old logic
-  enabledLayers: string[] = [],
+  enabledLayers?: string[],
 ): Signal {
   // Defensive: if candles is empty or undefined, return HOLD immediately
   if (!candles || candles.length === 0) {
     return { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No candle data available", layer: "None" };
+  }
+  // Production passes an explicit list. An explicit empty list means the user enabled no strategies,
+  // so fail closed. Omitted arguments retain the legacy pure-function default used by older tests/tools.
+  if (enabledLayers?.length === 0) {
+    const price = candles[candles.length - 1].close;
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "No strategy layers enabled", layer: "None" };
   }
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
@@ -974,7 +982,7 @@ export function generateSignal(
   const buyPenalty  = (candles5m.length >= 5 && trend5m === "bearish") ? against5mPenalty : 0;
   const sellPenalty = (candles5m.length >= 5 && trend5m === "bullish") ? against5mPenalty : 0;
 
-  const _v1LayerOk = (name: string) => enabledLayers.length === 0 || enabledLayers.includes(name);
+  const _v1LayerOk = (name: string) => enabledLayers === undefined || enabledLayers.includes(name);
 
   if (_v1LayerOk("Breakout") && breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi > 45 && rsi < 80 && strict5mBuy) {
     direction = "BUY";
@@ -1599,11 +1607,15 @@ export function generateSignalV2(
   prevDayClose = 0,
   consecutiveSameDirectionSLs = 0,
   lastSlExitDirection: "BUY" | "SELL" | null = null,
-  enabledLayers: string[] = [],
+  enabledLayers?: string[],
 ): Signal {
   // ── Early returns ──────────────────────────────────────────────────────────
   if (!candles || candles.length === 0) {
     return { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No candle data", layer: "None" };
+  }
+  if (enabledLayers?.length === 0) {
+    const price = candles[candles.length - 1].close;
+    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "No strategy layers enabled", layer: "None" };
   }
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
@@ -1668,7 +1680,7 @@ export function generateSignalV2(
   // These fire regardless of regime because they are time-gated and high-confidence.
   // HourlyClose: fires at 10:15 AM when first hour candle has strong directional body
   // ORB: fires 9:30-14:00 when price breaks the 15-min opening range
-  const _layerOk = (name: string) => enabledLayers.length === 0 || enabledLayers.includes(name);
+  const _layerOk = (name: string) => enabledLayers === undefined || enabledLayers.includes(name);
   if (_layerOk("HourlyClose") && direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {
     const firstHourCandles = candles.slice(0, Math.min(60, candles.length));
     const hourOpen = firstHourCandles[0].open;
@@ -4642,41 +4654,18 @@ async function tick(
   try {
 
   const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100;
-  if (state.dailyPnl <= maxDailyLoss) {
-    if (state.unlimitedTrades) {
-      // Admin/unlimited mode: NEVER pause — just warn and continue trading
-      if (!state.alertsSent.has("daily_loss_warn")) {
-        state.alertsSent.add("daily_loss_warn");
-        console.warn(`[tick] ⚠ Daily loss limit reached (ADMIN MODE — continuing) — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)}`);
-        emitActivity(state.sessionToken, "error", `⚠ Daily loss limit reached (₹${state.dailyPnl.toFixed(0)}) — Admin mode: continuing to trade.`);
-        sendTelegramAlert(state,
-          `⚠️ <b>DAILY LOSS LIMIT WARNING</b>\n` +
-          `📊 <b>${state.instrumentLabel}</b>\n` +
-          `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +
-          `✅ Admin mode — bot continues trading\n` +
-          `⚠️ Monitor positions carefully`
-        , "criticalAlerts");
-      }
-      state.dailyLossAcknowledged = true;
-    } else if ((state.tickCount ?? 0) <= 1) {
-      // User manually started despite existing losses — warn but don't block
-      console.warn(`[tick] ⚠ Daily loss limit already reached — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — Bot will only pause on NEW losses`);
-      emitActivity(state.sessionToken, "error", `⚠ Daily loss limit already reached (₹${state.dailyPnl.toFixed(0)}). Bot will only pause on NEW losses.`);
-      state.dailyLossAcknowledged = true;
-    } else if (!state.dailyLossAcknowledged) {
-      // New losses pushed past limit — WARNING ONLY (never pause, admin single-user system)
-      console.warn(`[tick] ⚠ DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — WARNING ONLY (continuing)`);
-      state.dailyLossAcknowledged = true;
-      emitActivity(state.sessionToken, "error", `⚠ Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit. Bot continues (warning only).`);
-      // Telegram: warning alert for daily loss limit
-      sendTelegramAlert(state,
-        `⚠️ <b>DAILY LOSS LIMIT WARNING</b>\n` +
-        `📊 <b>${state.instrumentLabel}</b>\n` +
-        `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +
-        `✅ Bot continues trading (warning only)\n` +
-        `⚠️ Monitor positions carefully`
-      , "criticalAlerts");
-    }
+  if (state.dailyPnl <= maxDailyLoss && !state.alertsSent.has("daily_loss_hard_stop")) {
+    // Hard capital-protection barrier: keep managing any open position, but never permit a new one.
+    state.alertsSent.add("daily_loss_hard_stop");
+    console.warn(`[tick] 🛑 DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — new entries blocked`);
+    emitActivity(state.sessionToken, "error", `🛑 Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit. New entries are blocked.`);
+    sendTelegramAlert(state,
+      `🛑 <b>DAILY LOSS LIMIT — NEW ENTRIES BLOCKED</b>\n` +
+      `📊 <b>${state.instrumentLabel}</b>\n` +
+      `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +
+      `Existing positions remain under exit management.`,
+      "criticalAlerts",
+    );
   }
 
   // ── Options mode: determine which token to use for candle/signal vs which to trade ──
@@ -5539,7 +5528,7 @@ async function tick(
     // Logic: After trade is in profit by ≥ 0.5×ATR, exit on first opposite-color Renko brick.
     // This captures the bulk of a trend move and exits at the first sign of reversal.
     // Original SL/Target still apply as safety nets.
-    if (false && state.candles && state.candles.length >= 10 && trade.atr > 0) {
+    if (state.renkoExitEnabled === true && state.candles && state.candles.length >= 10 && trade.atr > 0) {
       const currentPnlForRenko = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
         : trade.entryPrice - effectivePrice;
@@ -5933,7 +5922,11 @@ async function tick(
   if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < 120_000) {
     return;
   }
-  if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade && !state.unlimitedTrades) {
+  if (state.dailyPnl <= maxDailyLoss && !state.openTrade) {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Daily loss limit reached (₹${state.dailyPnl.toFixed(0)})`, layer: "None" };
+    return;
+  }
+  if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade) {
     // Don't pause — just block new trade entries. Bot continues monitoring open trades & prices.
     if ((state.tickCount ?? 0) % 20 === 1) {
       console.warn(`[tick] ⚠ Max trades reached — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} — blocking new entries only`);
@@ -5957,8 +5950,8 @@ async function tick(
   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
   // 1. StoplossGuard: pause after 3 consecutive SLs in last 20 trades (checked globally)
   const slGuard = getStoplossGuardState(state.sessionToken);
-  if (slGuard.isPaused && !state.dailyLossAcknowledged && !state.unlimitedTrades) {
-    // Only block if user hasn't manually restarted (acknowledged) and isn't admin with unlimited trades
+  if (slGuard.isPaused && !state.openTrade) {
+    // Consecutive-stop protection is a hard barrier and cannot be acknowledged or bypassed.
     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: slGuard.reason ?? "StoplossGuard active", layer: "None" };
     return;
   }
@@ -5966,9 +5959,8 @@ async function tick(
   const baseToken = state.sessionToken.replace(/-slot\d+$/, "");
   const portfolioBots = getAllRunningBotsForSession(baseToken);
   const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct, baseToken);
-  if (ddCheck.halted && !state.openTrade && !state.dailyLossAcknowledged && !state.unlimitedTrades) {
-    // Only block if user hasn't manually restarted (acknowledged) and isn't admin with unlimited trades.
-    // When user explicitly restarts after loss, they've accepted the risk — don't block again.
+  if (ddCheck.halted && !state.openTrade) {
+    // Portfolio drawdown is a hard capital-protection barrier and cannot be bypassed.
     if ((state.tickCount ?? 0) % 20 === 1) {
       console.warn(`[tick] ⚠ Portfolio drawdown active — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} — blocking new trades only`);
     }
@@ -6507,12 +6499,7 @@ async function tick(
     if (isMCX) {
       console.log(`[MCX-DIAG] ${state.sessionToken.slice(0,8)} ${state.instrumentSymbol} → P2 gate check: consecutiveUnderlyingSLs=${state.consecutiveUnderlyingSLs}, lastSLAt=${state.lastUnderlyingSLAt}, elapsed=${Date.now() - state.lastUnderlyingSLAt}ms`);
     }
-    // Skip cooldown if user manually restarted (acknowledged losses) or has unlimited trades
-    if (state.dailyLossAcknowledged || state.unlimitedTrades) {
-      // User explicitly restarted — clear the cooldown and proceed
-      state.consecutiveUnderlyingSLs = 0;
-      state.lastUnderlyingSLAt = null;
-    } else {
+    // This protection cannot be cleared by restart or legacy unlimited mode.
     const elapsedSinceUnderlyingSL = Date.now() - state.lastUnderlyingSLAt;
     // MCX trends strongly — reduce cooldown from 15min to 8min for MCX to avoid missing trend continuations
     const P2_COOLDOWN_MS = isMCX ? 480_000 : 900_000; // MCX: 8 min, NSE: 15 min
@@ -6526,15 +6513,14 @@ async function tick(
       state.consecutiveUnderlyingSLs = 0;
       state.lastUnderlyingSLAt = null;
     }
-    }
   }
   // ── P1: Direction-Aware Cooldown ─────────────────────────────────────────────
   // After SL, penalize same-direction signals:
   // - Within 3 minutes (NSE) / 90 sec (MCX): BLOCK same direction entirely (market proved you wrong)
   // - 3-5 minutes (NSE) / 90s-2.5min (MCX): require 75% confidence for same direction (higher bar)
   // - After 2+ consecutive same-direction SLs: BLOCK that direction for 10 min (NSE) / 5 min (MCX)
-  if (state.lastSlExitAt && state.lastSlExitDirection && !state.dailyLossAcknowledged && !state.unlimitedTrades) {
-    // Skip P1 cooldown if user manually restarted (acknowledged) or has unlimited trades
+  if (state.lastSlExitAt && state.lastSlExitDirection) {
+    // Direction-aware cooldown is a hard risk control and cannot be bypassed.
     const elapsedSinceSl = Date.now() - state.lastSlExitAt;
     const signalMatchesSLDirection = signal.direction === state.lastSlExitDirection;
 

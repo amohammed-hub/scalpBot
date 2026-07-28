@@ -208,6 +208,9 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     await dbInner.update(botSessions).set({
       tradesCount: liveState?.tradesCount ?? ((session.tradesCount ?? 0) + 1),
       dailyPnl: liveState?.dailyPnl ?? ((session.dailyPnl ?? 0) + pnl),
+      layerTradesCount: JSON.stringify(liveState?.layerTradesCount ?? {}),
+      consecutiveUnderlyingSLs: liveState?.consecutiveUnderlyingSLs ?? 0,
+      lastUnderlyingSLAt: liveState?.lastUnderlyingSLAt ?? null,
     }).where(eq(botSessions.sessionToken, session.sessionToken));
     // Refresh StoplossGuard from recent trades (same as primary path)
     try {
@@ -237,8 +240,11 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       currentSl: state.openTrade?.currentSl ?? null,
       // Staleness detection — Dashboard shows warning if this is too old
       lastTickAt: Date.now(),
-      // Persist optionTradeToken so it survives server restarts
+      // Persist option and risk state so the next restart cannot erase same-day safety controls.
       optionTradeToken: state.optionTradeToken ?? null,
+      layerTradesCount: JSON.stringify(state.layerTradesCount ?? {}),
+      consecutiveUnderlyingSLs: state.consecutiveUnderlyingSLs ?? 0,
+      lastUnderlyingSLAt: state.lastUnderlyingSLAt ?? null,
     }).where(eq(botSessions.sessionToken, state.sessionToken));
   };
 
@@ -280,6 +286,18 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       gte(tradeLog.enteredAt, todayStartUTC)
     ));
   const actualTodayTradesCount = todayTradesRows.length;
+  const sessionIsToday = !!session.startedAt && new Date(session.startedAt).getTime() >= todayStartUTC.getTime();
+  const restoredLayerTradesCount: Record<string, number> = (() => {
+    if (!sessionIsToday || !session.layerTradesCount) return {};
+    try {
+      const parsed = JSON.parse(session.layerTradesCount);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  })();
+  const restoredConsecutiveUnderlyingSLs = sessionIsToday ? (session.consecutiveUnderlyingSLs ?? 0) : 0;
+  const restoredLastUnderlyingSLAt = sessionIsToday ? (session.lastUnderlyingSLAt ?? null) : null;
   console.log(`[BotRestart] ${session.sessionToken.slice(0,8)} actual today trades: ${actualTodayTradesCount} (DB session.tradesCount was ${session.tradesCount})`);
 
   startBot(
@@ -315,18 +333,24 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
      optionType: (session.optionType ?? undefined) as "CE" | "PE" | "auto" | undefined,
      consecutiveTickErrors: 0,
       capitalUsed: 0,
-     enabledLayers: session.enabledLayers ? (() => { try { return JSON.parse(session.enabledLayers!); } catch { return undefined; } })() : getRecommendedLayers(session.instrumentLabel ?? session.instrumentSymbol ?? ""),
+     enabledLayers: session.enabledLayers ? (() => { try { const parsed = JSON.parse(session.enabledLayers!); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : [],
+      slStrategy: (session.slStrategy === "D" ? "D" : "B"),
       partial1Pct: session.partial1Pct ?? 30,
       partial2Pct: session.partial2Pct ?? 60,
       carryForward: existingOpenTrade ? !!(openTradeRows[0]?.carryForward) : false,
       averagingEnabled: session.averagingEnabled ?? true,
       averagingLossThreshold: session.averagingLossThreshold ?? 0.20,
+      useV2Engine: session.useV2Engine ?? false,
       unlimitedTrades: session.unlimitedTrades ?? false,
       openingBurstEnabled: session.openingBurstEnabled ?? false,
-      consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,
+      crudeOilCorrelation: session.crudeOilCorrelation ?? false,
+      adaptiveRegimeEnabled: session.adaptiveRegimeEnabled ?? false,
+      renkoExitEnabled: session.renkoExitEnabled ?? false,
+      consecutiveUnderlyingSLs: restoredConsecutiveUnderlyingSLs,
+      lastUnderlyingSLAt: restoredLastUnderlyingSLAt,
       // Restore persisted optionTradeToken from DB — prevents underlying price leak after restart
       optionTradeToken: session.optionTradeToken ?? undefined,
-      layerTradesCount: {},
+      layerTradesCount: restoredLayerTradesCount,
     },
     onTradeOpen,
     onTradeClose,

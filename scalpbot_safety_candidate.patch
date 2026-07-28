@@ -1,0 +1,783 @@
+[1mdiff --git a/drizzle/schema.ts b/drizzle/schema.ts[m
+[1mindex 876f625..2168056 100644[m
+[1m--- a/drizzle/schema.ts[m
+[1m+++ b/drizzle/schema.ts[m
+[36m@@ -116,6 +116,12 @@[m [mexport const botSessions = mysqlTable("bot_sessions", {[m
+   unlimitedTrades: boolean("unlimitedTrades").default(false),[m
+   openingBurstEnabled: boolean("openingBurstEnabled").default(false),[m
+   crudeOilCorrelation: boolean("crudeOilCorrelation").default(false),[m
+[32m+[m[32m  // Restart-critical strategy and safety state. Defaults are fail-safe for existing rows.[m
+[32m+[m[32m  adaptiveRegimeEnabled: boolean("adaptiveRegimeEnabled").default(false),[m
+[32m+[m[32m  renkoExitEnabled: boolean("renkoExitEnabled").default(false),[m
+[32m+[m[32m  layerTradesCount: text("layerTradesCount"),[m
+[32m+[m[32m  consecutiveUnderlyingSLs: int("consecutiveUnderlyingSLs").default(0),[m
+[32m+[m[32m  lastUnderlyingSLAt: bigint("lastUnderlyingSLAt", { mode: "number" }),[m
+   // Persisted option trade token — survives server restarts (prevents underlying price leak)[m
+   optionTradeToken: varchar("optionTradeToken", { length: 128 }),[m
+   createdAt: timestamp("createdAt").defaultNow().notNull(),[m
+[1mdiff --git a/server/botEngine.ts b/server/botEngine.ts[m
+[1mindex f0bf0f7..69e482f 100644[m
+[1m--- a/server/botEngine.ts[m
+[1m+++ b/server/botEngine.ts[m
+[36m@@ -211,8 +211,10 @@[m [mexport interface BotState {[m
+   shadowLog?: ShadowLogEntry[];[m
+   // V2 engine: when true, use generateSignalV2 (regime-based) instead of V1[m
+   useV2Engine?: boolean;[m
+[31m-  // Unlimited trades: admin-only, bypasses maxTradesPerDay limit[m
+[32m+[m[32m  // Legacy admin mode: may relax non-risk workflow limits, but must never bypass hard safety barriers[m
+   unlimitedTrades?: boolean;[m
+[32m+[m[32m  // Renko profit-lock exit is explicit and disabled by default[m
+[32m+[m[32m  renkoExitEnabled?: boolean;[m
+   // Opening Burst Strategy (9:15-9:25 AM)[m
+   openingBurstMode?: boolean;[m
+   openingBurstTradeTaken?: boolean; // true after burst trade taken today (reset daily)[m
+[36m@@ -887,12 +889,18 @@[m [mexport function generateSignal([m
+   prevDayLow = 0,[m
+   prevDayClose = 0,[m
+   skipOrbFreshnessGate = false, // Shadow mode: skip P0 ORB freshness gate to simulate old logic[m
+[31m-  enabledLayers: string[] = [],[m
+[32m+[m[32m  enabledLayers?: string[],[m
+ ): Signal {[m
+   // Defensive: if candles is empty or undefined, return HOLD immediately[m
+   if (!candles || candles.length === 0) {[m
+     return { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No candle data available", layer: "None" };[m
+   }[m
+[32m+[m[32m  // Production passes an explicit list. An explicit empty list means the user enabled no strategies,[m
+[32m+[m[32m  // so fail closed. Omitted arguments retain the legacy pure-function default used by older tests/tools.[m
+[32m+[m[32m  if (enabledLayers?.length === 0) {[m
+[32m+[m[32m    const price = candles[candles.length - 1].close;[m
+[32m+[m[32m    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "No strategy layers enabled", layer: "None" };[m
+[32m+[m[32m  }[m
+   const closes = candles.map(c => c.close);[m
+   const price = closes[closes.length - 1];[m
+   const atr = calcATR(candles, 14);[m
+[36m@@ -974,7 +982,7 @@[m [mexport function generateSignal([m
+   const buyPenalty  = (candles5m.length >= 5 && trend5m === "bearish") ? against5mPenalty : 0;[m
+   const sellPenalty = (candles5m.length >= 5 && trend5m === "bullish") ? against5mPenalty : 0;[m
+ [m
+[31m-  const _v1LayerOk = (name: string) => enabledLayers.length === 0 || enabledLayers.includes(name);[m
+[32m+[m[32m  const _v1LayerOk = (name: string) => enabledLayers === undefined || enabledLayers.includes(name);[m
+ [m
+   if (_v1LayerOk("Breakout") && breakoutUpPct > dynamicBreakoutThreshold && volRatio >= 1.0 && rsi > 45 && rsi < 80 && strict5mBuy) {[m
+     direction = "BUY";[m
+[36m@@ -1599,12 +1607,16 @@[m [mexport function generateSignalV2([m
+   prevDayClose = 0,[m
+   consecutiveSameDirectionSLs = 0,[m
+   lastSlExitDirection: "BUY" | "SELL" | null = null,[m
+[31m-  enabledLayers: string[] = [],[m
+[32m+[m[32m  enabledLayers?: string[],[m
+ ): Signal {[m
+   // ── Early returns ──────────────────────────────────────────────────────────[m
+   if (!candles || candles.length === 0) {[m
+     return { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No candle data", layer: "None" };[m
+   }[m
+[32m+[m[32m  if (enabledLayers?.length === 0) {[m
+[32m+[m[32m    const price = candles[candles.length - 1].close;[m
+[32m+[m[32m    return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "No strategy layers enabled", layer: "None" };[m
+[32m+[m[32m  }[m
+   const closes = candles.map(c => c.close);[m
+   const price = closes[closes.length - 1];[m
+   const atr = calcATR(candles, 14);[m
+[36m@@ -1668,7 +1680,7 @@[m [mexport function generateSignalV2([m
+   // These fire regardless of regime because they are time-gated and high-confidence.[m
+   // HourlyClose: fires at 10:15 AM when first hour candle has strong directional body[m
+   // ORB: fires 9:30-14:00 when price breaks the 15-min opening range[m
+[31m-  const _layerOk = (name: string) => enabledLayers.length === 0 || enabledLayers.includes(name);[m
+[32m+[m[32m  const _layerOk = (name: string) => enabledLayers === undefined || enabledLayers.includes(name);[m
+   if (_layerOk("HourlyClose") && direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {[m
+     const firstHourCandles = candles.slice(0, Math.min(60, candles.length));[m
+     const hourOpen = firstHourCandles[0].open;[m
+[36m@@ -4642,41 +4654,18 @@[m [masync function tick([m
+   try {[m
+ [m
+   const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100;[m
+[31m-  if (state.dailyPnl <= maxDailyLoss) {[m
+[31m-    if (state.unlimitedTrades) {[m
+[31m-      // Admin/unlimited mode: NEVER pause — just warn and continue trading[m
+[31m-      if (!state.alertsSent.has("daily_loss_warn")) {[m
+[31m-        state.alertsSent.add("daily_loss_warn");[m
+[31m-        console.warn(`[tick] ⚠ Daily loss limit reached (ADMIN MODE — continuing) — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)}`);[m
+[31m-        emitActivity(state.sessionToken, "error", `⚠ Daily loss limit reached (₹${state.dailyPnl.toFixed(0)}) — Admin mode: continuing to trade.`);[m
+[31m-        sendTelegramAlert(state,[m
+[31m-          `⚠️ <b>DAILY LOSS LIMIT WARNING</b>\n` +[m
+[31m-          `📊 <b>${state.instrumentLabel}</b>\n` +[m
+[31m-          `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +[m
+[31m-          `✅ Admin mode — bot continues trading\n` +[m
+[31m-          `⚠️ Monitor positions carefully`[m
+[31m-        , "criticalAlerts");[m
+[31m-      }[m
+[31m-      state.dailyLossAcknowledged = true;[m
+[31m-    } else if ((state.tickCount ?? 0) <= 1) {[m
+[31m-      // User manually started despite existing losses — warn but don't block[m
+[31m-      console.warn(`[tick] ⚠ Daily loss limit already reached — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — Bot will only pause on NEW losses`);[m
+[31m-      emitActivity(state.sessionToken, "error", `⚠ Daily loss limit already reached (₹${state.dailyPnl.toFixed(0)}). Bot will only pause on NEW losses.`);[m
+[31m-      state.dailyLossAcknowledged = true;[m
+[31m-    } else if (!state.dailyLossAcknowledged) {[m
+[31m-      // New losses pushed past limit — WARNING ONLY (never pause, admin single-user system)[m
+[31m-      console.warn(`[tick] ⚠ DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — WARNING ONLY (continuing)`);[m
+[31m-      state.dailyLossAcknowledged = true;[m
+[31m-      emitActivity(state.sessionToken, "error", `⚠ Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit. Bot continues (warning only).`);[m
+[31m-      // Telegram: warning alert for daily loss limit[m
+[31m-      sendTelegramAlert(state,[m
+[31m-        `⚠️ <b>DAILY LOSS LIMIT WARNING</b>\n` +[m
+[31m-        `📊 <b>${state.instrumentLabel}</b>\n` +[m
+[31m-        `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +[m
+[31m-        `✅ Bot continues trading (warning only)\n` +[m
+[31m-        `⚠️ Monitor positions carefully`[m
+[31m-      , "criticalAlerts");[m
+[31m-    }[m
+[32m+[m[32m  if (state.dailyPnl <= maxDailyLoss && !state.alertsSent.has("daily_loss_hard_stop")) {[m
+[32m+[m[32m    // Hard capital-protection barrier: keep managing any open position, but never permit a new one.[m
+[32m+[m[32m    state.alertsSent.add("daily_loss_hard_stop");[m
+[32m+[m[32m    console.warn(`[tick] 🛑 DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — new entries blocked`);[m
+[32m+[m[32m    emitActivity(state.sessionToken, "error", `🛑 Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit. New entries are blocked.`);[m
+[32m+[m[32m    sendTelegramAlert(state,[m
+[32m+[m[32m      `🛑 <b>DAILY LOSS LIMIT — NEW ENTRIES BLOCKED</b>\n` +[m
+[32m+[m[32m      `📊 <b>${state.instrumentLabel}</b>\n` +[m
+[32m+[m[32m      `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +[m
+[32m+[m[32m      `Existing positions remain under exit management.`,[m
+[32m+[m[32m      "criticalAlerts",[m
+[32m+[m[32m    );[m
+   }[m
+ [m
+   // ── Options mode: determine which token to use for candle/signal vs which to trade ──[m
+[36m@@ -5539,7 +5528,7 @@[m [masync function tick([m
+     // Logic: After trade is in profit by ≥ 0.5×ATR, exit on first opposite-color Renko brick.[m
+     // This captures the bulk of a trend move and exits at the first sign of reversal.[m
+     // Original SL/Target still apply as safety nets.[m
+[31m-    if (false && state.candles && state.candles.length >= 10 && trade.atr > 0) {[m
+[32m+[m[32m    if (state.renkoExitEnabled === true && state.candles && state.candles.length >= 10 && trade.atr > 0) {[m
+       const currentPnlForRenko = trade.direction === "BUY"[m
+         ? effectivePrice - trade.entryPrice[m
+         : trade.entryPrice - effectivePrice;[m
+[36m@@ -5933,7 +5922,11 @@[m [masync function tick([m
+   if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < 120_000) {[m
+     return;[m
+   }[m
+[31m-  if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade && !state.unlimitedTrades) {[m
+[32m+[m[32m  if (state.dailyPnl <= maxDailyLoss && !state.openTrade) {[m
+[32m+[m[32m    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Daily loss limit reached (₹${state.dailyPnl.toFixed(0)})`, layer: "None" };[m
+[32m+[m[32m    return;[m
+[32m+[m[32m  }[m
+[32m+[m[32m  if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade) {[m
+     // Don't pause — just block new trade entries. Bot continues monitoring open trades & prices.[m
+     if ((state.tickCount ?? 0) % 20 === 1) {[m
+       console.warn(`[tick] ⚠ Max trades reached — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} — blocking new entries only`);[m
+[36m@@ -5957,8 +5950,8 @@[m [masync function tick([m
+   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────[m
+   // 1. StoplossGuard: pause after 3 consecutive SLs in last 20 trades (checked globally)[m
+   const slGuard = getStoplossGuardState(state.sessionToken);[m
+[31m-  if (slGuard.isPaused && !state.dailyLossAcknowledged && !state.unlimitedTrades) {[m
+[31m-    // Only block if user hasn't manually restarted (acknowledged) and isn't admin with unlimited trades[m
+[32m+[m[32m  if (slGuard.isPaused && !state.openTrade) {[m
+[32m+[m[32m    // Consecutive-stop protection is a hard barrier and cannot be acknowledged or bypassed.[m
+     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: slGuard.reason ?? "StoplossGuard active", layer: "None" };[m
+     return;[m
+   }[m
+[36m@@ -5966,9 +5959,8 @@[m [masync function tick([m
+   const baseToken = state.sessionToken.replace(/-slot\d+$/, "");[m
+   const portfolioBots = getAllRunningBotsForSession(baseToken);[m
+   const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct, baseToken);[m
+[31m-  if (ddCheck.halted && !state.openTrade && !state.dailyLossAcknowledged && !state.unlimitedTrades) {[m
+[31m-    // Only block if user hasn't manually restarted (acknowledged) and isn't admin with unlimited trades.[m
+[31m-    // When user explicitly restarts after loss, they've accepted the risk — don't block again.[m
+[32m+[m[32m  if (ddCheck.halted && !state.openTrade) {[m
+[32m+[m[32m    // Portfolio drawdown is a hard capital-protection barrier and cannot be bypassed.[m
+     if ((state.tickCount ?? 0) % 20 === 1) {[m
+       console.warn(`[tick] ⚠ Portfolio drawdown active — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} — blocking new trades only`);[m
+     }[m
+[36m@@ -6507,12 +6499,7 @@[m [masync function tick([m
+     if (isMCX) {[m
+       console.log(`[MCX-DIAG] ${state.sessionToken.slice(0,8)} ${state.instrumentSymbol} → P2 gate check: consecutiveUnderlyingSLs=${state.consecutiveUnderlyingSLs}, lastSLAt=${state.lastUnderlyingSLAt}, elapsed=${Date.now() - state.lastUnderlyingSLAt}ms`);[m
+     }[m
+[31m-    // Skip cooldown if user manually restarted (acknowledged losses) or has unlimited trades[m
+[31m-    if (state.dailyLossAcknowledged || state.unlimitedTrades) {[m
+[31m-      // User explicitly restarted — clear the cooldown and proceed[m
+[31m-      state.consecutiveUnderlyingSLs = 0;[m
+[31m-      state.lastUnderlyingSLAt = null;[m
+[31m-    } else {[m
+[32m+[m[32m    // This protection cannot be cleared by restart or legacy unlimited mode.[m
+     const elapsedSinceUnderlyingSL = Date.now() - state.lastUnderlyingSLAt;[m
+     // MCX trends strongly — reduce cooldown from 15min to 8min for MCX to avoid missing trend continuations[m
+     const P2_COOLDOWN_MS = isMCX ? 480_000 : 900_000; // MCX: 8 min, NSE: 15 min[m
+[36m@@ -6526,15 +6513,14 @@[m [masync function tick([m
+       state.consecutiveUnderlyingSLs = 0;[m
+       state.lastUnderlyingSLAt = null;[m
+     }[m
+[31m-    }[m
+   }[m
+   // ── P1: Direction-Aware Cooldown ─────────────────────────────────────────────[m
+   // After SL, penalize same-direction signals:[m
+   // - Within 3 minutes (NSE) / 90 sec (MCX): BLOCK same direction entirely (market proved you wrong)[m
+   // - 3-5 minutes (NSE) / 90s-2.5min (MCX): require 75% confidence for same direction (higher bar)[m
+   // - After 2+ consecutive same-direction SLs: BLOCK that direction for 10 min (NSE) / 5 min (MCX)[m
+[31m-  if (state.lastSlExitAt && state.lastSlExitDirection && !state.dailyLossAcknowledged && !state.unlimitedTrades) {[m
+[31m-    // Skip P1 cooldown if user manually restarted (acknowledged) or has unlimited trades[m
+[32m+[m[32m  if (state.lastSlExitAt && state.lastSlExitDirection) {[m
+[32m+[m[32m    // Direction-aware cooldown is a hard risk control and cannot be bypassed.[m
+     const elapsedSinceSl = Date.now() - state.lastSlExitAt;[m
+     const signalMatchesSLDirection = signal.direction === state.lastSlExitDirection;[m
+ [m
+[1mdiff --git a/server/botRestart.ts b/server/botRestart.ts[m
+[1mindex 478e70d..1341bd7 100644[m
+[1m--- a/server/botRestart.ts[m
+[1m+++ b/server/botRestart.ts[m
+[36m@@ -208,6 +208,9 @@[m [mexport async function restartSingleSession(session: BotSessionRow): Promise<bool[m
+     await dbInner.update(botSessions).set({[m
+       tradesCount: liveState?.tradesCount ?? ((session.tradesCount ?? 0) + 1),[m
+       dailyPnl: liveState?.dailyPnl ?? ((session.dailyPnl ?? 0) + pnl),[m
+[32m+[m[32m      layerTradesCount: JSON.stringify(liveState?.layerTradesCount ?? {}),[m
+[32m+[m[32m      consecutiveUnderlyingSLs: liveState?.consecutiveUnderlyingSLs ?? 0,[m
+[32m+[m[32m      lastUnderlyingSLAt: liveState?.lastUnderlyingSLAt ?? null,[m
+     }).where(eq(botSessions.sessionToken, session.sessionToken));[m
+     // Refresh StoplossGuard from recent trades (same as primary path)[m
+     try {[m
+[36m@@ -237,8 +240,11 @@[m [mexport async function restartSingleSession(session: BotSessionRow): Promise<bool[m
+       currentSl: state.openTrade?.currentSl ?? null,[m
+       // Staleness detection — Dashboard shows warning if this is too old[m
+       lastTickAt: Date.now(),[m
+[31m-      // Persist optionTradeToken so it survives server restarts[m
+[32m+[m[32m      // Persist option and risk state so the next restart cannot erase same-day safety controls.[m
+       optionTradeToken: state.optionTradeToken ?? null,[m
+[32m+[m[32m      layerTradesCount: JSON.stringify(state.layerTradesCount ?? {}),[m
+[32m+[m[32m      consecutiveUnderlyingSLs: state.consecutiveUnderlyingSLs ?? 0,[m
+[32m+[m[32m      lastUnderlyingSLAt: state.lastUnderlyingSLAt ?? null,[m
+     }).where(eq(botSessions.sessionToken, state.sessionToken));[m
+   };[m
+ [m
+[36m@@ -280,6 +286,18 @@[m [mexport async function restartSingleSession(session: BotSessionRow): Promise<bool[m
+       gte(tradeLog.enteredAt, todayStartUTC)[m
+     ));[m
+   const actualTodayTradesCount = todayTradesRows.length;[m
+[32m+[m[32m  const sessionIsToday = !!session.startedAt && new Date(session.startedAt).getTime() >= todayStartUTC.getTime();[m
+[32m+[m[32m  const restoredLayerTradesCount: Record<string, number> = (() => {[m
+[32m+[m[32m    if (!sessionIsToday || !session.layerTradesCount) return {};[m
+[32m+[m[32m    try {[m
+[32m+[m[32m      const parsed = JSON.parse(session.layerTradesCount);[m
+[32m+[m[32m      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};[m
+[32m+[m[32m    } catch {[m
+[32m+[m[32m      return {};[m
+[32m+[m[32m    }[m
+[32m+[m[32m  })();[m
+[32m+[m[32m  const restoredConsecutiveUnderlyingSLs = sessionIsToday ? (session.consecutiveUnderlyingSLs ?? 0) : 0;[m
+[32m+[m[32m  const restoredLastUnderlyingSLAt = sessionIsToday ? (session.lastUnderlyingSLAt ?? null) : null;[m
+   console.log(`[BotRestart] ${session.sessionToken.slice(0,8)} actual today trades: ${actualTodayTradesCount} (DB session.tradesCount was ${session.tradesCount})`);[m
+ [m
+   startBot([m
+[36m@@ -315,18 +333,24 @@[m [mexport async function restartSingleSession(session: BotSessionRow): Promise<bool[m
+      optionType: (session.optionType ?? undefined) as "CE" | "PE" | "auto" | undefined,[m
+      consecutiveTickErrors: 0,[m
+       capitalUsed: 0,[m
+[31m-     enabledLayers: session.enabledLayers ? (() => { try { return JSON.parse(session.enabledLayers!); } catch { return undefined; } })() : getRecommendedLayers(session.instrumentLabel ?? session.instrumentSymbol ?? ""),[m
+[32m+[m[32m     enabledLayers: session.enabledLayers ? (() => { try { const parsed = JSON.parse(session.enabledLayers!); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : [],[m
+[32m+[m[32m      slStrategy: (session.slStrategy === "D" ? "D" : "B"),[m
+       partial1Pct: session.partial1Pct ?? 30,[m
+       partial2Pct: session.partial2Pct ?? 60,[m
+       carryForward: existingOpenTrade ? !!(openTradeRows[0]?.carryForward) : false,[m
+       averagingEnabled: session.averagingEnabled ?? true,[m
+       averagingLossThreshold: session.averagingLossThreshold ?? 0.20,[m
+[32m+[m[32m      useV2Engine: session.useV2Engine ?? false,[m
+       unlimitedTrades: session.unlimitedTrades ?? false,[m
+       openingBurstEnabled: session.openingBurstEnabled ?? false,[m
+[31m-      consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,[m
+[32m+[m[32m      crudeOilCorrelation: session.crudeOilCorrelation ?? false,[m
+[32m+[m[32m      adaptiveRegimeEnabled: session.adaptiveRegimeEnabled ?? false,[m
+[32m+[m[32m      renkoExitEnabled: session.renkoExitEnabled ?? false,[m
+[32m+[m[32m      consecutiveUnderlyingSLs: restoredConsecutiveUnderlyingSLs,[m
+[32m+[m[32m      lastUnderlyingSLAt: restoredLastUnderlyingSLAt,[m
+       // Restore persisted optionTradeToken from DB — prevents underlying price leak after restart[m
+       optionTradeToken: session.optionTradeToken ?? undefined,[m
+[31m-      layerTradesCount: {},[m
+[32m+[m[32m      layerTradesCount: restoredLayerTradesCount,[m
+     },[m
+     onTradeOpen,[m
+     onTradeClose,[m
+[1mdiff --git a/server/db.ts b/server/db.ts[m
+[1mindex 3419f6e..b4e8648 100644[m
+[1m--- a/server/db.ts[m
+[1m+++ b/server/db.ts[m
+[36m@@ -258,6 +258,27 @@[m [masync function initDb() {[m
+           console.log("[Database] Migration complete: useV2Engine column added");[m
+         }[m
+       }[m
+[32m+[m[32m      // Restart-safety fields: Railway runs `pnpm start` directly, so keep startup migrations idempotent.[m
+[32m+[m[32m      const restartSafetyColumns = [[m
+[32m+[m[32m        ["adaptiveRegimeEnabled", "boolean DEFAULT false"],[m
+[32m+[m[32m        ["renkoExitEnabled", "boolean DEFAULT false"],[m
+[32m+[m[32m        ["layerTradesCount", "text"],[m
+[32m+[m[32m        ["consecutiveUnderlyingSLs", "int DEFAULT 0"],[m
+[32m+[m[32m        ["lastUnderlyingSLAt", "bigint"],[m
+[32m+[m[32m      ] as const;[m
+[32m+[m[32m      for (const [columnName, sqlType] of restartSafetyColumns) {[m
+[32m+[m[32m        try {[m
+[32m+[m[32m          await pool.execute(`SELECT \`${columnName}\` FROM \`bot_sessions\` LIMIT 1`);[m
+[32m+[m[32m        } catch (e: any) {[m
+[32m+[m[32m          if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {[m
+[32m+[m[32m            console.log(`[Database] Auto-migrating: adding ${columnName} to bot_sessions`);[m
+[32m+[m[32m            await pool.execute(`ALTER TABLE \`bot_sessions\` ADD COLUMN \`${columnName}\` ${sqlType}`);[m
+[32m+[m[32m            console.log(`[Database] Migration complete: ${columnName} column added`);[m
+[32m+[m[32m          } else {[m
+[32m+[m[32m            throw e;[m
+[32m+[m[32m          }[m
+[32m+[m[32m        }[m
+[32m+[m[32m      }[m
+       // Check nseSummaryCronTaskUid column on bot_sessions (migration 0022)[m
+       try {[m
+         await pool.execute("SELECT `nseSummaryCronTaskUid` FROM `bot_sessions` LIMIT 1");[m
+[1mdiff --git a/server/forensicSafetyContracts.test.ts b/server/forensicSafetyContracts.test.ts[m
+[1mnew file mode 100644[m
+[1mindex 0000000..76d1eb0[m
+[1m--- /dev/null[m
+[1m+++ b/server/forensicSafetyContracts.test.ts[m
+[36m@@ -0,0 +1,123 @@[m
+[32m+[m[32mimport { describe, expect, it } from "vitest";[m
+[32m+[m[32mimport { readFileSync } from "node:fs";[m
+[32m+[m[32mimport { fileURLToPath } from "node:url";[m
+[32m+[m[32mimport { dirname, join } from "node:path";[m
+[32m+[m[32mimport { generateSignal, generateSignalV2, type Candle } from "./botEngine";[m
+[32m+[m
+[32m+[m[32mconst here = dirname(fileURLToPath(import.meta.url));[m
+[32m+[m[32mconst engineSource = readFileSync(join(here, "botEngine.ts"), "utf8");[m
+[32m+[m[32mconst restartSource = readFileSync(join(here, "botRestart.ts"), "utf8");[m
+[32m+[m
+[32m+[m[32mfunction has(source: string, pattern: string | RegExp): boolean {[m
+[32m+[m[32m  return typeof pattern === "string" ? source.includes(pattern) : pattern.test(source);[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction strongUptrendCandles(count: number, minutesPerCandle = 1): Candle[] {[m
+[32m+[m[32m  const start = Date.parse("2026-07-27T04:00:00.000Z"); // 09:30 IST[m
+[32m+[m[32m  let price = 23_800;[m
+[32m+[m[32m  return Array.from({ length: count }, (_, index) => {[m
+[32m+[m[32m    const open = price;[m
+[32m+[m[32m    price += minutesPerCandle === 1 ? 4 : 20;[m
+[32m+[m[32m    return {[m
+[32m+[m[32m      open,[m
+[32m+[m[32m      high: price + 3,[m
+[32m+[m[32m      low: open - 2,[m
+[32m+[m[32m      close: price,[m
+[32m+[m[32m      volume: 200_000 + index * 1_000,[m
+[32m+[m[32m      timestamp: start + index * minutesPerCandle * 60_000,[m
+[32m+[m[32m    };[m
+[32m+[m[32m  });[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction callV1WithExplicitLayers(layers: string[]) {[m
+[32m+[m[32m  return generateSignal([m
+[32m+[m[32m    strongUptrendCandles(90, 1), 1.5, 2, 0.55,[m
+[32m+[m[32m    strongUptrendCandles(24, 5), 0, 0, 0, false, layers,[m
+[32m+[m[32m  );[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction callV2WithExplicitLayers(layers: string[]) {[m
+[32m+[m[32m  return generateSignalV2([m
+[32m+[m[32m    strongUptrendCandles(90, 1), 1.5, 2, 0.55,[m
+[32m+[m[32m    strongUptrendCandles(24, 5), 0, 0, 0, 0, null, layers,[m
+[32m+[m[32m  );[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mdescribe("forensic safety contracts — 27 July incident", () => {[m
+[32m+[m[32m  describe("strategy selection fails closed", () => {[m
+[32m+[m[32m    it("V1 emits HOLD when the persisted layer list is explicitly empty", () => {[m
+[32m+[m[32m      const signal = callV1WithExplicitLayers([]);[m
+[32m+[m[32m      expect(signal.direction).toBe("HOLD");[m
+[32m+[m[32m      expect(signal.layer).toBe("None");[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    it("V2 emits HOLD when the persisted layer list is explicitly empty", () => {[m
+[32m+[m[32m      const signal = callV2WithExplicitLayers([]);[m
+[32m+[m[32m      expect(signal.direction).toBe("HOLD");[m
+[32m+[m[32m      expect(signal.layer).toBe("None");[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    it("V1 does not treat an empty layer list as permission to run every layer", () => {[m
+[32m+[m[32m      expect(has(engineSource, /_v1LayerOk\s*=\s*\([^)]*\)\s*=>\s*enabledLayers\.length\s*===\s*0\s*\|\|/)).toBe(false);[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    it("V2 does not treat an empty layer list as permission to run every layer", () => {[m
+[32m+[m[32m      expect(has(engineSource, /_layerOk\s*=\s*\([^)]*\)\s*=>\s*enabledLayers\.length\s*===\s*0\s*\|\|/)).toBe(false);[m
+[32m+[m[32m    });[m
+[32m+[m[32m  });[m
+[32m+[m
+[32m+[m[32m  describe("restart restores authoritative strategy and risk configuration", () => {[m
+[32m+[m[32m    const requiredMappings = [[m
+[32m+[m[32m      { name: "slStrategy", pattern: /slStrategy\s*:\s*\(?session\.slStrategy/ },[m
+[32m+[m[32m      { name: "useV2Engine", pattern: /useV2Engine\s*:\s*session\.useV2Engine/ },[m
+[32m+[m[32m      { name: "adaptiveRegimeEnabled", pattern: /adaptiveRegimeEnabled\s*:\s*session\.adaptiveRegimeEnabled/ },[m
+[32m+[m[32m      { name: "crudeOilCorrelation", pattern: /crudeOilCorrelation\s*:\s*session\.crudeOilCorrelation/ },[m
+[32m+[m[32m    ];[m
+[32m+[m
+[32m+[m[32m    for (const mapping of requiredMappings) {[m
+[32m+[m[32m      it(`restores ${mapping.name} from the persisted session`, () => {[m
+[32m+[m[32m        expect(has(restartSource, mapping.pattern)).toBe(true);[m
+[32m+[m[32m      });[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    it("does not erase per-layer trade counters on every deployment restart", () => {[m
+[32m+[m[32m      expect(has(restartSource, /layerTradesCount\s*:\s*\{\s*\}/)).toBe(false);[m
+[32m+[m[32m      expect(has(restartSource, /layerTradesCount\s*:\s*(session\.|restored|actual|recomputed)/)).toBe(true);[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    it("validates persisted enabledLayers and fails closed for missing, malformed, or explicit-empty state", () => {[m
+[32m+[m[32m      expect(has(restartSource, /Array\.isArray\s*\(/)).toBe(true);[m
+[32m+[m[32m      expect(has(restartSource, /enabledLayers[\s\S]{0,500}catch\s*\{\s*return\s*\[\]\s*;?\s*\}/)).toBe(true);[m
+[32m+[m[32m      expect(has(restartSource, /enabledLayers[\s\S]{0,500}:\s*\[\]/)).toBe(true);[m
+[32m+[m[32m      expect(has(restartSource, /enabledLayers[^\r\n]*getRecommendedLayers/)).toBe(false);[m
+[32m+[m[32m    });[m
+[32m+[m[32m  });[m
+[32m+[m
+[32m+[m[32m  describe("loss and trade limits are hard barriers", () => {[m
+[32m+[m[32m    it("does not let unlimitedTrades bypass the configured max-trade limit", () => {[m
+[32m+[m[32m      expect(has(engineSource, /tradesCount\s*>=\s*state\.maxTradesPerDay[^\n]*!state\.unlimitedTrades/)).toBe(false);[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    it("does not continue trading after the daily-loss limit in unlimited/admin mode", () => {[m
+[32m+[m[32m      expect(has(engineSource, /dailyPnl\s*<=\s*maxDailyLoss[\s\S]{0,500}if\s*\(state\.unlimitedTrades\)/)).toBe(false);[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    it("does not let unlimited/admin mode bypass StoplossGuard", () => {[m
+[32m+[m[32m      expect(has(engineSource, /slGuard\.isPaused[^\n]*!state\.unlimitedTrades/)).toBe(false);[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    it("does not let unlimited/admin mode bypass portfolio drawdown", () => {[m
+[32m+[m[32m      expect(has(engineSource, /ddCheck\.halted[^\n]*!state\.unlimitedTrades/)).toBe(false);[m
+[32m+[m[32m    });[m
+[32m+[m[32m  });[m
+[32m+[m
+[32m+[m[32m  describe("Renko exit is a controlled feature, not unreachable dead code", () => {[m
+[32m+[m[32m    it("declares an explicit renkoExitEnabled runtime flag", () => {[m
+[32m+[m[32m      expect(has(engineSource, /renkoExitEnabled\??\s*:\s*boolean/)).toBe(true);[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    it("does not disable production exit logic with a literal `false &&` guard", () => {[m
+[32m+[m[32m      expect(has(engineSource, /if\s*\(\s*false\s*&&\s*state\.candles/)).toBe(false);[m
+[32m+[m[32m    });[m
+[32m+[m[32m  });[m
+[32m+[m[32m});[m
+[1mdiff --git a/server/routers.ts b/server/routers.ts[m
+[1mindex f0de952..ee86167 100644[m
+[1m--- a/server/routers.ts[m
+[1m+++ b/server/routers.ts[m
+[36m@@ -421,10 +421,11 @@[m [mexport const appRouter = router({[m
+         averagingEnabled: z.boolean().default(true),[m
+         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging[m
+         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine[m
+[31m-       unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit[m
+[31m-       openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users[m
+[31m-        crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)[m
+[31m-        adaptiveRegimeEnabled: z.boolean().default(true), // Adaptive Regime Switching (default ON)[m
+[32m+[m[32m        unlimitedTrades: z.boolean().default(false), // Legacy workflow option; hard safety barriers remain non-bypassable[m
+[32m+[m[32m        openingBurstEnabled: z.boolean().default(false),[m
+[32m+[m[32m        crudeOilCorrelation: z.boolean().default(false),[m
+[32m+[m[32m        adaptiveRegimeEnabled: z.boolean().default(false),[m
+[32m+[m[32m        renkoExitEnabled: z.boolean().default(false),[m
+       }))[m
+      .mutation(async ({ input, ctx }) => {[m
+       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);[m
+[36m@@ -703,10 +704,22 @@[m [mexport const appRouter = router({[m
+         }[m
+ [m
+         const existing = await db[m
+[31m-          .select({ id: botSessions.id })[m
+[32m+[m[32m          .select()[m
+           .from(botSessions)[m
+           .where(eq(botSessions.sessionToken, input.sessionToken))[m
+           .limit(1);[m
+[32m+[m[32m        const existingIsToday = !!existing[0]?.startedAt && new Date(existing[0].startedAt).getTime() >= todayStart.getTime();[m
+[32m+[m[32m        const restoredLayerTradesCount: Record<string, number> = (() => {[m
+[32m+[m[32m          if (!existingIsToday || !existing[0]?.layerTradesCount) return {};[m
+[32m+[m[32m          try {[m
+[32m+[m[32m            const parsed = JSON.parse(existing[0].layerTradesCount);[m
+[32m+[m[32m            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};[m
+[32m+[m[32m          } catch {[m
+[32m+[m[32m            return {};[m
+[32m+[m[32m          }[m
+[32m+[m[32m        })();[m
+[32m+[m[32m        const restoredConsecutiveUnderlyingSLs = existingIsToday ? (existing[0]?.consecutiveUnderlyingSLs ?? 0) : 0;[m
+[32m+[m[32m        const restoredLastUnderlyingSLAt = existingIsToday ? (existing[0]?.lastUnderlyingSLAt ?? null) : null;[m
+ [m
+         let sessionId: number;[m
+         if (existing.length > 0) {[m
+[36m@@ -738,7 +751,7 @@[m [mexport const appRouter = router({[m
+               isIndexOptions: input.isIndexOptions,[m
+               underlyingToken: input.underlyingToken ?? null,[m
+               optionType: input.optionType ?? null,[m
+[31m-              enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),[m
+[32m+[m[32m              enabledLayers: JSON.stringify(input.enabledLayers ?? []),[m
+              slStrategy: input.slStrategy ?? "B",[m
+              partial1Pct: input.partial1Pct,[m
+              partial2Pct: input.partial2Pct,[m
+[36m@@ -748,9 +761,8 @@[m [mexport const appRouter = router({[m
+              unlimitedTrades: input.unlimitedTrades,[m
+              openingBurstEnabled: input.openingBurstEnabled,[m
+              crudeOilCorrelation: input.crudeOilCorrelation,[m
+[31m-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,[m
+[31m-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,[m
+[31m-            layerTradesCount: {},[m
+[32m+[m[32m             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,[m
+[32m+[m[32m             renkoExitEnabled: input.renkoExitEnabled ?? false,[m
+            })[m
+            .where(eq(botSessions.sessionToken, input.sessionToken));[m
+        } else {[m
+[36m@@ -778,7 +790,7 @@[m [mexport const appRouter = router({[m
+             isIndexOptions: input.isIndexOptions,[m
+               underlyingToken: input.underlyingToken ?? null,[m
+               optionType: input.optionType ?? null,[m
+[31m-              enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : null,[m
+[32m+[m[32m              enabledLayers: JSON.stringify(input.enabledLayers ?? []),[m
+               slStrategy: input.slStrategy ?? "B",[m
+               partial1Pct: input.partial1Pct,[m
+               partial2Pct: input.partial2Pct,[m
+[36m@@ -788,9 +800,11 @@[m [mexport const appRouter = router({[m
+               unlimitedTrades: input.unlimitedTrades,[m
+               openingBurstEnabled: input.openingBurstEnabled,[m
+               crudeOilCorrelation: input.crudeOilCorrelation,[m
+[31m-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,[m
+[31m-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,[m
+[31m-            layerTradesCount: {},[m
+[32m+[m[32m              adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,[m
+[32m+[m[32m              renkoExitEnabled: input.renkoExitEnabled ?? false,[m
+[32m+[m[32m              consecutiveUnderlyingSLs: 0,[m
+[32m+[m[32m              lastUnderlyingSLAt: null,[m
+[32m+[m[32m              layerTradesCount: JSON.stringify({}),[m
+           });[m
+           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);[m
+         }[m
+[36m@@ -935,7 +949,7 @@[m [mexport const appRouter = router({[m
+             isIndexOptions: input.isIndexOptions,[m
+             underlyingToken: input.underlyingToken,[m
+             optionType: input.optionType,[m
+[31m-           enabledLayers: input.enabledLayers,[m
+[32m+[m[32m           enabledLayers: input.enabledLayers ?? [],[m
+            slStrategy: input.slStrategy ?? "B",[m
+            consecutiveTickErrors: 0,[m
+             capitalUsed: 0,[m
+[36m@@ -948,9 +962,11 @@[m [mexport const appRouter = router({[m
+             unlimitedTrades: input.unlimitedTrades,[m
+             openingBurstEnabled: input.openingBurstEnabled,[m
+             crudeOilCorrelation: input.crudeOilCorrelation,[m
+[31m-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,[m
+[31m-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,[m
+[31m-            layerTradesCount: {},[m
+[32m+[m[32m            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,[m
+[32m+[m[32m            renkoExitEnabled: input.renkoExitEnabled ?? false,[m
+[32m+[m[32m            consecutiveUnderlyingSLs: restoredConsecutiveUnderlyingSLs,[m
+[32m+[m[32m            lastUnderlyingSLAt: restoredLastUnderlyingSLAt,[m
+[32m+[m[32m            layerTradesCount: restoredLayerTradesCount,[m
+           },[m
+           onTradeOpen,[m
+           onTradeClose,[m
+[36m@@ -969,8 +985,11 @@[m [mexport const appRouter = router({[m
+               currentSl: tickState.openTrade?.currentSl ?? null,[m
+               // Staleness detection — Dashboard shows warning if this is too old[m
+               lastTickAt: Date.now(),[m
+[31m-              // Persist optionTradeToken so it survives server restarts (prevents underlying price leak)[m
+[32m+[m[32m              // Persist option and risk state so deploy restarts cannot reset same-day safety controls.[m
+               optionTradeToken: (tickState as any).optionTradeToken ?? null,[m
+[32m+[m[32m              layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),[m
+[32m+[m[32m              consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,[m
+[32m+[m[32m              lastUnderlyingSLAt: tickState.lastUnderlyingSLAt ?? null,[m
+             }).where(eq(botSessions.sessionToken, tickState.sessionToken));[m
+           },[m
+         );[m
+[36m@@ -1263,6 +1282,18 @@[m [mexport const appRouter = router({[m
+           ));[m
+         const todayCount = todayTrades.length;[m
+         const restoredPnl = todayTrades.reduce((s: number, t: { pnl: number | null }) => s + (t.pnl ?? 0), 0);[m
+[32m+[m[32m        const rowIsToday = !!row.startedAt && new Date(row.startedAt).getTime() >= todayStart.getTime();[m
+[32m+[m[32m        const resumeLayerTradesCount: Record<string, number> = (() => {[m
+[32m+[m[32m          if (!rowIsToday || !row.layerTradesCount) return {};[m
+[32m+[m[32m          try {[m
+[32m+[m[32m            const parsed = JSON.parse(row.layerTradesCount);[m
+[32m+[m[32m            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};[m
+[32m+[m[32m          } catch {[m
+[32m+[m[32m            return {};[m
+[32m+[m[32m          }[m
+[32m+[m[32m        })();[m
+[32m+[m[32m        const resumeConsecutiveUnderlyingSLs = rowIsToday ? (row.consecutiveUnderlyingSLs ?? 0) : 0;[m
+[32m+[m[32m        const resumeLastUnderlyingSLAt = rowIsToday ? (row.lastUnderlyingSLAt ?? null) : null;[m
+         // Restore open trade if any[m
+         const openTradeRows = await db[m
+           .select()[m
+[36m@@ -1326,7 +1357,15 @@[m [mexport const appRouter = router({[m
+           const capital = row.capital ?? 100000;[m
+           await dbInner.update(tradeLog).set({ status: "closed", exitPrice, pnl, pnlPct: (pnl / capital) * 100, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));[m
+           const state = getBotState(input.sessionToken);[m
+[31m-          if (state) await dbInner.update(botSessions).set({ tradesCount: state.tradesCount, dailyPnl: state.dailyPnl, status: state.status, lastError: state.lastError }).where(eq(botSessions.sessionToken, input.sessionToken));[m
+[32m+[m[32m          if (state) await dbInner.update(botSessions).set({[m
+[32m+[m[32m            tradesCount: state.tradesCount,[m
+[32m+[m[32m            dailyPnl: state.dailyPnl,[m
+[32m+[m[32m            status: state.status,[m
+[32m+[m[32m            lastError: state.lastError,[m
+[32m+[m[32m            layerTradesCount: JSON.stringify(state.layerTradesCount ?? {}),[m
+[32m+[m[32m            consecutiveUnderlyingSLs: state.consecutiveUnderlyingSLs ?? 0,[m
+[32m+[m[32m            lastUnderlyingSLAt: state.lastUnderlyingSLAt ?? null,[m
+[32m+[m[32m          }).where(eq(botSessions.sessionToken, input.sessionToken));[m
+           // Refresh StoplossGuard state from last 20 closed trades (same as bot.start path)[m
+           try {[m
+             const recentRows = await dbInner[m
+[36m@@ -1372,6 +1411,8 @@[m [mexport const appRouter = router({[m
+             isIndexOptions: row.isIndexOptions ?? false,[m
+             underlyingToken: row.underlyingToken ?? undefined,[m
+            optionType: (row.optionType as "CE" | "PE" | "auto" | undefined) ?? undefined,[m
+[32m+[m[32m           enabledLayers: row.enabledLayers ? (() => { try { const parsed = JSON.parse(row.enabledLayers); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : [],[m
+[32m+[m[32m           slStrategy: row.slStrategy === "D" ? "D" : "B",[m
+            consecutiveTickErrors: 0,[m
+             capitalUsed: 0,[m
+            partial1Pct: row.partial1Pct ?? 30,[m
+[36m@@ -1383,9 +1424,11 @@[m [mexport const appRouter = router({[m
+            unlimitedTrades: row.unlimitedTrades ?? false,[m
+            openingBurstEnabled: row.openingBurstEnabled ?? false,[m
+            crudeOilCorrelation: row.crudeOilCorrelation ?? false,[m
+[31m-           adaptiveRegimeEnabled: (row as any).adaptiveRegimeEnabled ?? true,[m
+[31m-           consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,[m
+[31m-            layerTradesCount: {},[m
+[32m+[m[32m           adaptiveRegimeEnabled: row.adaptiveRegimeEnabled ?? false,[m
+[32m+[m[32m           renkoExitEnabled: row.renkoExitEnabled ?? false,[m
+[32m+[m[32m           consecutiveUnderlyingSLs: resumeConsecutiveUnderlyingSLs,[m
+[32m+[m[32m           lastUnderlyingSLAt: resumeLastUnderlyingSLAt,[m
+[32m+[m[32m           layerTradesCount: resumeLayerTradesCount,[m
+          },[m
+          onTradeOpen,[m
+          onTradeClose,[m
+[36m@@ -1399,6 +1442,9 @@[m [mexport const appRouter = router({[m
+               lastSignalAt: tickState.lastSignal ? new Date() : undefined,[m
+               currentSl: tickState.openTrade?.currentSl ?? null, lastTickAt: Date.now(),[m
+               optionTradeToken: (tickState as any).optionTradeToken ?? null,[m
+[32m+[m[32m              layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),[m
+[32m+[m[32m              consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,[m
+[32m+[m[32m              lastUnderlyingSLAt: tickState.lastUnderlyingSLAt ?? null,[m
+             }).where(eq(botSessions.sessionToken, tickState.sessionToken));[m
+           },[m
+         );[m
+[36m@@ -2712,12 +2758,16 @@[m [mexport const appRouter = router({[m
+         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit[m
+         openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users[m
+         crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)[m
+[31m-        adaptiveRegimeEnabled: z.boolean().default(true), // Adaptive Regime Switching (default ON)[m
+[32m+[m[32m        adaptiveRegimeEnabled: z.boolean().default(false), // Fail-safe: enable adaptive switching only when explicitly selected[m
+[32m+[m[32m        renkoExitEnabled: z.boolean().default(false), // Experimental exit remains off unless explicitly selected[m
+         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R[m
+       }))[m
+      .mutation(async ({ input, ctx }) => {[m
+         // SECURITY: Verify caller owns this session[m
+         await verifySessionOwnership(ctx, input.sessionToken);[m
+[32m+[m[32m        if (!Array.isArray(input.enabledLayers) || input.enabledLayers.length === 0) {[m
+[32m+[m[32m          throw new Error("Select at least one strategy before starting a secondary bot.");[m
+[32m+[m[32m        }[m
+ [m
+         const db = await getDb();[m
+         if (!db) throw new Error("DB unavailable");[m
+[36m@@ -2924,10 +2974,29 @@[m [mexport const appRouter = router({[m
+         const slotTodayCount = slotTodayCountRows[0]?.count ?? 0;[m
+         // Insert or update a bot session for this slot[m
+         const existing = await db[m
+[31m-          .select({ id: botSessions.id, lastPrice: botSessions.lastPrice })[m
+[32m+[m[32m          .select({[m
+[32m+[m[32m            id: botSessions.id,[m
+[32m+[m[32m            lastPrice: botSessions.lastPrice,[m
+[32m+[m[32m            startedAt: botSessions.startedAt,[m
+[32m+[m[32m            layerTradesCount: botSessions.layerTradesCount,[m
+[32m+[m[32m            consecutiveUnderlyingSLs: botSessions.consecutiveUnderlyingSLs,[m
+[32m+[m[32m            lastUnderlyingSLAt: botSessions.lastUnderlyingSLAt,[m
+[32m+[m[32m          })[m
+           .from(botSessions)[m
+           .where(eq(botSessions.sessionToken, slotToken))[m
+           .limit(1);[m
+[32m+[m[32m        const slotSessionIsToday = !!existing[0]?.startedAt && new Date(existing[0].startedAt).getTime() >= slotTodayStart.getTime();[m
+[32m+[m[32m        const slotRestoredLayerTradesCount: Record<string, number> = (() => {[m
+[32m+[m[32m          if (!slotSessionIsToday || !existing[0]?.layerTradesCount) return {};[m
+[32m+[m[32m          try {[m
+[32m+[m[32m            const parsed = JSON.parse(existing[0].layerTradesCount);[m
+[32m+[m[32m            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};[m
+[32m+[m[32m          } catch {[m
+[32m+[m[32m            return {};[m
+[32m+[m[32m          }[m
+[32m+[m[32m        })();[m
+[32m+[m[32m        const slotRestoredConsecutiveUnderlyingSLs = slotSessionIsToday ? (existing[0]?.consecutiveUnderlyingSLs ?? 0) : 0;[m
+[32m+[m[32m        const slotRestoredLastUnderlyingSLAt = slotSessionIsToday ? (existing[0]?.lastUnderlyingSLAt ?? null) : null;[m
+         let sessionId: number;[m
+         if (existing.length > 0) {[m
+           sessionId = existing[0].id;[m
+[36m@@ -2947,7 +3016,7 @@[m [mexport const appRouter = router({[m
+             isIndexOptions: input.isIndexOptions ?? false,[m
+             underlyingToken: input.underlyingToken ?? null,[m
+             startedAt: new Date(), stoppedAt: null, lastError: null,[m
+[31m-           enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),[m
+[32m+[m[32m           enabledLayers: JSON.stringify(input.enabledLayers),[m
+            slStrategy: input.slStrategy ?? "B",[m
+            partial1Pct: input.partial1Pct,[m
+            partial2Pct: input.partial2Pct,[m
+[36m@@ -2957,9 +3026,11 @@[m [mexport const appRouter = router({[m
+            unlimitedTrades: input.unlimitedTrades ?? false,[m
+            openingBurstEnabled: input.openingBurstEnabled ?? false,[m
+            crudeOilCorrelation: input.crudeOilCorrelation,[m
+[31m-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,[m
+[31m-           consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,[m
+[31m-            layerTradesCount: {},[m
+[32m+[m[32m           adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,[m
+[32m+[m[32m           renkoExitEnabled: input.renkoExitEnabled ?? false,[m
+[32m+[m[32m           consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,[m
+[32m+[m[32m           lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,[m
+[32m+[m[32m           layerTradesCount: JSON.stringify(slotRestoredLayerTradesCount),[m
+          }).where(eq(botSessions.sessionToken, slotToken));[m
+        } else {[m
+           const result = await db.insert(botSessions).values({[m
+[36m@@ -2976,7 +3047,7 @@[m [mexport const appRouter = router({[m
+             isIndexOptions: input.isIndexOptions ?? false,[m
+             underlyingToken: input.underlyingToken ?? null,[m
+             startedAt: new Date(),[m
+[31m-            enabledLayers: input.enabledLayers ? JSON.stringify(input.enabledLayers) : JSON.stringify(getRecommendedLayers(input.instrumentLabel)),[m
+[32m+[m[32m            enabledLayers: JSON.stringify(input.enabledLayers),[m
+             slStrategy: input.slStrategy ?? "B",[m
+             partial1Pct: input.partial1Pct,[m
+             partial2Pct: input.partial2Pct,[m
+[36m@@ -2986,9 +3057,11 @@[m [mexport const appRouter = router({[m
+             unlimitedTrades: input.unlimitedTrades ?? false,[m
+             openingBurstEnabled: input.openingBurstEnabled ?? false,[m
+             crudeOilCorrelation: input.crudeOilCorrelation,[m
+[31m-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,[m
+[31m-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,[m
+[31m-            layerTradesCount: {},[m
+[32m+[m[32m            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,[m
+[32m+[m[32m            renkoExitEnabled: input.renkoExitEnabled ?? false,[m
+[32m+[m[32m            consecutiveUnderlyingSLs: 0,[m
+[32m+[m[32m            lastUnderlyingSLAt: null,[m
+[32m+[m[32m            layerTradesCount: JSON.stringify({}),[m
+           });[m
+           sessionId = Number((result as unknown as [{ insertId: number }])[0].insertId);[m
+         }[m
+[36m@@ -3017,6 +3090,9 @@[m [mexport const appRouter = router({[m
+               dailyPnl: slotState.dailyPnl,[m
+               status: slotState.status,[m
+               lastError: slotState.lastError,[m
+[32m+[m[32m              layerTradesCount: JSON.stringify(slotState.layerTradesCount ?? {}),[m
+[32m+[m[32m              consecutiveUnderlyingSLs: slotState.consecutiveUnderlyingSLs ?? 0,[m
+[32m+[m[32m              lastUnderlyingSLAt: slotState.lastUnderlyingSLAt ?? null,[m
+             }).where(eq(botSessions.sessionToken, slotToken));[m
+           }[m
+           // Refresh StoplossGuard from recent slot trades (parity with primary path)[m
+[36m@@ -3059,9 +3135,11 @@[m [mexport const appRouter = router({[m
+           unlimitedTrades: input.unlimitedTrades,[m
+           openingBurstEnabled: input.openingBurstEnabled,[m
+           crudeOilCorrelation: input.crudeOilCorrelation,[m
+[31m-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,[m
+[31m-            consecutiveUnderlyingSLs: 0, lastUnderlyingSLAt: null,[m
+[31m-            layerTradesCount: {},[m
+[32m+[m[32m          adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,[m
+[32m+[m[32m          renkoExitEnabled: input.renkoExitEnabled ?? false,[m
+[32m+[m[32m          consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,[m
+[32m+[m[32m          lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,[m
+[32m+[m[32m          layerTradesCount: slotRestoredLayerTradesCount,[m
+         }, onTradeOpen, onTradeClose, slotExistingOpenTrade ?? undefined, async (tickState) => {[m
+           const db = await getDb();[m
+           if (!db) return;[m
+[36m@@ -3075,6 +3153,9 @@[m [mexport const appRouter = router({[m
+             currentSl: tickState.openTrade?.currentSl ?? null,[m
+             lastTickAt: Date.now(),[m
+             optionTradeToken: (tickState as any).optionTradeToken ?? null,[m
+[32m+[m[32m            layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),[m
+[32m+[m[32m            consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,[m
+[32m+[m[32m            lastUnderlyingSLAt: tickState.lastUnderlyingSLAt ?? null,[m
+           }).where(eq(botSessions.sessionToken, tickState.sessionToken));[m
+         });[m
+ [m
