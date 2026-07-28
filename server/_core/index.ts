@@ -29,7 +29,7 @@ import { hotReloadAccessToken } from "../botEngine";
 import { upstoxFetch } from "../upstoxHttp";
 import { startBotWatchdog } from "../botWatchdog";
 import rateLimit from "express-rate-limit";
-import jwt from "jsonwebtoken";
+import { createTrpcAuthGate } from "./trpcAuthGate";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -90,71 +90,17 @@ async function startServer() {
   app.use("/api/trpc/mobileAuth.verifyOtp", otpLimiter);
 
 
+  // Parse cookies before the tRPC auth gate so browser sessions are recognized.
+  app.use(cookieParser());
+
   // ── tRPC Auth Gate ────────────────────────────────────────────────────────
-  // Block unauthenticated access to sensitive tRPC procedures.
-  // Only whitelisted public procedures are accessible without a valid JWT.
-  const PUBLIC_TRPC_PROCEDURES = new Set([
-    // Auth flows (must be public for login/signup)
-    "mobileAuth.sendOtp",
-    "mobileAuth.verifyOtp",
-    "mobileAuth.me",
-    "mobileAuth.updateName",
-    "mobileAuth.logout",
-    // Legacy auth stub
-    "auth.me",
-    "auth.logout",
-    // Admin login (has its own password check)
-    "admin.login",
-    "admin.verify",
-    // Subscription (needed for paywall before full access)
-    "subscription.checkAccess",
-    "subscription.startTrial",
-    "subscription.createOrder",
-    "subscription.verifyPayment",
-    // Referral (public for signup flow)
-    "referral.applyCode",
-    "referral.myReferral",
-    // System health
-    "system.health",
-  ]);
-
-  app.use("/api/trpc", (req, res, next) => {
-    // Extract procedure name(s) from the URL path
-    // tRPC batch calls use comma-separated procedure names: /api/trpc/proc1,proc2
-    const procedurePath = req.path.replace(/^\//, "");
-    if (!procedurePath) { next(); return; }
-
-    const procedures = procedurePath.split(",").map(p => p.trim());
-    const allPublic = procedures.every(p => PUBLIC_TRPC_PROCEDURES.has(p));
-    if (allPublic) { next(); return; }
-
-    // Check for valid JWT
-    const token: string | undefined =
-      req.cookies?.scalpbot_auth
-      || req.headers?.authorization?.replace("Bearer ", "")
-      || (req.headers?.["x-auth-token"] as string | undefined);
-
-    if (!token) {
-      res.status(401).json({
-        error: { message: "Authentication required. Please log in.", code: "UNAUTHORIZED" },
-      });
-      return;
-    }
-
-    try {
-      jwt.verify(token, process.env.JWT_SECRET || "fallback-secret");
-      next();
-    } catch {
-      res.status(401).json({
-        error: { message: "Invalid or expired session. Please log in again.", code: "UNAUTHORIZED" },
-      });
-    }
-  });
+  // Block unauthenticated access to sensitive tRPC procedures while returning
+  // a wire-compatible tRPC/SuperJSON error envelope.
+  app.use("/api/trpc", createTrpcAuthGate());
 
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  app.use(cookieParser());
   registerStorageProxy(app);
   registerOAuthRoutes(app);
 

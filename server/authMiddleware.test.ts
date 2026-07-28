@@ -1,98 +1,222 @@
-import { describe, it, expect, vi } from "vitest";
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
+import cookieParser from "cookie-parser";
+import express from "express";
 import jwt from "jsonwebtoken";
+import superjson from "superjson";
+import { createTRPCClient, httpLink, TRPCClientError } from "@trpc/client";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  createTrpcAuthGate,
+  getTrpcProcedurePaths,
+} from "./_core/trpcAuthGate";
 
-// Test the auth middleware logic (extracted for unit testing)
 const JWT_SECRET = "test-secret-key";
+const openServers = new Set<Server>();
 
-const PUBLIC_TRPC_PROCEDURES = new Set([
-  "mobileAuth.sendOtp",
-  "mobileAuth.verifyOtp",
-  "mobileAuth.me",
-  "mobileAuth.updateName",
-  "mobileAuth.logout",
-  "auth.me",
-  "auth.logout",
-  "admin.login",
-  "admin.verify",
-  "subscription.checkAccess",
-  "subscription.startTrial",
-  "subscription.createOrder",
-  "subscription.verifyPayment",
-  "referral.applyCode",
-  "referral.myReferral",
-  "system.health",
-]);
+async function startGateServer(): Promise<{ baseUrl: string; server: Server }> {
+  const app = express();
 
-function shouldBlockRequest(path: string, token: string | undefined): { blocked: boolean; reason?: string } {
-  const procedurePath = path.replace(/^\//, "");
-  if (!procedurePath) return { blocked: false };
+  // This order intentionally matches production. The regression being protected
+  // is that the gate must run only after cookie-parser populates req.cookies.
+  app.use(cookieParser());
+  app.use(
+    "/api/trpc",
+    createTrpcAuthGate({ getJwtSecret: () => JWT_SECRET }),
+  );
+  app.use("/api/trpc", (req, res) => {
+    res.json({
+      ok: true,
+      path: req.path,
+      authenticatedByCookie: typeof req.cookies?.scalpbot_auth === "string",
+    });
+  });
 
-  const procedures = procedurePath.split(",").map(p => p.trim());
-  const allPublic = procedures.every(p => PUBLIC_TRPC_PROCEDURES.has(p));
-  if (allPublic) return { blocked: false };
+  const server = await new Promise<Server>(resolve => {
+    const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+  });
+  openServers.add(server);
 
-  if (!token) return { blocked: true, reason: "no_token" };
-
-  try {
-    jwt.verify(token, JWT_SECRET);
-    return { blocked: false };
-  } catch {
-    return { blocked: true, reason: "invalid_token" };
-  }
+  const address = server.address() as AddressInfo;
+  return { baseUrl: `http://127.0.0.1:${address.port}`, server };
 }
 
-describe("Auth Middleware — tRPC Gate", () => {
-  it("allows public procedures without any token", () => {
-    expect(shouldBlockRequest("mobileAuth.me", undefined).blocked).toBe(false);
-    expect(shouldBlockRequest("mobileAuth.sendOtp", undefined).blocked).toBe(false);
-    expect(shouldBlockRequest("subscription.checkAccess", undefined).blocked).toBe(false);
-    expect(shouldBlockRequest("auth.me", undefined).blocked).toBe(false);
+async function closeServer(server: Server): Promise<void> {
+  openServers.delete(server);
+  await new Promise<void>((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+  });
+}
+
+function signValidToken(): string {
+  return jwt.sign(
+    { userId: 1, mobile: "9876543210", role: "admin" },
+    JWT_SECRET,
+    { expiresIn: "24h" },
+  );
+}
+
+function deserializeTrpcError(responseBody: any): any {
+  expect(responseBody).toHaveProperty("error.json");
+  return superjson.deserialize(responseBody.error);
+}
+
+afterEach(async () => {
+  await Promise.all([...openServers].map(server => closeServer(server)));
+});
+
+describe("tRPC auth gate", () => {
+  it("allows whitelisted public procedures without a token", async () => {
+    const { baseUrl, server } = await startGateServer();
+
+    const response = await fetch(`${baseUrl}/api/trpc/mobileAuth.me`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      path: "/mobileAuth.me",
+    });
+    await closeServer(server);
   });
 
-  it("blocks sensitive procedures without a token", () => {
-    expect(shouldBlockRequest("multiBots.allStatus", undefined).blocked).toBe(true);
-    expect(shouldBlockRequest("bot.start", undefined).blocked).toBe(true);
-    expect(shouldBlockRequest("trades.list", undefined).blocked).toBe(true);
-    expect(shouldBlockRequest("credentials.get", undefined).blocked).toBe(true);
-    expect(shouldBlockRequest("bot.status", undefined).blocked).toBe(true);
+  it("blocks sensitive procedures with a SuperJSON-compatible tRPC 401", async () => {
+    const { baseUrl, server } = await startGateServer();
+
+    const response = await fetch(`${baseUrl}/api/trpc/credentials.save`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ json: { apiKey: "inert", apiSecret: "inert" } }),
+    });
+    const body = await response.json();
+    const error = deserializeTrpcError(body);
+
+    expect(response.status).toBe(401);
+    expect(error).toMatchObject({
+      message: "Authentication required. Please log in.",
+      code: -32001,
+      data: {
+        code: "UNAUTHORIZED",
+        httpStatus: 401,
+        path: "credentials.save",
+      },
+    });
+    await closeServer(server);
   });
 
-  it("blocks batch requests if ANY procedure is non-public", () => {
-    expect(shouldBlockRequest("mobileAuth.me,multiBots.allStatus", undefined).blocked).toBe(true);
-    expect(shouldBlockRequest("subscription.checkAccess,bot.start", undefined).blocked).toBe(true);
+  it("surfaces a normal UNAUTHORIZED error through the real tRPC/SuperJSON client", async () => {
+    const { baseUrl, server } = await startGateServer();
+    const client = createTRPCClient<any>({
+      links: [
+        httpLink({
+          url: `${baseUrl}/api/trpc`,
+          transformer: superjson,
+        }),
+      ],
+    });
+
+    let caughtError: unknown;
+    try {
+      await client.credentials.save.mutate({
+        apiKey: "inert",
+        apiSecret: "inert",
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(TRPCClientError);
+    expect(caughtError).toMatchObject({
+      message: "Authentication required. Please log in.",
+      data: {
+        code: "UNAUTHORIZED",
+        httpStatus: 401,
+        path: "credentials.save",
+      },
+    });
+    expect((caughtError as Error).message).not.toContain(
+      "Unable to transform response from server",
+    );
+    await closeServer(server);
   });
 
-  it("allows batch requests if ALL procedures are public", () => {
-    expect(shouldBlockRequest("mobileAuth.me,auth.me", undefined).blocked).toBe(false);
-    expect(shouldBlockRequest("subscription.checkAccess,mobileAuth.sendOtp", undefined).blocked).toBe(false);
+  it("recognizes a valid scalpbot_auth cookie after cookie parsing", async () => {
+    const { baseUrl, server } = await startGateServer();
+    const token = signValidToken();
+
+    const response = await fetch(`${baseUrl}/api/trpc/credentials.save`, {
+      headers: { cookie: `scalpbot_auth=${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      authenticatedByCookie: true,
+    });
+    await closeServer(server);
   });
 
-  it("allows sensitive procedures with a valid JWT", () => {
-    const token = jwt.sign({ userId: 1, mobile: "9876543210", role: "admin" }, JWT_SECRET, { expiresIn: "24h" });
-    expect(shouldBlockRequest("multiBots.allStatus", token).blocked).toBe(false);
-    expect(shouldBlockRequest("bot.start", token).blocked).toBe(false);
-    expect(shouldBlockRequest("trades.list", token).blocked).toBe(false);
+  it("allows a sensitive procedure with a valid bearer JWT", async () => {
+    const { baseUrl, server } = await startGateServer();
+
+    const response = await fetch(`${baseUrl}/api/trpc/trades.list`, {
+      headers: { authorization: `Bearer ${signValidToken()}` },
+    });
+
+    expect(response.status).toBe(200);
+    await closeServer(server);
   });
 
-  it("blocks sensitive procedures with an invalid/expired JWT", () => {
+  it("returns a transformable tRPC 401 for an invalid or expired JWT", async () => {
+    const { baseUrl, server } = await startGateServer();
     const expiredToken = jwt.sign({ userId: 1 }, JWT_SECRET, { expiresIn: "-1h" });
-    expect(shouldBlockRequest("multiBots.allStatus", expiredToken).blocked).toBe(true);
-    expect(shouldBlockRequest("multiBots.allStatus", expiredToken).reason).toBe("invalid_token");
+
+    const response = await fetch(`${baseUrl}/api/trpc/multiBots.allStatus`, {
+      headers: { authorization: `Bearer ${expiredToken}` },
+    });
+    const error = deserializeTrpcError(await response.json());
+
+    expect(response.status).toBe(401);
+    expect(error).toMatchObject({
+      message: "Invalid or expired session. Please log in again.",
+      code: -32001,
+      data: {
+        code: "UNAUTHORIZED",
+        httpStatus: 401,
+        path: "multiBots.allStatus",
+      },
+    });
+    await closeServer(server);
   });
 
-  it("blocks sensitive procedures with a JWT signed by wrong secret", () => {
-    const wrongToken = jwt.sign({ userId: 1 }, "wrong-secret", { expiresIn: "24h" });
-    expect(shouldBlockRequest("multiBots.allStatus", wrongToken).blocked).toBe(true);
-    expect(shouldBlockRequest("multiBots.allStatus", wrongToken).reason).toBe("invalid_token");
+  it("blocks a mixed batch and returns one valid tRPC error per operation", async () => {
+    const { baseUrl, server } = await startGateServer();
+
+    const response = await fetch(
+      `${baseUrl}/api/trpc/mobileAuth.me,credentials.get?batch=1`,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body).toHaveLength(2);
+    expect(body.map(deserializeTrpcError)).toEqual([
+      expect.objectContaining({
+        code: -32001,
+        data: expect.objectContaining({ path: "mobileAuth.me" }),
+      }),
+      expect.objectContaining({
+        code: -32001,
+        data: expect.objectContaining({ path: "credentials.get" }),
+      }),
+    ]);
+    await closeServer(server);
   });
 
-  it("blocks sensitive procedures with a random string as token", () => {
-    expect(shouldBlockRequest("multiBots.allStatus", "random-garbage-string").blocked).toBe(true);
-    expect(shouldBlockRequest("multiBots.allStatus", "random-garbage-string").reason).toBe("invalid_token");
-  });
-
-  it("handles empty path gracefully", () => {
-    expect(shouldBlockRequest("", undefined).blocked).toBe(false);
-    expect(shouldBlockRequest("/", undefined).blocked).toBe(false);
+  it("parses empty and comma-separated procedure paths deterministically", () => {
+    expect(getTrpcProcedurePaths("")).toEqual([]);
+    expect(getTrpcProcedurePaths("/")).toEqual([]);
+    expect(getTrpcProcedurePaths("/mobileAuth.me, credentials.get")).toEqual([
+      "mobileAuth.me",
+      "credentials.get",
+    ]);
   });
 });
