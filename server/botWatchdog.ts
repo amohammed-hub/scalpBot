@@ -12,6 +12,7 @@
 
 import { getDb, resetDbConnection } from "./db";
 import { isBotAutomationEnabled } from "./botAutomation";
+import { canAutoRestartSession } from "./botSessionLifecycle";
 import { botSessions } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { getBotState } from "./botEngine";
@@ -68,6 +69,11 @@ export async function runWatchdogCycle(): Promise<{ checked: number; restarted: 
   let errors = 0;
 
   for (const session of runningSessions) {
+    if (!canAutoRestartSession(session)) {
+      console.log(`[BotWatchdog] Session ${session.sessionToken.slice(0, 8)} skipped — durable kill-switch stop marker present`);
+      continue;
+    }
+
     const inMemory = getBotState(session.sessionToken);
     if (!inMemory) {
       // Bot is marked running in DB but not in memory — restart it

@@ -7748,8 +7748,13 @@ export function startBot(
         state.lastError = `Tick error: ${msg}`;
         state.consecutiveTickErrors = (state.consecutiveTickErrors ?? 0) + 1;
         emitActivity(config.sessionToken, "error", `⚠ Tick error (${state.consecutiveTickErrors}/3): ${msg}`);
-        // Auto-restart after 3 consecutive failures
+        // Auto-restart after 3 consecutive failures, unless an explicit stop
+        // removed this bot while the failing tick was still in flight.
         if (state.consecutiveTickErrors >= 3) {
+          if (state.status === "stopped" || !bots.has(state.sessionToken)) {
+            console.log(`[BotEngine] Auto-restart cancelled for ${config.sessionToken} — bot was explicitly stopped`);
+            return;
+          }
           console.warn(`[BotEngine] Auto-restarting bot ${config.sessionToken} after 3 consecutive tick failures`);
           emitActivity(config.sessionToken, "bot_start", `🔄 Auto-restarting bot after 3 consecutive tick errors — preserving open trade`);
           sendTelegramAlert(state,
@@ -7823,7 +7828,15 @@ export function startBot(
 }
 export function stopBot(sessionToken: string) {
   const state = bots.get(sessionToken);
-  if (state?.intervalHandle) { clearInterval(state.intervalHandle); state.intervalHandle = null; state.status = "stopped"; }
+  if (state) {
+    // Publish the terminal state before clearing handles or emitting alerts so
+    // any in-flight tick failure cannot enter the self-restart path.
+    state.status = "stopped";
+    if (state.intervalHandle) {
+      clearInterval(state.intervalHandle);
+      state.intervalHandle = null;
+    }
+  }
   emitActivity(sessionToken, "bot_stop", `Bot stopped | Day P&L: ₹${state?.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state?.tradesCount ?? 0}`);
   if (state) {
     const pnlSign = (state.dailyPnl ?? 0) >= 0 ? "+" : "";

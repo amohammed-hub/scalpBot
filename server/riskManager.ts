@@ -407,8 +407,9 @@ export async function executeKillSwitch(
       closedTrades++;
     }
 
-    // Stop the bot
-    if (bot.status === "running") {
+    // Stop every in-memory bot that is not already terminal. Paused/error bots
+    // still retain engine state and must not survive an emergency kill switch.
+    if (bot.status !== "stopped") {
       stopBotFn(bot.sessionToken);
       stoppedBots++;
     }

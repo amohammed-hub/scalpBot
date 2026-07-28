@@ -10,6 +10,7 @@ import { ENV } from "./_core/env";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";
 import { getUpstoxEgressStatus, upstoxFetch, verifyUpstoxManagedEgress } from "./upstoxHttp";
 import { assertBotAutomationEnabled } from "./botAutomation";
+import { getBaseSessionToken, KILL_SWITCH_LAST_ERROR } from "./botSessionLifecycle";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -1155,7 +1156,7 @@ export const appRouter = router({
           if (db) {
             await db
               .update(botSessions)
-              .set({ status: "running" })
+              .set({ status: "running", stoppedAt: null, lastError: null })
               .where(eq(botSessions.sessionToken, input.sessionToken));
           }
         } catch (dbErr) {
@@ -1185,7 +1186,7 @@ export const appRouter = router({
           if (db) {
             await db
               .update(botSessions)
-              .set({ status: "running" })
+              .set({ status: "running", stoppedAt: null, lastError: null })
               .where(eq(botSessions.sessionToken, input.sessionToken));
           }
         } catch (dbErr) {
@@ -4256,6 +4257,37 @@ export const appRouter = router({
 
         console.log("[KILL SWITCH] ⚠️ ACTIVATED — stopping ALL bots, closing ALL positions");
         const db = await getDb();
+        if (!db) {
+          throw new Error("Kill Switch failed: database unavailable; durable stopped state could not be recorded");
+        }
+
+        // Persist the terminal state FIRST for every slot owned by this base
+        // session. The in-memory map may be empty after a deploy, which was the
+        // root cause of stopped bots being shown as reconnecting and revived.
+        const baseSessionToken = getBaseSessionToken(input.sessionToken);
+        const ownedSessionCondition = or(
+          eq(botSessions.sessionToken, baseSessionToken),
+          like(botSessions.sessionToken, `${baseSessionToken}-slot%`),
+        );
+        const persistedSessions = await db
+          .select({ sessionToken: botSessions.sessionToken, status: botSessions.status })
+          .from(botSessions)
+          .where(ownedSessionCondition);
+        const stoppedSessionTokens = new Set(
+          persistedSessions
+            .filter((session: { sessionToken: string; status: string }) => session.status !== "stopped")
+            .map((session: { sessionToken: string; status: string }) => session.sessionToken),
+        );
+        const killSwitchStoppedAt = new Date();
+        await db
+          .update(botSessions)
+          .set({
+            status: "stopped",
+            stoppedAt: killSwitchStoppedAt,
+            lastError: KILL_SWITCH_LAST_ERROR,
+          })
+          .where(ownedSessionCondition);
+
         const onTradeCloseKill = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
           if (!db) return;
           await db.update(tradeLog).set({ status: "closed", exitPrice, pnl, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
@@ -4264,15 +4296,18 @@ export const appRouter = router({
 
         // Get ALL bots for this session (running AND paused — kill everything)
         const { getAllBotsForSession } = await import("./botEngine");
-        const allBots = getAllBotsForSession(input.sessionToken);
-        console.log(`[KILL SWITCH] Found ${allBots.length} bot(s) to kill`);
+        const allBots = getAllBotsForSession(baseSessionToken);
+        for (const bot of allBots) {
+          if (bot.status !== "stopped") stoppedSessionTokens.add(bot.sessionToken);
+        }
+        console.log(`[KILL SWITCH] Found ${allBots.length} in-memory bot(s) and ${persistedSessions.length} persisted session(s) to stop`);
 
         // Attempt 1
         let result = await executeKillSwitch(allBots, stopBot, onTradeCloseKill);
         
         // Retry: check if any bots are still running/have open trades
-        const remainingBots = getAllBotsForSession(input.sessionToken);
-        const stillRunning = remainingBots.filter(b => b.status === "running" || b.openTrade);
+        const remainingBots = getAllBotsForSession(baseSessionToken);
+        const stillRunning = remainingBots.filter(b => b.status !== "stopped" || b.openTrade);
         
         if (stillRunning.length > 0) {
           console.log(`[KILL SWITCH] RETRY — ${stillRunning.length} bot(s) still active after first attempt`);
@@ -4283,23 +4318,25 @@ export const appRouter = router({
         }
 
         // Final check — force stop any stragglers
-        const finalCheck = getAllBotsForSession(input.sessionToken);
+        const finalCheck = getAllBotsForSession(baseSessionToken);
         const failures: string[] = [];
         for (const bot of finalCheck) {
-          if (bot.status === "running" || bot.openTrade) {
+          if (bot.status !== "stopped" || bot.openTrade) {
             console.error(`[KILL SWITCH] FORCE STOP — bot ${bot.sessionToken.slice(0, 8)} still alive`);
             try { stopBot(bot.sessionToken); result.stoppedBots++; } catch {}
             if (bot.openTrade) failures.push(bot.openTrade.symbolLabel ?? bot.openTrade.symbol ?? bot.sessionToken.slice(0, 8));
           }
         }
 
-        // Mark all sessions stopped in DB
-        if (db) {
-          const { inArray } = await import("drizzle-orm");
-          const tokens = allBots.map(b => b.sessionToken);
-          if (tokens.length > 0) {
-            await db.update(botSessions).set({ status: "stopped", stoppedAt: new Date(), lastError: "Kill Switch activated" }).where(inArray(botSessions.sessionToken, tokens));
-          }
+        // Count unique sessions stopped across durable and in-memory state,
+        // then verify the database cannot advertise any of them as running.
+        result.stoppedBots = stoppedSessionTokens.size;
+        const runningAfterKill = await db
+          .select({ sessionToken: botSessions.sessionToken })
+          .from(botSessions)
+          .where(and(ownedSessionCondition, eq(botSessions.status, "running")));
+        if (runningAfterKill.length > 0) {
+          failures.push(`Durable stop verification failed for ${runningAfterKill.length} session(s)`);
         }
 
         console.log(`[KILL SWITCH] COMPLETE — ${result.stoppedBots} bots stopped, ${result.closedTrades} trades closed, ${failures.length} failures`);
@@ -4309,8 +4346,8 @@ export const appRouter = router({
           if (db2) {
             // BUG-7 FIX: Check ALL sessions for Telegram config (not just primary)
             const { inArray } = await import("drizzle-orm");
-            const allTokens = allBots.map(b => b.sessionToken);
-            if (allTokens.length === 0) allTokens.push(input.sessionToken);
+            const allTokens = persistedSessions.map((session: { sessionToken: string }) => session.sessionToken);
+            if (allTokens.length === 0) allTokens.push(baseSessionToken);
             const tgRows = await db2.select({ telegramBotToken: botSessions.telegramBotToken, telegramChatId: botSessions.telegramChatId, telegramEnabled: botSessions.telegramEnabled })
               .from(botSessions).where(inArray(botSessions.sessionToken, allTokens));
             // Deduplicate: send to each unique chatId only once
