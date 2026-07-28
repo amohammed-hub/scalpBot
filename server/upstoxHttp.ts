@@ -152,9 +152,9 @@ function readConfig(): UpstoxEgressConfig {
         `${UPSTOX_EGRESS_ENV.proxyUrl} is required when ${UPSTOX_EGRESS_ENV.mode}=managed-proxy`,
       );
     }
-    if (allowedIps.length !== 2) {
+    if (allowedIps.length < 1 || allowedIps.length > 2) {
       throw new Error(
-        `${UPSTOX_EGRESS_ENV.allowedIps} must contain exactly two IPv4 addresses for managed-proxy mode`,
+        `${UPSTOX_EGRESS_ENV.allowedIps} must contain one or two IPv4 addresses for managed-proxy mode`,
       );
     }
   }
