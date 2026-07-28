@@ -11,6 +11,7 @@
 
 import type { BotState, Candle } from "./botEngine";
 import { classifyMarketRegime, placeUpstoxOrder } from "./botEngine";
+import { upstoxAxios } from "./upstoxHttp";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface MarketRiskScore {
@@ -87,12 +88,11 @@ const VIX_CACHE_MS = 60_000; // cache 60s
 export async function fetchIndiaVix(accessToken?: string | null): Promise<number> {
   if (Date.now() - lastVixFetch < VIX_CACHE_MS && cachedVix > 0) return cachedVix;
   try {
-    const { default: axios } = await import("axios");
     // India VIX instrument key on Upstox
     const headers: Record<string, string> = { Accept: "application/json" };
     // BUG-13 fix: Include auth header when available to avoid rate limiting
     if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-    const resp = await axios.get(
+    const resp = await upstoxAxios.get(
       "https://api.upstox.com/v2/market-quote/quotes?instrument_key=NSE_INDEX%7CIndia%20VIX",
       { headers, timeout: 6000 },
     );

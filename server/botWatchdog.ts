@@ -11,6 +11,7 @@
  */
 
 import { getDb, resetDbConnection } from "./db";
+import { isBotAutomationEnabled } from "./botAutomation";
 import { botSessions } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { getBotState } from "./botEngine";
@@ -20,6 +21,11 @@ import { emitActivity } from "./activityLog";
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startBotWatchdog(intervalMs = 60_000) {
+  if (!isBotAutomationEnabled()) {
+    console.log("[BotWatchdog] Disabled: BOT_AUTOMATION_ENABLED is not true.");
+    return;
+  }
+
   if (watchdogTimer) return; // already running
 
   watchdogTimer = setInterval(async () => {
@@ -45,6 +51,10 @@ export function stopBotWatchdog() {
 }
 
 export async function runWatchdogCycle(): Promise<{ checked: number; restarted: number; errors: number }> {
+  if (!isBotAutomationEnabled()) {
+    return { checked: 0, restarted: 0, errors: 0 };
+  }
+
   const db = await getDb();
   if (!db) return { checked: 0, restarted: 0, errors: 0 };
 

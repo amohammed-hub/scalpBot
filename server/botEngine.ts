@@ -4,6 +4,8 @@
  */
 
 import axios from "axios";
+import { ensureUpstoxLiveOrderEgress, upstoxAxios, upstoxFetch } from "./upstoxHttp";
+import { assertBotAutomationEnabled } from "./botAutomation";
 import { emitActivity } from "./activityLog";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import { evaluateStrategyGate, computeVRP, computeOIFlowBias, computeMaxPainGravity } from "./vrpRegimeFilter";
@@ -3664,7 +3666,7 @@ export async function fetchUpstoxCandles(instrumentToken: string, accessToken?: 
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/1minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-    const resp = await axios.get(url, { headers, timeout: 8000 });
+    const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending order — reverse to ascending
   } catch { return []; }
@@ -3679,7 +3681,7 @@ async function fetchUpstoxDayCandles(instrumentToken: string, accessToken?: stri
     const url = `https://api.upstox.com/v2/historical-candle/${encoded}/day/${toDate}/${fromDate}`;
     const headers: Record<string, string> = { Accept: "application/json" };
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-    const resp = await axios.get(url, { headers, timeout: 8000 });
+    const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
   } catch { return []; }
@@ -3692,7 +3694,7 @@ export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/5minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-    const resp = await axios.get(url, { headers, timeout: 8000 });
+    const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
   } catch { return []; }
@@ -3705,7 +3707,7 @@ export async function fetchUpstox1hCandles(instrumentToken: string, accessToken?
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/60minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-    const resp = await axios.get(url, { headers, timeout: 8000 });
+    const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse();
   } catch { return []; }
@@ -3768,7 +3770,7 @@ export async function fetchFullQuote(instrumentToken: string, accessToken: strin
   try {
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded}`;
-    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
+    const resp = await upstoxAxios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
     const data = resp.data?.data?.[instrumentToken] ?? resp.data?.data?.[Object.keys(resp.data?.data ?? {})[0]];
     if (!data) return null;
     const ltp = data.last_price ?? 0;
@@ -3785,7 +3787,7 @@ export async function fetchFullQuote(instrumentToken: string, accessToken: strin
       await new Promise(r => setTimeout(r, 1000));
       const encoded = encodeURIComponent(instrumentToken);
       const url = `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded}`;
-      const resp = await axios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
+      const resp = await upstoxAxios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
       const data = resp.data?.data?.[instrumentToken] ?? resp.data?.data?.[Object.keys(resp.data?.data ?? {})[0]];
       if (!data) return null;
       const ltp = data.last_price ?? 0;
@@ -3853,7 +3855,7 @@ export async function resolveAtmOptionToken(
 ): Promise<ResolvedOption | null> {
   try {
     // Step 1: get current underlying price
-    const quoteResp = await axios.get(
+    const quoteResp = await upstoxAxios.get(
       `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(underlyingToken)}`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
     );
@@ -3880,7 +3882,7 @@ export async function resolveAtmOptionToken(
 
     for (const expiry of expiryOrder) {
       try {
-        const resp = await axios.get(
+        const resp = await upstoxAxios.get(
           `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${expiry}`,
           { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
         );
@@ -3986,7 +3988,7 @@ async function validateOptionToken(
 ): Promise<{ valid: boolean; actualStrike?: number; tradingSymbol?: string }> {
   try {
     // Use instrument search to find the actual details of this token
-    const resp = await axios.get(
+    const resp = await upstoxAxios.get(
       `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(token.split("|")[0] === "NSE_FO" ? "NSE_INDEX|Nifty 50" : token)}`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
     );
@@ -4024,7 +4026,7 @@ export async function resolveMcxFuturesToken(
         `?query=${encodeURIComponent(symbol)}` +
         `&exchanges=MCX&segments=COMM&instrument_types=FUTCOM` +
         `&expiry=current_month&records=10`;
-      const resp = await axios.get(url, {
+      const resp = await upstoxAxios.get(url, {
         headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
         timeout: 8000,
       });
@@ -4129,7 +4131,7 @@ async function getMcxInstruments(): Promise<McxInstrumentRow[]> {
   if (mcxInstrumentsCache && Date.now() - mcxInstrumentsCacheAt < MCX_INSTRUMENTS_CACHE_MS) {
     return mcxInstrumentsCache;
   }
-  const resp = await axios.get("https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz", {
+  const resp = await upstoxAxios.get("https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz", {
     responseType: "arraybuffer",
     timeout: 20000,
   });
@@ -4161,7 +4163,7 @@ export async function resolveAtmMcxOptionToken(
     // Step 1: get current futures price (try market-quote API, fall back to candle price)
     let underlyingPrice: number = 0;
     try {
-      const quoteResp = await axios.get(
+      const quoteResp = await upstoxAxios.get(
         `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(futuresToken)}`,
         { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
       );
@@ -4217,7 +4219,7 @@ export async function resolveAtmMcxOptionToken(
             const optionsUnderlyingKey = optionCandidates[0].underlying_key;
             if (optionsUnderlyingKey && optionsUnderlyingKey !== futuresToken) {
               try {
-                const ulResp = await axios.get(
+                const ulResp = await upstoxAxios.get(
                   `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(optionsUnderlyingKey)}`,
                   { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
                 );
@@ -4252,7 +4254,7 @@ export async function resolveAtmMcxOptionToken(
           let premiumByToken = new Map<string, number>();
           let quoteFetchOk = false;
           try {
-            const optQuoteResp = await axios.get(
+            const optQuoteResp = await upstoxAxios.get(
               `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(keys)}`,
               { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
             );
@@ -4316,7 +4318,7 @@ export async function resolveAtmMcxOptionToken(
             if (nextNear.length > 0) {
               const nextKeys = nextNear.map(c => c.instrument_key).join(",");
               try {
-                const nextQuoteResp = await axios.get(
+                const nextQuoteResp = await upstoxAxios.get(
                   `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(nextKeys)}`,
                   { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
                 );
@@ -4366,7 +4368,7 @@ export async function resolveAtmMcxOptionToken(
       market_data?: { ltp?: number };
     }> = [];
     try {
-      const fallbackResp = await axios.get(
+      const fallbackResp = await upstoxAxios.get(
         `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(futuresToken)}`,
         { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
       );
@@ -4421,7 +4423,7 @@ async function checkUpstoxMargin(accessToken: string, isMcx: boolean): Promise<n
     return null;
   }
   try {
-    const resp = await axios.get("https://api.upstox.com/v2/user/get-funds-and-margin", {
+    const resp = await upstoxAxios.get("https://api.upstox.com/v2/user/get-funds-and-margin", {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
       timeout: 5000,
     });
@@ -4456,7 +4458,17 @@ export async function placeUpstoxOrder(
     return fakeOrderId;
   }
 
-  const MAX_RETRIES = 10;
+  let liveOrderHeaders: Awaited<ReturnType<typeof ensureUpstoxLiveOrderEgress>>;
+  try {
+    liveOrderHeaders = await ensureUpstoxLiveOrderEgress();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    lastOrderRejectionReason = reason;
+    console.error(`[BotEngine] Live order blocked by managed-egress safety gate: ${reason}`);
+    return null;
+  }
+
+  const MAX_AUTH_RETRIES = 2;
   // ── PRODUCT TYPE: MCX and F&O use "D" (NRML/Delivery), equity uses "I" (Intraday) ──
   // Upstox API docs: F&O examples all use product "D". MCX options REQUIRE "D".
   // Using "I" for MCX options causes exchange rejection (ghost trades).
@@ -4478,12 +4490,12 @@ export async function placeUpstoxOrder(
     orderQty = correctedQty;
   }
   let currentToken = accessToken;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 1; attempt <= MAX_AUTH_RETRIES; attempt++) {
   try {
-    const resp = await axios.post(
+    const resp = await upstoxAxios.post(
       useSandbox ? "https://api-sandbox.upstox.com/v3/order/place" : "https://api-hft.upstox.com/v3/order/place",
       { quantity: orderQty, product, validity: "DAY", price: 0, tag: "scalp-bot", instrument_token: instrumentToken, order_type: "MARKET", transaction_type: direction, disclosed_quantity: 0, trigger_price: 0, is_amo: false, slice: true, market_protection: -1 },
-      { headers: { Authorization: `Bearer ${currentToken}`, "Content-Type": "application/json", Accept: "application/json" }, timeout: 8000 }
+      { headers: { Authorization: `Bearer ${currentToken}`, "Content-Type": "application/json", Accept: "application/json", ...liveOrderHeaders }, timeout: 8000 }
     );
     lastOrderRejectionReason = null;
     // v3 API returns { data: { order_ids: ["..."] } } (array)
@@ -4508,19 +4520,19 @@ export async function placeUpstoxOrder(
       }
     }
     // On 401 (token expired), try refreshing from DB and retry
-    if (axios.isAxiosError(err) && err.response?.status === 401 && attempt < MAX_RETRIES) {
-      console.log(`[BotEngine] Order got 401 (token expired), attempting DB refresh... (attempt ${attempt}/${MAX_RETRIES})`);
+    if (axios.isAxiosError(err) && err.response?.status === 401 && attempt < MAX_AUTH_RETRIES) {
+      console.log(`[BotEngine] Order got 401 (token expired), waiting for DB hot reload... (attempt ${attempt}/${MAX_AUTH_RETRIES})`);
       // We don't have sessionToken here, but the caller passes accessToken from state.
       // The hotReload mechanism should have already updated, but try a small delay to let it propagate.
       await new Promise(r => setTimeout(r, 1000));
       continue;
     }
-    // If the error is UDAPI1154 (static IP restriction), retry — Railway load-balances
-    // across 3 IPs but only 2 are whitelisted in Upstox. Retrying hits a different IP.
-    if (reason.includes("UDAPI1154") && attempt < MAX_RETRIES) {
-      console.log(`[BotEngine] Order hit non-whitelisted IP (attempt ${attempt}/${MAX_RETRIES}), retrying in 500ms...`);
-      await new Promise(r => setTimeout(r, 500));
-      continue;
+    // A static-IP rejection means the managed-egress invariant is broken.
+    // Fail closed immediately; retries cannot repair a misrouted request and may duplicate intent.
+    if (reason.includes("UDAPI1154")) {
+      lastOrderRejectionReason = reason;
+      console.error(`[BotEngine] Managed-egress invariant failed; blocking further order attempts: ${reason}`);
+      return null;
     }
     lastOrderRejectionReason = reason;
     console.error(`[BotEngine] Order placement failed (${instrumentToken} ${direction} qty=${orderQty} product=${product}):`, reason);
@@ -4541,7 +4553,7 @@ export async function verifyUpstoxOrderStatus(
     return { status: "complete", filledQty: undefined, avgPrice: undefined };
   }
   try {
-    const resp = await axios.get(
+    const resp = await upstoxAxios.get(
       useSandbox ? `https://api-sandbox.upstox.com/v3/order/details?order_id=${orderId}` : `https://api.upstox.com/v2/order/details?order_id=${orderId}`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 }
     );
@@ -4569,7 +4581,7 @@ export async function resolveNseLotSize(underlyingToken: string, accessToken: st
   const cached = nseLotSizeCache.get(underlyingToken);
   if (cached && Date.now() - cached.fetchedAt < 12 * 3600 * 1000) return cached.lotSize;
   try {
-    const resp = await axios.get(
+    const resp = await upstoxAxios.get(
       `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(underlyingToken)}`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
     );
@@ -4916,7 +4928,7 @@ async function tick(
     let tokenExpired = !state.accessToken;
     if (state.accessToken && !tokenExpired) {
       try {
-        const testResp = await fetch("https://api.upstox.com/v2/user/profile", {
+        const testResp = await upstoxFetch("https://api.upstox.com/v2/user/profile", {
           headers: { "Authorization": `Bearer ${state.accessToken}`, "Accept": "application/json" },
         });
         if (testResp.status === 401 || testResp.status === 403) {
@@ -5806,7 +5818,7 @@ async function tick(
         // may be larger than what the bot knows (remainingQty). Exit the FULL position.
         let actualExitQty = remainingQty;
         try {
-          const posResp = await axios.get("https://api.upstox.com/v2/portfolio/short-term-positions", {
+          const posResp = await upstoxAxios.get("https://api.upstox.com/v2/portfolio/short-term-positions", {
             headers: { Authorization: `Bearer ${state.accessToken}`, Accept: "application/json" },
             timeout: 8000,
           });
@@ -7558,6 +7570,8 @@ export function startBot(
   existingOpenTrade?: OpenTrade | null,
   onTick?: (state: BotState) => Promise<void>,
 ) {
+  assertBotAutomationEnabled("Bot engine start");
+
   const existing = bots.get(config.sessionToken);
   if (existing?.intervalHandle) clearInterval(existing.intervalHandle);
 
@@ -8022,7 +8036,7 @@ export async function resolveSpecificOptionToken(
     let chainData: any[] = [];
     for (const expiry of expiryOrder) {
       try {
-        const resp = await axios.get(
+        const resp = await upstoxAxios.get(
           `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${expiry}`,
           { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
         );
