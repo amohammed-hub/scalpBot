@@ -66,9 +66,17 @@ describe("Upstox managed-egress configuration", () => {
     expect(() => getUpstoxEgressStatus()).toThrow(UPSTOX_EGRESS_ENV.proxyUrl);
   });
 
-  it("requires exactly two valid IPv4 addresses", () => {
+  it("accepts one or two valid IPv4 addresses and rejects unsafe counts", () => {
     configureManaged({ [UPSTOX_EGRESS_ENV.allowedIps]: "203.0.113.10" });
-    expect(() => getUpstoxEgressStatus()).toThrow("exactly two IPv4 addresses");
+    expect(getUpstoxEgressStatus().allowedIps).toEqual(["203.0.113.10"]);
+
+    configureManaged({ [UPSTOX_EGRESS_ENV.allowedIps]: "" });
+    expect(() => getUpstoxEgressStatus()).toThrow("one or two IPv4 addresses");
+
+    configureManaged({
+      [UPSTOX_EGRESS_ENV.allowedIps]: "203.0.113.10,203.0.113.11,203.0.113.12",
+    });
+    expect(() => getUpstoxEgressStatus()).toThrow("one or two IPv4 addresses");
 
     configureManaged({ [UPSTOX_EGRESS_ENV.allowedIps]: "203.0.113.10,not-an-ip" });
     expect(() => getUpstoxEgressStatus()).toThrow("non-IPv4");
@@ -109,14 +117,14 @@ describe("Upstox live-order egress gate", () => {
     });
   });
 
-  it("verifies the proxy-observed IP and accepts an allowlisted address", async () => {
-    configureManaged();
+  it("verifies a single proxy-observed IP against a one-address allowlist", async () => {
+    configureManaged({ [UPSTOX_EGRESS_ENV.allowedIps]: "203.0.113.10" });
     const { create, get } = mockAxiosRequest("203.0.113.10");
 
     const result = await verifyUpstoxManagedEgress({ force: true });
 
     expect(result.observedIp).toBe("203.0.113.10");
-    expect(result.allowedIps).toEqual(["203.0.113.10", "203.0.113.11"]);
+    expect(result.allowedIps).toEqual(["203.0.113.10"]);
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ proxy: false, httpsAgent: expect.anything() }));
     expect(get).toHaveBeenCalledWith(
       expect.stringContaining("api.ipify.org"),
