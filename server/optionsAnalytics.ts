@@ -8,7 +8,7 @@
  *   - Smart strike selection (delta 0.4-0.6 band)
  *   - Probability of Profit (PoP) approximation from delta
  */
-import axios from "axios";
+import { upstoxAxios } from "./upstoxHttp";
 
 export interface OptionChainStrike {
   strike: number;
@@ -56,7 +56,7 @@ export async function fetchOptionsAnalytics(
 
   try {
     // Step 1: nearest expiry from contract API
-    const contractResp = await axios.get(
+    const contractResp = await upstoxAxios.get(
       `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(underlyingToken)}`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
     );
@@ -68,7 +68,7 @@ export async function fetchOptionsAnalytics(
     if (!nearestExpiry) return null;
 
     // Step 2: full PC chain with Greeks
-    const chainResp = await axios.get(
+    const chainResp = await upstoxAxios.get(
       `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${nearestExpiry}`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
     );

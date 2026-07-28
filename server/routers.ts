@@ -8,6 +8,7 @@ import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";
+import { getUpstoxEgressStatus, upstoxFetch, verifyUpstoxManagedEgress } from "./upstoxHttp";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -264,7 +265,7 @@ export const appRouter = router({
           grant_type: "authorization_code",
         });
 
-        const response = await fetch("https://api.upstox.com/v2/login/authorization/token", {
+        const response = await upstoxFetch("https://api.upstox.com/v2/login/authorization/token", {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -317,7 +318,7 @@ export const appRouter = router({
           return { status: "expired" as const, message: `Token expired at ${new Date(expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}. Refresh it in Settings.` };
         }
         try {
-          const resp = await fetch("https://api.upstox.com/v2/user/get-funds-and-margin", {
+          const resp = await upstoxFetch("https://api.upstox.com/v2/user/get-funds-and-margin", {
             headers: { Authorization: `Bearer ${rows[0].accessToken}`, Accept: "application/json" },
             signal: AbortSignal.timeout(6000),
           });
@@ -2385,7 +2386,7 @@ export const appRouter = router({
         if (rows.length === 0 || !rows[0].accessToken) return null;
         const { accessToken } = rows[0];
         try {
-          const res = await fetch("https://api.upstox.com/v2/user/profile", {
+          const res = await upstoxFetch("https://api.upstox.com/v2/user/profile", {
             headers: {
               Authorization: `Bearer ${accessToken}`,
               Accept: "application/json",
@@ -2423,7 +2424,7 @@ export const appRouter = router({
         if (rows.length === 0 || !rows[0].accessToken) return null;
         const { accessToken } = rows[0];
         try {
-          const res = await fetch("https://api.upstox.com/v2/user/get-funds-and-margin", {
+          const res = await upstoxFetch("https://api.upstox.com/v2/user/get-funds-and-margin", {
             headers: {
               Authorization: `Bearer ${accessToken}`,
               Accept: "application/json",
@@ -3289,7 +3290,7 @@ export const appRouter = router({
         const underlyingToken = input.underlying === "NIFTY" ? "NSE_INDEX|Nifty 50" : input.underlying === "BANKNIFTY" ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty Fin Service";
         let underlyingPrice = 0;
         try {
-          const quoteRes = await fetch(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(underlyingToken)}`, {
+          const quoteRes = await upstoxFetch(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(underlyingToken)}`, {
             headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
             signal: AbortSignal.timeout(8000),
           });
@@ -3304,7 +3305,7 @@ export const appRouter = router({
 
         // Get weekly option chain
         try {
-          const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=current_week`, {
+          const chainRes = await upstoxFetch(`https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=current_week`, {
             headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
             signal: AbortSignal.timeout(10000),
           });
@@ -3659,7 +3660,7 @@ export const appRouter = router({
         // Fetch historical 1m candles for the date range
         const encoded = encodeURIComponent(input.instrumentToken);
         const url = `https://api.upstox.com/v2/historical-candle/${encoded}/1minute/${input.toDate}/${input.fromDate}`;
-        const resp = await fetch(url, {
+        const resp = await upstoxFetch(url, {
           headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
           signal: AbortSignal.timeout(15000),
         });
@@ -3780,7 +3781,7 @@ export const appRouter = router({
         // Fetch historical 1m candles
         const encoded = encodeURIComponent(input.instrumentToken);
         const url = `https://api.upstox.com/v2/historical-candle/${encoded}/1minute/${input.toDate}/${input.fromDate}`;
-        const resp = await fetch(url, {
+        const resp = await upstoxFetch(url, {
           headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
           signal: AbortSignal.timeout(15000),
         });
@@ -5104,6 +5105,19 @@ export const appRouter = router({
           console.error("[admin.referralStats] Error:", e);
           return { referrals: [], totalReferrals: 0, totalRewardsGranted: 0, usersWithBonusSlots: 0, userSlots: [] };
         }
+      }),
+
+    // ── Upstox managed-egress diagnostics (never places an order) ────────
+    upstoxEgressStatus: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        return getUpstoxEgressStatus();
+      }),
+
+    verifyUpstoxEgress: publicProcedure
+      .mutation(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        return verifyUpstoxManagedEgress({ force: true });
       }),
 
     // ── System Health ─────────────────────────────────────────────────────

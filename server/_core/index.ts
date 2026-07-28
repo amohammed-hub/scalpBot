@@ -26,6 +26,7 @@ import { upstoxCredentials, botSessions, tradeLog } from "../../drizzle/schema";
 import { eq, and, gte, inArray } from "drizzle-orm";
 import { restartRunningBots } from "../botRestart";
 import { hotReloadAccessToken } from "../botEngine";
+import { upstoxFetch } from "../upstoxHttp";
 import { startBotWatchdog } from "../botWatchdog";
 import rateLimit from "express-rate-limit";
 import jwt from "jsonwebtoken";
@@ -166,7 +167,7 @@ async function startServer() {
         return;
       }
       const params = new URLSearchParams({ code, client_id, client_secret, redirect_uri, grant_type: 'authorization_code' });
-      const upstoxResp = await fetch('https://api.upstox.com/v2/login/authorization/token', {
+      const upstoxResp = await upstoxFetch('https://api.upstox.com/v2/login/authorization/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
         body: params.toString()
@@ -265,7 +266,7 @@ async function startServer() {
         grant_type: 'authorization_code',
       });
 
-      const tokenResp = await fetch('https://api.upstox.com/v2/login/authorization/token', {
+      const tokenResp = await upstoxFetch('https://api.upstox.com/v2/login/authorization/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
         body: params.toString(),
@@ -396,7 +397,7 @@ async function startServer() {
       let tokenRequested = false;
       if (creds.apiKey && creds.apiSecret) {
         try {
-          const tokenReqResp = await fetch(`https://api.upstox.com/v3/login/auth/token/request/${creds.apiKey}`, {
+          const tokenReqResp = await upstoxFetch(`https://api.upstox.com/v3/login/auth/token/request/${creds.apiKey}`, {
             method: 'POST',
             headers: { 'accept': 'application/json', 'Content-Type': 'application/json' },
             body: JSON.stringify({ client_secret: creds.apiSecret }),
