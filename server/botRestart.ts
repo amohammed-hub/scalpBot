@@ -12,6 +12,7 @@
  */
 import { getDb } from "./db";
 import { isBotAutomationEnabled } from "./botAutomation";
+import { canAutoRestartSession } from "./botSessionLifecycle";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc, gte } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
@@ -29,7 +30,7 @@ type BotSessionRow = typeof botSessions.$inferSelect;
  * botWatchdog.ts can call it for sessions that fall out of memory after startup.
  *
  * Returns true if the bot was started, false if it was skipped (already running
- * or no open trade), throws on unexpected errors.
+ * or no longer eligible for automatic restart), throws on unexpected errors.
  */
 export async function restartSingleSession(session: BotSessionRow): Promise<boolean> {
   if (!isBotAutomationEnabled()) {
@@ -37,8 +38,29 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     return false;
   }
 
+  if (!canAutoRestartSession(session)) {
+    console.warn(`[BotRestart] ${session.sessionToken.slice(0, 8)} is not eligible for automatic restart — status=${session.status}, lastError=${session.lastError ?? "none"}`);
+    return false;
+  }
+
   const db = await getDb();
   if (!db) return false;
+
+  // Re-read the row immediately before recovery. A watchdog cycle may hold a
+  // stale "running" snapshot while the kill switch is concurrently persisting
+  // "stopped". Never revive a row whose current durable state says stop.
+  const currentRows = await db
+    .select()
+    .from(botSessions)
+    .where(eq(botSessions.sessionToken, session.sessionToken))
+    .limit(1);
+  const currentSession = currentRows[0];
+  if (!currentSession || !canAutoRestartSession(currentSession)) {
+    console.warn(`[BotRestart] ${session.sessionToken.slice(0, 8)} restart cancelled — durable state is ${currentSession?.status ?? "missing"}`);
+    return false;
+  }
+  session = currentSession;
+
   // Skip if already running in memory
   if (getBotState(session.sessionToken)) {
     console.log(`[BotRestart] ${session.sessionToken.slice(0, 8)} already in memory — skipping`);
@@ -525,6 +547,10 @@ export async function restartRunningBots(): Promise<void> {
   console.log(`[BotRestart] Found ${runningSessions.length} session(s) marked running — restarting all...`);
 
   for (const session of runningSessions) {
+    if (!canAutoRestartSession(session)) {
+      console.log(`[BotRestart] Skipping ${session.sessionToken.slice(0, 8)} — automatic restart blocked by durable stop marker`);
+      continue;
+    }
     try {
       await restartSingleSession(session);
     } catch (err) {
