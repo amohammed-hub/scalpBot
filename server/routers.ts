@@ -9,6 +9,7 @@ import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";
 import { getUpstoxEgressStatus, upstoxFetch, verifyUpstoxManagedEgress } from "./upstoxHttp";
+import { assertBotAutomationEnabled } from "./botAutomation";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -432,6 +433,7 @@ export const appRouter = router({
       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
         // SECURITY: Verify caller owns this session
         await verifySessionOwnership(ctx, input.sessionToken);
+        assertBotAutomationEnabled("Primary bot start");
 
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
@@ -1237,6 +1239,7 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .mutation(async ({ input, ctx }) => {
         await verifySessionOwnership(ctx, input.sessionToken);
+        assertBotAutomationEnabled("Bot restart");
         // Stop the bot first
         stopBot(input.sessionToken);
         const db = await getDb();
@@ -2766,6 +2769,7 @@ export const appRouter = router({
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
         await verifySessionOwnership(ctx, input.sessionToken);
+        assertBotAutomationEnabled("Secondary bot start");
         if (!Array.isArray(input.enabledLayers) || input.enabledLayers.length === 0) {
           throw new Error("Select at least one strategy before starting a secondary bot.");
         }

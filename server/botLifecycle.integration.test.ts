@@ -28,6 +28,20 @@ import {
   type TradeInsert,
 } from "./botEngine";
 
+const originalBotAutomationEnabled = process.env.BOT_AUTOMATION_ENABLED;
+
+beforeEach(() => {
+  process.env.BOT_AUTOMATION_ENABLED = "true";
+});
+
+afterEach(() => {
+  if (originalBotAutomationEnabled === undefined) {
+    delete process.env.BOT_AUTOMATION_ENABLED;
+  } else {
+    process.env.BOT_AUTOMATION_ENABLED = originalBotAutomationEnabled;
+  }
+});
+
 // Mock axios so tests don't make real HTTP calls and always get mock candle data
 vi.mock("axios", () => {
   const mockCandles = Array.from({ length: 30 }, (_, i) => ({

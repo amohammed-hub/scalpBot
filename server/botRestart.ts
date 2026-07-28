@@ -11,6 +11,7 @@
  * 3. Access token is loaded from DB for market data access.
  */
 import { getDb } from "./db";
+import { isBotAutomationEnabled } from "./botAutomation";
 import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc, gte } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
@@ -31,6 +32,11 @@ type BotSessionRow = typeof botSessions.$inferSelect;
  * or no open trade), throws on unexpected errors.
  */
 export async function restartSingleSession(session: BotSessionRow): Promise<boolean> {
+  if (!isBotAutomationEnabled()) {
+    console.warn("[BotRestart] Single-session restart blocked: BOT_AUTOMATION_ENABLED is not true.");
+    return false;
+  }
+
   const db = await getDb();
   if (!db) return false;
   // Skip if already running in memory
@@ -369,6 +375,11 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
  * and calls restartSingleSession for each.
  */
 export async function restartRunningBots(): Promise<void> {
+  if (!isBotAutomationEnabled()) {
+    console.log("[BotRestart] Automatic restart disabled: BOT_AUTOMATION_ENABLED is not true.");
+    return;
+  }
+
   const db = await getDb();
   if (!db) {
     console.log("[BotRestart] DB unavailable — skipping auto-restart");

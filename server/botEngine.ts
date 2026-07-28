@@ -5,6 +5,7 @@
 
 import axios from "axios";
 import { ensureUpstoxLiveOrderEgress, upstoxAxios, upstoxFetch } from "./upstoxHttp";
+import { assertBotAutomationEnabled } from "./botAutomation";
 import { emitActivity } from "./activityLog";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import { evaluateStrategyGate, computeVRP, computeOIFlowBias, computeMaxPainGravity } from "./vrpRegimeFilter";
@@ -7569,6 +7570,8 @@ export function startBot(
   existingOpenTrade?: OpenTrade | null,
   onTick?: (state: BotState) => Promise<void>,
 ) {
+  assertBotAutomationEnabled("Bot engine start");
+
   const existing = bots.get(config.sessionToken);
   if (existing?.intervalHandle) clearInterval(existing.intervalHandle);
 
