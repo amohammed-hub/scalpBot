@@ -3,6 +3,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import jwt from "jsonwebtoken";
+import { getJwtSecret } from "../authSession";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -60,7 +61,7 @@ const requireMobileAuth = t.middleware(async opts => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as {
+    const decoded = jwt.verify(token, getJwtSecret()) as {
       userId: number;
       mobile: string;
       role: string;

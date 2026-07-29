@@ -19,6 +19,7 @@ import {
 } from "./riskManager";
 import { lockDirection, recordDirectionExit, isDirectionFlipBlocked, resetDirectionFlipLock } from "./riskManager";
 import { fetchIndiaVix } from "./riskManager";
+import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 
 // Production log suppression — hide strategy details in production logs
 const IS_DEV = process.env.NODE_ENV !== "production";
@@ -171,7 +172,9 @@ export interface BotState {
   underlyingToken?: string;
   optionType?: "CE" | "PE" | "auto";
   optionTradeToken?: string; // resolved at runtime from option chain
-  optionPremiumPrice?: number; // last fetched option premium (for quantity sizing)
+  optionPremiumPrice?: number; // last successfully fetched option premium
+  optionQuoteStatus?: "live" | "stale" | "unavailable";
+  optionQuoteUpdatedAt?: number;
   isOpeningTrade?: boolean; // mutex: prevents duplicate trade opens from concurrent ticks
   tickInProgress?: boolean; // lock: prevents overlapping ticks from running concurrently
   // Layer selection: user can enable/disable specific strategy layers
@@ -3771,8 +3774,11 @@ export async function fetchFullQuote(instrumentToken: string, accessToken: strin
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded}`;
     const resp = await upstoxAxios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
-    const data = resp.data?.data?.[instrumentToken] ?? resp.data?.data?.[Object.keys(resp.data?.data ?? {})[0]];
-    if (!data) return null;
+    const data = selectRequestedUpstoxQuote(resp.data?.data, instrumentToken);
+    if (!data) {
+      console.warn(`[BotEngine] fetchFullQuote rejected a response without an exact instrument-token match for ${instrumentToken}`);
+      return null;
+    }
     const ltp = data.last_price ?? 0;
     const bid = data.depth?.buy?.[0]?.price ?? ltp;
     const ask = data.depth?.sell?.[0]?.price ?? ltp;
@@ -3788,8 +3794,11 @@ export async function fetchFullQuote(instrumentToken: string, accessToken: strin
       const encoded = encodeURIComponent(instrumentToken);
       const url = `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded}`;
       const resp = await upstoxAxios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
-      const data = resp.data?.data?.[instrumentToken] ?? resp.data?.data?.[Object.keys(resp.data?.data ?? {})[0]];
-      if (!data) return null;
+      const data = selectRequestedUpstoxQuote(resp.data?.data, instrumentToken);
+      if (!data) {
+        console.warn(`[BotEngine] fetchFullQuote retry rejected a response without an exact instrument-token match for ${instrumentToken}`);
+        return null;
+      }
       const ltp = data.last_price ?? 0;
       const bid = data.depth?.buy?.[0]?.price ?? ltp;
       const ask = data.depth?.sell?.[0]?.price ?? ltp;
@@ -3847,6 +3856,28 @@ function build5mFromMock(candles1m: Candle[]): Candle[] {
 }
 
 // ── Fetch option chain and resolve ATM/OTM CE/PE token ─────────────────────────
+export async function fetchUpcomingOptionExpiryKeys(
+  underlyingToken: string,
+  accessToken: string,
+  limit = 4,
+): Promise<string[]> {
+  try {
+    const contractsResp = await upstoxAxios.get(
+      `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(underlyingToken)}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
+    );
+    const contracts: Array<{ expiry?: string | number }> = contractsResp.data?.data ?? [];
+    return Array.from(new Set(
+      contracts
+        .map(contract => getOptionExpiryDateKey(contract.expiry))
+        .filter((expiry): expiry is string => !!expiry && isOptionExpiryTradable(expiry)),
+    )).sort().slice(0, limit);
+  } catch (error) {
+    console.error(`[BotEngine] Unable to load authoritative expiries for ${underlyingToken}:`, error instanceof Error ? error.message : String(error));
+    return [];
+  }
+}
+
 export async function resolveAtmOptionToken(
   underlyingToken: string,
   optionType: "CE" | "PE",
@@ -3859,12 +3890,13 @@ export async function resolveAtmOptionToken(
       `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(underlyingToken)}`,
       { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
     );
-    const qData = quoteResp.data?.data;
-    const qKey = qData ? Object.keys(qData)[0] : null;
-    const underlyingPrice: number = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
+    const underlyingQuote = selectRequestedUpstoxQuote(quoteResp.data?.data, underlyingToken);
+    const underlyingPrice: number = underlyingQuote?.last_price ?? 0;
     if (!underlyingPrice) return null;
 
-    // Step 2: fetch option chain (current week expiry — auto-rolls after each expiry)
+    // Step 2: derive exact upcoming expiry dates from the authoritative
+    // option-contract list, then request the chain with Upstox's required
+    // YYYY-MM-DD value. Never use aliases such as current_week/current_month.
     let chainData: Array<{
       expiry?: string;
       strike_price?: number;
@@ -3873,12 +3905,12 @@ export async function resolveAtmOptionToken(
       put_options?: { instrument_key?: string; market_data?: { ltp?: number } };
     }> = [];
 
-    // BankNifty no longer has weekly expiry (discontinued 2024). Nifty has weekly (Tuesday).
-    // Strategy: BankNifty → current_month first; Nifty → current_week first; both fall through all options.
-    const isBankNifty = underlyingToken.toLowerCase().includes("nifty bank") || underlyingToken.toLowerCase().includes("banknifty");
-    const expiryOrder = isBankNifty
-      ? ["current_month", "next_month"]
-      : ["current_week", "next_week", "current_month", "next_month"];
+    const expiryOrder = await fetchUpcomingOptionExpiryKeys(underlyingToken, accessToken);
+
+    if (expiryOrder.length === 0) {
+      console.error(`[BotEngine] resolveAtmOptionToken: no expiry on or after ${getIstDateKey()} for ${underlyingToken}`);
+      return null;
+    }
 
     for (const expiry of expiryOrder) {
       try {
@@ -3886,22 +3918,33 @@ export async function resolveAtmOptionToken(
           `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${expiry}`,
           { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
         );
-        chainData = resp.data?.data ?? [];
-        if (chainData.length > 0) {
-          console.log(`[BotEngine] resolveAtmOptionToken: found ${chainData.length} contracts for ${underlyingToken} (${expiry})`);
+        const returnedRows: typeof chainData = resp.data?.data ?? [];
+        const tradableRows = returnedRows.filter(row => getOptionExpiryDateKey(row.expiry) === expiry && isOptionExpiryTradable(row.expiry));
+        if (returnedRows.length > 0 && tradableRows.length === 0) {
+          const returnedExpiries = Array.from(new Set(returnedRows.map(row => getOptionExpiryDateKey(row.expiry) ?? "missing")));
+          console.error(`[BotEngine] resolveAtmOptionToken: rejected mismatched, expired, or undated chain for ${underlyingToken} (${expiry}); returned expiries: ${returnedExpiries.join(", ")}; IST today: ${getIstDateKey()}`);
+          continue;
+        }
+        if (tradableRows.length > 0) {
+          chainData = tradableRows;
+          console.log(`[BotEngine] resolveAtmOptionToken: found ${chainData.length} tradable contracts for ${underlyingToken}, expiry ${expiry}`);
           break;
         }
-        console.warn(`[BotEngine] resolveAtmOptionToken: empty chain for ${underlyingToken} (${expiry}). Trying next...`);
+        console.warn(`[BotEngine] resolveAtmOptionToken: empty chain for ${underlyingToken} (${expiry}). Trying next valid expiry...`);
       } catch (e) {
         console.warn(`[BotEngine] resolveAtmOptionToken: error fetching ${expiry} for ${underlyingToken}:`, e instanceof Error ? e.message : String(e));
       }
     }
     if (chainData.length === 0) {
-      console.warn(`[BotEngine] resolveAtmOptionToken: no options found after trying all expiries (${expiryOrder.join(', ')}) for ${underlyingToken}`);
+      console.warn(`[BotEngine] resolveAtmOptionToken: no unexpired options found after trying exact expiries (${expiryOrder.join(', ')}) for ${underlyingToken}`);
       return null;
     }
 
-    const chainExpiry: string | undefined = chainData[0]?.expiry ?? undefined;
+    const chainExpiry = getOptionExpiryDateKey(chainData[0].expiry);
+    if (!chainExpiry || !isOptionExpiryTradable(chainExpiry)) {
+      console.error(`[BotEngine] resolveAtmOptionToken: final expiry guard rejected ${chainExpiry} for ${underlyingToken}`);
+      return null;
+    }
 
     // NOTE: Same-day expiry is ALLOWED — expiry day has highest gamma = biggest moves for scalping.
     // The key is tighter SL + faster exit on expiry day, not avoiding it entirely.
@@ -3976,38 +4019,104 @@ export async function resolveAtmOptionToken(
   }
 }
 
-// ── Token Validation: Cross-check resolved token against /v2/option/contract ──
-// The option chain API sometimes returns mismatched instrument_key for a given strike.
-// This function validates by fetching the contract details for the token and confirming
-// the strike_price matches what we expect.
-async function validateOptionToken(
+// ── Token Validation: resolved option contracts must be provably tradable ─────
+export interface OptionTokenValidation {
+  valid: boolean;
+  reason?: string;
+  actualStrike?: number;
+  tradingSymbol?: string;
+  expiry?: string;
+}
+
+export function getIstDateKey(now: Date = new Date()): string {
+  return new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+}
+
+export function getOptionExpiryDateKey(expiry: string | number | undefined): string | null {
+  if (expiry === undefined || expiry === null || expiry === "") return null;
+  if (typeof expiry === "number") {
+    const timestampMs = expiry < 1_000_000_000_000 ? expiry * 1000 : expiry;
+    const date = new Date(timestampMs);
+    return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
+  }
+
+  const direct = String(expiry).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(direct)) return direct;
+  const parsed = new Date(String(expiry));
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+}
+
+export function isOptionExpiryTradable(expiry: string | number | undefined, now: Date = new Date()): boolean {
+  const expiryDate = getOptionExpiryDateKey(expiry);
+  return !!expiryDate && expiryDate >= getIstDateKey(now);
+}
+
+/** Variant C: option positions exit only through price/risk/session controls, never elapsed time. */
+export function getOptionTimeExitReason(
+  _tradeAgeMs: number,
+  _signalLayer?: string,
+): null {
+  return null;
+}
+
+export async function validateOptionToken(
   token: string,
   expectedStrike: number,
   optionType: "CE" | "PE",
   accessToken: string,
-): Promise<{ valid: boolean; actualStrike?: number; tradingSymbol?: string }> {
+  underlyingToken?: string,
+  expectedExpiry?: string,
+): Promise<OptionTokenValidation> {
   try {
-    // Use instrument search to find the actual details of this token
-    const resp = await upstoxAxios.get(
-      `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(token.split("|")[0] === "NSE_FO" ? "NSE_INDEX|Nifty 50" : token)}`,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
-    );
-    const contracts: Array<{ instrument_key: string; strike_price: number; trading_symbol: string; instrument_type: string }> = resp.data?.data ?? [];
-    const match = contracts.find(c => c.instrument_key === token);
-    if (match) {
-      if (match.strike_price !== expectedStrike) {
-        console.error(`[BotEngine] TOKEN MISMATCH! Token ${token} has strike ${match.strike_price} but expected ${expectedStrike}. Trading symbol: ${match.trading_symbol}`);
-        return { valid: false, actualStrike: match.strike_price, tradingSymbol: match.trading_symbol };
+    let contracts: Array<{
+      instrument_key: string;
+      strike_price?: number;
+      trading_symbol?: string;
+      instrument_type?: string;
+      expiry?: string | number;
+    }> = [];
+
+    if (token.startsWith("MCX_FO|")) {
+      contracts = await getMcxInstruments();
+    } else {
+      if (!underlyingToken || underlyingToken === token) {
+        return { valid: false, reason: "missing underlying token for contract validation" };
       }
-      console.log(`[BotEngine] Token validated: ${token} → strike ${match.strike_price} ${match.instrument_type} (${match.trading_symbol})`);
-      return { valid: true, actualStrike: match.strike_price, tradingSymbol: match.trading_symbol };
+      const resp = await upstoxAxios.get(
+        `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(underlyingToken)}`,
+        { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
+      );
+      contracts = resp.data?.data ?? [];
     }
-    // Token not found in contracts — might be a different underlying. Skip validation.
-    console.warn(`[BotEngine] Token ${token} not found in option contracts — skipping validation`);
-    return { valid: true }; // assume valid if we can't verify
+
+    const match = contracts.find(c => c.instrument_key === token);
+    if (!match) {
+      return { valid: false, reason: "token not present in the authoritative contract list" };
+    }
+
+    const actualStrike = match.strike_price ?? 0;
+    const actualType = (match.instrument_type ?? "").toUpperCase();
+    const expiry = getOptionExpiryDateKey(match.expiry) ?? undefined;
+
+    if (actualStrike !== expectedStrike) {
+      return { valid: false, reason: `strike mismatch (${actualStrike} != ${expectedStrike})`, actualStrike, tradingSymbol: match.trading_symbol, expiry };
+    }
+    if (actualType !== optionType) {
+      return { valid: false, reason: `option side mismatch (${actualType || "unknown"} != ${optionType})`, actualStrike, tradingSymbol: match.trading_symbol, expiry };
+    }
+    if (!isOptionExpiryTradable(expiry)) {
+      return { valid: false, reason: `expired or missing expiry (${expiry ?? "unknown"})`, actualStrike, tradingSymbol: match.trading_symbol, expiry };
+    }
+    if (expectedExpiry && expiry !== expectedExpiry) {
+      return { valid: false, reason: `expiry mismatch (${expiry ?? "unknown"} != ${expectedExpiry})`, actualStrike, tradingSymbol: match.trading_symbol, expiry };
+    }
+
+    console.log(`[BotEngine] Token validated: ${token} → strike ${actualStrike} ${actualType}, expiry ${expiry} (${match.trading_symbol ?? "unnamed"})`);
+    return { valid: true, actualStrike, tradingSymbol: match.trading_symbol, expiry };
   } catch (err) {
-    console.warn(`[BotEngine] validateOptionToken failed for ${token}:`, err instanceof Error ? err.message : String(err));
-    return { valid: true }; // don't block trading on validation failure
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[BotEngine] validateOptionToken failed closed for ${token}: ${reason}`);
+    return { valid: false, reason: `contract validation failed: ${reason}` };
   }
 }
 
@@ -4167,9 +4276,8 @@ export async function resolveAtmMcxOptionToken(
         `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(futuresToken)}`,
         { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
       );
-      const qData = quoteResp.data?.data;
-      const qKey = qData ? Object.keys(qData)[0] : null;
-      underlyingPrice = qKey ? (qData[qKey]?.last_price ?? 0) : 0;
+      const underlyingQuote = selectRequestedUpstoxQuote(quoteResp.data?.data, futuresToken);
+      underlyingPrice = underlyingQuote?.last_price ?? 0;
     } catch (priceFetchErr) {
       console.warn(`[BotEngine] resolveAtmMcxOptionToken: market-quote failed for ${futuresToken} (token may be expired): ${priceFetchErr instanceof Error ? priceFetchErr.message : String(priceFetchErr)}`);
     }
@@ -4190,11 +4298,10 @@ export async function resolveAtmMcxOptionToken(
     //  a Thursday, so every guess failed and trades were wrongly skipped.)
     try {
       const instruments = await getMcxInstruments();
-      const nowMs = Date.now();
       const candidates = instruments.filter(x =>
         x.underlying_key === futuresToken &&
         (x.instrument_type ?? "").toUpperCase() === optionType &&
-        (x.expiry ?? 0) > nowMs,
+        isOptionExpiryTradable(x.expiry),
       );
       // FALLBACK: If no options match the exact underlying_key (e.g., SILVER100 has no options,
       // only SILVER/SILVERM do), try matching by commodity name instead.
@@ -4209,7 +4316,7 @@ export async function resolveAtmMcxOptionToken(
           optionCandidates = instruments.filter(x =>
             (x.name ?? "").toUpperCase() === commodityName &&
             (x.instrument_type ?? "").toUpperCase() === optionType &&
-            (x.expiry ?? 0) > nowMs,
+            isOptionExpiryTradable(x.expiry),
           );
           if (optionCandidates.length > 0) {
             console.log(`[BotEngine] MCX: exact underlying_key match failed for ${futuresToken}, using name-based fallback (${commodityName}): found ${optionCandidates.length} options`);
@@ -4223,9 +4330,8 @@ export async function resolveAtmMcxOptionToken(
                   `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(optionsUnderlyingKey)}`,
                   { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
                 );
-                const ulData = ulResp.data?.data;
-                const ulKey = ulData ? Object.keys(ulData)[0] : null;
-                const realUlPrice: number = ulKey ? (ulData[ulKey]?.last_price ?? 0) : 0;
+                const optionsUnderlyingQuote = selectRequestedUpstoxQuote(ulResp.data?.data, optionsUnderlyingKey);
+                const realUlPrice: number = optionsUnderlyingQuote?.last_price ?? 0;
                 if (realUlPrice > 0) {
                   console.log(`[BotEngine] MCX: options underlying ${optionsUnderlyingKey} price = ₹${realUlPrice} (bot futures price was ₹${underlyingPrice})`);
                   effectiveUnderlyingPrice = realUlPrice;
@@ -4271,8 +4377,8 @@ export async function resolveAtmMcxOptionToken(
             for (const c of near) {
               const premium = premiumByToken.get(c.instrument_key) ?? 0;
               if (premium > MCX_MIN_PREMIUM && !excludeStrikes.includes(c.strike_price ?? 0)) {
-                const expDate = new Date(c.expiry!);
-                const expiryStr = `${expDate.getFullYear()}-${String(expDate.getMonth() + 1).padStart(2, "0")}-${String(expDate.getDate()).padStart(2, "0")}`;
+                const expiryStr = getOptionExpiryDateKey(c.expiry);
+                if (!expiryStr) continue;
                 console.log(`[BotEngine] MCX ATM ${optionType} resolved (instruments JSON): ${c.trading_symbol} | strike ${c.strike_price}, premium ₹${premium.toFixed(2)}, expiry ${expiryStr}, lot ${c.lot_size}${excludeStrikes.length > 0 ? ` (diversified, excluded [${excludeStrikes.join(",")}])` : ""}`);
                 return {
                   token: c.instrument_key,
@@ -4285,27 +4391,13 @@ export async function resolveAtmMcxOptionToken(
               }
             }
           }
-          // LAST RESORT: If premium fetch failed OR all premiums are 0,
-          // pick the nearest ATM strike anyway. For live mode, Upstox fills at market price.
-          // For demo mode, estimate premium based on distance from ATM.
-          const bestNoQuote = near.find(c => !excludeStrikes.includes(c.strike_price ?? 0));
-          if (bestNoQuote) {
-            const expDate = new Date(bestNoQuote.expiry!);
-            const expiryStr = `${expDate.getFullYear()}-${String(expDate.getMonth() + 1).padStart(2, "0")}-${String(expDate.getDate()).padStart(2, "0")}`;
-            const dist = Math.abs((bestNoQuote.strike_price ?? 0) - effectiveUnderlyingPrice);
-            // Estimate premium: ATM ≈ 0.5% of underlying, decays with distance
-            const estimatedPremium = Math.max(1.0, effectiveUnderlyingPrice * 0.003 - dist * 0.5);
-            console.log(`[BotEngine] MCX ATM ${optionType} resolved (LAST RESORT — no premium data): ${bestNoQuote.trading_symbol} | strike ${bestNoQuote.strike_price}, estimated premium ₹${estimatedPremium.toFixed(2)}, expiry ${expiryStr}`);
-            return {
-              token: bestNoQuote.instrument_key,
-              premium: estimatedPremium,
-              strike: bestNoQuote.strike_price ?? 0,
-              expiry: expiryStr,
-              lotSize: bestNoQuote.lot_size,
-              tradingSymbol: bestNoQuote.trading_symbol,
-            };
-          }
-          console.warn(`[BotEngine] MCX ${optionType}: found ${near.length} ATM contracts (nearest expiry) but no premium > ${MCX_MIN_PREMIUM} — trying next expiry...`);
+          // Fail closed: never manufacture an option premium from the underlying price.
+          // Without a successful authenticated quote, neither demo nor live mode has a
+          // trustworthy entry, SL, target, quantity, or P&L baseline.
+          const quoteFailureReason = quoteFetchOk
+            ? `all ${near.length} quoted contracts were at or below ₹${MCX_MIN_PREMIUM}`
+            : "authenticated option quote request failed";
+          console.warn(`[BotEngine] MCX ${optionType}: ${quoteFailureReason} for nearest expiry — refusing unquoted contracts and trying the next expiry.`);
           // FALLBACK: Try next-week expiry if nearest expiry options are all illiquid
           const expirySet = new Set(optionCandidates.map(c => c.expiry ?? Infinity));
           const uniqueExpiries = Array.from(expirySet).sort((a, b) => a - b);
@@ -4330,8 +4422,8 @@ export async function resolveAtmMcxOptionToken(
                 for (const c of nextNear) {
                   const premium = nextPremiumByToken.get(c.instrument_key) ?? 0;
                   if (premium > MCX_MIN_PREMIUM && !excludeStrikes.includes(c.strike_price ?? 0)) {
-                    const expDate = new Date(c.expiry!);
-                    const expiryStr = `${expDate.getFullYear()}-${String(expDate.getMonth() + 1).padStart(2, "0")}-${String(expDate.getDate()).padStart(2, "0")}`;
+                    const expiryStr = getOptionExpiryDateKey(c.expiry);
+                    if (!expiryStr) continue;
                     console.log(`[BotEngine] MCX ATM ${optionType} resolved (NEXT-EXPIRY fallback): ${c.trading_symbol} | strike ${c.strike_price}, premium ₹${premium.toFixed(2)}, expiry ${expiryStr}, lot ${c.lot_size}`);
                     return {
                       token: c.instrument_key,
@@ -5087,7 +5179,9 @@ async function tick(
           // Underlying price leaked through — freeze at entry (P&L = 0)
           console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — UNDERLYING LEAK DETECTED: fetchFullQuote(${realOptToken}) returned LTP ₹${optQuote.ltp.toFixed(2)} which is ${priceLeakRatio.toFixed(0)}× entry ₹${entryPx.toFixed(2)}. This is the underlying futures price, NOT option premium. Freezing at entry.`);
           effectivePrice = entryPx;
-          state.optionPremiumPrice = entryPx;
+          state.optionPremiumPrice = undefined;
+          state.optionQuoteStatus = "unavailable";
+          state.optionQuoteUpdatedAt = undefined;
           // Clear bad optionTradeToken so livePrices endpoint re-resolves
           if (state.optionTradeToken === realOptToken) {
             state.optionTradeToken = undefined;
@@ -5120,6 +5214,8 @@ async function tick(
         }
        effectivePrice = bestExitPrice;
        state.optionPremiumPrice = bestExitPrice; // update for Dashboard display
+       state.optionQuoteStatus = "live";
+       state.optionQuoteUpdatedAt = Date.now();
         } // end of priceLeakRatio <= 10 block
       } else {
         // fetchFullQuote failed — retry once after 1s delay
@@ -5131,10 +5227,14 @@ async function tick(
           if (retryRatio > 10) {
             console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — UNDERLYING LEAK (retry): LTP ₹${retryQuote.ltp.toFixed(2)} is ${retryRatio.toFixed(0)}× entry. Freezing at entry.`);
             effectivePrice = state.openTrade.entryPrice;
-            state.optionPremiumPrice = state.openTrade.entryPrice;
+            state.optionPremiumPrice = undefined;
+            state.optionQuoteStatus = "unavailable";
+            state.optionQuoteUpdatedAt = undefined;
           } else {
             effectivePrice = retryQuote.ltp;
             state.optionPremiumPrice = retryQuote.ltp;
+            state.optionQuoteStatus = "live";
+            state.optionQuoteUpdatedAt = Date.now();
             console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote retry SUCCEEDED: LTP=₹${retryQuote.ltp}`);
           }
         } else {
@@ -5146,12 +5246,15 @@ async function tick(
           if (lastKnown > 0 && lastKnown !== entryPremium) {
             // Use last known good price for SL monitoring (stale but better than entry)
             effectivePrice = lastKnown;
-            console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. Using last known ₹${lastKnown.toFixed(2)} for SL.`);
+            state.optionQuoteStatus = "stale";
+            console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. Using last known ₹${lastKnown.toFixed(2)} for SL and marking it stale.`);
           } else {
             // Never got a real quote — freeze at entry (P&L = 0, SL won't fire)
             effectivePrice = entryPremium;
-            state.optionPremiumPrice = entryPremium;
-            console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. No last known price — freezing at entry ₹${entryPremium.toFixed(2)}.`);
+            state.optionPremiumPrice = undefined;
+            state.optionQuoteStatus = "unavailable";
+            state.optionQuoteUpdatedAt = undefined;
+            console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. No last known price — P&L is unavailable; entry is used internally only to prevent unsafe exits.`);
             // Track consecutive failures — auto-close trade if option token is expired/invalid
             state.optionQuoteFailCount = (state.optionQuoteFailCount ?? 0) + 1;
             if (state.optionQuoteFailCount >= 10) {
@@ -5174,8 +5277,10 @@ async function tick(
       // Demo mode (no access token): cannot fetch real option quote.
       // Freeze P&L at entry (show 0) — delta approximation is unreliable and gives fake P&L.
       const entryPremium = state.openTrade.entryPrice;
-      effectivePrice = entryPremium; // P&L = 0 — no real quote available
-      state.optionPremiumPrice = entryPremium;
+      effectivePrice = entryPremium; // Internal safety baseline only; never presented as a live mark.
+      state.optionPremiumPrice = undefined;
+      state.optionQuoteStatus = "unavailable";
+      state.optionQuoteUpdatedAt = undefined;
     }
   }
  // SANITY: effectivePrice should be in the same magnitude as entry
@@ -5188,7 +5293,9 @@ async function tick(
       const safePrice = (state.optionPremiumPrice && state.optionPremiumPrice > 0 && state.optionPremiumPrice / entryPx <= 5) 
         ? state.optionPremiumPrice : entryPx;
       effectivePrice = safePrice;
-      state.optionPremiumPrice = safePrice;
+      state.optionPremiumPrice = undefined;
+      state.optionQuoteStatus = "unavailable";
+      state.optionQuoteUpdatedAt = undefined;
     }
   }
 
@@ -5769,16 +5876,14 @@ async function tick(
     // ── Full exit: SL or Target ───────────────────────────────────────────────
    let exitReason: string | null = null;
     const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
-    // ── TIME-BASED EXIT: VARIANT C — No time exit at all ──
-    // Exit ONLY on SL, Target, or Trailing Stop (matches backtest assumption).
-    // Exception: Opening Burst strategy has strict 10-min limit (moves happen in 2-3 min).
-    if (!exitReason && trade.isIndexOptions && trade.signalLayer === "OpeningBurst" && tradeAgeMs > 10 * 60 * 1000) {
-      const currentPnlPerUnit = trade.direction === "BUY"
-        ? effectivePrice - trade.entryPrice
-        : trade.entryPrice - effectivePrice;
-      exitReason = `Opening Burst Time Exit (10min) — close at market`;
-      emitActivity(state.sessionToken, "signal", `🚀⏰ Opening Burst time limit: held ${Math.floor(tradeAgeMs / 60000)}min — closing at market | P&L ₹${(currentPnlPerUnit * (trade.quantity - (trade.bookedQty ?? 0))).toFixed(0)}`);
-    }
+    // ── TIME-BASED EXIT: VARIANT C ──────────────────────────────────────────
+    // Option positions never exit because of elapsed time, regardless of layer.
+    // Keep this policy call adjacent to exitReason so a future strategy change must
+    // deliberately alter the tested policy instead of adding an ad-hoc time exit.
+    const optionTimeExitReason = trade.isIndexOptions
+      ? getOptionTimeExitReason(tradeAgeMs, trade.signalLayer)
+      : null;
+    if (!exitReason && optionTimeExitReason) exitReason = optionTimeExitReason;
 
     // SAFETY GUARD: For options trades where effectivePrice is frozen at entry (no real quote available),
     // skip SL/Target checks for the FIRST 5 minutes (grace period for token resolution / quote fetching).
@@ -6938,6 +7043,52 @@ async function tick(
     return;
   }
 
+  // Every non-paper option must be verified against the authoritative contract list,
+  // then quoted again immediately before sizing. Failure is blocking in both demo and
+  // live mode because an unverified token or unquoted premium corrupts every downstream
+  // field: entry, quantity, SL, target, exposure, and P&L.
+  if (
+    isOptionsMode &&
+    tradeInstrumentToken &&
+    !tradeInstrumentToken.startsWith("PAPER_OPT|") &&
+    state.accessToken &&
+    state.accessToken !== "DEMO_NO_TOKEN"
+  ) {
+    const side = tradeSymbol?.includes("_CE_") ? "CE" as const : "PE" as const;
+    const expectedStrike = Number(tradeSymbol?.match(/_(\d+)$/)?.[1] ?? 0);
+    const underlyingForValidation = state.underlyingToken || state.instrumentToken;
+    const validation = await validateOptionToken(
+      tradeInstrumentToken,
+      expectedStrike,
+      side,
+      state.accessToken,
+      underlyingForValidation,
+      resolvedExpiry,
+    );
+    if (!validation.valid) {
+      const reason = validation.reason ?? "unknown contract validation failure";
+      state.lastError = `Option entry blocked: ${reason}`;
+      state.lastTradeOpenedAt = Date.now();
+      state.isOpeningTrade = false;
+      console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — OPTION ENTRY BLOCKED: ${tradeInstrumentToken}: ${reason}`);
+      emitActivity(state.sessionToken, "error", `⛔ SKIPPED: Unverified option contract ${tradeLabel}. ${reason}. No order or demo trade was created.`);
+      return;
+    }
+
+    const finalQuote = await fetchFullQuote(tradeInstrumentToken, state.accessToken);
+    if (!finalQuote || !Number.isFinite(finalQuote.ltp) || finalQuote.ltp <= 0) {
+      state.lastError = `Option entry blocked: no authenticated live premium for ${tradeInstrumentToken}`;
+      state.lastTradeOpenedAt = Date.now();
+      state.isOpeningTrade = false;
+      console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — OPTION ENTRY BLOCKED: final premium quote unavailable for ${tradeInstrumentToken}`);
+      emitActivity(state.sessionToken, "error", `⛔ SKIPPED: No authenticated live premium for ${tradeLabel}. No order or demo trade was created.`);
+      return;
+    }
+
+    optionPremiumForSizing = finalQuote.ltp;
+    state.optionPremiumPrice = finalQuote.ltp;
+  }
+
   // ══════════════════════════════════════════════════════════════════════════════════
   // ── OPTION EXECUTION QUALITY GATES ─────────────────────────────────────────────
   // Three pre-entry filters to eliminate trades with guaranteed slippage loss.
@@ -7005,7 +7156,13 @@ async function tick(
           state.optionPremiumPrice = midPrice;
         }
       }
-      // If quote fetch fails, proceed with LTP-based premium (don't block on API failure)
+      if (!optQuote || !Number.isFinite(optQuote.ltp) || optQuote.ltp <= 0) {
+        state.lastError = `Option entry blocked: execution-quality quote unavailable for ${tradeInstrumentToken}`;
+        state.lastTradeOpenedAt = Date.now();
+        state.isOpeningTrade = false;
+        emitActivity(state.sessionToken, "error", `⛔ SKIPPED: Option quote became unavailable before sizing. No order or demo trade was created.`);
+        return;
+      }
     }
   }
   // ══════════════════════════════════════════════════════════════════════════════════
@@ -7171,21 +7328,28 @@ async function tick(
   // The actual order placed is always a BUY of the option contract.
   let orderId: string | undefined;
   if ((state.mode === "live" || state.mode === "demo") && state.accessToken) {
-    // ── TOKEN VALIDATION: Cross-check resolved token before placing order ──────
-    // The Upstox option chain API sometimes returns mismatched instrument_key for a strike.
-    // Validate the token's actual strike matches what we resolved.
-    if (isOptionsMode && tradeInstrumentToken && state.accessToken) {
-      const ceOrPeForValidation = tradeSymbol?.includes("_CE") ? "CE" as const : "PE" as const;
-      const expectedStrikeForValidation = parseInt(tradeSymbol?.match(/_(\d+)$/)?.[1] ?? "0");
-      if (expectedStrikeForValidation > 0) {
-        const validation = await validateOptionToken(tradeInstrumentToken, expectedStrikeForValidation, ceOrPeForValidation, state.accessToken);
-        if (!validation.valid && validation.actualStrike) {
-          // Token mismatch detected! Update the label and symbol to reflect the ACTUAL strike
-          console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — STRIKE MISMATCH CORRECTED: label said ${expectedStrikeForValidation} but token is actually ${validation.actualStrike} ${ceOrPeForValidation}`);
-          emitActivity(state.sessionToken, "signal", `⚠ Strike correction: ${expectedStrikeForValidation} → ${validation.actualStrike} ${ceOrPeForValidation} (token validation)`);
-          tradeSymbol = `${state.instrumentSymbol}_${ceOrPeForValidation}_${validation.actualStrike}`;
-          tradeLabel = formatOptionContractLabel(state.instrumentSymbol, validation.actualStrike, ceOrPeForValidation, resolvedExpiry);
-        }
+    // Revalidate immediately before any order request. A token can be replaced by
+    // the 0DTE re-resolution path after the earlier sizing gate, so this second check
+    // is intentionally redundant and authoritative.
+    if (isOptionsMode && tradeInstrumentToken && !tradeInstrumentToken.startsWith("PAPER_OPT|") && state.accessToken !== "DEMO_NO_TOKEN") {
+      const ceOrPeForValidation = tradeSymbol?.includes("_CE_") ? "CE" as const : "PE" as const;
+      const expectedStrikeForValidation = Number(tradeSymbol?.match(/_(\d+)$/)?.[1] ?? 0);
+      const validation = await validateOptionToken(
+        tradeInstrumentToken,
+        expectedStrikeForValidation,
+        ceOrPeForValidation,
+        state.accessToken,
+        state.underlyingToken || state.instrumentToken,
+        resolvedExpiry,
+      );
+      if (!validation.valid) {
+        const reason = validation.reason ?? "unknown contract validation failure";
+        state.lastError = `Order blocked: ${reason}`;
+        state.lastTradeOpenedAt = Date.now();
+        state.isOpeningTrade = false;
+        console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — ORDER BLOCKED before Upstox call: ${tradeInstrumentToken}: ${reason}`);
+        emitActivity(state.sessionToken, "error", `⛔ ORDER BLOCKED: ${tradeLabel} failed final contract validation (${reason}).`);
+        return;
       }
     }
     // Options: always BUY the option (CE for bullish, PE for bearish)
@@ -8040,12 +8204,13 @@ export async function resolveSpecificOptionToken(
     // MCX not supported here — use resolveAtmMcxOptionToken
     if (underlyingToken.startsWith("MCX_FO|")) return null;
     
-    // Use same API as resolveAtmOptionToken: instrument_key + expiry_date
-    const isBankNifty = underlyingToken.toLowerCase().includes("nifty bank");
-    const expiryOrder = isBankNifty
-      ? ["current_month", "next_month"]
-      : ["current_week", "next_week", "current_month", "next_month"];
-    
+    // Use the same authoritative exact-date expiry policy as new option entry.
+    const expiryOrder = await fetchUpcomingOptionExpiryKeys(underlyingToken, accessToken);
+    if (expiryOrder.length === 0) {
+      console.log(`[resolveSpecificOptionToken] No unexpired contract expiry for ${underlyingToken}`);
+      return null;
+    }
+
     let chainData: any[] = [];
     for (const expiry of expiryOrder) {
       try {
@@ -8053,9 +8218,13 @@ export async function resolveSpecificOptionToken(
           `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${expiry}`,
           { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 8000 },
         );
-        chainData = resp.data?.data ?? [];
-        if (chainData.length > 0) break;
-      } catch { /* try next expiry */ }
+        const returnedRows: any[] = resp.data?.data ?? [];
+        const tradableRows = returnedRows.filter(row => getOptionExpiryDateKey(row.expiry) === expiry && isOptionExpiryTradable(row.expiry));
+        if (tradableRows.length > 0) {
+          chainData = tradableRows;
+          break;
+        }
+      } catch { /* try next authoritative expiry */ }
     }
     if (chainData.length === 0) {
       console.log(`[resolveSpecificOptionToken] No chain data for ${underlyingToken} strike ${strike} ${optionType}`);

@@ -55,11 +55,11 @@ export default function Backtest() {
   // ── Auth Gate ──────────────────────────────────────────────────────────────
   const mobileAuthMe = trpc.mobileAuth.me.useQuery(undefined, { staleTime: 5_000, retry: 2 });
   useEffect(() => {
-    if (mobileAuthMe.isFetched && !mobileAuthMe.data) {
+    if (mobileAuthMe.isSuccess && mobileAuthMe.data === null) {
       localStorage.removeItem("scalpbot_auth_token");
       navigate("/login");
     }
-  }, [mobileAuthMe.isFetched, mobileAuthMe.data, navigate]);
+  }, [mobileAuthMe.isSuccess, mobileAuthMe.data, navigate]);
 
   // Access control
   const accessQuery = trpc.subscription.checkAccess.useQuery(

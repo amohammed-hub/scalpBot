@@ -103,11 +103,11 @@ export default function HeroZeroScanner() {
     retryDelay: 500,
   });
   useEffect(() => {
-    if (meQuery.isFetched && !meQuery.data) {
+    if (meQuery.isSuccess && meQuery.data === null) {
       localStorage.removeItem("scalpbot_auth_token");
       navigate("/login");
     }
-  }, [meQuery.isFetched, meQuery.data, navigate]);
+  }, [meQuery.isSuccess, meQuery.data, navigate]);
 
   const [underlying, setUnderlying] = useState<"NIFTY" | "BANKNIFTY" | "FINNIFTY">("NIFTY");
   const [autoRefresh, setAutoRefresh] = useState(false);
