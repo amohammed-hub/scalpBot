@@ -7,7 +7,7 @@ import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, noti
 import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, fetchUpcomingOptionExpiryKeys, getOptionExpiryDateKey, isOptionExpiryTradable, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, generateMeanReversionV13Signal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, fetchUpcomingOptionExpiryKeys, getOptionExpiryDateKey, isOptionExpiryTradable, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";
 import { getUpstoxEgressStatus, upstoxFetch, verifyUpstoxManagedEgress } from "./upstoxHttp";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 import { assertBotAutomationEnabled } from "./botAutomation";
