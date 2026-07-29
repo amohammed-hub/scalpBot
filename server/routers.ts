@@ -12,6 +12,8 @@ import { getUpstoxEgressStatus, upstoxFetch, verifyUpstoxManagedEgress } from ".
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 import { assertBotAutomationEnabled } from "./botAutomation";
 import { getBaseSessionToken, KILL_SWITCH_LAST_ERROR } from "./botSessionLifecycle";
+import { isOptionTrade } from "../shared/optionTradeIdentity";
+import { getStoppedTradeQuoteState } from "./stoppedTradeQuoteState";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -1536,6 +1538,11 @@ export const appRouter = router({
             .orderBy(desc(tradeLog.enteredAt))
             .limit(1);
           const dbOpenTrade = openTradeRows.length > 0 ? openTradeRows[0] : null;
+          const dbOpenTradeQuoteState = getStoppedTradeQuoteState({
+            isIndexOptions: rows[0].isIndexOptions,
+            symbol: dbOpenTrade?.symbol,
+            symbolLabel: dbOpenTrade?.symbolLabel,
+          });
           return {
             price: rows[0].lastPrice ?? 0,
             bid: rows[0].bidPrice ?? 0,
@@ -1545,6 +1552,9 @@ export const appRouter = router({
             nextScanAt: rows[0].nextScanAt ?? 0,
             // Last tick timestamp for staleness detection
             lastTickAt: rows[0].lastTickAt ?? 0,
+            // A stopped option has no in-memory exact-contract quote. Expose that
+            // state explicitly so no consumer can treat the underlying as its mark.
+            ...dbOpenTradeQuoteState,
             openTrade: dbOpenTrade ? (() => {
               const slDist = Math.abs(dbOpenTrade.entryPrice - (dbOpenTrade.slPrice ?? dbOpenTrade.entryPrice));
               const p1 = dbOpenTrade.partial1RPrice ?? (dbOpenTrade.direction === "BUY" ? dbOpenTrade.entryPrice + slDist : dbOpenTrade.entryPrice - slDist);
@@ -1573,13 +1583,19 @@ export const appRouter = router({
                 partialBooked: (dbOpenTrade.partialBooked ?? 0) as 0 | 1 | 2,
                 bookedQty: dbOpenTrade.bookedQty ?? 0,
                 bookedPnl: dbOpenTrade.bookedPnl ?? 0,
-                // CRITICAL: Include options metadata so frontend doesn't use underlying price as "Current"
-                isIndexOptions: !!(rows[0].isIndexOptions),
+                // Reconstruct option identity from the durable contract itself when
+                // the stopped session row has a missing or stale options flag.
+                isIndexOptions: dbOpenTradeQuoteState.isIndexOptions,
                 entryUnderlyingPrice: dbOpenTrade.entryUnderlyingPrice ?? undefined,
               };
             })() : null,
           };
         }
+        const stateOpenTradeIsOption = isOptionTrade({
+          isIndexOptions: state.isIndexOptions,
+          symbol: state.openTrade?.symbol,
+          symbolLabel: state.openTrade?.symbolLabel,
+        });
         const result: any = {
           price: state.lastPrice,
           bid: state.bidPrice,
@@ -1598,10 +1614,12 @@ export const appRouter = router({
           openingBurstMode: state.openingBurstMode ?? false,
           reEntryCandles: state.reEntryCandles,
           // Options mode: expose a premium only when it came from a successful quote.
-          optionPremiumPrice: state.optionQuoteStatus !== "unavailable" ? (state.optionPremiumPrice ?? null) : null,
-          optionQuoteStatus: state.isIndexOptions ? (state.optionQuoteStatus ?? "unavailable") : null,
-          optionQuoteUpdatedAt: state.optionQuoteUpdatedAt ?? null,
-          isIndexOptions: state.isIndexOptions ?? false,
+          optionPremiumPrice: stateOpenTradeIsOption && state.optionQuoteStatus !== "unavailable"
+            ? (state.optionPremiumPrice ?? null)
+            : null,
+          optionQuoteStatus: stateOpenTradeIsOption ? (state.optionQuoteStatus ?? "unavailable") : null,
+          optionQuoteUpdatedAt: stateOpenTradeIsOption ? (state.optionQuoteUpdatedAt ?? null) : null,
+          isIndexOptions: stateOpenTradeIsOption,
           // Averaging settings
           averagingEnabled: state.averagingEnabled ?? true,
           averagingLossThreshold: state.averagingLossThreshold ?? 0.20,

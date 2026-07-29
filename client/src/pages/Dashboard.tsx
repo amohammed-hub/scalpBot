@@ -22,6 +22,7 @@ import { trpc } from "@/lib/trpc";
 import { MCX_INSTRUMENTS } from "@shared/mcxInstruments";
 import { getTierLimits, FEATURE_MIN_PLAN, type TierLimits } from "@shared/tierLimits";
 import { getCurrentSession, getAllSessionDefaults, hasSessionChanged, type TradingSession } from "@shared/sessionDefaults";
+import { isOptionTrade } from "@shared/optionTradeIdentity";
 // ── Session Token ─────────────────────────────────────────────────────────────
 // A UUID stored in localStorage — no Manus login needed. Used as the user identity key.
 const LS_SESSION = "scalpbot_session";
@@ -990,7 +991,7 @@ export default function Dashboard() {
   const optionQuoteStatus = (primaryLiveQuote?.optionQuoteStatus
     ?? (liveData as any)?.optionQuoteStatus
     ?? (optionPremiumPrice && optionPremiumPrice > 0 ? "live" : "unavailable")) as "live" | "stale" | "unavailable";
-  const isIndexOptions = liveData?.isIndexOptions ?? false;
+  const isIndexOptions = (liveData as any)?.isIndexOptions ?? (botStatus as any)?.isIndexOptions ?? false;
   const lastTickAt = liveData?.lastTickAt ?? 0;
 
   const recentRejectedSignals = (liveData as any)?.recentRejectedSignals ?? [];
@@ -1195,7 +1196,7 @@ export default function Dashboard() {
     const trade = openTrade ?? (inMemOpenTrade ? { id: inMemOpenTrade.dbId, entryPrice: inMemOpenTrade.entryPrice, direction: inMemOpenTrade.direction, quantity: inMemOpenTrade.quantity } : null);
     if (!trade || !trade.id) { toast.error("No open trade to exit."); return; }
     // For options mode: use option premium price (not underlying spot) as exit price
-    const exitPriceToUse = isIndexOptions
+    const exitPriceToUse = activeTradeIsOption
       ? (effectiveLivePrice > 0 ? effectiveLivePrice : 0)
       : currentPrice;
     if (!exitPriceToUse) { toast.error("No option premium price available. Wait for bot to fetch it, or use 'Close All Open' button."); return; }
@@ -1207,7 +1208,9 @@ export default function Dashboard() {
   // Fall back to DB openTrade (from trades.openTrade — used after server restart)
   const activeTrade = inMemOpenTrade ? {
     id: inMemOpenTrade.dbId,
+    symbol: inMemOpenTrade.symbol,
     symbolLabel: inMemOpenTrade.symbolLabel,
+    instrumentToken: inMemOpenTrade.instrumentToken,
     direction: inMemOpenTrade.direction,
     entryPrice: inMemOpenTrade.entryPrice,
     quantity: inMemOpenTrade.quantity,
@@ -1223,12 +1226,17 @@ export default function Dashboard() {
     averageCount: (inMemOpenTrade as any).averageCount ?? 0,
     originalEntryPrice: (inMemOpenTrade as any).originalEntryPrice ?? inMemOpenTrade.entryPrice,
   } : openTrade ? { ...openTrade, upstoxOrderId: openTrade.upstoxOrderId ?? null } : null;
+  const activeTradeIsOption = isOptionTrade({
+    isIndexOptions,
+    symbol: activeTrade?.symbol,
+    symbolLabel: activeTrade?.symbolLabel,
+  });
 
   // Only calculate unrealized P&L when we have a real live price (not 0, not same as entry)
   // For options mode, use option premium price for unrealized P&L; otherwise use underlying price
   // IMPORTANT: For options, NEVER use underlying price as fallback — it gives absurd P&L
   const effectiveLivePrice = (() => {
-    if (!isIndexOptions) return currentPrice;
+    if (!activeTradeIsOption) return currentPrice;
     // A premium is eligible for P&L only when the API identifies it as a
     // successful live quote or an explicitly stale last-known quote.
     if (optionQuoteStatus === "unavailable") return 0;
@@ -2077,12 +2085,16 @@ export default function Dashboard() {
          // Total unrealized across all open positions (all slots). Missing
          // option quotes are excluded and surfaced explicitly, never counted as ₹0.
          let totalUnrealized = unrealizedPnl ?? 0;
-         let unavailableUnrealizedCount = activeTrade && isIndexOptions && unrealizedPnl === null ? 1 : 0;
+         let unavailableUnrealizedCount = activeTrade && activeTradeIsOption && unrealizedPnl === null ? 1 : 0;
          (allBots ?? []).forEach((bot: any) => {
            if (bot.slot === 0) return; // primary already counted
            const ot = bot.openTrade;
            if (!ot) return;
-           const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
+           const isOpts = isOptionTrade({
+             isIndexOptions: ot.isIndexOptions ?? bot.isIndexOptions,
+             symbol: ot.symbol,
+             symbolLabel: ot.symbolLabel,
+           });
            const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
            let liveP = 0;
            if (isOpts) {
@@ -2198,7 +2210,7 @@ export default function Dashboard() {
              const positions: OpenPos[] = [];
              // Primary slot
               if (activeTrade) {
-                const markAvailable = !isIndexOptions || (optionQuoteStatus !== "unavailable" && effectiveLivePrice > 0);
+                const markAvailable = !activeTradeIsOption || (optionQuoteStatus !== "unavailable" && effectiveLivePrice > 0);
                 const liveP = markAvailable ? effectiveLivePrice : null;
                 const dir = activeTrade.direction === "BUY" ? 1 : -1;
                 positions.push({
@@ -2209,8 +2221,8 @@ export default function Dashboard() {
                   pnl: liveP !== null ? (liveP - activeTrade.entryPrice) * dir * activeTrade.quantity : null,
                   qty: activeTrade.quantity,
                   slot: 0,
-                  isOptions: isIndexOptions,
-                  quoteStatus: isIndexOptions ? optionQuoteStatus : "live",
+                  isOptions: activeTradeIsOption,
+                  quoteStatus: activeTradeIsOption ? optionQuoteStatus : "live",
                   openedAt: activeTrade.openedAt ?? activeTrade.entryTime,
                   instrumentToken: (activeTrade as any).instrumentToken ?? config.instrumentToken,
                   optionTradeToken: (inMemOpenTrade as any)?.optionTradeToken ?? null,
@@ -2222,7 +2234,11 @@ export default function Dashboard() {
                const ot = bot.openTrade;
                if (!ot) return;
                // Check both openTrade-level AND bot-level isIndexOptions (handles legacy/DB-restored trades)
-               const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
+               const isOpts = isOptionTrade({
+                 isIndexOptions: ot.isIndexOptions ?? bot.isIndexOptions,
+                 symbol: ot.symbol,
+                 symbolLabel: ot.symbolLabel,
+               });
                const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
                let liveP = 0;
                const quoteStatus = isOpts
@@ -2462,10 +2478,17 @@ export default function Dashboard() {
                             const ot = bot.openTrade;
                             const symbol = ot?.symbolLabel || ot?.symbol || (bot as any).instrumentLabel || "position";
                             const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
-                            const isOpts = ot?.isIndexOptions ?? (bot as any).isIndexOptions ?? false;
+                            const isOpts = isOptionTrade({
+                              isIndexOptions: ot?.isIndexOptions ?? (bot as any).isIndexOptions,
+                              symbol: ot?.symbol,
+                              symbolLabel: ot?.symbolLabel,
+                            });
                             let liveP = 0;
                             if (isOpts) {
-                              liveP = (lpEntry as any)?.optionPremiumPrice ?? (bot as any).optionPremiumPrice ?? 0;
+                              const quoteStatus = (lpEntry as any)?.optionQuoteStatus ?? (bot as any).optionQuoteStatus ?? "unavailable";
+                              liveP = quoteStatus !== "unavailable"
+                                ? ((lpEntry as any)?.optionPremiumPrice ?? (bot as any).optionPremiumPrice ?? 0)
+                                : 0;
                             } else {
                               liveP = lpEntry?.livePrice ?? (bot as any).lastPrice ?? 0;
                             }
@@ -2645,7 +2668,11 @@ export default function Dashboard() {
                    <div className="text-[10px] text-white/50 mb-1 font-medium">● IN TRADE</div>
                    {(() => {
                      const ot = bot.openTrade;
-                     const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
+                     const isOpts = isOptionTrade({
+                       isIndexOptions: ot.isIndexOptions ?? bot.isIndexOptions,
+                       symbol: ot.symbol,
+                       symbolLabel: ot.symbolLabel,
+                     });
                      const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
                       const quoteStatus = isOpts
                         ? ((lpEntry as any)?.optionQuoteStatus ?? bot.optionQuoteStatus ?? "unavailable")
@@ -3146,17 +3173,17 @@ export default function Dashboard() {
                   <span className="text-sm font-semibold text-teal-300">
                     {activeTrade.symbolLabel ?? ('symbol' in activeTrade ? activeTrade.symbol : null) ?? config.instrumentLabel}
                   </span>
-                  {isIndexOptions && effectiveLivePrice > 0 && (
+                  {activeTradeIsOption && effectiveLivePrice > 0 && (
                     <span className={`text-xs border px-2 py-0.5 rounded-full ${optionQuoteStatus === "stale" ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-teal-500/15 text-teal-400 border-teal-500/30"}`}>
                       Premium ₹{effectiveLivePrice.toFixed(1)}{optionQuoteStatus === "stale" ? " · stale" : " · live"}
                     </span>
                   )}
-                  {isIndexOptions && effectiveLivePrice <= 0 && (
+                  {activeTradeIsOption && effectiveLivePrice <= 0 && (
                     <span className="text-xs bg-red-500/15 text-red-300 border border-red-500/30 px-2 py-0.5 rounded-full">
                       Premium unavailable
                     </span>
                   )}
-                  {isIndexOptions && currentPrice > 0 && (
+                  {activeTradeIsOption && currentPrice > 0 && (
                     <span className="text-xs text-white/30">
                       Underlying ₹{currentPrice.toFixed(2)}
                     </span>
@@ -3168,7 +3195,7 @@ export default function Dashboard() {
                   <span className={`text-lg font-bold ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                     {unrealizedPnl >= 0 ? "+" : ""}₹{unrealizedPnl.toFixed(0)}
                   </span>
-                ) : isIndexOptions ? (
+                ) : activeTradeIsOption ? (
                   <span className="text-sm font-semibold text-red-300">P&amp;L unavailable</span>
                 ) : null}
                 {/* Deep-link to Upstox chart — works for both demo and live */}
@@ -3222,10 +3249,10 @@ export default function Dashboard() {
               {(() => {
                 // In options mode: Entry/Current/SL/Target are all in option premium space
                 // currentPrice is the underlying — use effectiveLivePrice (already includes all fallbacks)
-                const displayCurrent = isIndexOptions
+                const displayCurrent = activeTradeIsOption
                   ? (effectiveLivePrice > 0 ? effectiveLivePrice : null)
                   : (currentPrice > 0 ? currentPrice : null);
-                const currentLabel = isIndexOptions ? "Premium Now" : "Current";
+                const currentLabel = activeTradeIsOption ? "Premium Now" : "Current";
                 const currentColor = displayCurrent && displayCurrent > activeTrade.entryPrice
                   ? "text-emerald-400"
                   : displayCurrent && displayCurrent < activeTrade.entryPrice
