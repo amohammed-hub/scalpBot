@@ -213,12 +213,13 @@ export default function Dashboard() {
   useEffect(() => {
     // SECURITY FIX: Always redirect to login if server confirms no valid session.
     // The server is the source of truth — localStorage tokens can be stale/forged.
-    if (meQuery.isFetched && !meQuery.data) {
-      // Clear stale localStorage token to prevent loops
+    if (meQuery.isSuccess && meQuery.data === null) {
+      // Clear only when the server successfully confirms the JWT is absent,
+      // invalid, or expired. A redeploy/network/DB error must retain it.
       localStorage.removeItem("scalpbot_auth_token");
       navigate("/login");
     }
-  }, [meQuery.isFetched, meQuery.data, navigate]);
+  }, [meQuery.isSuccess, meQuery.data, navigate]);
 
   // ── Name Prompt for users who haven't set their name ──────────────────────
   const [showNamePrompt, setShowNamePrompt] = useState(false);
@@ -985,6 +986,10 @@ export default function Dashboard() {
   const openingBurstMode = (liveData as any)?.openingBurstMode ?? false;
   const reEntryCandles = liveData?.reEntryCandles ?? 0;
   const optionPremiumPrice = liveData?.optionPremiumPrice ?? null;
+  const primaryLiveQuote = livePricesData?.find(lp => lp.slot === 0) as any;
+  const optionQuoteStatus = (primaryLiveQuote?.optionQuoteStatus
+    ?? (liveData as any)?.optionQuoteStatus
+    ?? (optionPremiumPrice && optionPremiumPrice > 0 ? "live" : "unavailable")) as "live" | "stale" | "unavailable";
   const isIndexOptions = liveData?.isIndexOptions ?? false;
   const lastTickAt = liveData?.lastTickAt ?? 0;
 
@@ -1224,10 +1229,11 @@ export default function Dashboard() {
   // IMPORTANT: For options, NEVER use underlying price as fallback — it gives absurd P&L
   const effectiveLivePrice = (() => {
     if (!isIndexOptions) return currentPrice;
-    // Priority: liveData optionPremiumPrice > livePrices optionPremiumPrice > NOTHING (no fake delta)
+    // A premium is eligible for P&L only when the API identifies it as a
+    // successful live quote or an explicitly stale last-known quote.
+    if (optionQuoteStatus === "unavailable") return 0;
     if (optionPremiumPrice && optionPremiumPrice > 0) return optionPremiumPrice;
-    const lpPrimary = livePricesData?.find(lp => lp.slot === 0);
-    const lpOptPremium = (lpPrimary as any)?.optionPremiumPrice ?? 0;
+    const lpOptPremium = primaryLiveQuote?.optionPremiumPrice ?? 0;
     if (lpOptPremium > 0) return lpOptPremium;
     // NO delta approximation — it gives FAKE P&L. Return 0 → shows "—" in UI.
     return 0;
@@ -2068,8 +2074,10 @@ export default function Dashboard() {
           const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 99 : 0);
           const todayWinRate = todayClosed.length > 0 ? (todayWins.length / todayClosed.length) * 100 : 0;
 
-         // Total unrealized across all open positions (all slots)
+         // Total unrealized across all open positions (all slots). Missing
+         // option quotes are excluded and surfaced explicitly, never counted as ₹0.
          let totalUnrealized = unrealizedPnl ?? 0;
+         let unavailableUnrealizedCount = activeTrade && isIndexOptions && unrealizedPnl === null ? 1 : 0;
          (allBots ?? []).forEach((bot: any) => {
            if (bot.slot === 0) return; // primary already counted
            const ot = bot.openTrade;
@@ -2078,15 +2086,16 @@ export default function Dashboard() {
            const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
            let liveP = 0;
            if (isOpts) {
+             const quoteStatus = (lpEntry as any)?.optionQuoteStatus ?? bot.optionQuoteStatus ?? "unavailable";
+             if (quoteStatus === "unavailable") {
+               unavailableUnrealizedCount += 1;
+               return;
+             }
              liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
-              // No delta fallback — show 0 P&L until real quote arrives
-              if (liveP === 0) {
-                liveP = ot.entryPrice;
-              }
-              // SANITY: Cap at 10× entry
-              if (liveP > ot.entryPrice * 10) {
-                liveP = ot.entryPrice;
-              }
+             if (liveP <= 0) {
+               unavailableUnrealizedCount += 1;
+               return;
+             }
            } else {
              liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
            }
@@ -2116,13 +2125,19 @@ export default function Dashboard() {
                   <span className="text-white/50 text-[11px] uppercase tracking-wide">Unrealized</span>
                   <Activity className={`w-3.5 h-3.5 ${totalUnrealized >= 0 ? "text-teal-400" : "text-red-400"}`} />
                 </div>
-                <div className={`text-xl font-bold tabular-nums ${totalUnrealized > 0 ? "text-teal-400" : totalUnrealized < 0 ? "text-red-400" : "text-white/40"}`}>
-                  {totalUnrealized !== 0 ? `${totalUnrealized > 0 ? "+" : ""}₹${totalUnrealized.toFixed(0)}` : "—"}
+                <div className={`text-xl font-bold tabular-nums ${totalUnrealized > 0 ? "text-teal-400" : totalUnrealized < 0 ? "text-red-400" : unavailableUnrealizedCount > 0 ? "text-red-300" : "text-white/40"}`}>
+                  {unavailableUnrealizedCount > 0 && totalUnrealized === 0
+                    ? "Unavailable"
+                    : totalUnrealized !== 0
+                      ? `${totalUnrealized > 0 ? "+" : ""}₹${totalUnrealized.toFixed(0)}${unavailableUnrealizedCount > 0 ? " · partial" : ""}`
+                      : "—"}
                 </div>
                 <div className="text-[10px] text-white/30 mt-0.5">
-                  {(allBots ?? []).filter((b: any) => b.openTrade).length + (activeTrade ? 1 : 0) > 0
-                    ? `${(allBots ?? []).filter((b: any) => b.openTrade && b.slot > 0).length + (activeTrade ? 1 : 0)} open position(s)`
-                    : "No open positions"}
+                  {unavailableUnrealizedCount > 0
+                    ? `${unavailableUnrealizedCount} option quote(s) unavailable`
+                    : (allBots ?? []).filter((b: any) => b.openTrade).length + (activeTrade ? 1 : 0) > 0
+                      ? `${(allBots ?? []).filter((b: any) => b.openTrade && b.slot > 0).length + (activeTrade ? 1 : 0)} open position(s)`
+                      : "No open positions"}
                 </div>
               </div>
 
@@ -2179,21 +2194,23 @@ export default function Dashboard() {
             </div>
             {(() => {
               // Collect all open positions across all slots
-              type OpenPos = { symbol: string; direction: string; entry: number; current: number; pnl: number; qty: number; slot: number; isOptions: boolean; openedAt?: number; instrumentToken?: string; optionTradeToken?: string };
+              type OpenPos = { symbol: string; direction: string; entry: number; current: number | null; pnl: number | null; qty: number; slot: number; isOptions: boolean; quoteStatus?: "live" | "stale" | "unavailable"; openedAt?: number; instrumentToken?: string; optionTradeToken?: string };
              const positions: OpenPos[] = [];
              // Primary slot
               if (activeTrade) {
-                const liveP = effectiveLivePrice > 0 ? effectiveLivePrice : activeTrade.entryPrice;
+                const markAvailable = !isIndexOptions || (optionQuoteStatus !== "unavailable" && effectiveLivePrice > 0);
+                const liveP = markAvailable ? effectiveLivePrice : null;
                 const dir = activeTrade.direction === "BUY" ? 1 : -1;
                 positions.push({
                   symbol: activeTrade.symbolLabel ?? config.instrumentLabel,
                   direction: activeTrade.direction,
                   entry: activeTrade.entryPrice,
                   current: liveP,
-                  pnl: (liveP - activeTrade.entryPrice) * dir * activeTrade.quantity,
+                  pnl: liveP !== null ? (liveP - activeTrade.entryPrice) * dir * activeTrade.quantity : null,
                   qty: activeTrade.quantity,
                   slot: 0,
                   isOptions: isIndexOptions,
+                  quoteStatus: isIndexOptions ? optionQuoteStatus : "live",
                   openedAt: activeTrade.openedAt ?? activeTrade.entryTime,
                   instrumentToken: (activeTrade as any).instrumentToken ?? config.instrumentToken,
                   optionTradeToken: (inMemOpenTrade as any)?.optionTradeToken ?? null,
@@ -2208,37 +2225,33 @@ export default function Dashboard() {
                const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
                const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
                let liveP = 0;
+               const quoteStatus = isOpts
+                 ? ((lpEntry as any)?.optionQuoteStatus ?? bot.optionQuoteStatus ?? "unavailable")
+                 : "live";
                if (isOpts) {
-                 liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
-                  // REMOVED: Delta-style synthetic fallback that computed fake option premiums
-                  // from underlying price movement. This caused phantom P&L (e.g., ₹3 entry → ₹496 current).
-                  // If no real optionPremiumPrice is available, show entry price (P&L = 0).
-                  if (liveP === 0) {
-                    liveP = ot.entryPrice;
-                  }
-                  // SANITY: Cap at 10× entry to prevent underlying price leak
-                  if (liveP > ot.entryPrice * 10) {
-                    liveP = ot.entryPrice;
-                  }
+                 liveP = quoteStatus !== "unavailable"
+                   ? ((lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0)
+                   : 0;
                } else {
                  liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
                }
-                if (liveP > 0) {
-                  const dir = ot.direction === "BUY" ? 1 : -1;
-                  positions.push({
+               const markAvailable = !isOpts || (quoteStatus !== "unavailable" && liveP > 0);
+               const markedPrice = markAvailable ? liveP : null;
+               const dir = ot.direction === "BUY" ? 1 : -1;
+               positions.push({
                     symbol: ot.symbolLabel ?? bot.instrumentLabel ?? `Bot ${bot.slot + 1}`,
                     direction: ot.direction,
                     entry: ot.entryPrice,
-                    current: liveP,
-                    pnl: (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0)),
+                    current: markedPrice,
+                    pnl: markedPrice !== null ? (markedPrice - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0)) : null,
                     qty: ot.quantity - (ot.bookedQty ?? 0),
                     slot: bot.slot,
                     isOptions: isOpts,
+                    quoteStatus,
                     openedAt: ot.openedAt ?? ot.entryTime,
                     instrumentToken: ot.instrumentToken ?? bot.instrumentToken ?? "",
                     optionTradeToken: bot.optionTradeToken ?? null,
                   });
-                }
               });
 
               if (positions.length === 0) {
@@ -2269,7 +2282,7 @@ export default function Dashboard() {
                     </thead>
                     <tbody>
                       {positions.map((pos, idx) => {
-                        const isPos = pos.pnl >= 0;
+                        const isPos = pos.pnl !== null && pos.pnl >= 0;
                         // Calculate duration from trade open time if available
                         const openTime = (pos as any).openedAt;
                         let durationStr = "—";
@@ -2315,9 +2328,11 @@ export default function Dashboard() {
                               </span>
                             </td>
                             <td className="py-1.5 px-1 text-right text-white/60 tabular-nums">₹{pos.entry.toFixed(2)}</td>
-                            <td className="py-1.5 px-1 text-right text-white/80 tabular-nums">₹{pos.current.toFixed(2)}</td>
-                            <td className={`py-1.5 px-1 text-right font-bold tabular-nums ${isPos ? "text-emerald-400" : "text-red-400"}`}>
-                              {isPos ? "+" : ""}₹{pos.pnl.toFixed(0)}
+                            <td className="py-1.5 px-1 text-right text-white/80 tabular-nums">
+                              {pos.current !== null ? `₹${pos.current.toFixed(2)}${pos.quoteStatus === "stale" ? " · stale" : ""}` : "Unavailable"}
+                            </td>
+                            <td className={`py-1.5 px-1 text-right font-bold tabular-nums ${pos.pnl === null ? "text-red-300" : isPos ? "text-emerald-400" : "text-red-400"}`}>
+                              {pos.pnl !== null ? `${isPos ? "+" : ""}₹${pos.pnl.toFixed(0)}` : "Unavailable"}
                             </td>
                            <td className="py-1.5 px-1 text-right text-white/40 tabular-nums">{durationStr}</td>
                             {isAdmin && (
@@ -2632,31 +2647,26 @@ export default function Dashboard() {
                      const ot = bot.openTrade;
                      const isOpts = ot.isIndexOptions ?? bot.isIndexOptions ?? false;
                      const lpEntry = livePricesData?.find((lp: any) => lp.slot === bot.slot);
-                     let liveP = 0;
-                     if (isOpts) {
-                       liveP = (lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0;
-                        // No delta fallback — show 0 P&L until real quote arrives
-                        if (liveP === 0) {
-                          liveP = ot.entryPrice;
-                        }
-                        // SANITY: Cap at 10× entry
-                        if (liveP > ot.entryPrice * 10) {
-                          liveP = ot.entryPrice;
-                        }
-                     } else {
-                       liveP = lpEntry?.livePrice ?? bot.lastPrice ?? 0;
-                     }
+                      const quoteStatus = isOpts
+                        ? ((lpEntry as any)?.optionQuoteStatus ?? bot.optionQuoteStatus ?? "unavailable")
+                        : "live";
+                      const liveP = isOpts
+                        ? (quoteStatus !== "unavailable" ? ((lpEntry as any)?.optionPremiumPrice ?? bot.optionPremiumPrice ?? 0) : 0)
+                        : (lpEntry?.livePrice ?? bot.lastPrice ?? 0);
+                      const markAvailable = !isOpts || (quoteStatus !== "unavailable" && liveP > 0);
                       const dir = ot.direction === "BUY" ? 1 : -1;
-                      const unrealised = liveP > 0 ? (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0)) : 0;
+                      const unrealised = markAvailable && liveP > 0
+                        ? (liveP - ot.entryPrice) * dir * (ot.quantity - (ot.bookedQty ?? 0))
+                        : null;
                       const symbolShort = ot.symbolLabel ?? ot.symbol ?? "";
                       return (
                         <>
                           <div className="text-[11px] text-white/80 font-medium">
-                            {ot.direction} {symbolShort.includes("CE") ? "CE" : symbolShort.includes("PE") ? "PE" : ""} ₹{ot.entryPrice?.toFixed(2)} → {liveP > 0 ? `₹${liveP.toFixed(2)}` : "…"}
-                          </div>
-                          <div className={`text-sm font-bold mt-1 tabular-nums ${unrealised >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                            {unrealised >= 0 ? "+" : ""}₹{unrealised.toFixed(0)}
-                          </div>
+                             {ot.direction} {symbolShort.includes("CE") ? "CE" : symbolShort.includes("PE") ? "PE" : ""} ₹{ot.entryPrice?.toFixed(2)} → {markAvailable && liveP > 0 ? `₹${liveP.toFixed(2)}${quoteStatus === "stale" ? " · stale" : ""}` : "Unavailable"}
+                           </div>
+                           <div className={`text-sm font-bold mt-1 tabular-nums ${unrealised === null ? "text-red-300" : unrealised >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                             {unrealised !== null ? `${unrealised >= 0 ? "+" : ""}₹${unrealised.toFixed(0)}` : "P&L unavailable"}
+                           </div>
                           <button
                             className="mt-1.5 text-[9px] text-teal-400/70 hover:text-teal-300 flex items-center gap-0.5 transition-colors"
                             onClick={(e) => {
@@ -3137,8 +3147,13 @@ export default function Dashboard() {
                     {activeTrade.symbolLabel ?? ('symbol' in activeTrade ? activeTrade.symbol : null) ?? config.instrumentLabel}
                   </span>
                   {isIndexOptions && effectiveLivePrice > 0 && (
-                    <span className="text-xs bg-teal-500/15 text-teal-400 border border-teal-500/30 px-2 py-0.5 rounded-full">
-                      Premium ₹{effectiveLivePrice.toFixed(1)}{!optionPremiumPrice || optionPremiumPrice === 0 ? " ~" : ""}
+                    <span className={`text-xs border px-2 py-0.5 rounded-full ${optionQuoteStatus === "stale" ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-teal-500/15 text-teal-400 border-teal-500/30"}`}>
+                      Premium ₹{effectiveLivePrice.toFixed(1)}{optionQuoteStatus === "stale" ? " · stale" : " · live"}
+                    </span>
+                  )}
+                  {isIndexOptions && effectiveLivePrice <= 0 && (
+                    <span className="text-xs bg-red-500/15 text-red-300 border border-red-500/30 px-2 py-0.5 rounded-full">
+                      Premium unavailable
                     </span>
                   )}
                   {isIndexOptions && currentPrice > 0 && (
@@ -3149,11 +3164,13 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {unrealizedPnl !== null && (
+                {unrealizedPnl !== null ? (
                   <span className={`text-lg font-bold ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                     {unrealizedPnl >= 0 ? "+" : ""}₹{unrealizedPnl.toFixed(0)}
                   </span>
-                )}
+                ) : isIndexOptions ? (
+                  <span className="text-sm font-semibold text-red-300">P&amp;L unavailable</span>
+                ) : null}
                 {/* Deep-link to Upstox chart — works for both demo and live */}
                 <button
                   onClick={() => {
@@ -3579,6 +3596,9 @@ export default function Dashboard() {
                     // 3. Delta approximation fallback (when bot hasn't ticked or isn't running)
                     const lpOptionPremium = (lpSlot as any)?.optionPremiumPrice ?? 0;
                     const slotOptionPremium = lpOptionPremium || (slotBot?.optionPremiumPrice ?? 0);
+                    const slotQuoteStatus = tradeSlot === 0
+                      ? optionQuoteStatus
+                      : ((lpSlot as any)?.optionQuoteStatus ?? slotBot?.optionQuoteStatus ?? "unavailable");
                     // Detect if this trade is an options trade (symbol contains CE or PE)
                     const isOptionTrade = (t.symbol ?? "").includes("CE") || (t.symbol ?? "").includes("PE") ||
                       (t.symbolLabel ?? "").includes(" CE") || (t.symbolLabel ?? "").includes(" PE");
@@ -3586,25 +3606,26 @@ export default function Dashboard() {
                     // Using underlying price (e.g. 7700) with option entry (e.g. 252) gives absurd P&L
                     let liveEffectivePrice = 0;
                     if (isOptionTrade) {
-                      // Options: use option premium price from best available source
-                      // Source priority: liveData optionPremiumPrice > livePrices optionPremiumPrice > allBots optionPremiumPrice
-                      if (tradeSlot === 0 && optionPremiumPrice && optionPremiumPrice > 0) {
-                        liveEffectivePrice = optionPremiumPrice;
-                      } else if (tradeSlot === 0 && lpOptionPremium > 0) {
-                        liveEffectivePrice = lpOptionPremium;
-                      } else if (tradeSlot > 0 && slotOptionPremium > 0) {
-                        liveEffectivePrice = slotOptionPremium;
+                      // Only a live or explicitly stale premium can mark an open option.
+                      if (slotQuoteStatus !== "unavailable") {
+                        if (tradeSlot === 0 && optionPremiumPrice && optionPremiumPrice > 0) {
+                          liveEffectivePrice = optionPremiumPrice;
+                        } else if (tradeSlot === 0 && lpOptionPremium > 0) {
+                          liveEffectivePrice = lpOptionPremium;
+                        } else if (tradeSlot > 0 && slotOptionPremium > 0) {
+                          liveEffectivePrice = slotOptionPremium;
+                        }
                       }
-                      // NO delta approximation fallback — it gives FAKE P&L.
-                      // If liveEffectivePrice is still 0, livePnl will show stored DB pnl (for closed) or 0 (for open).
                     } else {
                       // Non-options: use underlying/futures price as before
                       liveEffectivePrice = slotEffectivePrice;
                     }
-                    const livePnl = t.status === "open" && liveEffectivePrice > 0
-                      ? t.direction === "BUY"
-                        ? (liveEffectivePrice - t.entryPrice) * (t.quantity - (t.bookedQty ?? 0))
-                        : (t.entryPrice - liveEffectivePrice) * (t.quantity - (t.bookedQty ?? 0))
+                    const livePnl = t.status === "open"
+                      ? liveEffectivePrice > 0
+                        ? t.direction === "BUY"
+                          ? (liveEffectivePrice - t.entryPrice) * (t.quantity - (t.bookedQty ?? 0))
+                          : (t.entryPrice - liveEffectivePrice) * (t.quantity - (t.bookedQty ?? 0))
+                        : null
                       : t.pnl;
                     return (
                       <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
@@ -3688,10 +3709,10 @@ export default function Dashboard() {
                         <td className="py-2.5 pr-4 text-right font-mono text-cyan-400/80 text-xs">
                           ₹{(t.entryPrice * t.quantity).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                         </td>
-                        <td className={`py-2.5 pr-4 text-right font-mono font-semibold ${(livePnl ?? 0) > 0 ? "text-emerald-400" : (livePnl ?? 0) < 0 ? "text-red-400" : "text-white/40"}`}>
+                        <td className={`py-2.5 pr-4 text-right font-mono font-semibold ${livePnl === null ? "text-red-300" : (livePnl ?? 0) > 0 ? "text-emerald-400" : (livePnl ?? 0) < 0 ? "text-red-400" : "text-white/40"}`}>
                           {livePnl !== undefined && livePnl !== null
                             ? `${livePnl > 0 ? "+" : ""}₹${livePnl.toFixed(0)}${t.status === "open" ? " ●" : ""}`
-                            : "—"}
+                            : t.status === "open" && isOptionTrade ? "Unavailable" : "—"}
                         </td>
                         <td className="py-2.5 pr-4 text-center">
                           {(t as any).partialBooked > 0 ? (

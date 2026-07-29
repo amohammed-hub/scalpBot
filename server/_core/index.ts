@@ -30,6 +30,7 @@ import { upstoxFetch } from "../upstoxHttp";
 import { startBotWatchdog } from "../botWatchdog";
 import rateLimit from "express-rate-limit";
 import { createTrpcAuthGate } from "./trpcAuthGate";
+import { assertPersistentJwtConfiguration } from "../authSession";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -51,6 +52,10 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Production sessions must be signed by a Railway-persisted secret. Never
+  // start with an implicit fallback that changes session semantics on redeploy.
+  assertPersistentJwtConfiguration();
+
   const app = express();
   app.set("trust proxy", 1); // Trust first proxy (Cloud Run / Railway)
   const server = createServer(app);

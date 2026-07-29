@@ -916,6 +916,31 @@ export async function getAppUserById(userId: number) {
 }
 
 /**
+ * Authentication lookup variant that preserves the difference between an
+ * absent user and a temporary Railway/database failure. A reconnect window
+ * must not be converted into a logged-out browser session.
+ */
+export async function getAppUserByIdStrict(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Authentication database unavailable");
+
+  try {
+    const rows = await db.select().from(appUsers).where(eq(appUsers.id, userId)).limit(1);
+    return rows[0] ?? null;
+  } catch (primaryError) {
+    try {
+      const [rawRows]: any = await db.execute(sql`SELECT id, mobile, name, role, isVerified, sessionToken, lastLoginAt, createdAt, updatedAt FROM app_users WHERE id = ${userId} LIMIT 1`);
+      const row = Array.isArray(rawRows) ? rawRows[0] : rawRows;
+      return row ?? null;
+    } catch (fallbackError) {
+      const error = new Error("Authentication database query failed", { cause: fallbackError });
+      (error as Error & { primaryCause?: unknown }).primaryCause = primaryError;
+      throw error;
+    }
+  }
+}
+
+/**
  * Get all app users (for admin panel)
  */
 export async function getAllAppUsers() {

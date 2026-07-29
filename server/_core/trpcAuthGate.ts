@@ -1,6 +1,7 @@
 import type { Request, RequestHandler } from "express";
 import jwt from "jsonwebtoken";
 import superjson from "superjson";
+import { getJwtSecret as getPersistentJwtSecret } from "../authSession";
 
 const UNAUTHORIZED_TRPC_CODE = -32001;
 
@@ -88,8 +89,7 @@ export function createTrpcUnauthorizedResponse(
 export function createTrpcAuthGate(
   options: CreateTrpcAuthGateOptions = {},
 ): RequestHandler {
-  const getJwtSecret = options.getJwtSecret
-    ?? (() => process.env.JWT_SECRET || "fallback-secret");
+  const resolveJwtSecret = options.getJwtSecret ?? getPersistentJwtSecret;
 
   return (req, res, next) => {
     const procedures = getTrpcProcedurePaths(req.path);
@@ -116,7 +116,7 @@ export function createTrpcAuthGate(
     }
 
     try {
-      jwt.verify(token, getJwtSecret());
+      jwt.verify(token, resolveJwtSecret());
       next();
     } catch {
       res

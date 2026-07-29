@@ -78,11 +78,11 @@ export default function PnLAnalytics() {
   // ── Auth Gate ──────────────────────────────────────────────────────────────
   const meQuery = trpc.mobileAuth.me.useQuery(undefined, { staleTime: 5_000, retry: 2 });
   useEffect(() => {
-    if (meQuery.isFetched && !meQuery.data) {
+    if (meQuery.isSuccess && meQuery.data === null) {
       localStorage.removeItem("scalpbot_auth_token");
       navigate("/login");
     }
-  }, [meQuery.isFetched, meQuery.data, navigate]);
+  }, [meQuery.isSuccess, meQuery.data, navigate]);
 
   const [chartView, setChartView] = useState<ChartView>("per-trade");
   const [botFilter, setBotFilter] = useState<string>("all");

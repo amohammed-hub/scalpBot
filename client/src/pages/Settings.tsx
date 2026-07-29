@@ -547,11 +547,11 @@ export default function Settings() {
     retryDelay: 500,
   });
   useEffect(() => {
-    if (meQuery.isFetched && !meQuery.data) {
+    if (meQuery.isSuccess && meQuery.data === null) {
       localStorage.removeItem("scalpbot_auth_token");
       navigate("/login");
     }
-  }, [meQuery.isFetched, meQuery.data, navigate]);
+  }, [meQuery.isSuccess, meQuery.data, navigate]);
 
   // ── Subscription Access ────────────────────────────────────────────────────
   const [creds, setCreds] = useState<Credentials>(loadCreds);

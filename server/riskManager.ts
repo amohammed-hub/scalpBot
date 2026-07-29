@@ -12,6 +12,7 @@
 import type { BotState, Candle } from "./botEngine";
 import { classifyMarketRegime, placeUpstoxOrder } from "./botEngine";
 import { upstoxAxios } from "./upstoxHttp";
+import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface MarketRiskScore {
@@ -96,9 +97,8 @@ export async function fetchIndiaVix(accessToken?: string | null): Promise<number
       "https://api.upstox.com/v2/market-quote/quotes?instrument_key=NSE_INDEX%7CIndia%20VIX",
       { headers, timeout: 6000 },
     );
-    const data = resp.data?.data;
-    const key = data ? Object.keys(data)[0] : null;
-    const vix = key ? (data[key]?.last_price ?? 0) : 0;
+    const quote = selectRequestedUpstoxQuote(resp.data?.data, "NSE_INDEX|India VIX");
+    const vix = quote?.last_price ?? 0;
     if (vix > 0) { cachedVix = vix; lastVixFetch = Date.now(); }
     return cachedVix;
   } catch {
