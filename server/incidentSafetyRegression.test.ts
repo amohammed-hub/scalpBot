@@ -8,6 +8,8 @@ import {
   getOptionTimeExitReason,
   isOptionExpiryTradable,
 } from "./botEngine";
+import { isOptionTrade } from "../shared/optionTradeIdentity";
+import { getStoppedTradeQuoteState } from "./stoppedTradeQuoteState";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const engineSource = readFileSync(join(here, "botEngine.ts"), "utf8");
@@ -127,10 +129,46 @@ describe("29 July option-trading incident regressions", () => {
       expect(livePrices).toContain('optionQuoteStatus = "unavailable"');
     });
 
-    it("renders unavailable option marks and P&L explicitly", () => {
+    it("serializes a stopped persisted CRUDE option as unavailable even when the session flag is stale", () => {
+      const state = getStoppedTradeQuoteState({
+        isIndexOptions: false,
+        symbol: "CRUDEOIL_PE_8150",
+        symbolLabel: "CRUDEOIL 17AUG26 8150 PE",
+      });
+
+      expect(state).toEqual({
+        isIndexOptions: true,
+        optionPremiumPrice: null,
+        optionQuoteStatus: "unavailable",
+        optionQuoteUpdatedAt: null,
+      });
+    });
+
+    it("recognizes bounded CE/PE contract tokens without misclassifying ordinary symbols", () => {
+      expect(isOptionTrade({ symbolLabel: "GOLD 28JUL26 57300 CE" })).toBe(true);
+      expect(isOptionTrade({ symbol: "NIFTY_PE_24800" })).toBe(true);
+      expect(isOptionTrade({ symbol: "SENSEX" })).toBe(false);
+      expect(isOptionTrade({ symbol: "RELIANCE" })).toBe(false);
+    });
+
+    it("wires the tested stopped-quote contract into the DB-only live-data response", () => {
+      const stoppedStatus = between(
+        routerSource,
+        "const dbOpenTradeQuoteState",
+        "const stateOpenTradeIsOption",
+      );
+      expect(stoppedStatus).toContain("getStoppedTradeQuoteState");
+      expect(stoppedStatus).toContain("...dbOpenTradeQuoteState");
+      expect(stoppedStatus).toContain("isIndexOptions: dbOpenTradeQuoteState.isIndexOptions");
+    });
+
+    it("renders unavailable option marks and P&L explicitly from durable trade identity", () => {
       expect(dashboardSource).toContain("P&L unavailable");
       expect(dashboardSource).toContain('optionQuoteStatus !== "unavailable"');
       expect(dashboardSource).toContain('"Unavailable"');
+      expect(dashboardSource).toContain("const activeTradeIsOption = isOptionTrade");
+      expect(dashboardSource).toContain("if (!activeTradeIsOption) return currentPrice");
+      expect(dashboardSource).not.toContain("if (!isIndexOptions) return currentPrice");
     });
   });
 });
