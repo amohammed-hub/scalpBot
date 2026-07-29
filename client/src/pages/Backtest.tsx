@@ -83,7 +83,7 @@ export default function Backtest() {
   const [tab, setTab] = useState<"equity" | "trades" | "distribution">("equity");
   const [compareMode, setCompareMode] = useState(false);
   const [compareResult, setCompareResult] = useState<any>(null);
-
+  const [strategyFilter, setStrategyFilter] = useState("all");
   const runMutation = trpc.backtest.run.useMutation({
     onSuccess: (data) => {
       setResult(data);
@@ -104,7 +104,7 @@ export default function Backtest() {
 
   const handleRun = () => {
     if (fromDate >= toDate) { toast.error("From date must be before To date"); return; }
-    const params = { sessionToken, instrumentToken, fromDate, toDate, capital, riskPct, slMultiplier, tpMultiplier, minConfidence: minConfidence / 100 };
+    const params = { sessionToken, instrumentToken, fromDate, toDate, capital, riskPct, slMultiplier, tpMultiplier, minConfidence: minConfidence / 100, strategyFilter };
     if (compareMode) {
       compareMutation.mutate(params);
     } else {
@@ -194,7 +194,21 @@ export default function Backtest() {
                 ))}
               </select>
             </label>
-
+            <label className="block mb-3">
+              <span className="text-xs text-white/50 mb-1 block">Strategy to Test</span>
+              <select value={strategyFilter} onChange={e => setStrategyFilter(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-teal-500/50">
+                <option value="all" className="bg-zinc-900">All Strategies (V1 + layers)</option>
+                <option value="MeanReversionV13" className="bg-zinc-900">📊 Mean Reversion V13</option>
+                <option value="RedBarTheory" className="bg-zinc-900">🔴 Red Bar Theory</option>
+                <option value="BoxingStrategy" className="bg-zinc-900">🥊 Boxing Strategy</option>
+                <option value="ORB" className="bg-zinc-900">📈 ORB V8 (30m)</option>
+                <option value="TrikalStrategy" className="bg-zinc-900">▲ Trikal Strategy</option>
+                <option value="Adeeb" className="bg-zinc-900">⚡ Adeeb Strategy</option>
+                <option value="V1" className="bg-zinc-900">V1 Engine Only</option>
+                <option value="V2" className="bg-zinc-900">V2 Engine (Regime)</option>
+              </select>
+            </label>
             {/* Date range */}
             <div className="grid grid-cols-2 gap-3 mb-3">
               <label>
