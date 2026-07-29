@@ -3719,7 +3719,12 @@ export const appRouter = router({
         let i = WINDOW;
         while (i < candles.length) {
           const window = candles.slice(i - WINDOW, i);
-          const sig = generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
+          let sig = generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
+// Multi-strategy: if HOLD, try V13 Mean Reversion
+if (sig.direction === "HOLD" && window.length >= 50) {
+  const mrSig = generateMeanReversionV13Signal(window);
+  if (mrSig.direction !== "HOLD") sig = mrSig;
+}
           if (sig.direction !== "HOLD") {
             // Simulate trade: entry at next candle open
             const entryCandle = candles[i];
