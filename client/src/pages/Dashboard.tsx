@@ -287,7 +287,7 @@ export default function Dashboard() {
       trailingSlPct: 0.5,
       minConfidence: 60,
       scanIntervalSec: 60,
-      enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko", "BoxingStrategy", "ORB"],
+      enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko", "BoxingStrategy", "ORB", "MeanReversionV13"],
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -1830,6 +1830,7 @@ export default function Dashboard() {
                 { id: "TrikalStrategy", label: "Trikal", desc: "EMA cloud crossover with ADX trend strength filter", icon: "🔺" },
                 { id: "PremiumRenko", label: "Premium Renko", desc: "Option premium chart Renko bricks — pure premium action", icon: "💎" },
                 { id: "BoxingStrategy", label: "Boxing (1H/1L)", desc: "1st High/Low box + Engulfing pattern reversal at support/resistance zones", icon: "🥊" },
+                { id: "MeanReversionV13", label: "Mean Reversion V13", desc: "BB+RSI+VWAP confluence fade at statistical extremes in ranging markets", icon: "📊" },
                 { id: "ORB", label: "ORB V8 (30m)", desc: "30-min Opening Range Breakout — VWAP+EMA21 filters, 30pt SL, 50% target, trail@60%. Fires 9:45-11:30 AM only.", icon: "🚀" },
               ].map(s => {
                 const enabled = config.enabledLayers.includes(s.id);
