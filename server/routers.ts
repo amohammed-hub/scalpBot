@@ -3676,6 +3676,9 @@ export const appRouter = router({
         slMultiplier: z.number().default(1.5),
         tpMultiplier: z.number().default(3.0),
         minConfidence: z.number().default(0.6),
+        minConfidence: z.number().default(0.6),
+        strategyFilter: z.string().default("all"),
+      }))
       }))
       .mutation(async ({ input }) => {
         // Fetch access token from DB
@@ -3719,12 +3722,40 @@ export const appRouter = router({
         let i = WINDOW;
         while (i < candles.length) {
           const window = candles.slice(i - WINDOW, i);
-          let sig = generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
-// Multi-strategy: if HOLD, try V13 Mean Reversion
-if (sig.direction === "HOLD" && window.length >= 50) {
-  const mrSig = generateMeanReversionV13Signal(window);
-  if (mrSig.direction !== "HOLD") sig = mrSig;
-}
+          let sig: Signal;
+          switch (input.strategyFilter) {
+            case "MeanReversionV13":
+              sig = generateMeanReversionV13Signal(window);
+              break;
+            case "RedBarTheory":
+              sig = generateRenkoSignal(window);
+              break;
+            case "BoxingStrategy":
+              sig = generateBoxingSignal(window, { instrumentLabel: "" });
+              break;
+            case "ORB":
+              sig = generateORBV8Signal(window, { orbV8State: undefined, instrumentLabel: "" });
+              break;
+            case "TrikalStrategy":
+              sig = generateSmartRenkoSignal(window);
+              break;
+            case "Adeeb":
+              sig = generateAdeebSignal(window, 0, 0, 0, 0);
+              break;
+            case "V2":
+              sig = generateSignalV2(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
+              break;
+            case "V1":
+              sig = generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
+              break;
+            default: // "all"
+              sig = generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
+              if (sig.direction === "HOLD" && window.length >= 50) {
+                const mrSig = generateMeanReversionV13Signal(window);
+                if (mrSig.direction !== "HOLD") sig = mrSig;
+              }
+              break;
+          }
           if (sig.direction !== "HOLD") {
             // Simulate trade: entry at next candle open
             const entryCandle = candles[i];
