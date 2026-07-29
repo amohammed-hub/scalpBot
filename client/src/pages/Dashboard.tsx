@@ -1104,9 +1104,12 @@ export default function Dashboard() {
 
     // Detect ENTRY: no previous open trade → now have one
     if (!prevOT && currentOT) {
-      const symbol = currentOT.instrumentLabel || currentOT.instrumentSymbol || "Unknown";
+      const symbol = currentOT.symbolLabel || currentOT.symbol || currentOT.instrumentLabel || currentOT.instrumentSymbol || "Unknown";
       const direction = currentOT.direction === "BUY" ? "BUY" : "SELL";
-      const optType = currentOT.optionType ? ` ${currentOT.optionType}` : "";
+      const optionTypeAlreadyInSymbol = currentOT.optionType
+        ? new RegExp(`(?:^|[^A-Z0-9])${currentOT.optionType}(?:$|[^A-Z0-9])`, "i").test(String(symbol))
+        : false;
+      const optType = currentOT.optionType && !optionTypeAlreadyInSymbol ? ` ${currentOT.optionType}` : "";
       const price = currentOT.entryPrice ? ` @ ₹${Number(currentOT.entryPrice).toFixed(0)}` : "";
       playEntrySound();
       pushTradeNotification({
@@ -3309,18 +3312,22 @@ export default function Dashboard() {
                   const range = Math.abs(tgt - sl) || 1; // prevent division by zero
                   // Entry position as % of SL→Target range
                   const entryPct = Math.max(5, Math.min(95, (Math.abs(entry - sl) / range) * 100));
-                  // Current price position (only show cursor when we have a real price)
-                  const hasCurrent = currentPrice > 0 && currentPrice !== entry;
+                  // Current position and distances must use the option premium for option trades.
+                  // When the premium is unavailable, fail closed instead of comparing the
+                  // underlying future/index with premium-space SL and target levels.
+                  const progressCurrent = activeTradeIsOption
+                    ? (effectiveLivePrice > 0 ? effectiveLivePrice : null)
+                    : (currentPrice > 0 ? currentPrice : null);
+                  const hasCurrent = progressCurrent !== null;
                   const curPct = hasCurrent
                     ? Math.max(0, Math.min(100, (activeTrade.direction === "BUY"
-                        ? (currentPrice - sl) / range
-                        : (sl - currentPrice) / range) * 100))
+                        ? (progressCurrent - sl) / range
+                        : (sl - progressCurrent) / range) * 100))
                     : entryPct;
                   // SL distance and Target distance
-                  const slDist = Math.abs(entry - sl);
                   const tgtDist = Math.abs(tgt - entry);
-                  const slDistFromCurrent = currentPrice > 0 ? Math.abs(currentPrice - sl) : slDist;
-                  const tgtDistFromCurrent = currentPrice > 0 ? Math.abs(tgt - currentPrice) : tgtDist;
+                  const slDistFromCurrent = progressCurrent !== null ? Math.abs(progressCurrent - sl) : null;
+                  const tgtDistFromCurrent = progressCurrent !== null ? Math.abs(tgt - progressCurrent) : null;
                   return (
                     <>
                       <div className="relative h-3 bg-white/10 rounded-full overflow-hidden">
@@ -3331,15 +3338,21 @@ export default function Dashboard() {
                         {/* Entry marker */}
                         <div className="absolute top-0 h-full w-0.5 bg-white/40" style={{ left: `${entryPct}%` }} />
                         {/* Current price cursor */}
-                        <div
-                          className="absolute top-0 h-full w-1.5 bg-white rounded-full shadow-lg transition-all duration-1000"
-                          style={{ left: `${curPct}%`, transform: "translateX(-50%)" }}
-                        />
+                        {hasCurrent && (
+                          <div
+                            className="absolute top-0 h-full w-1.5 bg-white rounded-full shadow-lg transition-all duration-1000"
+                            style={{ left: `${curPct}%`, transform: "translateX(-50%)" }}
+                          />
+                        )}
                       </div>
                       <div className="flex justify-between text-xs text-white/30 mt-1">
-                        <span className="text-red-400/70">▼ SL ₹{slDistFromCurrent.toFixed(0)} away</span>
+                        <span className="text-red-400/70">
+                          {slDistFromCurrent !== null ? `▼ SL ₹${slDistFromCurrent.toFixed(0)} away` : "▼ SL distance unavailable"}
+                        </span>
                         <span className="text-white/50">Potential: +₹{(tgtDist * activeTrade.quantity).toFixed(0)}</span>
-                        <span className="text-emerald-400/70">▲ Target ₹{tgtDistFromCurrent.toFixed(0)} away</span>
+                        <span className="text-emerald-400/70">
+                          {tgtDistFromCurrent !== null ? `▲ Target ₹${tgtDistFromCurrent.toFixed(0)} away` : "▲ Target distance unavailable"}
+                        </span>
                       </div>
                     </>
                   );

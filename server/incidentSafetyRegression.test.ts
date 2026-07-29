@@ -170,5 +170,24 @@ describe("29 July option-trading incident regressions", () => {
       expect(dashboardSource).toContain("if (!activeTradeIsOption) return currentPrice");
       expect(dashboardSource).not.toContain("if (!isIndexOptions) return currentPrice");
     });
+
+    it("never derives stopped-option SL or target distance from the underlying price", () => {
+      const progressDisplay = between(
+        dashboardSource,
+        "const progressCurrent = activeTradeIsOption",
+        "{/* Partial Booking Progress */}",
+      );
+      expect(progressDisplay).toContain("? (effectiveLivePrice > 0 ? effectiveLivePrice : null)");
+      expect(progressDisplay).toContain("▼ SL distance unavailable");
+      expect(progressDisplay).toContain("▲ Target distance unavailable");
+      expect(progressDisplay).not.toMatch(/slDistFromCurrent\s*=\s*currentPrice/);
+      expect(progressDisplay).not.toMatch(/tgtDistFromCurrent\s*=\s*currentPrice/);
+    });
+
+    it("uses persisted option contract descriptors in the compact entry notification", () => {
+      expect(dashboardSource).toContain(
+        'currentOT.symbolLabel || currentOT.symbol || currentOT.instrumentLabel || currentOT.instrumentSymbol || "Unknown"',
+      );
+    });
   });
 });
