@@ -43,7 +43,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "PremiumRenko" | "BoxingStrategy" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "PremiumRenko" | "BoxingStrategy" | "MeanReversionV13" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -3562,6 +3562,165 @@ export function checkAdeebExit(candles: Candle[], tradeDirection: "BUY" | "SELL"
   return { shouldExit: false, reason: "" };
 }
 
+// ══════════════════════════════════════════════════════════════════════════════════
+// ── V13 Mean Reversion Strategy (CORRECTED) ─────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════════
+export function generateMeanReversionV13Signal(
+  candles: Candle[],
+  candles5m?: Candle[],
+): Signal {
+  const hold: Signal = {
+    direction: "HOLD",
+    confidence: 0,
+    entryPrice: 0,
+    slPrice: 0,
+    targetPrice: 0,
+    atr: 0,
+    reason: "MeanReversionV13: scanning",
+    layer: "MeanReversionV13" as Signal["layer"],
+  };
+
+  if (!candles || candles.length < 50) {
+    return { ...hold, reason: "[MR-V13] Insufficient candles (need 50+, have " + (candles?.length ?? 0) + ")" };
+  }
+
+  const price = candles[candles.length - 1].close;
+  const currCandle = candles[candles.length - 1];
+  const prevCandle = candles[candles.length - 2];
+
+  // ── Time Filter: 9:30 AM – 3:00 PM IST ──
+  const latestTs = currCandle.timestamp;
+  const istDate = new Date(latestTs + 330 * 60000);
+  const istMin = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
+
+  if (istMin < 570) {
+    return { ...hold, reason: "[MR-V13] Before 9:30 AM — waiting for opening volatility to settle" };
+  }
+  if (istMin >= 900) {
+    return { ...hold, reason: "[MR-V13] After 3:00 PM — no new entries near close" };
+  }
+
+  const closes = candles.map(c => c.close);
+  const volumes = candles.map(c => c.volume);
+  const atr = calcATR(candles.slice(-15), 14);
+
+  // ═══ HARD TRIGGER 1: Bollinger Bands (20, 2) ═══
+  const bb = calcBollingerBands(closes, 20, 2);
+  const priceAtUpperBB = price >= bb.upper;
+  const priceAtLowerBB = price <= bb.lower;
+
+  if (!priceAtUpperBB && !priceAtLowerBB) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] Price ${price.toFixed(1)} inside BB [${bb.lower.toFixed(1)}, ${bb.upper.toFixed(1)}] — no extreme` };
+  }
+
+  // ═══ HARD TRIGGER 2: RSI(14) extreme ═══
+  const rsi = calcRSI(closes, 14);
+  if (priceAtLowerBB && rsi >= 30) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] BB lower touched but RSI=${rsi.toFixed(1)} not oversold (<30 needed)` };
+  }
+  if (priceAtUpperBB && rsi <= 70) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] BB upper touched but RSI=${rsi.toFixed(1)} not overbought (>70 needed)` };
+  }
+
+  // ═══ HARD TRIGGER 3: VWAP Z-Score > 1.8 ═══
+  const vwapData = calcVWAPDeviation(candles);
+  const absZScore = Math.abs(vwapData.zScore);
+  if (absZScore < 1.8) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] VWAP Z=${vwapData.zScore.toFixed(2)} — not extreme enough (need |z| >= 1.8)` };
+  }
+  if (priceAtLowerBB && vwapData.zScore > 0) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] Conflict: BB-lower but VWAP Z positive (${vwapData.zScore.toFixed(2)})` };
+  }
+  if (priceAtUpperBB && vwapData.zScore < 0) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] Conflict: BB-upper but VWAP Z negative (${vwapData.zScore.toFixed(2)})` };
+  }
+
+  // ═══ HARD TRIGGER 4: Volume Spike (excludes current candle from avg) ═══
+  const prevVolumes = volumes.slice(-21, -1);
+  const avgVol20 = prevVolumes.length >= 20
+    ? prevVolumes.reduce((a, b) => a + b, 0) / 20
+    : prevVolumes.reduce((a, b) => a + b, 0) / Math.max(prevVolumes.length, 1);
+  const currVol = currCandle.volume;
+  const volRatio = avgVol20 > 0 ? currVol / avgVol20 : 0;
+
+  if (volRatio < 1.5) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] Volume ratio ${volRatio.toFixed(2)}x < 1.5x — no institutional confirmation` };
+  }
+
+  // ═══ HARD TRIGGER 5: 1-Step Deceleration ═══
+  const body1 = Math.abs(currCandle.close - currCandle.open);
+  const body2 = Math.abs(prevCandle.close - prevCandle.open);
+
+  if (body1 >= body2) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] No deceleration — body ${body1.toFixed(1)} > prev ${body2.toFixed(1)}` };
+  }
+
+  // ═══ CONFIDENCE SCORING (ADX/EMA = penalties, not hard blocks) ═══
+  let confidence = 0.60;
+  confidence += Math.min(0.10, (absZScore - 1.8) * 0.05);
+  confidence += Math.min(0.10, (Math.abs(rsi - 50) - 20) * 0.005);
+  confidence += Math.min(0.07, (volRatio - 1.5) * 0.035);
+
+  const adx = calcADX(candles, 14);
+  if (adx < 20) confidence += 0.05;
+  else if (adx >= 25 && adx < 35) confidence -= 0.15;
+  else if (adx >= 35) confidence -= 0.25;
+
+  const ema50Values = ema(closes, 50);
+  let ema50Slope = 0;
+  if (ema50Values.length >= 5) {
+    const ema50Now = ema50Values[ema50Values.length - 1];
+    const ema50Prev5 = ema50Values[ema50Values.length - 5];
+    ema50Slope = ema50Prev5 !== 0 ? Math.abs((ema50Now - ema50Prev5) / ema50Prev5) * 100 : 0;
+    if (ema50Slope <= 0.05) confidence += 0.03;
+    else if (ema50Slope > 0.10) confidence -= 0.10;
+  }
+
+  if (candles5m && candles5m.length >= 20) {
+    const closes5m = candles5m.map(c => c.close);
+    const rsi5m = calcRSI(closes5m, 14);
+    if ((priceAtLowerBB && rsi5m < 40) || (priceAtUpperBB && rsi5m > 60)) {
+      confidence += 0.05;
+    }
+  }
+
+  confidence = Math.min(0.92, Math.max(0, confidence));
+
+  if (confidence < 0.55) {
+    return {
+      ...hold, entryPrice: price,
+      reason: `[MR-V13] Setup found but confidence too low (${(confidence*100).toFixed(0)}%) — ADX(${adx.toFixed(0)}) EMA-slope(${ema50Slope.toFixed(3)}%) penalized`,
+    };
+  }
+
+  // ═══ SIGNAL OUTPUT (Fixed 1.5R target locked at entry) ═══
+  const direction: "BUY" | "SELL" = priceAtLowerBB ? "BUY" : "SELL";
+  const entryPrice = price;
+  const slDistance = atr * 1.2;
+  const slPrice = direction === "BUY" ? entryPrice - slDistance : entryPrice + slDistance;
+  const risk = slDistance;
+  const rewardMultiple = 1.5;
+  const targetDistance = risk * rewardMultiple;
+  const targetPrice = direction === "BUY" ? entryPrice + targetDistance : entryPrice - targetDistance;
+  const partial1RPrice = direction === "BUY" ? entryPrice + risk : entryPrice - risk;
+
+  const reason = `[MR-V13] ${direction} — BB${direction === "BUY" ? "lower" : "upper"} + RSI(${rsi.toFixed(0)}) + Z(${vwapData.zScore.toFixed(2)}) + Vol(${volRatio.toFixed(1)}x) + Decel | ADX(${adx.toFixed(0)}) EMA(${ema50Slope.toFixed(2)}%) | SL:${slDistance.toFixed(0)}pts Tgt:${targetDistance.toFixed(0)}pts (1:${rewardMultiple}) | Conf:${(confidence*100).toFixed(0)}%`;
+
+  return {
+    direction,
+    confidence,
+    entryPrice,
+    slPrice,
+    targetPrice,
+    atr,
+    reason,
+    layer: "MeanReversionV13" as Signal["layer"],
+    vwapZScore: vwapData.zScore,
+    partial1RPrice,
+    partial2RPrice: targetPrice,
+    marketRegime: `${adx < 25 ? "RANGING" : "MILD_TREND"} (ADX=${adx.toFixed(0)})`,
+  };
+}
 // ── Fetch 1-min candles from Upstox ───────────────────────────────────────────
 // ── Cross-Market Correlation: Crude Oil → NIFTY ──────────────────────────────
 // Tracks Crude Oil intraday movement relative to day open.
@@ -6229,6 +6388,7 @@ async function tick(
     "MaxPainGravity": 1,   // reduced from 2 → 1
     "BoxingStrategy": 1,   // reduced from 2 → 1
     "ORB": 1, // ORB V8: max 1 trade per day (by design)
+    "MeanReversionV13": 2, // max 2 mean reversion trades per day
   };
   // HARD CAP: max 6 trades per day per bot slot across ALL strategies.
   // This is a HARD limit — even unlimitedTrades cannot bypass it.
@@ -6300,7 +6460,13 @@ async function tick(
         if (adeebSignal.direction !== "HOLD") candidateSignals.push(adeebSignal);
       } catch (e) { console.warn(`[MultiStrategy] Adeeb error:`, (e as Error).message); }
     }
-
+    // Layer 8: MeanReversionV13 (BB+RSI+VWAP confluence mean reversion — ranging markets)
+    if (state.enabledLayers.includes("MeanReversionV13")) {
+      try {
+        const mrSignal = generateMeanReversionV13Signal(state.candles, state.candles5m);
+        if (mrSignal.direction !== "HOLD") candidateSignals.push(mrSignal);
+      } catch (e) { console.warn(`[MultiStrategy] MeanReversionV13 error:`, (e as Error).message); }
+    }
     // Layer 6: OI Flow Directional Bias (options mode only)
     if (state.enabledLayers.includes("OIFlow") && isOptionsMode && state.accessToken) {
       try {
