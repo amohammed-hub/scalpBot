@@ -4222,13 +4222,15 @@ export async function resolveAtmOptionToken(
     // If OTM not available or premium too low (<5), fall back to ATM.
     const atm = sorted[0]; // closest to spot
 
-    // Find 1-strike OTM candidates
+    // Find 1-strike ITM (In-The-Money) candidates
     const otmCandidates = sorted.filter(s => {
-      if (optionType === "CE") return s.strike > atm.strike;
-      return s.strike < atm.strike;
+      // CE ITM means the strike is BELOW the current market price
+      if (optionType === "CE") return s.strike < atm.strike; 
+      // PE ITM means the strike is ABOVE the current market price
+      return s.strike > atm.strike; 
     }).sort((a, b) => {
-      if (optionType === "CE") return a.strike - b.strike; // smallest above ATM
-      return b.strike - a.strike; // largest below ATM
+      if (optionType === "CE") return b.strike - a.strike; // closest ITM below ATM
+      return a.strike - b.strike; // closest ITM above ATM
     });
 
     let best: ResolvedOption | null = null;
@@ -4591,6 +4593,12 @@ export async function resolveAtmMcxOptionToken(
         const nearestExpiry = Math.min(...optionCandidates.map(c => c.expiry ?? Infinity));
         const chain = optionCandidates
           .filter(c => c.expiry === nearestExpiry)
+          .filter(c => {
+             // Force MCX to pick In-The-Money strikes
+             const strike = c.strike_price ?? 0;
+             if (optionType === "CE") return strike <= effectiveUnderlyingPrice;
+             return strike >= effectiveUnderlyingPrice;
+          })
           .sort((a, b) => Math.abs((a.strike_price ?? 0) - effectiveUnderlyingPrice) - Math.abs((b.strike_price ?? 0) - effectiveUnderlyingPrice));
         // Take the 10 strikes closest to ATM and fetch their live premiums in one call
         // (MCX options can be illiquid — checking only 4 often misses liquid contracts)
