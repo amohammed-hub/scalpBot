@@ -134,6 +134,22 @@ describe("seven-issue production repair", () => {
     expectSourceContains(routerSource, "stopBot(slotToken)");
   });
 
+  it("makes watchdog recovery canonical and truthful before reporting success", () => {
+    const restartSource = source("botRestart.ts");
+    const rereadStart = restartSource.indexOf("const currentRows = await db");
+    const rereadEnd = restartSource.indexOf("// Skip if already running in memory", rereadStart);
+    expect(rereadStart).toBeGreaterThan(-1);
+    expect(rereadEnd).toBeGreaterThan(rereadStart);
+    const rereadSource = restartSource.slice(rereadStart, rereadEnd);
+    expectSourceContains(rereadSource, ".where(eq(botSessions.id, session.id))");
+    expectSourceExcludes(rereadSource, ".where(eq(botSessions.sessionToken, session.sessionToken))");
+    expectSourceContains(restartSource, "const startResult = startBot(");
+    expectSourceContains(restartSource, "const readiness = await startResult.initialTick;");
+    expectSourceContains(restartSource, "const confirmedState = getBotState(session.sessionToken);");
+    expectSourceContains(restartSource, "stopBot(session.sessionToken);");
+    expectSourceContains(restartSource, "Engine registration did not converge during automatic recovery");
+  });
+
   it("never manufactures an entry-price exit when an exact option quote is unavailable", () => {
     const engineSource = source("botEngine.ts");
     const restartSource = source("botRestart.ts");
