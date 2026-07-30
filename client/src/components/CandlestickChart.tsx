@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { createChart, CandlestickSeries, type IChartApi, type ISeriesApi, type CandlestickData, type Time } from "lightweight-charts";
+import { createChart, CandlestickSeries, type IChartApi, type ISeriesApi, type IPriceLine, type CandlestickData, type Time } from "lightweight-charts";
 
 interface Candle {
   open: number;
@@ -22,6 +22,7 @@ export default function CandlestickChart({ candles, height = 300, entryPrice, sl
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const priceLinesRef = useRef<IPriceLine[]>([]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -77,6 +78,7 @@ export default function CandlestickChart({ candles, height = 300, entryPrice, sl
 
     return () => {
       resizeObserver.disconnect();
+      priceLinesRef.current = [];
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -95,38 +97,43 @@ export default function CandlestickChart({ candles, height = 300, entryPrice, sl
       close: c.close,
     }));
 
-    seriesRef.current.setData(data);
+    const series = seriesRef.current;
+    series.setData(data);
 
-    // Add price lines for entry, SL, target
+    // A selected bot can change without remounting the chart. Remove the previous
+    // slot's trade overlays before drawing the authoritative levels for this slot.
+    for (const line of priceLinesRef.current) series.removePriceLine(line);
+    priceLinesRef.current = [];
+
     if (entryPrice) {
-      seriesRef.current.createPriceLine({
+      priceLinesRef.current.push(series.createPriceLine({
         price: entryPrice,
         color: "#60a5fa",
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: true,
         title: "Entry",
-      });
+      }));
     }
     if (slPrice) {
-      seriesRef.current.createPriceLine({
+      priceLinesRef.current.push(series.createPriceLine({
         price: slPrice,
         color: "#ef4444",
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: true,
         title: "SL",
-      });
+      }));
     }
     if (targetPrice) {
-      seriesRef.current.createPriceLine({
+      priceLinesRef.current.push(series.createPriceLine({
         price: targetPrice,
         color: "#10b981",
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: true,
         title: "Target",
-      });
+      }));
     }
   }, [candles, entryPrice, slPrice, targetPrice]);
 

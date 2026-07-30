@@ -5307,13 +5307,17 @@ async function tick(
   // ── Resolve effective price for open trade monitoring ───────────────────────
   // For options mode: use current option premium (not underlying spot price) for P&L.
   // For regular mode: use underlying/futures price as before.
-  let effectivePrice = state.optionPremiumPrice ?? state.openTrade?.entryPrice ?? price;
-  if (state.openTrade?.isIndexOptions) {
-    if (state.accessToken && state.openTrade.instrumentToken) {
+  const openTradeAtTick = state.openTrade;
+  const openTradeIsOption = openTradeAtTick?.isIndexOptions === true;
+  let effectivePrice = openTradeIsOption
+    ? (state.optionPremiumPrice ?? openTradeAtTick.entryPrice)
+    : price;
+  if (openTradeIsOption && openTradeAtTick) {
+    if (state.accessToken && openTradeAtTick.instrumentToken) {
       // Fetch current option premium from Upstox using the REAL option token
       // state.optionTradeToken has the resolved real token (e.g. MCX_FO|..., NFO_OPT|...)
       // trade.instrumentToken may be a fake PAPER_OPT|... token that Upstox won't recognize
-      const realOptToken = state.optionTradeToken ?? state.openTrade.instrumentToken;
+      const realOptToken = state.optionTradeToken ?? openTradeAtTick.instrumentToken;
       const isPaperToken = realOptToken.startsWith("PAPER_OPT|");
       if (isPaperToken) {
         console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — P&L: using PAPER_OPT token (no real token resolved). optionTradeToken=${state.optionTradeToken}`);
@@ -5326,7 +5330,7 @@ async function tick(
        // FIX: For PAPER mode, always use LTP (last actually traded price).
        // For LIVE mode, use bid (what we can actually sell at) but cap it to prevent phantom quotes.
        let bestExitPrice: number;
-       const entryPx = state.openTrade.entryPrice;
+       const entryPx = openTradeAtTick.entryPrice;
 
         // ═══ CRITICAL FIX: UNDERLYING PRICE LEAK DETECTION ═══
         // After server restart, optionTradeToken is lost. Fallback uses openTrade.instrumentToken.
@@ -5366,9 +5370,9 @@ async function tick(
         }
         // SANITY CAP: effectivePrice should not exceed entry × 2.5 in a single tick
         // (no option realistically gains 150% in one 5-second tick)
-        const maxReasonablePrice = state.openTrade.entryPrice * 2.5;
+        const maxReasonablePrice = openTradeAtTick.entryPrice * 2.5;
         if (bestExitPrice > maxReasonablePrice) {
-          console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — SANITY: effectivePrice ₹${bestExitPrice.toFixed(2)} exceeds 2.5× entry ₹${state.openTrade.entryPrice.toFixed(2)}. Capping to LTP ₹${optQuote.ltp.toFixed(2)}`);
+          console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — SANITY: effectivePrice ₹${bestExitPrice.toFixed(2)} exceeds 2.5× entry ₹${openTradeAtTick.entryPrice.toFixed(2)}. Capping to LTP ₹${optQuote.ltp.toFixed(2)}`);
           bestExitPrice = optQuote.ltp;
         }
        effectivePrice = bestExitPrice;
@@ -5382,10 +5386,10 @@ async function tick(
        const retryQuote = await fetchFullQuote(realOptToken, state.accessToken!);
        if (retryQuote && retryQuote.ltp > 0) {
           // Apply same underlying leak check on retry
-          const retryRatio = state.openTrade.entryPrice > 0 ? retryQuote.ltp / state.openTrade.entryPrice : 1;
+          const retryRatio = openTradeAtTick.entryPrice > 0 ? retryQuote.ltp / openTradeAtTick.entryPrice : 1;
           if (retryRatio > 10) {
             console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — UNDERLYING LEAK (retry): LTP ₹${retryQuote.ltp.toFixed(2)} is ${retryRatio.toFixed(0)}× entry. Freezing at entry.`);
-            effectivePrice = state.openTrade.entryPrice;
+            effectivePrice = openTradeAtTick.entryPrice;
             state.optionPremiumPrice = undefined;
             state.optionQuoteStatus = "unavailable";
             state.optionQuoteUpdatedAt = undefined;
@@ -5401,7 +5405,7 @@ async function tick(
           // If we never got a good price, freeze at entry (P&L = 0).
           // state.optionPremiumPrice retains the last successful value from a previous tick.
           const lastKnown = state.optionPremiumPrice ?? 0;
-          const entryPremium = state.openTrade.entryPrice;
+          const entryPremium = openTradeAtTick.entryPrice;
           if (lastKnown > 0 && lastKnown !== entryPremium) {
             // Use last known good price for SL monitoring (stale but better than entry)
             effectivePrice = lastKnown;
@@ -5435,15 +5439,17 @@ async function tick(
     } else {
       // Demo mode (no access token): cannot fetch real option quote.
       // Freeze P&L at entry (show 0) — delta approximation is unreliable and gives fake P&L.
-      const entryPremium = state.openTrade.entryPrice;
+      const entryPremium = openTradeAtTick.entryPrice;
       effectivePrice = entryPremium; // Internal safety baseline only; never presented as a live mark.
       state.optionPremiumPrice = undefined;
       state.optionQuoteStatus = "unavailable";
       state.optionQuoteUpdatedAt = undefined;
     }
   }
- // SANITY: effectivePrice should be in the same magnitude as entry
-  if (state.openTrade && effectivePrice > 0) {
+  // SANITY: option premiums must remain in the same magnitude as their entry.
+  // Futures/equity marks legitimately use the current underlying price and must not
+  // be frozen by this option-only leak detector.
+  if (openTradeIsOption && state.openTrade && effectivePrice > 0) {
     const entryPx = state.openTrade.entryPrice;
     const ratio = effectivePrice / entryPx;
     if (ratio > 5 || ratio < 0.01) {
@@ -7135,9 +7141,11 @@ async function tick(
         else if (symSkip.includes("BANK")) strikeStepSkip = 100;
         const estimatedStrike = state.lastPrice > 0 ? Math.round(state.lastPrice / strikeStepSkip) * strikeStepSkip : 0;
         const wouldBuy = `${state.instrumentLabel} ${estimatedStrike} ${ceOrPe}`;
-        const reason = "live mode — cannot trade without confirmed contract";
+        const reason = state.mode === "live"
+          ? "live order requires a confirmed contract"
+          : "paper trade requires a real, verified option contract and premium";
         console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option (${reason}). Skipping trade.`);
-        emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Would buy ${wouldBuy} but option contract lookup failed. Underlying price ₹${state.lastPrice.toFixed(2)} fetched OK (token valid). Issue: no live option contracts matched for ${resolvedUnderlying}. Check: is this contract expired? Try refreshing token or restarting bot.`);
+        emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Would buy ${wouldBuy}, but Upstox did not return a verified option contract and premium for ${resolvedUnderlying}. The access token may be expired or unauthorized, or no matching contract may be available. Refresh the regular Upstox access token and retry; no price or trade was fabricated.`);
         return;
       }
       // Demo mode with DEMO_NO_TOKEN: simulate option trade using estimated strike and premium from candle data
@@ -8486,6 +8494,14 @@ export function getAllBotsForSession(sessionToken: string): BotState[] {
  * so bots don't need to be stopped and restarted.
  */
 export function hotReloadAccessToken(newToken: string, sessionToken?: string, isSandbox?: boolean): number {
+  // Sandbox tokens are restricted to sandbox order APIs. Running ScalpBot
+  // states use this field for live candles, quotes, and option resolution, so
+  // applying a sandbox token here would poison every authenticated data call.
+  if (isSandbox) {
+    console.log("[BotEngine] Ignored sandbox-token hot reload for market-data bots");
+    return 0;
+  }
+
   let updated = 0;
   for (const [, state] of Array.from(bots.entries())) {
     // If sessionToken provided, only update bots belonging to that session (strip slot suffix for matching)

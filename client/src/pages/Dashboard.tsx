@@ -7,7 +7,7 @@ import {
   Bot, TrendingUp, TrendingDown, Minus, Play, Square, Settings,
   BarChart2, AlertTriangle, CheckCircle, Activity, DollarSign,
   Zap, Calculator, RefreshCw, Bell, X, ShieldCheck, ShieldAlert, ShieldOff,
-  Download, LogOut, User, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
+  Download, LogOut, User, Wallet, BadgeIndianRupee, Flame, RotateCcw, ExternalLink, XCircle, Trash2
 } from "lucide-react";
 import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon } from "lucide-react";
 import { Info } from "lucide-react";
@@ -23,11 +23,19 @@ import { MCX_INSTRUMENTS } from "@shared/mcxInstruments";
 import { getTierLimits, FEATURE_MIN_PLAN, type TierLimits } from "@shared/tierLimits";
 import { getCurrentSession, getAllSessionDefaults, hasSessionChanged, type TradingSession } from "@shared/sessionDefaults";
 import { isOptionTrade } from "@shared/optionTradeIdentity";
+import { getUpstoxTokenDisplayState } from "@shared/upstoxTokenState";
 // ── Session Token ─────────────────────────────────────────────────────────────
 // A UUID stored in localStorage — no Manus login needed. Used as the user identity key.
 const LS_SESSION = "scalpbot_session";
 const LS_CONFIG  = "scalpbot_config";
+const MAX_CONFIGURABLE_BOT_SLOTS = 10;
 const LS_TELEGRAM = "scalpbot_telegram";
+
+function formatInr(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `₹${new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(value)}`
+    : "—";
+}
 
 function getSessionToken(): string {
   let token = localStorage.getItem(LS_SESSION);
@@ -313,6 +321,7 @@ export default function Dashboard() {
 
   // Price chart state (client-side only — visual only)
   const [priceHistory, setPriceHistory] = useState<PricePoint[]>([]);
+  const [selectedChartSlot, setSelectedChartSlot] = useState(0);
 
   // ── tRPC queries ─────────────────────────────────────────────────────────────────────────────
   const utils = trpc.useUtils();
@@ -332,12 +341,13 @@ export default function Dashboard() {
         "MCX_GOLD": "MCX_GOLD", "MCX_CRUDE": "MCX_CRUDE", "MCX_SILVER": "MCX_SILVER",
         "NIFTY": "NIFTY", "BANKNIFTY": "BANKNIFTY", "FINNIFTY": "FINNIFTY", "SENSEX": "SENSEX", "BANKEX": "BANKEX", "MIDCPNIFTY": "MIDCPNIFTY",
       };
-      return {
-        0: { symbol: defaults[0]?.symbol ?? "NIFTY", capital: 50000 },
-        1: { symbol: defaults[1]?.symbol ?? "BANKNIFTY", capital: 50000 },
-        2: { symbol: defaults[2]?.symbol ?? "FINNIFTY", capital: 50000 },
-        3: { symbol: defaults[3]?.symbol ?? "BANKNIFTY", capital: 50000 },
-      };
+      const fallbackSymbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MCX_CRUDE"];
+      return Object.fromEntries(
+        Array.from({ length: MAX_CONFIGURABLE_BOT_SLOTS }, (_, slot) => [
+          slot,
+          { symbol: defaults[slot]?.symbol ?? fallbackSymbols[slot] ?? "NIFTY", capital: 50000 },
+        ]),
+      );
     }
   );
 
@@ -362,13 +372,15 @@ export default function Dashboard() {
         const savedOverrides = JSON.parse(localStorage.getItem("scalpbot_user_override") ?? "{}");
         const newSlotQS: Record<number, { symbol: string; capital: number }> = {};
         let switched = false;
-        for (let i = 0; i < 4; i++) {
-          if (savedOverrides[i]) {
-            // User manually set this slot — keep their choice
+        const highestPersistedSlot = Math.max(-1, ...Object.keys(slotQS).map(Number).filter(Number.isFinite));
+        const slotsToPreserve = Math.max(MAX_CONFIGURABLE_BOT_SLOTS, highestPersistedSlot + 1);
+        for (let i = 0; i < slotsToPreserve; i++) {
+          if (savedOverrides[i] && slotQS[i]) {
+            // User manually set this slot — keep their choice.
             newSlotQS[i] = slotQS[i];
           } else {
-            // Auto-switch to session default
-            newSlotQS[i] = { symbol: defaults[i]?.symbol ?? "NIFTY", capital: slotQS[i]?.capital ?? 50000 };
+            // Auto-switch to session default without dropping higher slots.
+            newSlotQS[i] = { symbol: defaults[i]?.symbol ?? slotQS[i]?.symbol ?? "NIFTY", capital: slotQS[i]?.capital ?? 50000 };
             switched = true;
           }
         }
@@ -452,7 +464,7 @@ export default function Dashboard() {
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
       startSecondaryMutation.mutate({
-        sessionToken, slot: slot as 1 | 2 | 3,
+        sessionToken, slot,
         instrumentToken: resolved.token,
         instrumentSymbol: qs.symbol, instrumentLabel: resolved.label,
         mode: config.mode, capital: qs.capital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
@@ -524,7 +536,7 @@ export default function Dashboard() {
       if (slot === 0) {
         await stopMutation.mutateAsync({ sessionToken });
       } else {
-        await stopSecondaryMutation.mutateAsync({ sessionToken, slot: slot as 1 | 2 | 3 });
+        await stopSecondaryMutation.mutateAsync({ sessionToken, slot });
       }
       // Step 2: Wait briefly for cleanup
       await new Promise(r => setTimeout(r, 1500));
@@ -565,7 +577,7 @@ export default function Dashboard() {
         });
       } else {
         startSecondaryMutation.mutate({
-          sessionToken, slot: slot as 1 | 2 | 3,
+          sessionToken, slot,
           instrumentToken: resolved.token,
           instrumentSymbol: newSymbol, instrumentLabel: resolved.label,
           mode: config.mode, capital: newCapital, riskPerTradePct: 1.5, maxTradesPerDay: 5,
@@ -613,6 +625,12 @@ export default function Dashboard() {
     { sessionToken },
     { refetchInterval: 3000, staleTime: 1000 }
   );
+  const selectedChartSessionToken = selectedChartSlot === 0 ? sessionToken : `${sessionToken}-slot${selectedChartSlot}`;
+  const { data: secondaryChartLiveData } = trpc.bot.liveData.useQuery(
+    { sessionToken: selectedChartSessionToken },
+    { enabled: selectedChartSlot > 0, refetchInterval: 3000, staleTime: 1000 },
+  );
+  const selectedChartLiveData = selectedChartSlot === 0 ? liveData : secondaryChartLiveData;
   // Cross-Market Correlation: Crude Oil bias (only fetched when toggle is ON)
   const { data: crudeOilBias } = trpc.bot.crudeOilBias.useQuery(
     { sessionToken },
@@ -677,10 +695,11 @@ export default function Dashboard() {
     { sessionToken },
     { refetchInterval: 5000, staleTime: 2000 }
   );
-  const { data: portfolioStatus } = trpc.riskManager.portfolio.useQuery(
+  const portfolioQuery = trpc.riskManager.portfolio.useQuery(
     { sessionToken },
     { refetchInterval: 5000, staleTime: 2000 }
   );
+  const portfolioStatus = portfolioQuery.data;
   const { data: cooldownInfo } = trpc.riskManager.cooldown.useQuery(
     { sessionToken },
     { refetchInterval: 3000, staleTime: 1000 }
@@ -1066,6 +1085,18 @@ export default function Dashboard() {
   );
   const tokenHealthStatus = tokenHealthQuery.data?.status;
   const tokenHealthMessage = tokenHealthQuery.data?.message;
+  const tokenDisplayState = getUpstoxTokenDisplayState(
+    tokenStatus === "valid",
+    tokenHealthStatus,
+  );
+  const accountProfileQuery = trpc.account.profile.useQuery(
+    { sessionToken },
+    { enabled: tokenDisplayState === "valid", refetchInterval: 300_000, staleTime: 60_000 },
+  );
+  const accountBalanceQuery = trpc.account.balance.useQuery(
+    { sessionToken },
+    { enabled: tokenDisplayState === "valid", refetchInterval: 60_000, staleTime: 30_000 },
+  );
 
   useEffect(() => {
     if (serverCreds !== undefined) {
@@ -1289,7 +1320,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col md:flex-row">
+    <div className="min-h-screen bg-[oklch(0.10_0.02_240)] text-white flex flex-col md:flex-row overflow-x-hidden">
       <DashboardTour />
       {/* ── Name Prompt Dialog ────────────────────────────────────────────────── */}
       {showNamePrompt && (
@@ -1589,7 +1620,7 @@ export default function Dashboard() {
             utils.activity.log.invalidate(),
           ]);
         }}
-        className="flex-1 p-3 sm:p-4 md:p-6 pb-20 md:pb-6"
+        className="flex-1 min-w-0 p-3 sm:p-4 md:p-6 pb-20 md:pb-6"
       >
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6 pb-3 sm:pb-4 border-b border-white/5 gap-2">
@@ -1599,17 +1630,17 @@ export default function Dashboard() {
           </div>
          <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
          <button onClick={() => navigate("/settings")}
-             title={tokenHealthMessage ?? (tokenStatus === "valid" ? "Access Token: OK" : tokenStatus === "missing" ? "No Access Token" : "Token looks incomplete")}
+             title={tokenHealthMessage ?? (tokenDisplayState === "valid" ? "Access Token: OK" : tokenDisplayState === "checking" ? "Checking access token with Upstox" : tokenDisplayState === "expired" ? "Access token expired — reconnect Upstox" : tokenDisplayState === "error" ? "Could not validate access token" : "No Access Token")}
              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-               (tokenStatus === "valid" && tokenHealthStatus !== "expired") ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-               : tokenStatus === "missing" ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 animate-pulse"
+               tokenDisplayState === "valid" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+               : tokenDisplayState === "missing" || tokenDisplayState === "expired" ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 animate-pulse"
                : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
              }`}>
-             {(tokenStatus === "valid" && tokenHealthStatus === "valid") ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK ✓</span></>
-              : (tokenHealthStatus === "expired") ? <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token Expired!</span></>
-              : tokenStatus === "valid" ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK</span></>
-              : tokenStatus === "missing" ? <><ShieldOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">No Token</span></>
-              : <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token?</span></>}
+             {tokenDisplayState === "valid" ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK ✓</span></>
+              : tokenDisplayState === "expired" ? <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token Expired!</span></>
+              : tokenDisplayState === "error" ? <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token Error</span></>
+              : tokenDisplayState === "checking" ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /><span className="hidden sm:inline">Checking Token</span></>
+              : <><ShieldOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">No Token</span></>}
            </button>
             <Badge variant="outline" className={`border-none text-sm px-3 py-1.5 font-bold ${config.mode === "demo" ? "bg-blue-500/20 text-blue-400 border-blue-500/30" : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"}`}>
               {config.mode === "demo" ? "🔵 DEMO" : "🟢 LIVE"}
@@ -1617,7 +1648,7 @@ export default function Dashboard() {
           </div>
         </div>
         {/* ── Sticky Sub-Bar: Bot Status + Kill Switch ────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-4 px-3 sm:px-4 py-3 bg-white/[0.03] border border-white/10 rounded-xl text-xs">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4 mb-4 px-3 sm:px-4 py-3 bg-white/[0.03] border border-white/10 rounded-xl text-xs min-w-0">
           {/* Bot Running Status */}
           <div className="flex items-center gap-2">
             <span className={`w-2.5 h-2.5 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
@@ -1625,7 +1656,7 @@ export default function Dashboard() {
           </div>
           <div className="w-px h-4 bg-white/10" />
           {/* Mode indicator */}
-          <span className={`font-bold ${config.mode === "demo" ? "text-blue-400" : "text-emerald-400"}`}>
+          <span className={`font-bold min-w-0 break-words ${config.mode === "demo" ? "text-blue-400" : "text-emerald-400"}`}>
             {config.mode === "demo" ? "🔵 DEMO — Real API, fake money" : "⚡ LIVE — Real trades"}
           </span>
           <div className="flex-1" />
@@ -1633,7 +1664,7 @@ export default function Dashboard() {
           <button
             onClick={() => { if (confirm("⚠️ KILL SWITCH\n\nThis will:\n• STOP all running bots\n• CLOSE all open positions at market\n• Cancel pending orders\n\nContinue?")) killSwitchMutation.mutate({ sessionToken }); }}
             disabled={killSwitchMutation.isPending}
-            className="flex items-center gap-1.5 px-4 py-2 bg-red-600/30 hover:bg-red-600/50 border-2 border-red-500/60 text-red-300 rounded-lg font-black text-xs transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-900/20"
+            className="flex items-center justify-center gap-1.5 w-full sm:w-auto px-3 sm:px-4 py-2 bg-red-600/30 hover:bg-red-600/50 border-2 border-red-500/60 text-red-300 rounded-lg font-black text-xs transition-all sm:hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-900/20"
           >
             {killSwitchMutation.isPending ? (
               <><RefreshCw className="w-4 h-4 animate-spin" /> KILLING...</>
@@ -1677,7 +1708,7 @@ export default function Dashboard() {
       )}
 
         {/* ── Trading Mode Toggle (Demo / Live) ─────────────────────────────── */}
-        <div data-tour="mode-toggle" className="flex items-center gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+        <div data-tour="mode-toggle" className="flex flex-wrap items-center gap-2 sm:gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-3 sm:px-4 py-3 min-w-0">
           <span className="text-xs text-white/50 font-medium">Trading Mode</span>
          <div className="flex rounded-lg overflow-hidden border border-white/20 h-[36px]">
             <button onClick={() => setConfig(c => ({ ...c, mode: "demo" }))} disabled={isRunning}
@@ -1685,7 +1716,7 @@ export default function Dashboard() {
             <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning}
               className={`px-5 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>
           </div>
-          <span className="text-xs text-white/30 ml-auto">{config.mode === "demo" ? "Upstox Sandbox — real API, fake money" : "⚠ Real orders via Upstox"}</span>
+          <span className="basis-full sm:basis-auto text-xs text-white/30 sm:ml-auto break-words">{config.mode === "demo" ? "Demo fills — real Upstox market data, fake money" : "⚠ Real orders via Upstox"}</span>
         </div>
 
         {/* Opening Burst Quick Toggle — 4 contextual states */}
@@ -2386,10 +2417,15 @@ export default function Dashboard() {
         ═══════════════════════════════════════════════════════════════════════════ */}
         <div className="text-[10px] text-white/30 mb-1.5 ml-1">Each bot slot runs independently on a different instrument — start/stop individually</div>
         <div data-tour="bot-slots" className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${(() => {
-          const totalSlots = isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3);
+          const entitledSlots = isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3);
+          const highestServerSlot = (allBots ?? []).reduce((max: number, bot: any) => Math.max(max, Number(bot.slot) || 0), -1) + 1;
+          const totalSlots = Math.max(entitledSlots, highestServerSlot);
           return totalSlots >= 7 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 5 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3";
         })()}`}>
-          {((allBots && allBots.length > 0) ? allBots.slice(0, isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3)) : (() => {
+          {((allBots && allBots.length > 0) ? allBots.slice(0, Math.max(
+            isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3),
+            allBots.reduce((max: number, bot: any) => Math.max(max, Number(bot.slot) || 0), -1) + 1,
+          )) : (() => {
             const totalSlots = isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3);
             const slots = [];
             for (let i = 0; i < totalSlots; i++) {
@@ -2589,17 +2625,18 @@ export default function Dashboard() {
                       title={bot.openTrade ? "Close open trade before switching instrument" : "Switch instrument (will stop & restart bot)"}
                       className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-1.5 py-1 text-white text-[11px] font-semibold focus:outline-none focus:border-white/30 disabled:opacity-50 cursor-pointer appearance-none truncate"
                     >
-                     <option value="NIFTY">Nifty 50</option>
-                     <option value="BANKNIFTY">BankNifty</option>
-                     <option value="FINNIFTY">FinNifty</option>
-                     <option value="SENSEX">Sensex</option>
-                     <option value="BANKEX">Bankex</option>
-                     <option value="MIDCPNIFTY">MidcpNifty</option>
-                      <option value="MCX_CRUDE" disabled={!hasMcxAccess}>{hasMcxAccess ? "Crude Oil" : "🔒 Crude Oil"}</option>
-                      <option value="MCX_GOLD" disabled={!hasMcxAccess}>{hasMcxAccess ? "Gold" : "🔒 Gold"}</option>
-                      <option value="MCX_SILVER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Silver" : "🔒 Silver"}</option>
-                      <option value="MCX_NATGAS" disabled={!hasMcxAccess}>{hasMcxAccess ? "Natural Gas" : "🔒 Natural Gas"}</option>
-                      <option value="MCX_COPPER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Copper" : "🔒 Copper"}</option>
+                      <optgroup label="Index Options — auto OTM CE/PE">
+                        {INSTRUMENTS.filter(instrument => instrument.segment.includes("Index Options")).map(instrument => (
+                          <option key={instrument.symbol} value={instrument.symbol}>{instrument.label}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="MCX Options — auto OTM CE/PE">
+                        {INSTRUMENTS.filter(instrument => instrument.segment === "MCX Commodity Options").map(instrument => (
+                          <option key={instrument.symbol} value={instrument.symbol} disabled={!hasMcxAccess}>
+                            {hasMcxAccess ? instrument.label : `🔒 ${instrument.label}`}
+                          </option>
+                        ))}
+                      </optgroup>
                     </select>
                     <input
                       key={`cap-${bot.slot}-${(bot as any).capital ?? config.capital ?? 50000}`}
@@ -2781,17 +2818,18 @@ export default function Dashboard() {
                           <select data-tour="instrument-select" value={slotQS[bot.slot]?.symbol ?? "NIFTY"}
                            onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], symbol: e.target.value } }))}
                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-[10px] focus:outline-none">
-                           <option value="NIFTY">NIFTY</option>
-                           <option value="BANKNIFTY">BANKNIFTY</option>
-                           <option value="FINNIFTY">FINNIFTY</option>
-                           <option value="SENSEX">SENSEX</option>
-                           <option value="BANKEX">BANKEX</option>
-                           <option value="MIDCPNIFTY">MIDCPNIFTY</option>
-                            <option value="MCX_CRUDE" disabled={!hasMcxAccess}>{hasMcxAccess ? "Crude Oil" : "🔒 Crude Oil"}</option>
-                            <option value="MCX_GOLD" disabled={!hasMcxAccess}>{hasMcxAccess ? "Gold" : "🔒 Gold"}</option>
-                            <option value="MCX_SILVER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Silver" : "🔒 Silver"}</option>
-                            <option value="MCX_NATGAS" disabled={!hasMcxAccess}>{hasMcxAccess ? "Natural Gas" : "🔒 Natural Gas"}</option>
-                            <option value="MCX_COPPER" disabled={!hasMcxAccess}>{hasMcxAccess ? "Copper" : "🔒 Copper"}</option>
+                            <optgroup label="Index Options — auto OTM CE/PE">
+                              {INSTRUMENTS.filter(instrument => instrument.segment.includes("Index Options")).map(instrument => (
+                                <option key={instrument.symbol} value={instrument.symbol}>{instrument.label}</option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="MCX Options — auto OTM CE/PE">
+                              {INSTRUMENTS.filter(instrument => instrument.segment === "MCX Commodity Options").map(instrument => (
+                                <option key={instrument.symbol} value={instrument.symbol} disabled={!hasMcxAccess}>
+                                  {hasMcxAccess ? instrument.label : `🔒 ${instrument.label}`}
+                                </option>
+                              ))}
+                            </optgroup>
                           </select>
                           <input type="number" value={slotQS[bot.slot]?.capital ?? 50000}
                             onChange={e => setSlotQS(s => ({ ...s, [bot.slot]: { ...s[bot.slot], capital: Number(e.target.value) } }))}
@@ -2842,7 +2880,7 @@ export default function Dashboard() {
                                     });
                                   } else {
                                     startSecondaryMutation.mutate({
-                                      sessionToken, slot: bot.slot as 1 | 2 | 3,
+                                      sessionToken, slot: bot.slot,
                                       instrumentToken: r.token, instrumentSymbol: r.symbol, instrumentLabel: r.label,
                                       mode: config.mode, capital: slotQS[bot.slot]?.capital ?? 50000,
                                       riskPerTradePct: 1.5, maxTradesPerDay: 5, dailyLossLimitPct: 3,
@@ -2899,17 +2937,17 @@ export default function Dashboard() {
 
           {/* Portfolio Exposure */}
           <div className={`rounded-2xl p-4 border ${
-            (portfolioStatus?.exposurePct ?? 0) > 80 ? "bg-red-500/5 border-red-500/20" : "bg-white/5 border-white/10"
+            portfolioStatus && portfolioStatus.exposurePct > 80 ? "bg-red-500/5 border-red-500/20" : "bg-white/5 border-white/10"
           }`}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-white/50 text-xs">Portfolio Exposure</span>
-              <Shield className={`w-4 h-4 ${(portfolioStatus?.exposurePct ?? 0) > 80 ? "text-red-400" : "text-teal-400"}`} />
+              <Shield className={`w-4 h-4 ${portfolioStatus && portfolioStatus.exposurePct > 80 ? "text-red-400" : portfolioStatus ? "text-teal-400" : "text-white/30"}`} />
             </div>
             <div className="text-2xl font-bold text-white">
-              {(portfolioStatus?.exposurePct ?? 0).toFixed(0)}%
+              {portfolioStatus ? `${portfolioStatus.exposurePct.toFixed(0)}%` : "—"}
             </div>
             <div className="text-xs text-white/40 mt-1">
-              {portfolioStatus?.runningBots ?? 0} bots · ₹{((portfolioStatus?.totalExposure ?? 0) / 1000).toFixed(1)}K used
+              {portfolioStatus ? `${portfolioStatus.runningBots} bots · ₹${(portfolioStatus.totalExposure / 1000).toFixed(1)}K used` : portfolioQuery.isError ? "Unavailable — portfolio query failed" : "Loading authoritative portfolio data…"}
             </div>
             {portfolioStatus?.isHalted && (
               <div className="text-xs text-red-400 mt-1 font-medium">DRAWDOWN HALT</div>
@@ -2920,13 +2958,13 @@ export default function Dashboard() {
           <div className="rounded-2xl p-4 border bg-white/5 border-white/10">
             <div className="flex items-center justify-between mb-2">
               <span className="text-white/50 text-xs">Aggregate Daily P&L</span>
-              <DollarSign className={`w-4 h-4 ${(portfolioStatus?.aggregateDailyPnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`} />
+              <DollarSign className={`w-4 h-4 ${!portfolioStatus ? "text-white/30" : portfolioStatus.aggregateDailyPnl >= 0 ? "text-emerald-400" : "text-red-400"}`} />
             </div>
-            <div className={`text-2xl font-bold ${(portfolioStatus?.aggregateDailyPnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-              {(portfolioStatus?.aggregateDailyPnl ?? 0) >= 0 ? "+" : ""}₹{(portfolioStatus?.aggregateDailyPnl ?? 0).toFixed(0)}
+            <div className={`text-2xl font-bold ${!portfolioStatus ? "text-white/50" : portfolioStatus.aggregateDailyPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {portfolioStatus ? `${portfolioStatus.aggregateDailyPnl >= 0 ? "+" : ""}₹${portfolioStatus.aggregateDailyPnl.toFixed(0)}` : "—"}
             </div>
             <div className="text-xs text-white/40 mt-1">
-              Across all {portfolioStatus?.runningBots ?? 0} active slot(s)
+              {portfolioStatus ? `Across all ${portfolioStatus.runningBots} active slot(s)` : portfolioQuery.isError ? "Unavailable — P&L query failed" : "Loading authoritative P&L…"}
             </div>
           </div>
 
@@ -2947,7 +2985,51 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Account Balance & Profile Widget */}
+        {/* Account Balance & Profile — real Upstox data only */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
+          <div className="rounded-2xl p-4 border bg-white/5 border-white/10">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-white/60 text-xs font-semibold">Upstox Profile</span>
+              <User className="w-4 h-4 text-teal-400" />
+            </div>
+            {tokenDisplayState !== "valid" ? (
+              <div className="text-xs text-amber-300">Unavailable — reconnect the regular Upstox access token.</div>
+            ) : accountProfileQuery.isLoading ? (
+              <div className="text-xs text-white/40">Loading verified profile…</div>
+            ) : accountProfileQuery.data ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                {accountProfileQuery.data.user_name && <div><span className="text-white/40">Name</span><div className="text-white/80 truncate">{accountProfileQuery.data.user_name}</div></div>}
+                {accountProfileQuery.data.user_id && <div><span className="text-white/40">User ID</span><div className="text-white/80 font-mono truncate">{accountProfileQuery.data.user_id}</div></div>}
+                {accountProfileQuery.data.email && <div><span className="text-white/40">Email</span><div className="text-white/80 truncate">{accountProfileQuery.data.email}</div></div>}
+                {accountProfileQuery.data.mobile_number && <div><span className="text-white/40">Mobile</span><div className="text-white/80">{accountProfileQuery.data.mobile_number}</div></div>}
+                {accountProfileQuery.data.broker && <div><span className="text-white/40">Broker</span><div className="text-white/80">{accountProfileQuery.data.broker}</div></div>}
+                {accountProfileQuery.data.user_type && <div><span className="text-white/40">Account Type</span><div className="text-white/80">{accountProfileQuery.data.user_type}</div></div>}
+              </div>
+            ) : (
+              <div className="text-xs text-white/40">Unavailable — Upstox returned no profile data.</div>
+            )}
+          </div>
+          <div className="rounded-2xl p-4 border bg-white/5 border-white/10">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-white/60 text-xs font-semibold">Funds &amp; Margin</span>
+              <Wallet className="w-4 h-4 text-teal-400" />
+            </div>
+            {tokenDisplayState !== "valid" ? (
+              <div className="text-xs text-amber-300">Unavailable — reconnect the regular Upstox access token.</div>
+            ) : accountBalanceQuery.isLoading ? (
+              <div className="text-xs text-white/40">Loading verified funds…</div>
+            ) : accountBalanceQuery.data ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div><span className="text-white/40">Equity Available</span><div className="text-white/90 font-semibold">{formatInr(accountBalanceQuery.data.equity?.available_margin)}</div></div>
+                <div><span className="text-white/40">Equity Used</span><div className="text-white/90 font-semibold">{formatInr(accountBalanceQuery.data.equity?.used_margin)}</div></div>
+                <div><span className="text-white/40">Commodity Available</span><div className="text-white/90 font-semibold">{formatInr(accountBalanceQuery.data.commodity?.available_margin)}</div></div>
+                <div><span className="text-white/40">Commodity Used</span><div className="text-white/90 font-semibold">{formatInr(accountBalanceQuery.data.commodity?.used_margin)}</div></div>
+              </div>
+            ) : (
+              <div className="text-xs text-white/40">Unavailable — Upstox returned no funds data.</div>
+            )}
+          </div>
+        </div>
 
         {/* Power Hour Banner */}
         {isPowerHourMode && (
@@ -3085,28 +3167,49 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Price Chart — Real Candlestick */}
+          {/* Price Chart — selected bot's real candles */}
           <div className="lg:col-span-3 bg-white/5 border border-white/10 rounded-2xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs text-white/40 uppercase tracking-wider">Live Price — {config.instrumentSymbol} (1m candles)</div>
-              {(liveData?.candles?.length ?? 0) > 0 && (
-                <span className="text-[10px] text-emerald-400/60">{liveData?.candles?.length} candles</span>
-              )}
-            </div>
-            {(liveData?.candles?.length ?? 0) < 2 ? (
-              <div className="flex flex-col items-center justify-center h-[200px] gap-2">
-                <div className="text-white/30 text-sm">{isRunning ? "Collecting candles..." : "Start bot to see live chart"}</div>
-                <div className="text-white/20 text-xs">Uses real-time Upstox price feed</div>
-              </div>
-            ) : (
-              <CandlestickChart
-                candles={liveData?.candles ?? []}
-                height={200}
-                entryPrice={activeTrade?.entryPrice}
-                slPrice={activeTrade?.currentSl ?? activeTrade?.slPrice}
-                targetPrice={activeTrade?.targetPrice}
-              />
-            )}
+            {(() => {
+              const chartBot = (allBots ?? []).find((bot: any) => bot.slot === selectedChartSlot);
+              const chartTrade = chartBot?.openTrade ?? null;
+              const chartInstrument = chartBot?.instrumentLabel ?? chartBot?.symbol ?? slotQS[selectedChartSlot]?.symbol ?? `Bot ${selectedChartSlot + 1}`;
+              const chartIsRunning = chartBot?.status === "running" || chartBot?.status === "paused";
+              const chartCandles = selectedChartLiveData?.candles ?? [];
+              return (
+                <>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                    <div className="text-xs text-white/40 uppercase tracking-wider">Live Price — {chartInstrument} (1m candles)</div>
+                    <div className="flex items-center gap-2">
+                      {chartCandles.length > 0 && <span className="text-[10px] text-emerald-400/60">{chartCandles.length} candles</span>}
+                      <select
+                        aria-label="Chart bot"
+                        value={selectedChartSlot}
+                        onChange={(event) => setSelectedChartSlot(Number(event.target.value))}
+                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white/70 max-w-full"
+                      >
+                        {(allBots ?? []).map((bot: any) => (
+                          <option key={bot.slot} value={bot.slot}>Bot {bot.slot + 1} · {bot.instrumentLabel ?? bot.symbol ?? slotQS[bot.slot]?.symbol ?? "Unconfigured"}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  {chartCandles.length < 2 ? (
+                    <div className="flex flex-col items-center justify-center h-[200px] gap-2">
+                      <div className="text-white/30 text-sm">{chartIsRunning ? "Collecting candles..." : "Start this bot to see its live chart"}</div>
+                      <div className="text-white/20 text-xs">Uses the selected bot's real-time Upstox price feed</div>
+                    </div>
+                  ) : (
+                    <CandlestickChart
+                      candles={chartCandles}
+                      height={200}
+                      entryPrice={chartTrade?.entryPrice}
+                      slPrice={chartTrade?.currentSl ?? chartTrade?.slPrice}
+                      targetPrice={chartTrade?.targetPrice}
+                    />
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
         {/* ═══ REJECTED SIGNALS FEED ═══ */}
@@ -3249,7 +3352,7 @@ export default function Dashboard() {
             </div>
 
             {/* Price levels */}
-            <div className="grid grid-cols-4 gap-3 mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
               {(() => {
                 // In options mode: Entry/Current/SL/Target are all in option premium space
                 // currentPrice is the underlying — use effectiveLivePrice (already includes all fallbacks)
@@ -3880,7 +3983,7 @@ export default function Dashboard() {
 
       {/* ── Mobile Bottom Tab Navigation ─────────────────────────────────── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[oklch(0.12_0.02_240)] border-t border-white/10 backdrop-blur-lg safe-area-bottom">
-        <div className="flex items-stretch justify-around">
+        <div className="flex items-stretch w-full">
           {[
             { icon: "🎯", label: "Dashboard", path: "/dashboard", active: location.startsWith("/dashboard") },
             { icon: "⚙️", label: "Settings", path: "/settings", active: false },
@@ -3891,14 +3994,14 @@ export default function Dashboard() {
             <button
               key={tab.path}
               onClick={() => navigate(tab.path)}
-              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 px-2 min-h-[56px] min-w-[56px] transition-colors ${
+              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2.5 px-1 min-h-[56px] transition-colors ${
                 tab.active
                   ? "text-teal-400"
                   : "text-white/40 active:text-white/70"
               }`}
             >
               <span className="text-lg">{tab.icon}</span>
-              <span className="text-[10px] font-medium leading-tight">{tab.label}</span>
+              <span className="text-[9px] sm:text-[10px] font-medium leading-tight max-w-full truncate">{tab.label}</span>
             </button>
           ))}
         </div>

@@ -17,10 +17,18 @@ import type { Candle, Signal } from "./botEngine";
 // ═══════════════════════════════════════════════════════════════════════════════
 beforeAll(() => {
   vi.useFakeTimers();
+  // Keep synthetic market scenarios reproducible: the assertions must never
+  // pass or fail merely because Math.random produced a different candle path.
+  let seed = 0x5ca1ab1e;
+  vi.spyOn(Math, "random").mockImplementation(() => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  });
   // Set to July 17, 2026 4:30 AM UTC = 10:00 AM IST (Thursday, within NSE session)
   vi.setSystemTime(new Date("2026-07-17T04:30:00.000Z"));
 });
 afterAll(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
