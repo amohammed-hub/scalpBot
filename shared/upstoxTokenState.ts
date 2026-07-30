@@ -13,6 +13,12 @@ export type UpstoxTokenDisplayState =
   | "error"
   | "missing";
 
+export type UpstoxAuthorizationState =
+  | "valid"
+  | "unauthorized"
+  | "missing"
+  | "indeterminate";
+
 /**
  * ScalpBot paper/demo mode uses live Upstox market data but never places an
  * exchange order. Sandbox tokens are restricted to sandbox order APIs and
@@ -59,4 +65,20 @@ export function tokenHealthBlocksAuthenticatedMarketData(
   status?: UpstoxTokenHealthStatus,
 ): boolean {
   return status !== "valid";
+}
+
+/**
+ * Startup recovery may stop an orphaned bot only when authorization failure is
+ * definitive. Rate limits, upstream outages, and transport failures remain
+ * indeterminate so a transient Upstox problem cannot durably stop valid bots.
+ */
+export function classifyUpstoxAuthorizationHttpStatus(
+  status?: number | null,
+  hasToken = true,
+): UpstoxAuthorizationState {
+  if (!hasToken) return "missing";
+  if (status == null) return "indeterminate";
+  if (status >= 200 && status < 300) return "valid";
+  if (status === 401 || status === 403) return "unauthorized";
+  return "indeterminate";
 }

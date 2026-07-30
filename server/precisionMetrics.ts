@@ -16,6 +16,7 @@
 import { getDb } from "./db";
 import { tradeLog, signalJournal } from "../drizzle/schema";
 import { eq, and, desc, gte, lte, sql, inArray } from "drizzle-orm";
+import { normalizeSignalJournalRegime } from "../shared/signalJournalState";
 
 // IST timezone helper — converts a Date to IST date string (YYYY-MM-DD)
 function toISTDateKey(d: Date): string {
@@ -517,7 +518,7 @@ export function logSignalToJournal(entry: JournalEntry): void {
         suggestedSl: entry.suggestedSl ?? null,
         suggestedTarget: entry.suggestedTarget ?? null,
         atr: entry.atr ?? null,
-        regime: entry.regime ?? null,
+        regime: normalizeSignalJournalRegime(entry.regime),
         vixLevel: entry.vixLevel ?? null,
         oiBias: entry.oiBias ?? null,
         outcome: entry.outcome,
