@@ -23,6 +23,7 @@ import { upstoxAxios } from "./upstoxHttp";
 import {
   getBaseBotSessionToken,
   selectCanonicalBrokerSession,
+  selectOrphanScanOnlyBaseSessions,
   type BrokerSessionCandidate,
 } from "../shared/upstoxSessionReconciliation";
 
@@ -111,8 +112,33 @@ async function reconcileDuplicateBrokerSessions(
     .where(eq(tradeLog.status, "open"));
   const openTradeBases = new Set(openTradeRows.map((row: { sessionToken: string }) => getBaseBotSessionToken(row.sessionToken)));
 
+  const decommissionedSessionIds = new Set<number>();
+  const orphanBaseSessionTokens = selectOrphanScanOnlyBaseSessions(
+    baseSessionTokens.map(baseSessionToken => ({
+      baseSessionToken,
+      hasOpenTrade: openTradeBases.has(baseSessionToken),
+      isDurableUserSession: durableBaseSessions.has(baseSessionToken),
+    })),
+  );
+  const orphanBaseSessionSet = new Set(orphanBaseSessionTokens);
+
+  for (const baseSessionToken of orphanBaseSessionTokens) {
+    const orphanSessions = sessionsByBase.get(baseSessionToken) ?? [];
+    const orphanIds = orphanSessions.map(session => session.id);
+    if (orphanIds.length === 0) continue;
+
+    const lastError = "Automatic restart blocked: persisted scan-only session is not owned by a durable app user";
+    await db
+      .update(botSessions)
+      .set({ status: "stopped", lastError })
+      .where(inArray(botSessions.id, orphanIds));
+    orphanIds.forEach(id => decommissionedSessionIds.add(id));
+    console.warn(`[BotRestart] Decommissioned ${orphanIds.length} durable-user-orphan scan-only session(s) before engine startup`);
+  }
+
   const candidatesByBrokerUser = new Map<string, BrokerSessionCandidate[]>();
   for (const [baseSessionToken, sessions] of Array.from(sessionsByBase.entries())) {
+    if (orphanBaseSessionSet.has(baseSessionToken)) continue;
     const authorization = await checkStartupAuthorization(
       baseSessionToken,
       accessTokenByBase.get(baseSessionToken) ?? null,
@@ -135,7 +161,6 @@ async function reconcileDuplicateBrokerSessions(
     candidatesByBrokerUser.set(candidate.brokerUserId, peers);
   }
 
-  const decommissionedSessionIds = new Set<number>();
   for (const candidates of Array.from(candidatesByBrokerUser.values())) {
     if (candidates.length < 2) continue;
     const canonical = selectCanonicalBrokerSession(candidates);

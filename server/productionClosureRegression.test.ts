@@ -6,6 +6,7 @@ import { classifyUpstoxAuthorizationHttpStatus } from "../shared/upstoxTokenStat
 import {
   getBaseBotSessionToken,
   selectCanonicalBrokerSession,
+  selectOrphanScanOnlyBaseSessions,
   type BrokerSessionCandidate,
 } from "../shared/upstoxSessionReconciliation";
 
@@ -105,13 +106,27 @@ describe("30 July production closure regressions", () => {
       ])?.baseSessionToken).toBe("newer-transient");
     });
 
-    it("groups base and slot tokens consistently and decommissions duplicate scan-only rows before restart", () => {
+    it("identifies only durable-user-orphan scan sessions and always preserves open-trade owners", () => {
+      expect(selectOrphanScanOnlyBaseSessions([
+        { baseSessionToken: "durable-current", isDurableUserSession: true, hasOpenTrade: false },
+        { baseSessionToken: "orphan-scan", isDurableUserSession: false, hasOpenTrade: false },
+        { baseSessionToken: "orphan-protecting-trade", isDurableUserSession: false, hasOpenTrade: true },
+        { baseSessionToken: "orphan-scan", isDurableUserSession: false, hasOpenTrade: false },
+      ])).toEqual(["orphan-scan"]);
+    });
+
+    it("groups base and slot tokens consistently and decommissions unsafe duplicate rows before restart", () => {
       expect(getBaseBotSessionToken("base-token-slot4")).toBe("base-token");
       expect(getBaseBotSessionToken("base-token")).toBe("base-token");
       expect(restartSource).toContain("reconcileDuplicateBrokerSessions(runningSessions)");
+      expect(restartSource).toContain("selectOrphanScanOnlyBaseSessions");
+      expect(restartSource).toContain('persisted scan-only session is not owned by a durable app user');
       expect(restartSource).toContain('authorization.state !== "valid" || !authorization.brokerUserId');
       expect(restartSource).toContain("duplicate.hasOpenTrade");
       expect(restartSource).toContain('duplicate persisted session for the same Upstox account; canonical session selected');
+      expect(restartSource.indexOf("const orphanBaseSessionTokens")).toBeLessThan(
+        restartSource.indexOf("const candidatesByBrokerUser"),
+      );
       expect(restartSource.indexOf("reconcileDuplicateBrokerSessions(runningSessions)")).toBeLessThan(
         restartSource.indexOf("for (const session of reconciledSessions)"),
       );

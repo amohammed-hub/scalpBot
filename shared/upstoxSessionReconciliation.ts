@@ -39,6 +39,32 @@ export function selectCanonicalBrokerSession(
   })[0];
 }
 
+export interface PersistedBaseSessionOwnership {
+  baseSessionToken: string;
+  hasOpenTrade: boolean;
+  isDurableUserSession: boolean;
+}
+
+/**
+ * Identify persisted base sessions that are safe to decommission before startup.
+ * A session is orphaned only when no durable app-user owns it and it protects no
+ * open trade. Tokens are opaque identifiers; no broker/account identity is
+ * inferred here.
+ */
+export function selectOrphanScanOnlyBaseSessions(
+  candidates: readonly PersistedBaseSessionOwnership[],
+): string[] {
+  return Array.from(new Set(
+    candidates
+      .filter(candidate => (
+        candidate.baseSessionToken.length > 0
+        && !candidate.isDurableUserSession
+        && !candidate.hasOpenTrade
+      ))
+      .map(candidate => candidate.baseSessionToken),
+  )).sort((left, right) => left.localeCompare(right));
+}
+
 export function getBaseBotSessionToken(sessionToken: string): string {
   return sessionToken.replace(/-slot\d+$/, "");
 }
