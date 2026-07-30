@@ -15,7 +15,7 @@ import { isBotAutomationEnabled } from "./botAutomation";
 import { canAutoRestartSession, partitionCanonicalSessionRows } from "./botSessionLifecycle";
 import { appUsers, botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc, gte, inArray } from "drizzle-orm";
-import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
+import { startBot, stopBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
 import { classifyUpstoxAuthorizationHttpStatus, type UpstoxAuthorizationState } from "../shared/upstoxTokenState";
@@ -219,7 +219,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
   const currentRows = await db
     .select()
     .from(botSessions)
-    .where(eq(botSessions.sessionToken, session.sessionToken))
+    .where(eq(botSessions.id, session.id))
     .limit(1);
   const currentSession = currentRows[0];
   if (!currentSession || !canAutoRestartSession(currentSession)) {
@@ -497,7 +497,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
   const restoredLastUnderlyingSLAt = sessionIsToday ? (session.lastUnderlyingSLAt ?? null) : null;
   console.log(`[BotRestart] ${session.sessionToken.slice(0,8)} actual today trades: ${actualTodayTradesCount} (DB session.tradesCount was ${session.tradesCount})`);
 
-  startBot(
+  const startResult = startBot(
     {
       sessionToken: session.sessionToken,
       sessionId: session.id,
@@ -554,6 +554,26 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     existingOpenTrade,
     onTick,
   );
+
+  const readiness = await startResult.initialTick;
+  const confirmedState = getBotState(session.sessionToken);
+  if (!readiness.ready || !confirmedState || (confirmedState.status !== "running" && confirmedState.status !== "paused")) {
+    stopBot(session.sessionToken);
+    const lastError = readiness.lastError ?? "Engine registration did not converge during automatic recovery";
+    await db.update(botSessions).set({
+      status: "stopped",
+      stoppedAt: new Date(),
+      lastError,
+    }).where(eq(botSessions.id, session.id));
+    throw new Error(lastError);
+  }
+
+  await db.update(botSessions).set({
+    status: "running",
+    stoppedAt: null,
+    lastError: readiness.degraded ? readiness.lastError : null,
+    lastTickAt: readiness.lastTickAt,
+  }).where(eq(botSessions.id, session.id));
 
   console.log(`[BotRestart] ✅ Restarted bot for session ${session.sessionToken.slice(0, 8)} — ${session.instrumentSymbol} ${session.mode} mode${existingOpenTrade ? ` — protecting open trade #${existingOpenTrade.dbId}` : " — scan mode"}`);
   return true;
