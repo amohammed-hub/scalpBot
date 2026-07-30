@@ -21,9 +21,10 @@ const trpcClient = trpc.createClient({
   links: [
     splitLink({
       condition(op) {
-        // Mutations use a dedicated non-batched link to avoid being corrupted
-        // by concurrent query responses that fail serialization
-        return op.type === "mutation";
+        // Mutations and the authentication bootstrap use a dedicated request.
+        // `mobileAuth.me` must never wait behind slow broker/account/quote calls
+        // in the dashboard's normal query batch.
+        return op.type === "mutation" || op.path === "mobileAuth.me";
       },
       true: httpLink({
         url: "/api/trpc",
@@ -42,6 +43,10 @@ const trpcClient = trpc.createClient({
       false: httpBatchLink({
         url: "/api/trpc",
         transformer: superjson,
+        // Prevent large mount-time batches from creating head-of-line blocking.
+        // Four procedures keeps request count bounded without coupling the full
+        // dashboard to the slowest upstream broker call.
+        maxItems: 4,
         headers() {
           const token = localStorage.getItem("scalpbot_auth_token");
           return token ? { authorization: `Bearer ${token}` } : {};

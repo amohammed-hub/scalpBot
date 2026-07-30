@@ -210,7 +210,7 @@ export default function Dashboard() {
     : location.startsWith("/dashboard/log") ? "log"
     : "command";
   const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const sessionToken = getSessionToken();
+  const [sessionToken, setSessionToken] = useState(() => getSessionToken());
 
   // ── Mobile Auth Check ──────────────────────────────────────────────────────
   const meQuery = trpc.mobileAuth.me.useQuery(undefined, {
@@ -220,15 +220,27 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    // SECURITY FIX: Always redirect to login if server confirms no valid session.
-    // The server is the source of truth — localStorage tokens can be stale/forged.
+    // The server is the source of truth for both authentication and tenant
+    // identity. Adopt its durable token before enabling any dashboard query.
+    const durableToken = meQuery.data?.sessionToken;
+    if (durableToken && durableToken !== sessionToken) {
+      localStorage.setItem("scalpbot_session", durableToken);
+      setSessionToken(durableToken);
+      return;
+    }
+
     if (meQuery.isSuccess && meQuery.data === null) {
       // Clear only when the server successfully confirms the JWT is absent,
-      // invalid, or expired. A redeploy/network/DB error must retain it.
+      // invalid, or expired. Retryable network/DB errors retain both values.
       localStorage.removeItem("scalpbot_auth_token");
+      localStorage.removeItem("scalpbot_session");
       navigate("/login");
     }
-  }, [meQuery.isSuccess, meQuery.data, navigate]);
+  }, [meQuery.isSuccess, meQuery.data, navigate, sessionToken]);
+
+  const authReady = meQuery.isSuccess
+    && !!meQuery.data?.sessionToken
+    && meQuery.data.sessionToken === sessionToken;
 
   // ── Name Prompt for users who haven't set their name ──────────────────────
   const [showNamePrompt, setShowNamePrompt] = useState(false);
@@ -251,6 +263,7 @@ export default function Dashboard() {
   const logoutMutation = trpc.mobileAuth.logout.useMutation({
     onSuccess: () => {
       localStorage.removeItem("scalpbot_auth_token");
+      localStorage.removeItem("scalpbot_session");
       navigate("/login");
     },
   });
@@ -258,7 +271,7 @@ export default function Dashboard() {
   // ── Subscription Access Control ────────────────────────────────────────────
   const accessQuery = trpc.subscription.checkAccess.useQuery(
     { sessionToken },
-    { staleTime: 60_000, refetchOnWindowFocus: false }
+    { enabled: authReady, staleTime: 60_000, refetchOnWindowFocus: false }
   );
   // Derived tier limits for access control
   const isAdmin = accessQuery.data?.isAdmin ?? meQuery.data?.role === "admin";
@@ -405,16 +418,19 @@ export default function Dashboard() {
   }, [slotQS]);
 
   const startSecondaryMutation = trpc.multiBots.startSecondary.useMutation({
-    onSuccess: (_, vars) => {
-      toast.success(`🤖 Bot ${(vars.slot ?? 0) + 1} started in ${config.mode.toUpperCase()} mode!`);
-      // Cancel in-flight queries to prevent stale "stopped" responses from overwriting optimistic update
+    onSuccess: (result, vars) => {
+      if (result.readiness === "degraded") {
+        toast.warning(`Bot ${(vars.slot ?? 0) + 1} is running; the first market-data scan is degraded and will retry automatically.`);
+      } else {
+        toast.success(`Bot ${(vars.slot ?? 0) + 1} started in ${config.mode.toUpperCase()} mode.`);
+      }
+      const statusKey = { sessionToken, isAdmin: meQuery.data?.role === "admin" || accessQuery.data?.isAdmin === true };
       utils.multiBots.allStatus.cancel();
-      // Optimistic: immediately update the slot to "running"
-      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
+      utils.multiBots.allStatus.setData(statusKey, (old: any) => {
         if (!old) return old;
         return old.map((b: any) => b.slot === vars.slot ? { ...b, status: "running" } : b);
       });
-      setTimeout(() => { utils.multiBots.allStatus.invalidate(); utils.multiBots.livePrices.invalidate(); }, 2000);
+      setTimeout(() => { utils.multiBots.allStatus.invalidate(); utils.multiBots.livePrices.invalidate(); }, 250);
     },
     onError: (e) => toast.error(`Start failed: ${e.message}`),
   });
@@ -611,71 +627,71 @@ export default function Dashboard() {
   const [configCollapsed, setConfigCollapsed] = useState(false);
   const { data: scanData, isLoading: scanLoading, refetch: refetchScan } = trpc.scanner.smartScan.useQuery(
     { sessionToken },
-    { enabled: scanEnabled, staleTime: 30000, refetchOnWindowFocus: false }
+    { enabled: authReady && scanEnabled, staleTime: 30000, refetchOnWindowFocus: false }
   );
 
   // Bot status — poll every 3s when running
   const { data: botStatus } = trpc.bot.status.useQuery(
     { sessionToken },
-    { refetchInterval: 3000, staleTime: 1000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 3000, staleTime: 1000 }
   );
 
   // Live data — poll every 3s
   const { data: liveData } = trpc.bot.liveData.useQuery(
     { sessionToken },
-    { refetchInterval: 3000, staleTime: 1000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 3000, staleTime: 1000 }
   );
   const selectedChartSessionToken = selectedChartSlot === 0 ? sessionToken : `${sessionToken}-slot${selectedChartSlot}`;
   const { data: secondaryChartLiveData } = trpc.bot.liveData.useQuery(
     { sessionToken: selectedChartSessionToken },
-    { enabled: selectedChartSlot > 0, refetchInterval: 3000, staleTime: 1000 },
+    { enabled: authReady && activeTab === "command" && selectedChartSlot > 0, refetchInterval: 3000, staleTime: 1000 },
   );
   const selectedChartLiveData = selectedChartSlot === 0 ? liveData : secondaryChartLiveData;
   // Cross-Market Correlation: Crude Oil bias (only fetched when toggle is ON)
   const { data: crudeOilBias } = trpc.bot.crudeOilBias.useQuery(
     { sessionToken },
-    { refetchInterval: 60000, staleTime: 30000, enabled: config.crudeOilCorrelation }
+    { refetchInterval: 60000, staleTime: 30000, enabled: authReady && activeTab === "command" && config.crudeOilCorrelation }
   );
 
   // Trades list — poll every 5s
   const { data: trades = [], refetch: refetchTrades } = trpc.trades.list.useQuery(
     { sessionToken, limit: 50 },
-    { refetchInterval: 5000, staleTime: 2000 }
+    { enabled: authReady && activeTab !== "log", refetchInterval: 5000, staleTime: 2000 }
   );
 
   // Today stats
   const { data: todayStats } = trpc.trades.todayStats.useQuery(
     { sessionToken },
-    { refetchInterval: 5000, staleTime: 2000 }
+    { enabled: authReady && activeTab !== "log", refetchInterval: 5000, staleTime: 2000 }
   );
 
   // All-time stats
   const { data: allStats } = trpc.trades.stats.useQuery(
     { sessionToken },
-    { refetchInterval: 10000, staleTime: 5000 }
+    { enabled: authReady && activeTab !== "log", refetchInterval: 10000, staleTime: 5000 }
   );
 
   // Daily P&L chart data
   const { data: pnlByDay = [] } = trpc.trades.pnlByDay.useQuery(
     { sessionToken },
-    { refetchInterval: 30000, staleTime: 15000 }
+    { enabled: authReady && activeTab !== "log", refetchInterval: 30000, staleTime: 15000 }
   );
 
   // Open trade from DB
   const { data: openTrade } = trpc.trades.openTrade.useQuery(
     { sessionToken },
-    { refetchInterval: 3000, staleTime: 1000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 3000, staleTime: 1000 }
   );
 
-  // Multi-bot: all 3 slots
+  // Multi-bot: all slots
   const { data: allBots } = trpc.multiBots.allStatus.useQuery(
     { sessionToken, isAdmin: meQuery.data?.role === "admin" || accessQuery.data?.isAdmin === true },
-    { refetchInterval: 3000, staleTime: 1000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 3000, staleTime: 1000 }
   );
   // Lightweight live price polling — updates every 5 seconds independently of scan interval
   const { data: livePricesData } = trpc.multiBots.livePrices.useQuery(
     { sessionToken },
-    { refetchInterval: 5000, staleTime: 2000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 5000, staleTime: 2000 }
   );
   const stopSecondaryMutation = trpc.multiBots.stopSecondary.useMutation({
     onSuccess: (_, vars) => {
@@ -693,61 +709,61 @@ export default function Dashboard() {
   // ── Risk Manager Queries ────────────────────────────────────────────────────
   const { data: riskScore } = trpc.riskManager.score.useQuery(
     { sessionToken },
-    { refetchInterval: 5000, staleTime: 2000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 5000, staleTime: 2000 }
   );
   const portfolioQuery = trpc.riskManager.portfolio.useQuery(
     { sessionToken },
-    { refetchInterval: 5000, staleTime: 2000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 5000, staleTime: 2000 }
   );
   const portfolioStatus = portfolioQuery.data;
   const { data: cooldownInfo } = trpc.riskManager.cooldown.useQuery(
     { sessionToken },
-    { refetchInterval: 3000, staleTime: 1000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 3000, staleTime: 1000 }
   );
 
   // ── Layer Tracker ────────────────────────────────────────────────────────────
   const { data: layerStats = [] } = trpc.layerTracker.stats.useQuery(
     { sessionToken },
-    { refetchInterval: 10000, staleTime: 5000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 10000, staleTime: 5000 }
   );
 
   // ── Presets ──────────────────────────────────────────────────────────────────
-  const { data: presetsList = [] } = trpc.presets.list.useQuery(undefined, { staleTime: 60000 });
+  const { data: presetsList = [] } = trpc.presets.list.useQuery(undefined, { enabled: authReady, staleTime: 60000 });
 
   // ── Readiness ────────────────────────────────────────────────────────────────
   const { data: readinessData } = trpc.readiness.check.useQuery(
     { sessionToken },
-    { refetchInterval: 15000, staleTime: 10000 }
+    { enabled: authReady && activeTab === "command", refetchInterval: 15000, staleTime: 10000 }
   );
 
   // ── Demo Costs ──────────────────────────────────────────────────────────────
-  const { data: demoCosts } = trpc.demoCosts.get.useQuery(undefined, { staleTime: 30000 });
+  const { data: demoCosts } = trpc.demoCosts.get.useQuery(undefined, { enabled: authReady, staleTime: 30000 });
   const [localBrokerage, setLocalBrokerage] = useState(20);
   const [localSlippage, setLocalSlippage] = useState(0.05);
   useEffect(() => { if (demoCosts) { setLocalBrokerage(demoCosts.brokerage); setLocalSlippage(demoCosts.slippagePct); } }, [demoCosts]);
 
   // ── Mutations ────────────────────────────────────────────────────────────────
   const startMutation = trpc.bot.start.useMutation({
-    onSuccess: () => {
-      toast.success(`Bot started in ${config.mode.toUpperCase()} mode — scanning every ${config.scanIntervalSec}s`);
-      // Cancel in-flight queries to prevent stale "stopped" responses from overwriting optimistic update
+    onSuccess: (result) => {
+      if (result.readiness === "degraded") {
+        toast.warning("Bot is running; the first market-data scan is degraded and will retry automatically.");
+      } else {
+        toast.success(`Bot started in ${config.mode.toUpperCase()} mode — scanning every ${config.scanIntervalSec}s`);
+      }
+      const statusKey = { sessionToken, isAdmin: meQuery.data?.role === "admin" || accessQuery.data?.isAdmin === true };
       utils.bot.status.cancel();
       utils.multiBots.allStatus.cancel();
-      // Optimistic: immediately set bot.status cache to "running" so UI updates instantly
       utils.bot.status.setData({ sessionToken }, (old: any) => old ? { ...old, status: "running" } : { status: "running" });
-      // Optimistic: immediately update allBots slot 0 to "running"
-      utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
+      utils.multiBots.allStatus.setData(statusKey, (old: any) => {
         if (!old) return old;
         return old.map((b: any) => b.slot === 0 ? { ...b, status: "running" } : b);
       });
-      // Then invalidate to get fresh data from server (confirms the optimistic update).
-      // Use longer delay (2s) to ensure server has fully processed the start and the bot is in memory.
       setTimeout(() => {
         utils.bot.status.invalidate();
         utils.bot.liveData.invalidate();
         utils.multiBots.allStatus.invalidate();
         utils.multiBots.livePrices.invalidate();
-      }, 2000);
+      }, 250);
     },
     onError: (e) => toast.error(`Failed to start bot: ${e.message}`),
   });
@@ -972,7 +988,7 @@ export default function Dashboard() {
   const activityScrollRef = useRef<HTMLDivElement>(null);
   const { data: newActivityEvents } = trpc.activity.log.useQuery(
     { sessionToken, limit: 50, afterId: activityAfterId },
-    { refetchInterval: 2000, enabled: !!sessionToken }
+    { refetchInterval: 2000, enabled: authReady && activeTab === "log" }
   );
   useEffect(() => {
     if (!newActivityEvents || newActivityEvents.length === 0) return;
@@ -1075,13 +1091,13 @@ export default function Dashboard() {
   // Token status — check server DB (authoritative) with localStorage as fallback
   const { data: serverCreds } = trpc.credentials.get.useQuery(
     { sessionToken },
-    { refetchInterval: 60000, staleTime: 30000 }
+    { enabled: authReady, refetchInterval: 60000, staleTime: 30000 }
   );
   const [tokenStatus, setTokenStatus] = useState<"valid" | "missing" | "short">("missing");
   // Real-time token health check via Upstox API
   const tokenHealthQuery = trpc.credentials.tokenHealth.useQuery(
     { sessionToken },
-    { enabled: !!sessionToken, refetchInterval: 60000, staleTime: 30000 }
+    { enabled: authReady, refetchInterval: 60000, staleTime: 30000 }
   );
   const tokenHealthStatus = tokenHealthQuery.data?.status;
   const tokenHealthMessage = tokenHealthQuery.data?.message;
@@ -1091,11 +1107,11 @@ export default function Dashboard() {
   );
   const accountProfileQuery = trpc.account.profile.useQuery(
     { sessionToken },
-    { enabled: tokenDisplayState === "valid", refetchInterval: 300_000, staleTime: 60_000 },
+    { enabled: authReady && activeTab === "command" && tokenDisplayState === "valid", refetchInterval: 300_000, staleTime: 60_000 },
   );
   const accountBalanceQuery = trpc.account.balance.useQuery(
     { sessionToken },
-    { enabled: tokenDisplayState === "valid", refetchInterval: 60_000, staleTime: 30_000 },
+    { enabled: authReady && activeTab === "command" && tokenDisplayState === "valid", refetchInterval: 60_000, staleTime: 30_000 },
   );
 
   useEffect(() => {
@@ -4004,6 +4020,17 @@ export default function Dashboard() {
               <span className="text-[9px] sm:text-[10px] font-medium leading-tight max-w-full truncate">{tab.label}</span>
             </button>
           ))}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowAdminPanel(true)}
+              aria-label="Open Admin Panel"
+              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2.5 px-1 min-h-[56px] transition-colors ${showAdminPanel ? "text-red-400" : "text-white/40 active:text-red-300"}`}
+            >
+              <Shield className="w-[18px] h-[18px]" />
+              <span className="text-[9px] sm:text-[10px] font-medium leading-tight max-w-full truncate">Admin</span>
+            </button>
+          )}
         </div>
       </nav>
     </div>

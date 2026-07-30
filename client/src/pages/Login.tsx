@@ -59,14 +59,17 @@ export default function Login() {
   const verifyOtpMutation = trpc.mobileAuth.verifyOtp.useMutation({
     onSuccess: async (data) => {
       if (data.success && data.user) {
-        // Do NOT overwrite localStorage sessionToken — the server was updated to match it.
-        // The localStorage token is the identity key linked to credentials, trades, etc.
-        // Store auth token for API calls
+        // The server owns an existing user's durable session identity. Adopt it
+        // before any dashboard query mounts so credentials, subscriptions, bots,
+        // and trades resolve to the same tenant on refresh and on a new device.
+        if (data.user.sessionToken) {
+          localStorage.setItem("scalpbot_session", data.user.sessionToken);
+        }
         if (data.token) {
           localStorage.setItem("scalpbot_auth_token", data.token);
         }
-        // Invalidate the me query cache and WAIT for it to complete before navigating.
-        // This ensures Dashboard won't use a stale cached null result.
+        // Invalidate and refetch authentication only after both durable identity
+        // values have been committed locally.
         await utils.mobileAuth.me.invalidate();
         // If user has no name, ask for it
         if (!data.user.name) {
@@ -104,7 +107,9 @@ export default function Login() {
       toast.error("Enter the 6-digit OTP");
       return;
     }
-    // Pass the current localStorage sessionToken so the server updates the user record to match
+    // A browser token is only a bootstrap hint for first-time registration. The
+    // server returns the durable token for existing users and the success handler
+    // replaces this local hint before the dashboard mounts.
     const currentToken = localStorage.getItem("scalpbot_session") || undefined;
     verifyOtpMutation.mutate({ mobile, code: otp, sessionToken: currentToken });
   };

@@ -39,11 +39,11 @@ describe("30 July production closure regressions", () => {
   });
 
   describe("persisted bot ownership and startup authorization", () => {
-    it("migrates the base token and every supported slot including the fifth card", () => {
-      expect(dbSource).toContain("for (let slot = 0; slot <= 8; slot += 1)");
-      expect(dbSource).toContain('const suffix = slot === 0 ? "" : `-slot${slot}`');
-      expect(dbSource).toContain("[upstoxCredentials, botSessions, tradeLog, signalJournal]");
-      expect(dbSource).not.toContain('oldToken + "-slot3"');
+    it("preserves the server-owned tenant token on repeat OTP login", () => {
+      expect(dbSource).toContain("const durableToken = storedToken || clientSessionToken || crypto.randomUUID();");
+      expect(dbSource).toContain("sessionToken: durableToken");
+      expect(dbSource).toContain("Resuming existing durable session");
+      expect(dbSource).not.toContain("Migrating session token");
     });
 
     it("classifies only explicit credential failures as authorization blockers", () => {
@@ -150,7 +150,8 @@ describe("30 July production closure regressions", () => {
     it("groups base and slot tokens consistently and decommissions unsafe duplicate rows before restart", () => {
       expect(getBaseBotSessionToken("base-token-slot4")).toBe("base-token");
       expect(getBaseBotSessionToken("base-token")).toBe("base-token");
-      expect(restartSource).toContain("reconcileDuplicateBrokerSessions(runningSessions)");
+      expect(restartSource).toContain("partitionCanonicalSessionRows");
+      expect(restartSource).toContain("reconcileDuplicateBrokerSessions(canonicalRows)");
       expect(restartSource).toContain("selectOrphanScanOnlyBaseSessions");
       expect(restartSource).toContain('persisted scan-only session is not owned by a durable app user');
       expect(restartSource).toContain('authorization.state !== "valid" || !authorization.brokerIdentity');
@@ -161,7 +162,10 @@ describe("30 July production closure regressions", () => {
       expect(restartSource.indexOf("const orphanBaseSessionTokens")).toBeLessThan(
         restartSource.indexOf("const candidatesByBrokerIdentity"),
       );
-      expect(restartSource.indexOf("reconcileDuplicateBrokerSessions(runningSessions)")).toBeLessThan(
+      expect(restartSource.indexOf("partitionCanonicalSessionRows")).toBeLessThan(
+        restartSource.indexOf("reconcileDuplicateBrokerSessions(canonicalRows)"),
+      );
+      expect(restartSource.indexOf("reconcileDuplicateBrokerSessions(canonicalRows)")).toBeLessThan(
         restartSource.indexOf("for (const session of reconciledSessions)"),
       );
     });

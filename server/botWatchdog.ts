@@ -12,9 +12,9 @@
 
 import { getDb, resetDbConnection } from "./db";
 import { isBotAutomationEnabled } from "./botAutomation";
-import { canAutoRestartSession } from "./botSessionLifecycle";
+import { canAutoRestartSession, partitionCanonicalSessionRows } from "./botSessionLifecycle";
 import { botSessions } from "../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getBotState } from "./botEngine";
 import { restartSingleSession } from "./botRestart";
 import { emitActivity } from "./activityLog";
@@ -65,10 +65,20 @@ export async function runWatchdogCycle(): Promise<{ checked: number; restarted: 
     .from(botSessions)
     .where(eq(botSessions.status, "running"));
 
+  const { canonicalRows, duplicateRows } = partitionCanonicalSessionRows<typeof runningSessions[number]>(runningSessions);
+  if (duplicateRows.length > 0) {
+    await db.update(botSessions).set({
+      status: "stopped",
+      stoppedAt: new Date(),
+      lastError: "Duplicate durable session row decommissioned; newest exact-token row retained",
+    }).where(inArray(botSessions.id, duplicateRows.map(row => row.id)));
+    console.warn(`[BotWatchdog] Decommissioned ${duplicateRows.length} duplicate exact-token row(s)`);
+  }
+
   let restarted = 0;
   let errors = 0;
 
-  for (const session of runningSessions) {
+  for (const session of canonicalRows) {
     if (!canAutoRestartSession(session)) {
       console.log(`[BotWatchdog] Session ${session.sessionToken.slice(0, 8)} skipped — durable kill-switch stop marker present`);
       continue;
@@ -108,8 +118,8 @@ export async function runWatchdogCycle(): Promise<{ checked: number; restarted: 
   }
 
   if (restarted > 0 || errors > 0) {
-    console.log(`[BotWatchdog] Cycle complete — checked: ${runningSessions.length}, restarted: ${restarted}, errors: ${errors}`);
+    console.log(`[BotWatchdog] Cycle complete — checked: ${canonicalRows.length}, restarted: ${restarted}, errors: ${errors}`);
   }
 
-  return { checked: runningSessions.length, restarted, errors };
+  return { checked: canonicalRows.length, restarted, errors };
 }

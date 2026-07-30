@@ -12,7 +12,7 @@
  */
 import { getDb } from "./db";
 import { isBotAutomationEnabled } from "./botAutomation";
-import { canAutoRestartSession } from "./botSessionLifecycle";
+import { canAutoRestartSession, partitionCanonicalSessionRows } from "./botSessionLifecycle";
 import { appUsers, botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
 import { eq, and, desc, gte, inArray } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
@@ -616,8 +616,15 @@ export async function restartRunningBots(): Promise<void> {
           console.log(`[BotRestart] Trade #${t.id} (${t.symbolLabel ?? t.symbol}) has carryForward=true — keeping open`);
           continue;
         }
-        // Try to fetch the last traded price from Upstox API
-        let exitPrice = t.entryPrice; // fallback to entry price if API fails
+        // Never infer that a live broker position is closed merely because this
+        // process restarted after the session boundary. Broker reconciliation or
+        // an explicit user action must confirm the actual exit.
+        if (t.mode === "live") {
+          console.warn(`[BotRestart] Live trade #${t.id} requires broker reconciliation — keeping it open`);
+          continue;
+        }
+        // Demo positions may be closed only with a trustworthy exact-contract mark.
+        let exitPrice: number | null = null;
         let pnl = 0;
         const bookedPnl = t.bookedPnl ?? 0;
         try {
@@ -655,7 +662,7 @@ export async function restartRunningBots(): Promise<void> {
                 if (resolvedToken) {
                   const q = await fetchFullQuote(resolvedToken, token);
                   if (q && q.ltp > 0) {
-                    exitPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
+                    exitPrice = q.ltp;
                     resolved = true;
                     console.log(`[BotRestart] Resolved demo trade #${t.id} ${t.symbol} → real token ${resolvedToken} → exit ₹${exitPrice.toFixed(2)}`);
                   }
@@ -664,20 +671,23 @@ export async function restartRunningBots(): Promise<void> {
                 console.warn(`[BotRestart] Could not resolve demo trade #${t.id} ${t.symbol}:`, resolveErr);
               }
               if (!resolved) {
-                // Fallback: close at entry price (0 P&L on remaining) — safe default
-                exitPrice = t.entryPrice;
+                console.warn(`[BotRestart] Demo trade #${t.id} has no trustworthy exact-contract quote — keeping it open`);
               }
             } else {
               const quote = await fetchFullQuote(t.instrumentToken, token);
               if (quote && quote.ltp > 0) {
-                exitPrice = quote.bid > 0 ? Math.max(quote.bid, quote.ltp) : quote.ltp;
+                exitPrice = quote.ltp;
               }
             }
           }
         } catch (ltpErr) {
           console.warn(`[BotRestart] Could not fetch LTP for trade #${t.id}:`, ltpErr);
         }
-        // Calculate P&L using actual exit price
+        if (exitPrice === null) {
+          console.warn(`[BotRestart] Trade #${t.id} remains open because no trustworthy exit mark was available`);
+          continue;
+        }
+        // Calculate P&L using the confirmed exact-contract exit price
         const staleRemQty = t.quantity - (t.bookedQty ?? 0);
         pnl = t.direction === "BUY"
           ? (exitPrice - t.entryPrice) * staleRemQty
@@ -713,8 +723,18 @@ export async function restartRunningBots(): Promise<void> {
     return;
   }
 
-  const reconciledSessions = await reconcileDuplicateBrokerSessions(runningSessions);
-  console.log(`[BotRestart] Found ${runningSessions.length} session(s) marked running — ${reconciledSessions.length} eligible after authenticated account reconciliation`);
+  const { canonicalRows, duplicateRows } = partitionCanonicalSessionRows<typeof runningSessions[number]>(runningSessions);
+  if (duplicateRows.length > 0) {
+    await db.update(botSessions).set({
+      status: "stopped",
+      stoppedAt: new Date(),
+      lastError: "Duplicate durable session row decommissioned; newest exact-token row retained",
+    }).where(inArray(botSessions.id, duplicateRows.map(row => row.id)));
+    console.warn(`[BotRestart] Decommissioned ${duplicateRows.length} duplicate exact-token row(s) before engine startup`);
+  }
+
+  const reconciledSessions = await reconcileDuplicateBrokerSessions(canonicalRows);
+  console.log(`[BotRestart] Found ${runningSessions.length} running row(s) — ${canonicalRows.length} exact-token canonical row(s) — ${reconciledSessions.length} eligible after authenticated account reconciliation`);
 
   for (const session of reconciledSessions) {
     if (!canAutoRestartSession(session)) {
