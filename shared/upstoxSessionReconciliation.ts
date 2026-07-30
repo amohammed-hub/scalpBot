@@ -1,6 +1,6 @@
 export interface BrokerSessionCandidate {
   baseSessionToken: string;
-  brokerUserId: string;
+  brokerIdentityKey: string;
   hasOpenTrade: boolean;
   isDurableUserSession: boolean;
   latestUpdatedAtMs: number;
@@ -15,13 +15,13 @@ export interface BrokerSessionCandidate {
  * 3. otherwise prefer the most recently updated persisted session;
  * 4. use the opaque base token only as a deterministic final tie-breaker.
  *
- * Sessions without a verified brokerUserId must never be grouped here.
+ * Sessions without a verified broker identity must never be grouped here.
  */
 export function selectCanonicalBrokerSession(
   candidates: readonly BrokerSessionCandidate[],
 ): BrokerSessionCandidate | null {
   const eligible = candidates.filter(
-    candidate => candidate.baseSessionToken.length > 0 && candidate.brokerUserId.length > 0,
+    candidate => candidate.baseSessionToken.length > 0 && candidate.brokerIdentityKey.length > 0,
   );
   if (eligible.length === 0) return null;
 
