@@ -3627,11 +3627,11 @@ export function generateMeanReversionV13Signal(
   const istDate = new Date(latestTs + 330 * 60000);
   const istMin = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
 
-  if (istMin < 570) {
-    return { ...hold, reason: "[MR-V13] Before 9:30 AM — waiting for opening volatility to settle" };
+    if (istMin < 540) {
+    return { ...hold, reason: "[MR-V13] Before 9:00 AM — markets not open" };
   }
-  if (istMin >= 900) {
-    return { ...hold, reason: "[MR-V13] After 3:00 PM — no new entries near close" };
+  if (istMin >= 1410) {
+    return { ...hold, reason: "[MR-V13] After 11:30 PM — markets closed" };
   }
 
   const closes = candles.map(c => c.close);
