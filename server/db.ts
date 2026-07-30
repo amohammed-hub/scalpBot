@@ -854,26 +854,19 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
       try {
         // BUG-2 fix: Wrap all migration queries in a transaction to prevent partial data splits
         await db.transaction(async (tx: any) => {
-          // Migrate upstox_credentials (primary + slots)
-          await tx.update(upstoxCredentials).set({ sessionToken: newToken }).where(eq(upstoxCredentials.sessionToken, oldToken));
-          await tx.update(upstoxCredentials).set({ sessionToken: newToken + "-slot1" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot1"));
-          await tx.update(upstoxCredentials).set({ sessionToken: newToken + "-slot2" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot2"));
-          await tx.update(upstoxCredentials).set({ sessionToken: newToken + "-slot3" }).where(eq(upstoxCredentials.sessionToken, oldToken + "-slot3"));
-          // Migrate bot_sessions (primary + slots)
-          await tx.update(botSessions).set({ sessionToken: newToken }).where(eq(botSessions.sessionToken, oldToken));
-          await tx.update(botSessions).set({ sessionToken: newToken + "-slot1" }).where(eq(botSessions.sessionToken, oldToken + "-slot1"));
-          await tx.update(botSessions).set({ sessionToken: newToken + "-slot2" }).where(eq(botSessions.sessionToken, oldToken + "-slot2"));
-          await tx.update(botSessions).set({ sessionToken: newToken + "-slot3" }).where(eq(botSessions.sessionToken, oldToken + "-slot3"));
-          // Migrate trade_log (primary + slots)
-          await tx.update(tradeLog).set({ sessionToken: newToken }).where(eq(tradeLog.sessionToken, oldToken));
-          await tx.update(tradeLog).set({ sessionToken: newToken + "-slot1" }).where(eq(tradeLog.sessionToken, oldToken + "-slot1"));
-          await tx.update(tradeLog).set({ sessionToken: newToken + "-slot2" }).where(eq(tradeLog.sessionToken, oldToken + "-slot2"));
-          await tx.update(tradeLog).set({ sessionToken: newToken + "-slot3" }).where(eq(tradeLog.sessionToken, oldToken + "-slot3"));
-          // Migrate signal_journal (primary + slots)
-          await tx.update(signalJournal).set({ sessionToken: newToken }).where(eq(signalJournal.sessionToken, oldToken));
-          await tx.update(signalJournal).set({ sessionToken: newToken + "-slot1" }).where(eq(signalJournal.sessionToken, oldToken + "-slot1"));
-          await tx.update(signalJournal).set({ sessionToken: newToken + "-slot2" }).where(eq(signalJournal.sessionToken, oldToken + "-slot2"));
-          await tx.update(signalJournal).set({ sessionToken: newToken + "-slot3" }).where(eq(signalJournal.sessionToken, oldToken + "-slot3"));
+          // Migrate every supported bot key: base + slot1..slot8 (nine slots total).
+          // A fixed slot1..slot3 list previously orphaned the fifth card (`-slot4`)
+          // under an obsolete browser session, allowing a hidden engine to restart.
+          const sessionOwnedTables = [upstoxCredentials, botSessions, tradeLog, signalJournal] as const;
+          for (const table of sessionOwnedTables) {
+            for (let slot = 0; slot <= 8; slot += 1) {
+              const suffix = slot === 0 ? "" : `-slot${slot}`;
+              await tx
+                .update(table)
+                .set({ sessionToken: newToken + suffix })
+                .where(eq(table.sessionToken, oldToken + suffix));
+            }
+          }
           // Migrate subscriptions
           await tx.update(subscriptions).set({ sessionToken: newToken }).where(eq(subscriptions.sessionToken, oldToken));
         });

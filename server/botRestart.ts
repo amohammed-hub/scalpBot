@@ -18,10 +18,36 @@ import { eq, and, desc, gte } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
-import axios from "axios";
+import { classifyUpstoxAuthorizationHttpStatus, type UpstoxAuthorizationState } from "../shared/upstoxTokenState";
+import { upstoxAxios } from "./upstoxHttp";
 
 // Type alias for a row from botSessions (Drizzle infers this)
 type BotSessionRow = typeof botSessions.$inferSelect;
+
+const startupAuthorizationCache = new Map<string, { state: UpstoxAuthorizationState; checkedAt: number }>();
+const STARTUP_AUTH_CACHE_MS = 60_000;
+
+async function checkStartupAuthorization(baseSessionToken: string, accessToken: string | null): Promise<UpstoxAuthorizationState> {
+  if (!accessToken) return "missing";
+
+  const cached = startupAuthorizationCache.get(baseSessionToken);
+  if (cached && Date.now() - cached.checkedAt < STARTUP_AUTH_CACHE_MS) {
+    return cached.state;
+  }
+
+  try {
+    const response = await upstoxAxios.get("https://api.upstox.com/v2/user/profile", {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      timeout: 8_000,
+      validateStatus: () => true,
+    });
+    const state = classifyUpstoxAuthorizationHttpStatus(response.status, true);
+    startupAuthorizationCache.set(baseSessionToken, { state, checkedAt: Date.now() });
+    return state;
+  } catch {
+    return "indeterminate";
+  }
+}
 
 /**
  * restartSingleSession
@@ -169,16 +195,18 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     .from(upstoxCredentials)
     .where(eq(upstoxCredentials.sessionToken, baseToken))
     .limit(1);
-  let accessToken = credRows[0]?.accessToken ?? null;
-  // FALLBACK: If no credentials found, try any credential row (single-user system)
-  if (!accessToken) {
-    const allCreds = await db.select().from(upstoxCredentials).limit(10);
-    const credWithToken = allCreds.find((c: any) => !!c.accessToken);
-    if (credWithToken) {
-      accessToken = credWithToken.accessToken;
-      await db.update(upstoxCredentials).set({ sessionToken: baseToken }).where(eq(upstoxCredentials.id, credWithToken.id));
-      console.log(`[BotRestart] FALLBACK: Migrated credentials from ${credWithToken.sessionToken.slice(0, 8)}... to ${baseToken.slice(0, 8)}...`);
-    }
+  const accessToken = credRows[0]?.accessToken ?? null;
+  const authorizationState = await checkStartupAuthorization(baseToken, accessToken);
+  if (authorizationState === "missing" || authorizationState === "unauthorized") {
+    const lastError = authorizationState === "missing"
+      ? "Automatic restart blocked: this session has no owned Upstox market-data token"
+      : "Automatic restart blocked: this session's Upstox market-data token is unauthorized";
+    await db.update(botSessions).set({ status: "stopped", lastError }).where(eq(botSessions.id, session.id));
+    console.error(`[BotRestart] ${session.sessionToken.slice(0, 8)} stopped before recovery — ${lastError}`);
+    return false;
+  }
+  if (authorizationState === "indeterminate") {
+    console.warn(`[BotRestart] ${session.sessionToken.slice(0, 8)} token health is indeterminate — continuing recovery because no definitive 401/403 was observed`);
   }
 
   // Build onTradeOpen callback
