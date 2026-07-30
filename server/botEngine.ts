@@ -3656,11 +3656,11 @@ export function generateMeanReversionV13Signal(
     return { ...hold, entryPrice: price, reason: `[MR-V13] BB upper touched but RSI=${rsi.toFixed(1)} not overbought (>70 needed)` };
   }
 
-  // ═══ HARD TRIGGER 3: VWAP Z-Score > 1.8 ═══
+  // ═══ HARD TRIGGER 3: VWAP Z-Score > 1.5 ═══
   const vwapData = calcMeanReversionV13Deviation(candles);
   const absZScore = Math.abs(vwapData.zScore);
-  if (absZScore < 1.8) {
-    return { ...hold, entryPrice: price, reason: `[MR-V13] VWAP Z=${vwapData.zScore.toFixed(2)} — not extreme enough (need |z| >= 1.8)` };
+  if (absZScore < 1.5) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] VWAP Z=${vwapData.zScore.toFixed(2)} — not extreme enough (need |z| >= 1.5)` };
   }
   if (priceAtLowerBB && vwapData.zScore > 0) {
     return { ...hold, entryPrice: price, reason: `[MR-V13] Conflict: BB-lower but VWAP Z positive (${vwapData.zScore.toFixed(2)})` };
@@ -3678,8 +3678,8 @@ export function generateMeanReversionV13Signal(
   const volumeAvailable = vwapData.volumeAvailable && avgVol20 > 0;
   const volRatio = volumeAvailable ? currVol / avgVol20 : 0;
 
-  if (volumeAvailable && volRatio < 1.5) {
-    return { ...hold, entryPrice: price, reason: `[MR-V13] Volume ratio ${volRatio.toFixed(2)}x < 1.5x — no institutional confirmation` };
+ if (volumeAvailable && volRatio < 1.2) {
+    return { ...hold, entryPrice: price, reason: `[MR-V13] Volume ratio ${volRatio.toFixed(2)}x < 1.2x — no institutional confirmation` };
   }
 
   if (!volumeAvailable) {
@@ -3696,16 +3696,15 @@ export function generateMeanReversionV13Signal(
     }
   }
 
-  // ═══ HARD TRIGGER 5: 1-Step Deceleration ═══
+  // ═══ SOFT TRIGGER 5: 1-Step Deceleration (Hard Block Removed) ═══
   const body1 = Math.abs(currCandle.close - currCandle.open);
   const body2 = Math.abs(prevCandle.close - prevCandle.open);
-
-  if (body1 >= body2) {
-    return { ...hold, entryPrice: price, reason: `[MR-V13] No deceleration — body ${body1.toFixed(1)} > prev ${body2.toFixed(1)}` };
-  }
+  const isDecelerating = body1 < body2;
+  // We no longer block the trade here; we just note it for the confidence score.
 
   // ═══ CONFIDENCE SCORING (ADX/EMA = penalties, not hard blocks) ═══
   let confidence = 0.60;
+  if (!isDecelerating) confidence -= 0.05; // Soft penalty instead of total rejection
   confidence += Math.min(0.10, (absZScore - 1.8) * 0.05);
   confidence += Math.min(0.10, (Math.abs(rsi - 50) - 20) * 0.005);
   confidence += volumeAvailable
@@ -4416,7 +4415,8 @@ export async function resolveMcxFuturesToken(
       'ZINC': ['ZINC'],                     // ZINCMINI has NO options
       'ALUMINIUM': ['ALUMINIUM'],           // NO options available
     };
-    const strippedSymbol = symbol.toUpperCase().replace(/^MCX_/, '');
+// Fix: Strip spaces so "Natural Gas" matches "NATURALGAS" in our mapping
+    const strippedSymbol = symbol.toUpperCase().replace(/^MCX_/, '').replace(/\s+/g, '');
     const preferredAssets = SYMBOL_TO_ASSET[strippedSymbol] ?? [strippedSymbol];
     
     // Try each preferred asset_symbol in priority order (first = most liquid options)
