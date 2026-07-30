@@ -955,7 +955,7 @@ export const appRouter = router({
             scanIntervalSec: input.scanIntervalSec,
             tradesCount: todayTradesCount,
             // Restore today's P&L from DB so daily loss-limit circuit breaker is accurate across restarts
-            dailyPnl: restoredDailyPnl,
+            dailyPnl: 0,
             accessToken,
             telegramBotToken: input.telegramBotToken ?? null,
             telegramChatId: input.telegramChatId ?? null,
