@@ -3,6 +3,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeSignalJournalRegime } from "../shared/signalJournalState";
 import { classifyUpstoxAuthorizationHttpStatus } from "../shared/upstoxTokenState";
+import {
+  getBaseBotSessionToken,
+  selectCanonicalBrokerSession,
+  type BrokerSessionCandidate,
+} from "../shared/upstoxSessionReconciliation";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dbSource = readFileSync(join(here, "db.ts"), "utf8");
@@ -56,6 +61,60 @@ describe("30 July production closure regressions", () => {
       expect(restartSource).toContain('set({ status: "stopped", lastError })');
       expect(restartSource).not.toContain("FALLBACK: Migrated credentials");
       expect(restartSource).not.toContain("select().from(upstoxCredentials).limit(10)");
+    });
+
+    it("selects one canonical session per verified broker identity with open-trade safety first", () => {
+      const candidates: BrokerSessionCandidate[] = [
+        {
+          baseSessionToken: "durable-current",
+          brokerUserId: "broker-user",
+          hasOpenTrade: false,
+          isDurableUserSession: true,
+          latestUpdatedAtMs: 200,
+        },
+        {
+          baseSessionToken: "historical-protecting-trade",
+          brokerUserId: "broker-user",
+          hasOpenTrade: true,
+          isDurableUserSession: false,
+          latestUpdatedAtMs: 100,
+        },
+      ];
+      expect(selectCanonicalBrokerSession(candidates)?.baseSessionToken).toBe("historical-protecting-trade");
+    });
+
+    it("prefers the durable app-user session, then recency, when no open trade needs protection", () => {
+      const durable: BrokerSessionCandidate = {
+        baseSessionToken: "durable-current",
+        brokerUserId: "broker-user",
+        hasOpenTrade: false,
+        isDurableUserSession: true,
+        latestUpdatedAtMs: 100,
+      };
+      const newerTransient: BrokerSessionCandidate = {
+        baseSessionToken: "newer-transient",
+        brokerUserId: "broker-user",
+        hasOpenTrade: false,
+        isDurableUserSession: false,
+        latestUpdatedAtMs: 200,
+      };
+      expect(selectCanonicalBrokerSession([newerTransient, durable])?.baseSessionToken).toBe("durable-current");
+      expect(selectCanonicalBrokerSession([
+        { ...durable, isDurableUserSession: false },
+        newerTransient,
+      ])?.baseSessionToken).toBe("newer-transient");
+    });
+
+    it("groups base and slot tokens consistently and decommissions duplicate scan-only rows before restart", () => {
+      expect(getBaseBotSessionToken("base-token-slot4")).toBe("base-token");
+      expect(getBaseBotSessionToken("base-token")).toBe("base-token");
+      expect(restartSource).toContain("reconcileDuplicateBrokerSessions(runningSessions)");
+      expect(restartSource).toContain('authorization.state !== "valid" || !authorization.brokerUserId');
+      expect(restartSource).toContain("duplicate.hasOpenTrade");
+      expect(restartSource).toContain('duplicate persisted session for the same Upstox account; canonical session selected');
+      expect(restartSource.indexOf("reconcileDuplicateBrokerSessions(runningSessions)")).toBeLessThan(
+        restartSource.indexOf("for (const session of reconciledSessions)"),
+      );
     });
   });
 });
