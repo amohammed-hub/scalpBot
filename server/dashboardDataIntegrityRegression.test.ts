@@ -28,7 +28,7 @@ describe("30 July dashboard data-integrity and five-slot regressions", () => {
     it("loads profile and funds only after the regular token passes a live health probe", () => {
       expect(dashboardSource).toContain('trpc.account.profile.useQuery(');
       expect(dashboardSource).toContain('trpc.account.balance.useQuery(');
-      expect(dashboardSource.match(/enabled: tokenDisplayState === "valid"/g)?.length).toBe(2);
+      expect(dashboardSource.match(/enabled: authReady && activeTab === "command" && tokenDisplayState === "valid"/g)?.length).toBe(2);
     });
 
     it("renders missing account fields as blank or unavailable rather than invented values", () => {

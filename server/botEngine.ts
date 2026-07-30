@@ -3565,6 +3565,40 @@ export function checkAdeebExit(candles: Candle[], tradeDirection: "BUY" | "SELL"
 // ══════════════════════════════════════════════════════════════════════════════════
 // ── V13 Mean Reversion Strategy (CORRECTED) ─────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════════
+export function calcMeanReversionV13Deviation(candles: Candle[]): {
+  deviation: number;
+  stdDev: number;
+  zScore: number;
+  signal: "BUY" | "SELL" | "HOLD";
+  volumeAvailable: boolean;
+  anchor: "vwap" | "typical-price";
+} {
+  const recent = candles.slice(-20);
+  if (recent.length < 20) {
+    return { deviation: 0, stdDev: 0, zScore: 0, signal: "HOLD", volumeAvailable: false, anchor: "typical-price" };
+  }
+
+  const volumeAvailable = recent.some(c => Number.isFinite(c.volume) && c.volume > 0);
+  if (volumeAvailable) {
+    return { ...calcVWAPDeviation(candles), volumeAvailable: true, anchor: "vwap" };
+  }
+
+  // Upstox index candles legitimately report zero volume. Using the last close
+  // as VWAP makes every deviation zero and renders the strategy unreachable.
+  // For that feed only, use an equal-weight rolling typical-price benchmark;
+  // no synthetic volume is invented.
+  const typicalPrices = recent.map(c => (c.high + c.low + c.close) / 3);
+  const benchmark = typicalPrices.reduce((sum, value) => sum + value, 0) / typicalPrices.length;
+  const closeDiffs = recent.map(c => c.close - benchmark);
+  const meanDiff = closeDiffs.reduce((sum, value) => sum + value, 0) / closeDiffs.length;
+  const variance = closeDiffs.reduce((sum, value) => sum + Math.pow(value - meanDiff, 2), 0) / closeDiffs.length;
+  const stdDev = Math.sqrt(variance) || 1;
+  const deviation = recent[recent.length - 1].close - benchmark;
+  const zScore = deviation / stdDev;
+  const signal = zScore < -1.5 ? "BUY" : zScore > 1.5 ? "SELL" : "HOLD";
+  return { deviation, stdDev, zScore, signal, volumeAvailable: false, anchor: "typical-price" };
+}
+
 export function generateMeanReversionV13Signal(
   candles: Candle[],
   candles5m?: Candle[],
@@ -3623,7 +3657,7 @@ export function generateMeanReversionV13Signal(
   }
 
   // ═══ HARD TRIGGER 3: VWAP Z-Score > 1.8 ═══
-  const vwapData = calcVWAPDeviation(candles);
+  const vwapData = calcMeanReversionV13Deviation(candles);
   const absZScore = Math.abs(vwapData.zScore);
   if (absZScore < 1.8) {
     return { ...hold, entryPrice: price, reason: `[MR-V13] VWAP Z=${vwapData.zScore.toFixed(2)} — not extreme enough (need |z| >= 1.8)` };
@@ -3641,10 +3675,25 @@ export function generateMeanReversionV13Signal(
     ? prevVolumes.reduce((a, b) => a + b, 0) / 20
     : prevVolumes.reduce((a, b) => a + b, 0) / Math.max(prevVolumes.length, 1);
   const currVol = currCandle.volume;
-  const volRatio = avgVol20 > 0 ? currVol / avgVol20 : 0;
+  const volumeAvailable = vwapData.volumeAvailable && avgVol20 > 0;
+  const volRatio = volumeAvailable ? currVol / avgVol20 : 0;
 
-  if (volRatio < 1.5) {
+  if (volumeAvailable && volRatio < 1.5) {
     return { ...hold, entryPrice: price, reason: `[MR-V13] Volume ratio ${volRatio.toFixed(2)}x < 1.5x — no institutional confirmation` };
+  }
+
+  if (!volumeAvailable) {
+    // Index feeds have no usable volume. Require an actual rejection candle so
+    // the missing volume gate is replaced by price action, not simply removed.
+    const candleRange = Math.max(currCandle.high - currCandle.low, Number.EPSILON);
+    const body = Math.abs(currCandle.close - currCandle.open);
+    const lowerWick = Math.max(0, Math.min(currCandle.open, currCandle.close) - currCandle.low);
+    const upperWick = Math.max(0, currCandle.high - Math.max(currCandle.open, currCandle.close));
+    const bullishRejection = currCandle.close > currCandle.open || lowerWick >= Math.max(body, candleRange * 0.25);
+    const bearishRejection = currCandle.close < currCandle.open || upperWick >= Math.max(body, candleRange * 0.25);
+    if ((priceAtLowerBB && !bullishRejection) || (priceAtUpperBB && !bearishRejection)) {
+      return { ...hold, entryPrice: price, reason: "[MR-V13] Zero-volume index feed — waiting for a confirming rejection candle" };
+    }
   }
 
   // ═══ HARD TRIGGER 5: 1-Step Deceleration ═══
@@ -3659,7 +3708,9 @@ export function generateMeanReversionV13Signal(
   let confidence = 0.60;
   confidence += Math.min(0.10, (absZScore - 1.8) * 0.05);
   confidence += Math.min(0.10, (Math.abs(rsi - 50) - 20) * 0.005);
-  confidence += Math.min(0.07, (volRatio - 1.5) * 0.035);
+  confidence += volumeAvailable
+    ? Math.min(0.07, Math.max(0, volRatio - 1.5) * 0.035)
+    : 0.03; // rejection-candle confirmation on a genuine zero-volume index feed
 
   const adx = calcADX(candles, 14);
   if (adx < 20) confidence += 0.05;
@@ -3704,7 +3755,8 @@ export function generateMeanReversionV13Signal(
   const targetPrice = direction === "BUY" ? entryPrice + targetDistance : entryPrice - targetDistance;
   const partial1RPrice = direction === "BUY" ? entryPrice + risk : entryPrice - risk;
 
-  const reason = `[MR-V13] ${direction} — BB${direction === "BUY" ? "lower" : "upper"} + RSI(${rsi.toFixed(0)}) + Z(${vwapData.zScore.toFixed(2)}) + Vol(${volRatio.toFixed(1)}x) + Decel | ADX(${adx.toFixed(0)}) EMA(${ema50Slope.toFixed(2)}%) | SL:${slDistance.toFixed(0)}pts Tgt:${targetDistance.toFixed(0)}pts (1:${rewardMultiple}) | Conf:${(confidence*100).toFixed(0)}%`;
+  const confirmationLabel = volumeAvailable ? `Vol(${volRatio.toFixed(1)}x)` : "IndexRejection(no-volume-feed)";
+  const reason = `[MR-V13] ${direction} — BB${direction === "BUY" ? "lower" : "upper"} + RSI(${rsi.toFixed(0)}) + Z(${vwapData.zScore.toFixed(2)},${vwapData.anchor}) + ${confirmationLabel} + Decel | ADX(${adx.toFixed(0)}) EMA(${ema50Slope.toFixed(2)}%) | SL:${slDistance.toFixed(0)}pts Tgt:${targetDistance.toFixed(0)}pts (1:${rewardMultiple}) | Conf:${(confidence*100).toFixed(0)}%`;
 
   return {
     direction,
@@ -3928,44 +3980,75 @@ export async function refreshTokenFromDB(sessionToken: string): Promise<string |
   }
 }
 
-export async function fetchFullQuote(instrumentToken: string, accessToken: string): Promise<{ ltp: number; bid: number; ask: number } | null> {
-  try {
+type FullQuote = { ltp: number; bid: number; ask: number };
+type FullQuoteFetchOptions = {
+  retry?: boolean;
+  timeoutMs?: number;
+  cacheMs?: number;
+};
+
+const fullQuoteCache = new Map<string, { quote: FullQuote; fetchedAt: number }>();
+const fullQuoteInflight = new Map<string, Promise<FullQuote | null>>();
+
+export async function fetchFullQuote(
+  instrumentToken: string,
+  accessToken: string,
+  options: FullQuoteFetchOptions = {},
+): Promise<FullQuote | null> {
+  const retry = options.retry ?? true;
+  const timeoutMs = options.timeoutMs ?? 5000;
+  const cacheMs = options.cacheMs ?? 2000;
+  const cacheKey = `${instrumentToken}\u0000${accessToken}`;
+  const cached = fullQuoteCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt <= cacheMs) return cached.quote;
+
+  const existingRequest = fullQuoteInflight.get(cacheKey);
+  if (existingRequest) return existingRequest;
+
+  const requestQuote = async (): Promise<FullQuote | null> => {
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded}`;
-    const resp = await upstoxAxios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
+    const resp = await upstoxAxios.get(url, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      timeout: timeoutMs,
+    });
     const data = selectRequestedUpstoxQuote(resp.data?.data, instrumentToken);
     if (!data) {
       console.warn(`[BotEngine] fetchFullQuote rejected a response without an exact instrument-token match for ${instrumentToken}`);
       return null;
     }
     const ltp = data.last_price ?? 0;
-    const bid = data.depth?.buy?.[0]?.price ?? ltp;
-    const ask = data.depth?.sell?.[0]?.price ?? ltp;
-    return { ltp, bid, ask };
-  } catch (err) {
-    // On 401, don't retry with same token — caller should refresh from DB
-    if (axios.isAxiosError(err) && err.response?.status === 401) {
-      return null; // Signal caller to refresh token
-    }
-    // Retry once after 1 second for transient failures
+    const quote = {
+      ltp,
+      bid: data.depth?.buy?.[0]?.price ?? ltp,
+      ask: data.depth?.sell?.[0]?.price ?? ltp,
+    };
+    if (quote.ltp > 0) fullQuoteCache.set(cacheKey, { quote, fetchedAt: Date.now() });
+    return quote;
+  };
+
+  const request = (async () => {
     try {
-      await new Promise(r => setTimeout(r, 1000));
-      const encoded = encodeURIComponent(instrumentToken);
-      const url = `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded}`;
-      const resp = await upstoxAxios.get(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 5000 });
-      const data = selectRequestedUpstoxQuote(resp.data?.data, instrumentToken);
-      if (!data) {
-        console.warn(`[BotEngine] fetchFullQuote retry rejected a response without an exact instrument-token match for ${instrumentToken}`);
+      return await requestQuote();
+    } catch (err) {
+      // A stale/invalid credential cannot become valid by immediately retrying it.
+      if (axios.isAxiosError(err) && err.response?.status === 401) return null;
+      if (!retry) return null;
+      try {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        return await requestQuote();
+      } catch {
+        console.warn(`[BotEngine] fetchFullQuote failed twice for ${instrumentToken}`);
         return null;
       }
-      const ltp = data.last_price ?? 0;
-      const bid = data.depth?.buy?.[0]?.price ?? ltp;
-      const ask = data.depth?.sell?.[0]?.price ?? ltp;
-      return { ltp, bid, ask };
-    } catch {
-      console.warn(`[BotEngine] fetchFullQuote failed twice for ${instrumentToken}`);
-      return null;
     }
+  })();
+
+  fullQuoteInflight.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    if (fullQuoteInflight.get(cacheKey) === request) fullQuoteInflight.delete(cacheKey);
   }
 }
 
@@ -5093,11 +5176,27 @@ async function tick(
         if (state.carryForward) {
           console.log(`[BotEngine] ${state.sessionToken} — carry forward active, skipping force-close (no candle data)`);
         } else {
-        // Market is closed — force close the open trade at last known price
+        // Never mark a live broker position closed merely because market data is absent.
+        // Demo positions may close only from a trustworthy last exact-contract mark.
         const trade = state.openTrade;
         const exitPx = trade.isIndexOptions
-          ? (state.optionPremiumPrice && state.optionPremiumPrice > 0 ? state.optionPremiumPrice : trade.entryPrice)
-          : (state.lastPrice > 0 ? state.lastPrice : trade.entryPrice);
+          ? (state.optionPremiumPrice && state.optionPremiumPrice > 0 ? state.optionPremiumPrice : 0)
+          : (state.lastPrice > 0 ? state.lastPrice : 0);
+        if (state.mode === "live") {
+          state.lastError = `Auto square-off could not be verified without market data — confirm ${trade.symbolLabel} in Upstox`;
+          emitActivity(state.sessionToken, "error", `⚠ Live position retained: no market data to verify square-off for ${trade.symbolLabel}. Check Upstox manually.`);
+          sendTelegramAlert(state,
+            `⚠ <b>LIVE POSITION REQUIRES VERIFICATION</b>\n` +
+            `📊 <b>${trade.symbolLabel}</b>\n` +
+            `Market data is unavailable, so ScalpBot did not fabricate an exit or mark the trade closed. Confirm the position in Upstox.`
+          );
+          return;
+        }
+        if (!(exitPx > 0)) {
+          state.lastError = `Demo square-off deferred — no trustworthy mark for ${trade.symbolLabel}`;
+          emitActivity(state.sessionToken, "error", `⚠ Demo position retained: exact quote unavailable for ${trade.symbolLabel}. P&L remains unavailable until a trustworthy mark returns.`);
+          return;
+        }
         const noDataRemQty = trade.quantity - (trade.bookedQty ?? 0);
         const remainderPnl = trade.direction === "BUY" ? (exitPx - trade.entryPrice) * noDataRemQty : (trade.entryPrice - exitPx) * noDataRemQty;
         // Only add bookedPnl if it wasn't already added to dailyPnl during this session
@@ -5419,19 +5518,12 @@ async function tick(
             state.optionQuoteUpdatedAt = undefined;
             console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. No last known price — P&L is unavailable; entry is used internally only to prevent unsafe exits.`);
             // Track consecutive failures — auto-close trade if option token is expired/invalid
-            state.optionQuoteFailCount = (state.optionQuoteFailCount ?? 0) + 1;
-            if (state.optionQuoteFailCount >= 10) {
-              console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — EXPIRED OPTION DETECTED: ${realOptToken} failed ${state.optionQuoteFailCount} consecutive quote fetches. Auto-closing phantom trade.`);
-              // Force-close this phantom trade at entry price (0 P&L)
-              const phantomTrade = state.openTrade!;
-              // Record the close in DB via the onTradeClose callback
-              await onTradeClose(phantomTrade.dbId, phantomTrade.entryPrice, 0, "Expired Option — Auto Close");
-              state.openTrade = null;
-              state.capitalUsed = 0;
-              state.optionTradeToken = undefined;
-              state.optionQuoteFailCount = 0;
-              emitActivity(state.sessionToken, "trade_close", `⚠️ Auto-closed expired option (${realOptToken}) — quote failed 10× consecutively. Phantom trade removed.`);
-              return; // Exit tick early — trade is now closed
+            state.optionQuoteFailCount = Math.min(10, (state.optionQuoteFailCount ?? 0) + 1);
+            if (state.optionQuoteFailCount === 10 && !state.alertsSent.has("option_quote_reconciliation_required")) {
+              state.alertsSent.add("option_quote_reconciliation_required");
+              state.lastError = `Exact option quote unavailable for ${realOptToken}; position preserved for broker reconciliation`;
+              console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — exact option quote failed 10 consecutive times for ${realOptToken}. Position remains open; no synthetic exit was written.`);
+              emitActivity(state.sessionToken, "error", `Exact option quote unavailable 10× for ${realOptToken} — position preserved; verify the contract with Upstox before closing.`);
             }
           }
         }
@@ -8155,14 +8247,36 @@ export function startBot(
   state.intervalHandle = handle;
   bots.set(config.sessionToken, state);
   console.log(`[startBot] ✓ Bot added to Map — token=${config.sessionToken.slice(0,8)}, mapSize=${bots.size}, status=${state.status}`);
-  emitActivity(config.sessionToken, "bot_start", `Bot started — ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s | MapSize: ${bots.size}`);
-  tick(state, onTradeOpen, onTradeClose, onTick).catch(err => {
-    const msg = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : "";
-    console.error(`[BotEngine] ⚠ INITIAL TICK ERROR (${config.sessionToken}):\n  MSG: ${msg}\n  STACK: ${stack}`);
-    state.lastError = `Tick error: ${msg}`;
-    emitActivity(config.sessionToken, "error", `⚠ Initial tick error: ${msg}`);
-  });
+  emitActivity(config.sessionToken, "bot_start", `Bot registered — ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s | MapSize: ${bots.size}`);
+
+  const initialTick = (async () => {
+    try {
+      if (state._pendingOptionResolve) {
+        await state._pendingOptionResolve;
+        state._pendingOptionResolve = undefined;
+      }
+      await tick(state, onTradeOpen, onTradeClose, onTick);
+      const activeState = bots.get(config.sessionToken);
+      const ready = activeState === state
+        && (state.status === "running" || state.status === "paused")
+        && state.lastTickAt > 0;
+      return {
+        ready,
+        degraded: ready && state.candles.length === 0,
+        lastTickAt: state.lastTickAt,
+        lastError: state.lastError,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : "";
+      console.error(`[BotEngine] ⚠ INITIAL TICK ERROR (${config.sessionToken}):\n  MSG: ${msg}\n  STACK: ${stack}`);
+      state.lastError = `Tick error: ${msg}`;
+      emitActivity(config.sessionToken, "error", `⚠ Initial tick error: ${msg}`);
+      return { ready: false, degraded: false, lastTickAt: state.lastTickAt, lastError: state.lastError };
+    }
+  })();
+
+  return { state, initialTick };
 }
 export function stopBot(sessionToken: string) {
   const state = bots.get(sessionToken);

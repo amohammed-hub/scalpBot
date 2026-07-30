@@ -1,10 +1,11 @@
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAppUserByIdStrict, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess, createAccessGrant, listAccessGrants, revokeAccessGrant, extendAccessGrant } from "./db";
 import { getTierLimits, TIER_LIMITS, type TierLimits } from "../shared/tierLimits";
 import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, notificationPreferences, adminSettings, broadcastMessages, alertTemplates, subscriptions, referrals } from "../drizzle/schema";
-import { eq, desc, and, gte, count, or, like } from "drizzle-orm";
+import { eq, desc, and, gte, count, or, like, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
 import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, generateMeanReversionV13Signal, generateRenkoSignal, generateBoxingSignal, generateORBV8Signal, generateSmartRenkoSignal, generateAdeebSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, fetchUpcomingOptionExpiryKeys, getOptionExpiryDateKey, isOptionExpiryTradable, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type Signal, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";import { getUpstoxEgressStatus, upstoxFetch, verifyUpstoxManagedEgress } from "./upstoxHttp";
@@ -716,6 +717,7 @@ export const appRouter = router({
           .select()
           .from(botSessions)
           .where(eq(botSessions.sessionToken, input.sessionToken))
+          .orderBy(desc(botSessions.updatedAt), desc(botSessions.id))
           .limit(1);
         const existingIsToday = !!existing[0]?.startedAt && new Date(existing[0].startedAt).getTime() >= todayStart.getTime();
         const restoredLayerTradesCount: Record<string, number> = (() => {
@@ -773,7 +775,7 @@ export const appRouter = router({
              adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
              renkoExitEnabled: input.renkoExitEnabled ?? false,
            })
-           .where(eq(botSessions.sessionToken, input.sessionToken));
+           .where(eq(botSessions.id, sessionId));
        } else {
           const result = await db.insert(botSessions).values({
             sessionToken: input.sessionToken,
@@ -863,7 +865,7 @@ export const appRouter = router({
                 status: state.status,
                 lastError: state.lastError,
               })
-              .where(eq(botSessions.sessionToken, input.sessionToken));
+              .where(eq(botSessions.id, sessionId));
           }
           return insertId;
         };
@@ -880,7 +882,7 @@ export const appRouter = router({
           const sessionRow = await dbInner
             .select({ capital: botSessions.capital })
             .from(botSessions)
-            .where(eq(botSessions.sessionToken, input.sessionToken))
+            .where(eq(botSessions.id, sessionId))
             .limit(1);
           const capital = sessionRow[0]?.capital ?? input.capital;
           await dbInner
@@ -912,7 +914,7 @@ export const appRouter = router({
                 status: state.status,
                 lastError: state.lastError,
               })
-              .where(eq(botSessions.sessionToken, input.sessionToken));
+              .where(eq(botSessions.id, sessionId));
           }
 
           // v3: refresh StoplossGuard state from last 20 closed trades
@@ -932,7 +934,7 @@ export const appRouter = router({
         resetPortfolioHalt();
         resetDailyState(input.sessionToken);
 
-        startBot(
+        const startResult = startBot(
           {
             sessionToken: input.sessionToken,
             sessionId,
@@ -1004,11 +1006,33 @@ export const appRouter = router({
               layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),
               consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,
               lastUnderlyingSLAt: tickState.lastUnderlyingSLAt ?? null,
-            }).where(eq(botSessions.sessionToken, tickState.sessionToken));
+            }).where(eq(botSessions.id, sessionId));
           },
         );
 
-        return { success: true, sessionId };
+        const readiness = await startResult.initialTick;
+        const confirmedState = getBotState(input.sessionToken);
+        if (!readiness.ready || !confirmedState || (confirmedState.status !== "running" && confirmedState.status !== "paused")) {
+          stopBot(input.sessionToken);
+          await db.update(botSessions).set({
+            status: "stopped",
+            stoppedAt: new Date(),
+            lastError: readiness.lastError ?? "Engine registration did not converge after start",
+          }).where(eq(botSessions.id, sessionId));
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: readiness.lastError
+              ? `Bot failed its first market-data scan: ${readiness.lastError}`
+              : "Bot could not be confirmed after startup. No successful start was recorded.",
+          });
+        }
+
+        return {
+          success: true,
+          sessionId,
+          readiness: readiness.degraded ? "degraded" : "ready",
+          warning: readiness.degraded ? "The bot is running with a bounded market-data warning and will retry automatically." : null,
+        };
       }),
 
     stop: publicProcedure
@@ -2494,64 +2518,50 @@ export const appRouter = router({
     allStatus: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema, isAdmin: z.boolean().default(false) }))
       .query(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         const isAdmin = await verifyAdminAccess(ctx);
         const db = await getDb();
-        // Determine actual slot count from user's extraBotSlots in DB
-        let userMaxSlots = 3; // default for regular users
+        // Slot entitlement comes only from the authenticated session owner. The legacy
+        // client-supplied isAdmin flag remains in the input for wire compatibility but
+        // is intentionally ignored.
+        let userMaxSlots = 3;
         if (db) {
           try {
-            // Try finding user by sessionToken in app_users first
-            let [userRows]: any = await db.execute(sql`SELECT role, extraBotSlots FROM app_users WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
-            const userRow = Array.isArray(userRows) ? userRows[0] : userRows;
-            if (userRow) {
-              const extra = userRow.extraBotSlots ?? 0;
-              if (userRow.role === "admin" || input.isAdmin) {
-                // Admin: extraBotSlots IS the total (set by admin panel)
-                userMaxSlots = Math.max(3, extra);
-              } else {
-                // Regular user: extraBotSlots IS the total (set by admin)
-                userMaxSlots = extra > 0 ? extra : 3;
-              }
-            } else {
-              // Fallback: sessionToken might not be in app_users (different UUID per device)
-              // Check if this sessionToken exists in upstox_credentials and find the linked user
-              const [credRows]: any = await db.execute(sql`SELECT sessionToken FROM upstox_credentials WHERE sessionToken = ${input.sessionToken} LIMIT 1`);
-              const credRow = Array.isArray(credRows) ? credRows[0] : credRows;
-              if (credRow) {
-                // This sessionToken has credentials - check all app_users to find admin
-                const [allUsers]: any = await db.execute(sql`SELECT role, extraBotSlots FROM app_users ORDER BY id ASC LIMIT 5`);
-                const users = Array.isArray(allUsers) ? allUsers : [];
-                // Find the admin user (Mohammed Anas) or match by input.isAdmin
-                const adminUser = users.find((u: any) => u.role === "admin");
-                if (input.isAdmin && adminUser) {
-                  userMaxSlots = Math.max(3, adminUser.extraBotSlots ?? 4);
-                } else {
-                  // Regular user - find first non-admin with extraBotSlots
-                  const regularUser = users.find((u: any) => u.role !== "admin");
-                  if (regularUser) {
-                    userMaxSlots = (regularUser.extraBotSlots ?? 0) > 0 ? regularUser.extraBotSlots : 3;
-                  }
-                }
-              }
-            }
-          } catch { /* fallback to 3 */ }
+            const userRows = await db
+              .select({ extraBotSlots: appUsers.extraBotSlots })
+              .from(appUsers)
+              .where(eq(appUsers.sessionToken, input.sessionToken))
+              .limit(1);
+            const extra = userRows[0]?.extraBotSlots ?? 0;
+            userMaxSlots = extra > 0 ? Math.max(3, extra) : 3;
+          } catch (error) {
+            console.error("[allStatus] Failed to load owner slot entitlement:", error);
+          }
         }
         const slotTokens = getSlotTokens(input.sessionToken, userMaxSlots);
-        // Load DB rows for all 3 slot tokens in one pass
+        // Load DB rows for all entitled slot tokens in one pass
         const dbRows: Record<string, typeof botSessions.$inferSelect> = {};
         const nowMs_ = Date.now(); const istOff_ = 5.5 * 60 * 60 * 1000; const istN_ = new Date(nowMs_ + istOff_); istN_.setUTCHours(0, 0, 0, 0); const todayStart = new Date(istN_.getTime() - istOff_);
         const todayTradeCounts: Record<string, number> = {};
         if (db) {
-          for (const tok of slotTokens) {
-            try {
-              const rows = await db.select().from(botSessions).where(eq(botSessions.sessionToken, tok)).limit(1);
-              if (rows.length > 0) dbRows[tok] = rows[0];
-              const countRows = await db.select({ count: count() }).from(tradeLog).where(and(eq(tradeLog.sessionToken, tok), gte(tradeLog.enteredAt, todayStart)));
-              todayTradeCounts[tok] = countRows[0]?.count ?? 0;
-            } catch (dbErr) {
-              console.error(`[allStatus] DB query failed for ${tok}:`, dbErr);
-              // Continue with other slots — don't crash entire query
+          try {
+            const rows = await db
+              .select()
+              .from(botSessions)
+              .where(inArray(botSessions.sessionToken, slotTokens))
+              .orderBy(desc(botSessions.updatedAt), desc(botSessions.id));
+            for (const row of rows) {
+              if (!dbRows[row.sessionToken]) dbRows[row.sessionToken] = row;
             }
+
+            const countRows = await db
+              .select({ sessionToken: tradeLog.sessionToken, count: count() })
+              .from(tradeLog)
+              .where(and(inArray(tradeLog.sessionToken, slotTokens), gte(tradeLog.enteredAt, todayStart)))
+              .groupBy(tradeLog.sessionToken);
+            for (const row of countRows) todayTradeCounts[row.sessionToken] = row.count;
+          } catch (dbErr) {
+            console.error("[allStatus] Batched DB query failed:", dbErr);
           }
         }
         // Merge in-memory state with DB fallback — always return all 3 slots
@@ -2634,108 +2644,86 @@ export const appRouter = router({
     // This reduces the "lag" between dashboard and Upstox by updating prices more frequently.
     livePrices: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
         const slotTokens = [input.sessionToken, `${input.sessionToken}-slot1`, `${input.sessionToken}-slot2`, `${input.sessionToken}-slot3`, `${input.sessionToken}-slot4`, `${input.sessionToken}-slot5`];
-        const results: Array<{
-          sessionToken: string;
-          slot: number;
-          livePrice: number;
-          updatedAt: number;
-          optionPremiumPrice?: number;
-          optionQuoteStatus?: "live" | "stale" | "unavailable";
-          optionQuoteUpdatedAt?: number;
-        }> = [];
+        const runningBots = slotTokens.flatMap((sessionToken) => {
+          const bot = getBotState(sessionToken);
+          return bot?.status === "running" ? [{ sessionToken, bot }] : [];
+        });
 
-        for (const tok of slotTokens) {
-          const bot = getBotState(tok);
-          if (!bot || bot.status !== "running") continue;
+        return Promise.all(runningBots.map(async ({ sessionToken, bot }) => {
+          const slot = sessionToken === input.sessionToken
+            ? 0
+            : parseInt(sessionToken.match(/-slot(\d+)$/)?.[1] ?? "0", 10);
+          const signalToken = bot.isIndexOptions && bot.underlyingToken
+            ? bot.underlyingToken
+            : bot.instrumentToken;
+          const accessToken = bot.accessToken ?? "";
+          const exactOptionToken = bot.isIndexOptions
+            && bot.openTrade
+            && bot.optionTradeToken
+            && !bot.optionTradeToken.startsWith("PAPER_OPT|")
+            ? bot.optionTradeToken
+            : null;
 
-          // Determine the correct token to fetch price for
-          const signalToken = (bot.isIndexOptions && bot.underlyingToken) ? bot.underlyingToken : bot.instrumentToken;
+          const [signalQuote, optionQuote] = accessToken
+            ? await Promise.all([
+                fetchFullQuote(signalToken, accessToken, { retry: false, timeoutMs: 2500, cacheMs: 2500 }),
+                exactOptionToken
+                  ? fetchFullQuote(exactOptionToken, accessToken, { retry: false, timeoutMs: 2500, cacheMs: 2500 })
+                  : Promise.resolve(null),
+              ])
+            : [null, null];
 
-          try {
-            // Fetch only the latest 1-min candle (lightweight — no 5m, no day, no quote)
-            const candles = await fetchUpstoxCandles(signalToken, bot.accessToken ?? undefined);
-            const latestClose = candles.length > 0 ? candles[candles.length - 1].close : 0;
+          if (signalQuote?.ltp && signalQuote.ltp > 0) bot.lastPrice = signalQuote.ltp;
 
-            // Update in-memory lastPrice if we got a valid price (keeps allStatus in sync too)
-            if (latestClose > 0) {
-              bot.lastPrice = latestClose;
-            }
-
-            // For options bots: fetch real option premium price (no delta approximation)
-            let optPremium = bot.optionQuoteStatus === "live" || bot.optionQuoteStatus === "stale"
-              ? (bot.optionPremiumPrice ?? 0)
-              : 0;
-            if (bot.isIndexOptions && bot.openTrade) {
-             // Priority 1: Fetch real option quote if we have a resolved token
-             if (bot.optionTradeToken && bot.accessToken && !bot.optionTradeToken.startsWith("PAPER_OPT|")) {
-               try {
-                 const optQuote = await fetchFullQuote(bot.optionTradeToken, bot.accessToken);
-                 if (optQuote && optQuote.ltp > 0) {
-                    // ═══ SANITY CHECK: Underlying price leak detection ═══
-                    // If LTP is 10× entry, it's the underlying futures price, not the option premium
-                    const entryPx = bot.openTrade.entryPrice ?? 0;
-                    const leakRatio = entryPx > 0 ? optQuote.ltp / entryPx : 1;
-                    if (leakRatio > 5) {
-                      // A quote this far from the persisted entry cannot be trusted as the
-                      // same option contract. Do not convert it into entry-price P&L=0 or
-                      // cap it to another fabricated mark.
-                      console.warn(`[livePrices] OPTION QUOTE REJECTED: ${bot.optionTradeToken} returned LTP ₹${optQuote.ltp.toFixed(2)} which is ${leakRatio.toFixed(1)}× entry ₹${entryPx.toFixed(2)}. Marking P&L unavailable.`);
-                      bot.optionTradeToken = undefined;
-                      bot.optionPremiumPrice = undefined;
-                      bot.optionQuoteStatus = "unavailable";
-                      bot.optionQuoteUpdatedAt = undefined;
-                      optPremium = 0;
-                    } else {
-                      optPremium = optQuote.ltp;
-                      bot.optionPremiumPrice = optPremium;
-                      bot.optionQuoteStatus = "live";
-                      bot.optionQuoteUpdatedAt = Date.now();
-                    }
-                 }
-               } catch { /* non-fatal */ }
-             }
-              // Never resolve a different ATM contract to price an already-open trade.
-              // If the persisted trade token is unavailable or invalid, the only honest
-              // mark-to-market result is unavailable until that exact token quotes again.
-              if (optPremium === 0) {
-                bot.optionPremiumPrice = undefined;
-                bot.optionQuoteStatus = "unavailable";
-                bot.optionQuoteUpdatedAt = undefined;
+          if (bot.isIndexOptions && bot.openTrade) {
+            const previousMark = bot.optionPremiumPrice;
+            const previousMarkAt = bot.optionQuoteUpdatedAt;
+            if (optionQuote?.ltp && optionQuote.ltp > 0) {
+              const entryPrice = bot.openTrade.entryPrice ?? 0;
+              const leakRatio = entryPrice > 0 ? optionQuote.ltp / entryPrice : 1;
+              if (leakRatio <= 5) {
+                bot.optionPremiumPrice = optionQuote.ltp;
+                bot.optionQuoteStatus = "live";
+                bot.optionQuoteUpdatedAt = Date.now();
+              } else {
+                console.warn(`[livePrices] OPTION QUOTE REJECTED: exact token ${exactOptionToken} returned LTP ₹${optionQuote.ltp.toFixed(2)} which is ${leakRatio.toFixed(1)}× entry ₹${entryPrice.toFixed(2)}.`);
+                if (previousMark && previousMark > 0) {
+                  bot.optionPremiumPrice = previousMark;
+                  bot.optionQuoteStatus = "stale";
+                  bot.optionQuoteUpdatedAt = previousMarkAt;
+                } else {
+                  bot.optionPremiumPrice = undefined;
+                  bot.optionQuoteStatus = "unavailable";
+                  bot.optionQuoteUpdatedAt = undefined;
+                }
               }
+            } else if (previousMark && previousMark > 0) {
+              // A transient timeout must not erase the last exact-contract mark.
+              bot.optionPremiumPrice = previousMark;
+              bot.optionQuoteStatus = "stale";
+              bot.optionQuoteUpdatedAt = previousMarkAt;
+            } else {
+              bot.optionPremiumPrice = undefined;
+              bot.optionQuoteStatus = "unavailable";
+              bot.optionQuoteUpdatedAt = undefined;
             }
-
-            const slot = tok === input.sessionToken ? 0 : parseInt(tok.match(/-slot(\d+)$/)?.[1] ?? "0", 10);
-            results.push({
-              sessionToken: tok,
-              slot,
-              livePrice: latestClose > 0 ? latestClose : bot.lastPrice,
-              updatedAt: Date.now(),
-              optionPremiumPrice: bot.isIndexOptions && bot.optionQuoteStatus !== "unavailable"
-                ? (bot.optionPremiumPrice ?? undefined)
-                : undefined,
-              optionQuoteStatus: bot.isIndexOptions ? (bot.optionQuoteStatus ?? "unavailable") : undefined,
-              optionQuoteUpdatedAt: bot.isIndexOptions ? bot.optionQuoteUpdatedAt : undefined,
-            });
-          } catch {
-            // On error, return the last known price from memory
-            const slot = tok === input.sessionToken ? 0 : parseInt(tok.match(/-slot(\d+)$/)?.[1] ?? "0", 10);
-            results.push({
-              sessionToken: tok,
-              slot,
-              livePrice: bot.lastPrice,
-              updatedAt: bot.lastTickAt ?? Date.now(),
-              optionPremiumPrice: bot.isIndexOptions && bot.optionQuoteStatus !== "unavailable"
-                ? (bot.optionPremiumPrice ?? undefined)
-                : undefined,
-              optionQuoteStatus: bot.isIndexOptions ? (bot.optionQuoteStatus ?? "unavailable") : undefined,
-              optionQuoteUpdatedAt: bot.isIndexOptions ? bot.optionQuoteUpdatedAt : undefined,
-            });
           }
-        }
 
-        return results;
+          return {
+            sessionToken,
+            slot,
+            livePrice: bot.lastPrice,
+            updatedAt: signalQuote?.ltp ? Date.now() : (bot.lastTickAt ?? Date.now()),
+            optionPremiumPrice: bot.isIndexOptions && bot.optionQuoteStatus !== "unavailable"
+              ? (bot.optionPremiumPrice ?? undefined)
+              : undefined,
+            optionQuoteStatus: bot.isIndexOptions ? (bot.optionQuoteStatus ?? "unavailable") : undefined,
+            optionQuoteUpdatedAt: bot.isIndexOptions ? bot.optionQuoteUpdatedAt : undefined,
+          };
+        }));
       }),
 
     // Start a secondary bot on a different instrument
@@ -3000,6 +2988,7 @@ export const appRouter = router({
           })
           .from(botSessions)
           .where(eq(botSessions.sessionToken, slotToken))
+          .orderBy(desc(botSessions.updatedAt), desc(botSessions.id))
           .limit(1);
         const slotSessionIsToday = !!existing[0]?.startedAt && new Date(existing[0].startedAt).getTime() >= slotTodayStart.getTime();
         const slotRestoredLayerTradesCount: Record<string, number> = (() => {
@@ -3047,7 +3036,7 @@ export const appRouter = router({
            consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
            layerTradesCount: JSON.stringify(slotRestoredLayerTradesCount),
-         }).where(eq(botSessions.sessionToken, slotToken));
+         }).where(eq(botSessions.id, sessionId));
        } else {
           const result = await db.insert(botSessions).values({
             sessionToken: slotToken, status: "running", mode: input.mode,
@@ -3109,7 +3098,7 @@ export const appRouter = router({
               layerTradesCount: JSON.stringify(slotState.layerTradesCount ?? {}),
               consecutiveUnderlyingSLs: slotState.consecutiveUnderlyingSLs ?? 0,
               lastUnderlyingSLAt: slotState.lastUnderlyingSLAt ?? null,
-            }).where(eq(botSessions.sessionToken, slotToken));
+            }).where(eq(botSessions.id, sessionId));
           }
           // Refresh StoplossGuard from recent slot trades (parity with primary path)
           try {
@@ -3123,7 +3112,7 @@ export const appRouter = router({
           } catch { /* non-fatal */ }
         };
 
-        startBot({
+        const startResult = startBot({
           sessionToken: slotToken, sessionId, status: "running", mode: input.mode,
           instrumentToken: input.instrumentToken, instrumentSymbol: input.instrumentSymbol,
           instrumentLabel: input.instrumentLabel, capital: input.capital,
@@ -3172,10 +3161,33 @@ export const appRouter = router({
             layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),
             consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,
             lastUnderlyingSLAt: tickState.lastUnderlyingSLAt ?? null,
-          }).where(eq(botSessions.sessionToken, tickState.sessionToken));
+          }).where(eq(botSessions.id, sessionId));
         });
 
-        return { success: true, slotToken, sessionId };
+        const readiness = await startResult.initialTick;
+        const confirmedState = getBotState(slotToken);
+        if (!readiness.ready || !confirmedState || (confirmedState.status !== "running" && confirmedState.status !== "paused")) {
+          stopBot(slotToken);
+          await db.update(botSessions).set({
+            status: "stopped",
+            stoppedAt: new Date(),
+            lastError: readiness.lastError ?? "Engine registration did not converge after start",
+          }).where(eq(botSessions.id, sessionId));
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: readiness.lastError
+              ? `Bot failed its first market-data scan: ${readiness.lastError}`
+              : "Bot could not be confirmed after startup. No successful start was recorded.",
+          });
+        }
+
+        return {
+          success: true,
+          slotToken,
+          sessionId,
+          readiness: readiness.degraded ? "degraded" : "ready",
+          warning: readiness.degraded ? "The bot is running with a bounded market-data warning and will retry automatically." : null,
+        };
       }),
 
     stopSecondary: publicProcedure
@@ -3747,13 +3759,32 @@ export const appRouter = router({
             case "V1":
               sig = generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
               break;
-            default: // "all"
-              sig = generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
-              if (sig.direction === "HOLD" && window.length >= 50) {
-                const mrSig = generateMeanReversionV13Signal(window);
-                if (mrSig.direction !== "HOLD") sig = mrSig;
+            default: { // "all"
+              const generators: Array<() => Signal> = [
+                () => generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence),
+                () => generateSignalV2(window, input.slMultiplier, input.tpMultiplier, input.minConfidence),
+                () => generateMeanReversionV13Signal(window),
+                () => generateRenkoSignal(window),
+                () => generateBoxingSignal(window, { instrumentLabel: "" }),
+                () => generateORBV8Signal(window, { orbV8State: undefined, instrumentLabel: "" }),
+                () => generateSmartRenkoSignal(window),
+                () => generateAdeebSignal(window, 0, 0, 0, 0),
+              ];
+              const evaluated: Signal[] = [];
+              let firstHold: Signal | null = null;
+              for (const generate of generators) {
+                try {
+                  const candidate = generate();
+                  if (!firstHold) firstHold = candidate;
+                  if (candidate.direction !== "HOLD") evaluated.push(candidate);
+                } catch (error) {
+                  console.warn("[Backtest] Strategy evaluation skipped:", error instanceof Error ? error.message : String(error));
+                }
               }
+              evaluated.sort((a, b) => b.confidence - a.confidence);
+              sig = evaluated[0] ?? firstHold ?? generateSignal(window, input.slMultiplier, input.tpMultiplier, input.minConfidence);
               break;
+            }
           }
           if (sig.direction !== "HOLD") {
             // Simulate trade: entry at next candle open

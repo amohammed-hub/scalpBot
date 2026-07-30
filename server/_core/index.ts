@@ -75,7 +75,13 @@ async function startServer() {
   // ── Rate Limiting (API endpoints) ─────────────────────────────────────────
   const apiLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
-    max: 60, // 60 requests per minute per IP (tightened for anti-scraping)
+    // The dashboard intentionally polls several independent runtime views. A
+    // 60-request shared IP budget caused normal authenticated use to self-throttle,
+    // especially for users behind the same NAT. OTP remains under its own strict
+    // limiter below and is excluded from this general counter.
+    max: 300,
+    skip: (req) => req.originalUrl.includes("/api/trpc/mobileAuth.sendOtp")
+      || req.originalUrl.includes("/api/trpc/mobileAuth.verifyOtp"),
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later." },

@@ -846,42 +846,21 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
     // Update last login
     // Also promote to admin if this is the admin's mobile (handles case where user registered before admin role was set up)
     const isAdmin = ENV.adminMobile && (mobile === ENV.adminMobile || mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""));
-    // If client provides a sessionToken that DIFFERS from stored one, migrate ALL related data
-    const oldToken = userRows[0].sessionToken;
-    const newToken = clientSessionToken;
-    if (newToken && oldToken && newToken !== oldToken) {
-      console.log(`[verifyOtp] Token migration: ${oldToken.slice(0, 8)}... → ${newToken.slice(0, 8)}... for mobile ${mobile}`);
-      try {
-        // BUG-2 fix: Wrap all migration queries in a transaction to prevent partial data splits
-        await db.transaction(async (tx: any) => {
-          // Migrate every supported bot key: base + slot1..slot8 (nine slots total).
-          // A fixed slot1..slot3 list previously orphaned the fifth card (`-slot4`)
-          // under an obsolete browser session, allowing a hidden engine to restart.
-          const sessionOwnedTables = [upstoxCredentials, botSessions, tradeLog, signalJournal] as const;
-          for (const table of sessionOwnedTables) {
-            for (let slot = 0; slot <= 8; slot += 1) {
-              const suffix = slot === 0 ? "" : `-slot${slot}`;
-              await tx
-                .update(table)
-                .set({ sessionToken: newToken + suffix })
-                .where(eq(table.sessionToken, oldToken + suffix));
-            }
-          }
-          // Migrate subscriptions
-          await tx.update(subscriptions).set({ sessionToken: newToken }).where(eq(subscriptions.sessionToken, oldToken));
-        });
-        console.log(`[verifyOtp] Token migration complete for mobile ${mobile}`);
-      } catch (migrationErr) {
-        console.error(`[verifyOtp] Token migration FAILED (rolled back) for mobile ${mobile}:`, migrationErr);
-        // Transaction rolled back — old token still valid, user can still access account
-      }
+    // Existing identities are server-owned. A browser-generated token is only a
+    // bootstrap hint for a brand-new user; replacing a durable token on every
+    // login can split credentials, subscriptions, bot rows, and trades across
+    // devices. Resume the stored token instead and return it to the client.
+    const storedToken = userRows[0].sessionToken;
+    const durableToken = storedToken || clientSessionToken || crypto.randomUUID();
+    if (clientSessionToken && storedToken && clientSessionToken !== storedToken) {
+      console.info("[verifyOtp] Resuming existing durable session", { userId: userRows[0].id });
     }
-    // Update user record
+
     await db.update(appUsers).set({
       isVerified: true,
       lastLoginAt: new Date(),
+      sessionToken: durableToken,
       ...(isAdmin && userRows[0].role !== "admin" ? { role: "admin" as const } : {}),
-      ...(newToken ? { sessionToken: newToken } : {}),
     }).where(eq(appUsers.id, userRows[0].id));
     userRows = await db.select().from(appUsers).where(eq(appUsers.id, userRows[0].id)).limit(1);
   }
