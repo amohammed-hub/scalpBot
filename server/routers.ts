@@ -12,6 +12,7 @@ import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 import { assertBotAutomationEnabled } from "./botAutomation";
 import { getBaseSessionToken, KILL_SWITCH_LAST_ERROR } from "./botSessionLifecycle";
 import { isOptionTrade } from "../shared/optionTradeIdentity";
+import { selectMarketDataAccessToken } from "../shared/upstoxTokenState";
 import { getStoppedTradeQuoteState } from "./stoppedTradeQuoteState";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
@@ -233,9 +234,10 @@ export const appRouter = router({
           .update(upstoxCredentials)
           .set({ sandboxToken: input.demoToken, tokenExpiresAt: expires })
           .where(eq(upstoxCredentials.sessionToken, input.sessionToken));
-        // Hot-reload: update all running demo bots with the new token
-        const botsUpdated = hotReloadAccessToken(input.demoToken, input.sessionToken, true);
-        console.log(`[saveDemoToken] Sandbox token saved & hot-reloaded to ${botsUpdated} running bot(s)`);
+        // Sandbox tokens are valid only for sandbox order APIs. ScalpBot demo mode
+        // uses real market data and fake local fills, so running bots must continue
+        // using the regular Upstox access token for quotes and option contracts.
+        console.log("[saveDemoToken] Sandbox order token saved; market-data bot tokens unchanged");
         return { success: true };
       }),
 
@@ -528,8 +530,8 @@ export const appRouter = router({
           .from(upstoxCredentials)
           .where(eq(upstoxCredentials.sessionToken, baseTokenForCreds2))
           .limit(1);
-        if (creds.length > 0 && creds[0].accessToken) {
-          accessToken = input.mode === "demo" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
+        if (creds.length > 0) {
+          accessToken = selectMarketDataAccessToken(creds[0]);
         }
 
         // FALLBACK: Only allow credential migration for verified admin sessions.
@@ -1276,8 +1278,8 @@ export const appRouter = router({
             .from(upstoxCredentials)
             .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
             .limit(1);
-          if (creds.length > 0 && creds[0].accessToken) {
-            accessToken = row.mode === "demo" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
+          if (creds.length > 0) {
+            accessToken = selectMarketDataAccessToken(creds[0]);
           }
           if ((row.mode === "live" || row.mode === "demo") && !accessToken) {
             throw new Error("No Upstox access token. Connect your account first.");
@@ -2881,8 +2883,8 @@ export const appRouter = router({
             .from(upstoxCredentials)
             .where(eq(upstoxCredentials.sessionToken, baseTokenForCreds))
             .limit(1);
-          if (creds.length > 0 && creds[0].accessToken) {
-            accessToken = input.mode === "demo" ? (creds[0].sandboxToken ?? creds[0].accessToken) : creds[0].accessToken;
+          if (creds.length > 0) {
+            accessToken = selectMarketDataAccessToken(creds[0]);
           }
           // FALLBACK: Only admin can use the fallback credential lookup
           if (!accessToken) {
@@ -3675,9 +3677,7 @@ export const appRouter = router({
         slMultiplier: z.number().default(1.5),
         tpMultiplier: z.number().default(3.0),
         minConfidence: z.number().default(0.6),
-        minConfidence: z.number().default(0.6),
         strategyFilter: z.string().default("all"),
-      }))
       }))
       .mutation(async ({ input }) => {
         // Fetch access token from DB

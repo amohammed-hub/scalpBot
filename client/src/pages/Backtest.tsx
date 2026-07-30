@@ -20,15 +20,19 @@ function getSessionToken(): string {
 }
 
 const INSTRUMENTS = [
-  { token: "NSE_INDEX|Nifty 50",           label: "Nifty 50 (Spot)" },
-  { token: "NSE_INDEX|Nifty Bank",         label: "Bank Nifty (Spot)" },
-  { token: "NSE_INDEX|Nifty Fin Service",  label: "Fin Nifty (Spot)" },
-  { token: "MCX_FO|555922",               label: "Gold (MCX)" },
-  { token: "MCX_FO|471725",               label: "Silver (MCX)" },
-  { token: "MCX_FO|560977",               label: "Crude Oil (MCX)" },
-  { token: "MCX_FO|538685",               label: "Natural Gas (MCX)" },
-  { token: "NSE_EQ|INE009A01021",         label: "Reliance Industries" },
-  { token: "NSE_EQ|INE467B01029",         label: "TCS" },
+  { token: "NSE_INDEX|Nifty 50",           label: "Nifty 50 — option signal underlying" },
+  { token: "NSE_INDEX|Nifty Bank",         label: "Bank Nifty — option signal underlying" },
+  { token: "NSE_INDEX|Nifty Fin Service",  label: "Fin Nifty — option signal underlying" },
+  { token: "BSE_INDEX|SENSEX",             label: "Sensex — option signal underlying" },
+  { token: "BSE_INDEX|BANKEX",             label: "Bankex — option signal underlying" },
+  { token: "NSE_INDEX|NIFTY MID SELECT",   label: "Midcp Nifty — option signal underlying" },
+  { token: "MCX_FO|555922",                label: "Gold futures — option signal underlying" },
+  { token: "MCX_FO|471725",                label: "Silver futures — option signal underlying" },
+  { token: "MCX_FO|560977",                label: "Crude Oil futures — option signal underlying" },
+  { token: "MCX_FO|538685",                label: "Natural Gas futures — option signal underlying" },
+  { token: "MCX_FO|562048",                label: "Copper futures — option signal underlying" },
+  { token: "NSE_EQ|INE009A01021",          label: "Reliance Industries" },
+  { token: "NSE_EQ|INE467B01029",          label: "TCS" },
 ];
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -101,9 +105,13 @@ export default function Backtest() {
     },
     onError: (e: any) => toast.error(`Comparison failed: ${e.message}`),
   });
+  const isBacktestPending = runMutation.isPending || compareMutation.isPending;
+  const backtestError = runMutation.error ?? compareMutation.error;
 
   const handleRun = () => {
     if (fromDate >= toDate) { toast.error("From date must be before To date"); return; }
+    setResult(null);
+    setCompareResult(null);
     const params = { sessionToken, instrumentToken, fromDate, toDate, capital, riskPct, slMultiplier, tpMultiplier, minConfidence: minConfidence / 100, strategyFilter };
     if (compareMode) {
       compareMutation.mutate(params);
@@ -143,7 +151,7 @@ export default function Backtest() {
   }, [equityCurveData]);
 
   return (
-    <div className="min-h-screen bg-[oklch(0.11_0.025_240)] text-white">
+    <div className="min-h-screen bg-[oklch(0.11_0.025_240)] text-white overflow-x-hidden">
       {/* Upgrade Wall */}
       {!hasBacktesterAccess && (
         <div className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
@@ -178,10 +186,10 @@ export default function Backtest() {
         <span className="text-xs text-white/30 ml-auto hidden sm:block">Replay 1-min candles through the ScalpBot signal engine</span>
       </div>
 
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-4 sm:gap-6 pb-24 md:pb-6">
+      <div className="max-w-7xl mx-auto min-w-0 px-3 sm:px-4 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)] gap-4 sm:gap-6 pb-24 md:pb-6">
         {/* Config Panel */}
         <div className="space-y-4">
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 sm:p-5">
             <div className="text-xs text-white/40 uppercase tracking-wider mb-4">Backtest Parameters</div>
 
             {/* Instrument */}
@@ -210,7 +218,7 @@ export default function Backtest() {
               </select>
             </label>
             {/* Date range */}
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <label>
                 <span className="text-xs text-white/50 mb-1 block">From Date</span>
                 <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
@@ -288,9 +296,9 @@ export default function Backtest() {
               </span>
             </label>
 
-            <button onClick={handleRun} disabled={runMutation.isPending || compareMutation.isPending}
+            <button onClick={handleRun} disabled={isBacktestPending}
               className={`w-full flex items-center justify-center gap-2 ${compareMode ? 'bg-purple-500 hover:bg-purple-400' : 'bg-teal-500 hover:bg-teal-400'} disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold rounded-xl py-3 transition-colors active:scale-[0.98]`}>
-              {(runMutation.isPending || compareMutation.isPending)
+              {isBacktestPending
                 ? <><span className="animate-spin border-2 border-black/30 border-t-black rounded-full w-4 h-4" /> Running…</>
                 : compareMode
                   ? <><GitCompare className="w-4 h-4" /> Compare V1 vs V2</>
@@ -303,9 +311,9 @@ export default function Backtest() {
           <div className="bg-white/3 border border-white/8 rounded-xl p-4 flex items-start gap-2">
             <Info className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
             <p className="text-xs text-white/40 leading-relaxed">
-              Backtesting uses the same multi-layer signal engine as the live bot.
-              Requires a valid Upstox access token in Settings. Historical 1-min candles
-              are fetched from Upstox for the selected date range. Max 30 days recommended.
+              Backtesting replays the same signal engine on authoritative 1-minute underlying candles from Upstox.
+              It does not simulate option premiums, spreads, or fills, so index/commodity results are signal-proxy results—not option-contract P&amp;L.
+              A valid Upstox access token is required. Max 30 days recommended.
             </p>
           </div>
         </div>
@@ -317,10 +325,10 @@ export default function Backtest() {
             <div className="space-y-4">
               {/* Improvement Summary */}
               <div className="bg-white/5 border border-purple-500/30 rounded-2xl p-5">
-                <div className="flex items-center gap-2 mb-4">
+                <div className="flex flex-wrap items-center gap-2 mb-4">
                   <GitCompare className="w-5 h-5 text-purple-400" />
                   <span className="font-bold text-white">V1 vs V2 Comparison</span>
-                  <span className="text-xs text-white/30 ml-auto">{compareResult.candleCount} candles | {compareResult.fromDate} → {compareResult.toDate}</span>
+                  <span className="basis-full sm:basis-auto text-xs text-white/30 sm:ml-auto break-words">{compareResult.candleCount} candles | {compareResult.fromDate} → {compareResult.toDate}</span>
                 </div>
                 
                 {/* Improvement badges */}
@@ -352,7 +360,7 @@ export default function Backtest() {
                 </div>
 
                 {/* Side by side stats */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* V1 */}
                   <div className="bg-white/5 rounded-xl p-4 border border-white/10">
                     <div className="text-xs text-white/40 uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -388,7 +396,7 @@ export default function Backtest() {
             </div>
           )}
 
-          {!result && !runMutation.isPending && (
+          {!result && !compareResult && !isBacktestPending && !backtestError && (
             <div className="bg-white/5 border border-white/10 rounded-2xl flex flex-col items-center justify-center py-24 text-center gap-4">
               <BarChart2 className="w-12 h-12 text-white/20" />
               <div>
@@ -398,12 +406,22 @@ export default function Backtest() {
             </div>
           )}
 
-          {runMutation.isPending && (
+          {isBacktestPending && (
             <div className="bg-white/5 border border-white/10 rounded-2xl flex flex-col items-center justify-center py-24 text-center gap-4">
               <span className="animate-spin border-2 border-teal-500/30 border-t-teal-400 rounded-full w-10 h-10" />
               <div>
                 <p className="text-white/60 font-medium">Fetching candles & replaying signals…</p>
                 <p className="text-white/30 text-sm mt-1">This may take up to 15 seconds</p>
+              </div>
+            </div>
+          )}
+
+          {backtestError && !isBacktestPending && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-5 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-red-300 font-medium">Backtest could not run</p>
+                <p className="text-red-300/70 text-sm mt-1 break-words">{backtestError.message}</p>
               </div>
             </div>
           )}
@@ -447,10 +465,10 @@ export default function Backtest() {
 
               {/* Tabs */}
               <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-                <div className="flex border-b border-white/10">
+                <div className="flex border-b border-white/10 overflow-x-auto">
                   {(["equity", "trades", "distribution"] as const).map(t => (
                     <button key={t} onClick={() => setTab(t)}
-                      className={`px-5 py-3 text-sm font-medium transition-colors capitalize ${
+                      className={`flex-1 min-w-max px-3 sm:px-5 py-3 text-xs sm:text-sm font-medium transition-colors capitalize ${
                         tab === t ? "text-teal-400 border-b-2 border-teal-400 bg-teal-500/5" : "text-white/40 hover:text-white/70"
                       }`}>
                       {t === "equity" ? "Equity Curve" : t === "trades" ? "Trade Log" : "P&L Distribution"}
@@ -458,7 +476,7 @@ export default function Backtest() {
                   ))}
                 </div>
 
-                <div className="p-5">
+                <div className="p-3 sm:p-5 min-w-0">
                   {/* Equity Curve */}
                   {tab === "equity" && (
                     <div>
@@ -492,7 +510,7 @@ export default function Backtest() {
                       {result.trades.length === 0 ? (
                         <div className="flex items-center justify-center h-32 text-white/30 text-sm">No trades generated</div>
                       ) : (
-                        <table className="w-full text-xs">
+                        <table className="min-w-[680px] w-full text-xs">
                           <thead>
                             <tr className="text-white/40 border-b border-white/10">
                               <th className="text-left py-2 pr-4">Time</th>
