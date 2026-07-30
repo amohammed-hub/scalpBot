@@ -13,26 +13,39 @@
 import { getDb } from "./db";
 import { isBotAutomationEnabled } from "./botAutomation";
 import { canAutoRestartSession } from "./botSessionLifecycle";
-import { botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
-import { eq, and, desc, gte } from "drizzle-orm";
+import { appUsers, botSessions, tradeLog, upstoxCredentials } from "../drizzle/schema";
+import { eq, and, desc, gte, inArray } from "drizzle-orm";
 import { startBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
 import { classifyUpstoxAuthorizationHttpStatus, type UpstoxAuthorizationState } from "../shared/upstoxTokenState";
 import { upstoxAxios } from "./upstoxHttp";
+import {
+  getBaseBotSessionToken,
+  selectCanonicalBrokerSession,
+  type BrokerSessionCandidate,
+} from "../shared/upstoxSessionReconciliation";
 
 // Type alias for a row from botSessions (Drizzle infers this)
 type BotSessionRow = typeof botSessions.$inferSelect;
 
-const startupAuthorizationCache = new Map<string, { state: UpstoxAuthorizationState; checkedAt: number }>();
+interface StartupAuthorizationResult {
+  state: UpstoxAuthorizationState;
+  brokerUserId: string | null;
+}
+
+const startupAuthorizationCache = new Map<string, StartupAuthorizationResult & { checkedAt: number }>();
 const STARTUP_AUTH_CACHE_MS = 60_000;
 
-async function checkStartupAuthorization(baseSessionToken: string, accessToken: string | null): Promise<UpstoxAuthorizationState> {
-  if (!accessToken) return "missing";
+async function checkStartupAuthorization(
+  baseSessionToken: string,
+  accessToken: string | null,
+): Promise<StartupAuthorizationResult> {
+  if (!accessToken) return { state: "missing", brokerUserId: null };
 
   const cached = startupAuthorizationCache.get(baseSessionToken);
   if (cached && Date.now() - cached.checkedAt < STARTUP_AUTH_CACHE_MS) {
-    return cached.state;
+    return { state: cached.state, brokerUserId: cached.brokerUserId };
   }
 
   try {
@@ -42,11 +55,113 @@ async function checkStartupAuthorization(baseSessionToken: string, accessToken: 
       validateStatus: () => true,
     });
     const state = classifyUpstoxAuthorizationHttpStatus(response.status, true);
-    startupAuthorizationCache.set(baseSessionToken, { state, checkedAt: Date.now() });
-    return state;
+    const rawBrokerUserId = state === "valid"
+      ? response.data?.data?.user_id ?? response.data?.data?.userId
+      : null;
+    const brokerUserId = typeof rawBrokerUserId === "string" && rawBrokerUserId.trim().length > 0
+      ? rawBrokerUserId.trim()
+      : null;
+    const result = { state, brokerUserId } satisfies StartupAuthorizationResult;
+    startupAuthorizationCache.set(baseSessionToken, { ...result, checkedAt: Date.now() });
+    return result;
   } catch {
-    return "indeterminate";
+    return { state: "indeterminate", brokerUserId: null };
   }
+}
+
+async function reconcileDuplicateBrokerSessions(
+  runningSessions: readonly BotSessionRow[],
+): Promise<BotSessionRow[]> {
+  if (runningSessions.length < 2) return [...runningSessions];
+
+  const db = await getDb();
+  if (!db) return [];
+
+  const sessionsByBase = new Map<string, BotSessionRow[]>();
+  for (const session of runningSessions) {
+    const baseSessionToken = getBaseBotSessionToken(session.sessionToken);
+    const rows = sessionsByBase.get(baseSessionToken) ?? [];
+    rows.push(session);
+    sessionsByBase.set(baseSessionToken, rows);
+  }
+  if (sessionsByBase.size < 2) return [...runningSessions];
+
+  const baseSessionTokens = Array.from(sessionsByBase.keys());
+  const credentialRows = await db
+    .select({ sessionToken: upstoxCredentials.sessionToken, accessToken: upstoxCredentials.accessToken })
+    .from(upstoxCredentials)
+    .where(inArray(upstoxCredentials.sessionToken, baseSessionTokens));
+  const accessTokenByBase = new Map<string, string | null>(
+    credentialRows.map((row: { sessionToken: string; accessToken: string | null }) => [row.sessionToken, row.accessToken ?? null] as const),
+  );
+
+  const durableUserRows = await db
+    .select({ sessionToken: appUsers.sessionToken })
+    .from(appUsers);
+  const durableBaseSessions = new Set(
+    durableUserRows
+      .map((row: { sessionToken: string | null }) => row.sessionToken)
+      .filter((token: string | null): token is string => typeof token === "string" && token.length > 0)
+      .map(getBaseBotSessionToken),
+  );
+
+  const openTradeRows = await db
+    .select({ sessionToken: tradeLog.sessionToken })
+    .from(tradeLog)
+    .where(eq(tradeLog.status, "open"));
+  const openTradeBases = new Set(openTradeRows.map((row: { sessionToken: string }) => getBaseBotSessionToken(row.sessionToken)));
+
+  const candidatesByBrokerUser = new Map<string, BrokerSessionCandidate[]>();
+  for (const [baseSessionToken, sessions] of Array.from(sessionsByBase.entries())) {
+    const authorization = await checkStartupAuthorization(
+      baseSessionToken,
+      accessTokenByBase.get(baseSessionToken) ?? null,
+    );
+    if (authorization.state !== "valid" || !authorization.brokerUserId) continue;
+
+    const latestUpdatedAtMs = sessions.reduce((latest: number, session: BotSessionRow) => {
+      const updatedAtMs = session.updatedAt ? new Date(session.updatedAt).getTime() : 0;
+      return Math.max(latest, Number.isFinite(updatedAtMs) ? updatedAtMs : 0);
+    }, 0);
+    const candidate: BrokerSessionCandidate = {
+      baseSessionToken,
+      brokerUserId: authorization.brokerUserId,
+      hasOpenTrade: openTradeBases.has(baseSessionToken),
+      isDurableUserSession: durableBaseSessions.has(baseSessionToken),
+      latestUpdatedAtMs,
+    };
+    const peers = candidatesByBrokerUser.get(candidate.brokerUserId) ?? [];
+    peers.push(candidate);
+    candidatesByBrokerUser.set(candidate.brokerUserId, peers);
+  }
+
+  const decommissionedSessionIds = new Set<number>();
+  for (const candidates of Array.from(candidatesByBrokerUser.values())) {
+    if (candidates.length < 2) continue;
+    const canonical = selectCanonicalBrokerSession(candidates);
+    if (!canonical) continue;
+
+    for (const duplicate of candidates) {
+      if (duplicate.baseSessionToken === canonical.baseSessionToken) continue;
+      if (duplicate.hasOpenTrade) {
+        console.warn("[BotRestart] Duplicate authenticated account session has an open trade — preserving it until the trade is resolved");
+        continue;
+      }
+
+      const duplicateSessions = sessionsByBase.get(duplicate.baseSessionToken) ?? [];
+      const duplicateIds = duplicateSessions.map(session => session.id);
+      if (duplicateIds.length === 0) continue;
+      const lastError = "Automatic restart blocked: duplicate persisted session for the same Upstox account; canonical session selected";
+      await db
+        .update(botSessions)
+        .set({ status: "stopped", lastError })
+        .where(inArray(botSessions.id, duplicateIds));
+      duplicateIds.forEach(id => decommissionedSessionIds.add(id));
+      console.warn(`[BotRestart] Reconciled ${duplicateIds.length} duplicate scan-only session(s) for one authenticated Upstox account before engine startup`);
+    }
+  }
+
+  return runningSessions.filter(session => !decommissionedSessionIds.has(session.id));
 }
 
 /**
@@ -196,7 +311,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     .where(eq(upstoxCredentials.sessionToken, baseToken))
     .limit(1);
   const accessToken = credRows[0]?.accessToken ?? null;
-  const authorizationState = await checkStartupAuthorization(baseToken, accessToken);
+  const { state: authorizationState } = await checkStartupAuthorization(baseToken, accessToken);
   if (authorizationState === "missing" || authorizationState === "unauthorized") {
     const lastError = authorizationState === "missing"
       ? "Automatic restart blocked: this session has no owned Upstox market-data token"
@@ -572,9 +687,10 @@ export async function restartRunningBots(): Promise<void> {
     return;
   }
 
-  console.log(`[BotRestart] Found ${runningSessions.length} session(s) marked running — restarting all...`);
+  const reconciledSessions = await reconcileDuplicateBrokerSessions(runningSessions);
+  console.log(`[BotRestart] Found ${runningSessions.length} session(s) marked running — ${reconciledSessions.length} eligible after authenticated account reconciliation`);
 
-  for (const session of runningSessions) {
+  for (const session of reconciledSessions) {
     if (!canAutoRestartSession(session)) {
       console.log(`[BotRestart] Skipping ${session.sessionToken.slice(0, 8)} — automatic restart blocked by durable stop marker`);
       continue;
