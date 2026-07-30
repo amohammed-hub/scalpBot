@@ -20,6 +20,7 @@ import { getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
 import { classifyUpstoxAuthorizationHttpStatus, type UpstoxAuthorizationState } from "../shared/upstoxTokenState";
 import { upstoxAxios } from "./upstoxHttp";
+import { deriveBrokerSessionIdentity, type BrokerSessionIdentity } from "./upstoxSessionIdentity";
 import {
   getBaseBotSessionToken,
   selectCanonicalBrokerSession,
@@ -32,7 +33,7 @@ type BotSessionRow = typeof botSessions.$inferSelect;
 
 interface StartupAuthorizationResult {
   state: UpstoxAuthorizationState;
-  brokerUserId: string | null;
+  brokerIdentity: BrokerSessionIdentity | null;
 }
 
 const startupAuthorizationCache = new Map<string, StartupAuthorizationResult & { checkedAt: number }>();
@@ -42,11 +43,11 @@ async function checkStartupAuthorization(
   baseSessionToken: string,
   accessToken: string | null,
 ): Promise<StartupAuthorizationResult> {
-  if (!accessToken) return { state: "missing", brokerUserId: null };
+  if (!accessToken) return { state: "missing", brokerIdentity: null };
 
   const cached = startupAuthorizationCache.get(baseSessionToken);
   if (cached && Date.now() - cached.checkedAt < STARTUP_AUTH_CACHE_MS) {
-    return { state: cached.state, brokerUserId: cached.brokerUserId };
+    return { state: cached.state, brokerIdentity: cached.brokerIdentity };
   }
 
   try {
@@ -56,17 +57,14 @@ async function checkStartupAuthorization(
       validateStatus: () => true,
     });
     const state = classifyUpstoxAuthorizationHttpStatus(response.status, true);
-    const rawBrokerUserId = state === "valid"
-      ? response.data?.data?.user_id ?? response.data?.data?.userId
+    const brokerIdentity = state === "valid"
+      ? deriveBrokerSessionIdentity(response.data, accessToken)
       : null;
-    const brokerUserId = typeof rawBrokerUserId === "string" && rawBrokerUserId.trim().length > 0
-      ? rawBrokerUserId.trim()
-      : null;
-    const result = { state, brokerUserId } satisfies StartupAuthorizationResult;
+    const result = { state, brokerIdentity } satisfies StartupAuthorizationResult;
     startupAuthorizationCache.set(baseSessionToken, { ...result, checkedAt: Date.now() });
     return result;
   } catch {
-    return { state: "indeterminate", brokerUserId: null };
+    return { state: "indeterminate", brokerIdentity: null };
   }
 }
 
@@ -136,14 +134,17 @@ async function reconcileDuplicateBrokerSessions(
     console.warn(`[BotRestart] Decommissioned ${orphanIds.length} durable-user-orphan scan-only session(s) before engine startup`);
   }
 
-  const candidatesByBrokerUser = new Map<string, BrokerSessionCandidate[]>();
+  const candidatesByBrokerIdentity = new Map<string, BrokerSessionCandidate[]>();
   for (const [baseSessionToken, sessions] of Array.from(sessionsByBase.entries())) {
     if (orphanBaseSessionSet.has(baseSessionToken)) continue;
     const authorization = await checkStartupAuthorization(
       baseSessionToken,
       accessTokenByBase.get(baseSessionToken) ?? null,
     );
-    if (authorization.state !== "valid" || !authorization.brokerUserId) continue;
+    if (authorization.state !== "valid" || !authorization.brokerIdentity) continue;
+    if (authorization.brokerIdentity.source === "credential-fingerprint") {
+      console.warn(`[BotRestart] ${baseSessionToken.slice(0, 8)} profile validated without a usable user_id — using exact credential identity for startup reconciliation`);
+    }
 
     const latestUpdatedAtMs = sessions.reduce((latest: number, session: BotSessionRow) => {
       const updatedAtMs = session.updatedAt ? new Date(session.updatedAt).getTime() : 0;
@@ -151,17 +152,17 @@ async function reconcileDuplicateBrokerSessions(
     }, 0);
     const candidate: BrokerSessionCandidate = {
       baseSessionToken,
-      brokerUserId: authorization.brokerUserId,
+      brokerIdentityKey: authorization.brokerIdentity.key,
       hasOpenTrade: openTradeBases.has(baseSessionToken),
       isDurableUserSession: durableBaseSessions.has(baseSessionToken),
       latestUpdatedAtMs,
     };
-    const peers = candidatesByBrokerUser.get(candidate.brokerUserId) ?? [];
+    const peers = candidatesByBrokerIdentity.get(candidate.brokerIdentityKey) ?? [];
     peers.push(candidate);
-    candidatesByBrokerUser.set(candidate.brokerUserId, peers);
+    candidatesByBrokerIdentity.set(candidate.brokerIdentityKey, peers);
   }
 
-  for (const candidates of Array.from(candidatesByBrokerUser.values())) {
+  for (const candidates of Array.from(candidatesByBrokerIdentity.values())) {
     if (candidates.length < 2) continue;
     const canonical = selectCanonicalBrokerSession(candidates);
     if (!canonical) continue;

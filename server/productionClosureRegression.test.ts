@@ -9,6 +9,7 @@ import {
   selectOrphanScanOnlyBaseSessions,
   type BrokerSessionCandidate,
 } from "../shared/upstoxSessionReconciliation";
+import { deriveBrokerSessionIdentity, extractUpstoxProfileUserId } from "./upstoxSessionIdentity";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dbSource = readFileSync(join(here, "db.ts"), "utf8");
@@ -56,6 +57,37 @@ describe("30 July production closure regressions", () => {
       expect(classifyUpstoxAuthorizationHttpStatus(200, false)).toBe("missing");
     });
 
+    it("derives one normalized identity from documented and wrapped Upstox profile payloads", () => {
+      const documented = deriveBrokerSessionIdentity(
+        { status: "success", data: { user_id: " ab1234 " } },
+        "first-access-token",
+      );
+      const wrapped = deriveBrokerSessionIdentity(
+        JSON.stringify({ result: { profile: { userId: "AB1234" } } }),
+        "second-access-token",
+      );
+
+      expect(documented).toEqual({
+        key: "profile-user-id:AB1234",
+        source: "profile-user-id",
+      });
+      expect(wrapped).toEqual(documented);
+      expect(extractUpstoxProfileUserId({ data: { user_id: 12345 } })).toBe("12345");
+    });
+
+    it("uses a deterministic non-reversible exact credential identity only when profile user_id is unavailable", () => {
+      const first = deriveBrokerSessionIdentity({ status: "success", data: {} }, "secret-access-token");
+      const same = deriveBrokerSessionIdentity({ unexpected: true }, " secret-access-token ");
+      const different = deriveBrokerSessionIdentity({}, "different-access-token");
+
+      expect(first?.source).toBe("credential-fingerprint");
+      expect(first?.key).toMatch(/^credential-sha256:[a-f0-9]{64}$/);
+      expect(first?.key).not.toContain("secret-access-token");
+      expect(same?.key).toBe(first?.key);
+      expect(different?.key).not.toBe(first?.key);
+      expect(deriveBrokerSessionIdentity({}, "   ")).toBeNull();
+    });
+
     it("uses only session-owned credentials and stops definitive orphan sessions before engine creation", () => {
       expect(restartSource).toContain('upstoxAxios.get("https://api.upstox.com/v2/user/profile"');
       expect(restartSource).toContain('authorizationState === "missing" || authorizationState === "unauthorized"');
@@ -68,14 +100,14 @@ describe("30 July production closure regressions", () => {
       const candidates: BrokerSessionCandidate[] = [
         {
           baseSessionToken: "durable-current",
-          brokerUserId: "broker-user",
+          brokerIdentityKey: "broker-user",
           hasOpenTrade: false,
           isDurableUserSession: true,
           latestUpdatedAtMs: 200,
         },
         {
           baseSessionToken: "historical-protecting-trade",
-          brokerUserId: "broker-user",
+          brokerIdentityKey: "broker-user",
           hasOpenTrade: true,
           isDurableUserSession: false,
           latestUpdatedAtMs: 100,
@@ -87,14 +119,14 @@ describe("30 July production closure regressions", () => {
     it("prefers the durable app-user session, then recency, when no open trade needs protection", () => {
       const durable: BrokerSessionCandidate = {
         baseSessionToken: "durable-current",
-        brokerUserId: "broker-user",
+        brokerIdentityKey: "broker-user",
         hasOpenTrade: false,
         isDurableUserSession: true,
         latestUpdatedAtMs: 100,
       };
       const newerTransient: BrokerSessionCandidate = {
         baseSessionToken: "newer-transient",
-        brokerUserId: "broker-user",
+        brokerIdentityKey: "broker-user",
         hasOpenTrade: false,
         isDurableUserSession: false,
         latestUpdatedAtMs: 200,
@@ -121,11 +153,13 @@ describe("30 July production closure regressions", () => {
       expect(restartSource).toContain("reconcileDuplicateBrokerSessions(runningSessions)");
       expect(restartSource).toContain("selectOrphanScanOnlyBaseSessions");
       expect(restartSource).toContain('persisted scan-only session is not owned by a durable app user');
-      expect(restartSource).toContain('authorization.state !== "valid" || !authorization.brokerUserId');
+      expect(restartSource).toContain('authorization.state !== "valid" || !authorization.brokerIdentity');
+      expect(restartSource).toContain("deriveBrokerSessionIdentity(response.data, accessToken)");
+      expect(restartSource).toContain('authorization.brokerIdentity.source === "credential-fingerprint"');
       expect(restartSource).toContain("duplicate.hasOpenTrade");
       expect(restartSource).toContain('duplicate persisted session for the same Upstox account; canonical session selected');
       expect(restartSource.indexOf("const orphanBaseSessionTokens")).toBeLessThan(
-        restartSource.indexOf("const candidatesByBrokerUser"),
+        restartSource.indexOf("const candidatesByBrokerIdentity"),
       );
       expect(restartSource.indexOf("reconcileDuplicateBrokerSessions(runningSessions)")).toBeLessThan(
         restartSource.indexOf("for (const session of reconciledSessions)"),
