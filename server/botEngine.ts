@@ -6504,7 +6504,8 @@ async function tick(
       }
     }
   }
-
+      } catch { /* regime switch error */ }
+  
   // ── Multi-Layer Strategy Cascade: if main signal is HOLD, try Red Bar Theory, Trikal, Adeeb ──
   // ── MULTI-STRATEGY ENGINE: Run ALL 4 layers in PARALLEL, pick best signal ──
   // Per-layer trade limits (max trades per day per layer)
