@@ -6458,20 +6458,39 @@ async function tick(
         state.currentADX = adxVal;
         state.lastRegimeCheckAt = now;
         const prevRegime = state.currentRegime;
-        if (adxVal > 25) {
+               if (adxVal > 25) {
           state.currentRegime = "trending";
           // Enable Supertrend (layer "Trend") if not already enabled
           if (state.enabledLayers && !state.enabledLayers.includes("Trend") && !state.userDisabledLayers?.includes("Trend")) {
             state.enabledLayers.push("Trend");
-            emitActivity(state.sessionToken, "signal", `📊 Regime → TRENDING (ADX ${adxVal.toFixed(0)}) — Supertrend ENABLED`);
           }
+          // Disable mean reversion strategies (they lose in trends)
+          const trendDisable = ["VWAPReversion", "MeanReversionV13"];
+          const disabled: string[] = [];
+          for (const layer of trendDisable) {
+            if (state.enabledLayers?.includes(layer) && !state.userDisabledLayers?.includes(layer)) {
+              state.enabledLayers = state.enabledLayers.filter(l => l !== layer);
+              disabled.push(layer);
+            }
+          }
+          const enabled = !state.enabledLayers?.includes("Trend") ? "" : " +Supertrend";
+          emitActivity(state.sessionToken, "signal", `📊 Regime → TRENDING (ADX ${adxVal.toFixed(0)})${enabled}${disabled.length ? " −" + disabled.join(",") : ""}`);
         } else {
           state.currentRegime = "choppy";
           // Disable Supertrend (layer "Trend") if currently enabled
           if (state.enabledLayers && state.enabledLayers.includes("Trend")) {
             state.enabledLayers = state.enabledLayers.filter(l => l !== "Trend");
-            emitActivity(state.sessionToken, "signal", `📊 Regime → CHOPPY (ADX ${adxVal.toFixed(0)}) — Supertrend DISABLED`);
           }
+          // Re-enable mean reversion strategies (they work in ranging markets)
+          const choppyEnable = ["VWAPReversion", "MeanReversionV13"];
+          const reEnabled: string[] = [];
+          for (const layer of choppyEnable) {
+            if (state.enabledLayers && !state.enabledLayers.includes(layer) && !state.userDisabledLayers?.includes(layer)) {
+              state.enabledLayers.push(layer);
+              reEnabled.push(layer);
+            }
+          }
+          emitActivity(state.sessionToken, "signal", `📊 Regime → CHOPPY (ADX ${adxVal.toFixed(0)}) −Supertrend${reEnabled.length ? " +" + reEnabled.join(",") : ""}`);
         }
         if (prevRegime && prevRegime !== state.currentRegime) {
           devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched from ${prevRegime} to ${state.currentRegime} (ADX=${adxVal.toFixed(1)})`);
