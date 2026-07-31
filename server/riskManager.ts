@@ -354,18 +354,20 @@ export async function executeKillSwitch(
   allBots: BotState[],
   stopBotFn: (sessionToken: string) => void,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
-): Promise<{ closedTrades: number; stoppedBots: number }> {
+): Promise<{ closedTrades: number; stoppedBots: number; failedExits: string[] }> {
   let closedTrades = 0;
   let stoppedBots = 0;
+  const failedExits: string[] = [];
 
   for (const bot of allBots) {
     // Close open trade at market
     if (bot.openTrade) {
       const trade = bot.openTrade;
-      // For options trades: try to get real bid price from Upstox, fall back to optionPremiumPrice
       let exitPrice = 0;
+      let upstoxOrderFailed = false;
+
+      // Try to get real exit price from Upstox quote
       if (trade.isIndexOptions) {
-        // Try fetching real quote with bid price
         if (bot.accessToken && (bot as any).optionTradeToken && !(bot as any).optionTradeToken.startsWith("PAPER_OPT|")) {
           try {
             const { fetchFullQuote } = await import("./botEngine");
@@ -373,32 +375,42 @@ export async function executeKillSwitch(
             if (q && q.ltp > 0) exitPrice = q.bid > 0 ? Math.max(q.bid, q.ltp) : q.ltp;
           } catch { /* non-fatal */ }
         }
-        // Fallback to in-memory optionPremiumPrice (which is now bid-based from tick cycle)
         if (exitPrice === 0 && bot.optionPremiumPrice && bot.optionPremiumPrice > 0) {
           exitPrice = bot.optionPremiumPrice;
         }
-        // Last resort: entry price (don't use underlying spot for options!)
         if (exitPrice === 0) exitPrice = trade.entryPrice;
       } else {
         exitPrice = bot.lastPrice || trade.entryPrice;
       }
 
+      // Place exit order on Upstox (live mode only)
       if (trade.mode === "live" && bot.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
+        const { placeUpstoxOrder } = await import("./botEngine");
         const killOrderId = await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)), bot.lotSize);
         if (!killOrderId) {
-          console.error(`[KillSwitch] EXIT ORDER FAILED for ${trade.symbolLabel ?? trade.symbol} — position still open on Upstox!`);
-          continue; // Don't close in DB if order failed
+          // ORDER FAILED — but still close in DB and stop bot
+          // The position remains OPEN on Upstox — flag for user attention
+          console.error(`[KillSwitch] ⚠️ EXIT ORDER FAILED for ${trade.symbolLabel ?? trade.symbol} — position may still be open on Upstox!`);
+          failedExits.push(trade.symbolLabel ?? trade.symbol ?? bot.sessionToken.slice(0, 8));
+          upstoxOrderFailed = true;
+          // Don't `continue` — ALWAYS clean up DB state below
         }
       }
 
+      // ALWAYS close trade in DB (regardless of Upstox order success)
       const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
       const remainingPnl = trade.direction === "BUY"
         ? (exitPrice - trade.entryPrice) * remainingQty
         : (trade.entryPrice - exitPrice) * remainingQty;
       const pnl = remainingPnl + (trade.bookedPnl ?? 0);
-      await onTradeClose(trade.dbId, exitPrice, pnl, "Kill Switch — Emergency Close");
+      const exitReason = upstoxOrderFailed
+        ? "Kill Switch — DB closed but Upstox exit FAILED (CHECK BROKER)"
+        : "Kill Switch — Emergency Close";
+      await onTradeClose(trade.dbId, exitPrice, pnl, exitReason);
       bot.openTrade = null;
+
+      // Update daily P&L
       if ((trade as any).bookedPnlAddedToDaily) {
         bot.dailyPnl += remainingPnl;
       } else {
@@ -407,27 +419,15 @@ export async function executeKillSwitch(
       closedTrades++;
     }
 
-    // Stop every in-memory bot that is not already terminal. Paused/error bots
-    // still retain engine state and must not survive an emergency kill switch.
+    // ALWAYS stop the bot (even if Upstox order failed)
     if (bot.status !== "stopped") {
       stopBotFn(bot.sessionToken);
       stoppedBots++;
     }
   }
 
-  return { closedTrades, stoppedBots };
+  return { closedTrades, stoppedBots, failedExits };
 }
-
-// ── Slippage & Brokerage for Paper Mode ──────────────────────────────────────
-// BUG-11 fix: Per-session paper cost config
-const demoCostBySession = new Map<string, { brokerage: number; slippagePct: number }>();
-const defaultDemoCost = { brokerage: 20, slippagePct: 0.05 };
-let _demoCostLoadedFromDb = false;
-
-export function getDemoCostConfig(sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
-  return demoCostBySession.get(sessionToken) ?? defaultDemoCost;
-}
-
 export async function setDemoCostConfig(brokerage: number, slippagePct: number, sessionToken: string = "default"): Promise<{ brokerage: number; slippagePct: number }> {
   const config = { brokerage, slippagePct };
   demoCostBySession.set(sessionToken, config);
