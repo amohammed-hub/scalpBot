@@ -6458,16 +6458,13 @@ async function tick(
         state.currentADX = adxVal;
         state.lastRegimeCheckAt = now;
         const prevRegime = state.currentRegime;
-        if (adxVal > 25) {
+               if (adxVal > 25) {
           state.currentRegime = "trending";
-          // TRENDING: Enable trend-following strategies
-          const trendEnable = ["Trend", "Adeeb", "BoomingBulls"];
-          for (const layer of trendEnable) {
-            if (state.enabledLayers && !state.enabledLayers.includes(layer) && !state.userDisabledLayers?.includes(layer)) {
-              state.enabledLayers.push(layer);
-            }
+          // Enable Supertrend (layer "Trend") if not already enabled
+          if (state.enabledLayers && !state.enabledLayers.includes("Trend") && !state.userDisabledLayers?.includes("Trend")) {
+            state.enabledLayers.push("Trend");
           }
-          // TRENDING: Disable mean reversion strategies (they lose in trends)
+          // Disable mean reversion strategies (they lose in trends)
           const trendDisable = ["VWAPReversion", "MeanReversionV13"];
           const disabled: string[] = [];
           for (const layer of trendDisable) {
@@ -6476,35 +6473,32 @@ async function tick(
               disabled.push(layer);
             }
           }
-          emitActivity(state.sessionToken, "signal", `📊 Regime → TRENDING (ADX ${adxVal.toFixed(0)}) +Supertrend,Adeeb,BoomingBulls${disabled.length ? " −" + disabled.join(",") : ""}`);
+          const enabled = !state.enabledLayers?.includes("Trend") ? "" : " +Supertrend";
+          emitActivity(state.sessionToken, "signal", `📊 Regime → TRENDING (ADX ${adxVal.toFixed(0)})${enabled}${disabled.length ? " −" + disabled.join(",") : ""}`);
         } else {
           state.currentRegime = "choppy";
-          // CHOPPY: Enable mean reversion strategies
+          // Disable Supertrend (layer "Trend") if currently enabled
+          if (state.enabledLayers && state.enabledLayers.includes("Trend")) {
+            state.enabledLayers = state.enabledLayers.filter(l => l !== "Trend");
+          }
+          // Re-enable mean reversion strategies (they work in ranging markets)
           const choppyEnable = ["VWAPReversion", "MeanReversionV13"];
+          const reEnabled: string[] = [];
           for (const layer of choppyEnable) {
             if (state.enabledLayers && !state.enabledLayers.includes(layer) && !state.userDisabledLayers?.includes(layer)) {
               state.enabledLayers.push(layer);
+              reEnabled.push(layer);
             }
           }
-          // CHOPPY: Disable trend-following strategies (they lose in chop)
-          const choppyDisable = ["Trend", "Adeeb", "BoomingBulls"];
-          const removedLayers: string[] = [];
-          for (const layer of choppyDisable) {
-            if (state.enabledLayers?.includes(layer) && !state.userDisabledLayers?.includes(layer)) {
-              state.enabledLayers = state.enabledLayers.filter(l => l !== layer);
-              removedLayers.push(layer);
-            }
-          }
-          emitActivity(state.sessionToken, "signal", `📊 Regime → CHOPPY (ADX ${adxVal.toFixed(0)}) +VWAPReversion,MR-V13${removedLayers.length ? " −" + removedLayers.join(",") : ""}`);
+          emitActivity(state.sessionToken, "signal", `📊 Regime → CHOPPY (ADX ${adxVal.toFixed(0)}) −Supertrend${reEnabled.length ? " +" + reEnabled.join(",") : ""}`);
         }
-      }
         if (prevRegime && prevRegime !== state.currentRegime) {
           devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched from ${prevRegime} to ${state.currentRegime} (ADX=${adxVal.toFixed(1)})`);
         }
       }
     }
   }
-  
+
   // ── Multi-Layer Strategy Cascade: if main signal is HOLD, try Red Bar Theory, Trikal, Adeeb ──
   // ── MULTI-STRATEGY ENGINE: Run ALL 4 layers in PARALLEL, pick best signal ──
   // Per-layer trade limits (max trades per day per layer)
