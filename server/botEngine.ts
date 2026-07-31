@@ -7445,10 +7445,10 @@ async function tick(
   // For options: RISK-BASED sizing — SL = 30% below premium, size to keep loss ≤ riskAmount.
   // This ensures SL stays at entry × 0.88 (12% buffer) and quantity is capped by risk.
   // For futures/equity: use signal SL distance as before.
-  // ── CAPITAL GUARD: Max ₹3,250 per trade ──────────────────────────────────────
-  // Per-segment capital cap: NSE ₹3,250, MCX ₹50,000 (allows 1 lot of Gold/Silver — user specified)
+  // ── CAPITAL GUARD: Dynamic Allocation ──────────────────────────────────────
+  // Use the actual capital allocated on the dashboard for both NSE and MCX
   const isMcxForCapital = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
-  const MAX_CAPITAL_PER_TRADE = isMcxForCapital ? 50000 : 3250;
+  const MAX_CAPITAL_PER_TRADE = state.capital;
   const MAX_OPEN_POSITIONS = 4;
   // Check max open positions across all bots for this user
   const userBots = getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, ""));
