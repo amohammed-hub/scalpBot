@@ -5241,6 +5241,77 @@ export const appRouter = router({
         return verifyUpstoxManagedEgress({ force: true });
       }),
 
+    verifyUpstoxProfileEgress: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input, ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Unauthorized" });
+        }
+
+        const db = await getDb();
+        if (!db) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+        }
+
+        const [credential] = await db
+          .select({ accessToken: upstoxCredentials.accessToken })
+          .from(upstoxCredentials)
+          .where(eq(upstoxCredentials.sessionToken, input.sessionToken))
+          .orderBy(desc(upstoxCredentials.updatedAt))
+          .limit(1);
+        if (!credential?.accessToken) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "No active Upstox access token is available for this admin session",
+          });
+        }
+
+        // Both requests use the same managed proxy client. The probe proves the
+        // Railway process is egressing from an allowlisted IP; the second call is
+        // the exact authenticated, read-only Upstox profile GET requested for
+        // acceptance. This endpoint never invokes an order API.
+        const egress = await verifyUpstoxManagedEgress({ force: true });
+        const upstreamUrl = "https://api.upstox.com/v2/user/profile";
+        const profileResponse = await upstoxFetch(upstreamUrl, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${credential.accessToken}`,
+            Accept: "application/json",
+          },
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (!profileResponse.ok) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Upstox profile GET failed with HTTP ${profileResponse.status}`,
+          });
+        }
+
+        const payload = await profileResponse.json() as {
+          data?: { broker?: string; exchanges?: string[] };
+        };
+        if (!payload.data) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Upstox profile GET returned no profile data",
+          });
+        }
+
+        return {
+          observedIp: egress.observedIp,
+          verifiedAt: egress.verifiedAt,
+          allowedIps: egress.allowedIps,
+          upstreamMethod: "GET" as const,
+          upstreamUrl,
+          upstreamStatus: profileResponse.status,
+          profileSucceeded: true as const,
+          broker: payload.data.broker ?? null,
+          exchangeCount: Array.isArray(payload.data.exchanges) ? payload.data.exchanges.length : 0,
+          personalFieldsReturned: false as const,
+          orderEndpointCalled: false as const,
+        };
+      }),
+
     // ── System Health ─────────────────────────────────────────────────────
     systemHealth: publicProcedure
       .query(async ({ ctx }) => {
