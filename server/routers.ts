@@ -4431,7 +4431,30 @@ export const appRouter = router({
         if (runningAfterKill.length > 0) {
           failures.push(`Durable stop verification failed for ${runningAfterKill.length} session(s)`);
         }
-
+               // Force-close any orphan open trades in DB that have no in-memory bot
+        const baseToken = getBaseSessionToken(input.sessionToken);
+        const orphanTrades = await db.select({ id: tradeLog.id }).from(tradeLog).where(
+          and(
+            like(tradeLog.sessionToken, `${baseToken}%`),
+            eq(tradeLog.status, "open"),
+          ),
+        );
+        if (orphanTrades.length > 0) {
+          await db.update(tradeLog).set({
+            status: "closed",
+            exitPrice: 0,
+            pnl: 0,
+            exitReason: "Kill Switch — orphan position cleared",
+            exitedAt: new Date(),
+          }).where(
+            and(
+              like(tradeLog.sessionToken, `${baseToken}%`),
+              eq(tradeLog.status, "open"),
+            ),
+          );
+          console.log(`[KILL SWITCH] Cleared ${orphanTrades.length} orphan open trade(s) from DB`);
+          result.closedTrades += orphanTrades.length;
+        }
         console.log(`[KILL SWITCH] COMPLETE — ${result.stoppedBots} bots stopped, ${result.closedTrades} trades closed, ${failures.length} failures`);
         // Telegram: send consolidated kill switch alert
         try {
