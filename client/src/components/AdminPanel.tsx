@@ -18,6 +18,18 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
   // Referral & Health queries
   const referralStatsQuery = trpc.admin.referralStats.useQuery();
   const systemHealthQuery = trpc.admin.systemHealth.useQuery(undefined, { refetchInterval: 10000 });
+  const mobileAuthMeQuery = trpc.mobileAuth.me.useQuery(undefined, { staleTime: 5_000, retry: 2 });
+  const upstoxEgressStatusQuery = trpc.admin.upstoxEgressStatus.useQuery(undefined, {
+    enabled: activeTab === "health",
+    refetchInterval: activeTab === "health" ? 10_000 : false,
+  });
+  const verifyUpstoxProfileEgressMutation = trpc.admin.verifyUpstoxProfileEgress.useMutation({
+    onSuccess: (data) => {
+      upstoxEgressStatusQuery.refetch();
+      toast.success(`Upstox profile GET succeeded through ${data.observedIp}`);
+    },
+    onError: (err: { message: string }) => toast.error(err.message),
+  });
   // Override bot slots
   const overrideBotSlotsMutation = trpc.admin.overrideBotSlots.useMutation({
     onSuccess: (data) => { toast.success(`Bot slots set to ${data.extraBotSlots}`); usersQuery.refetch(); referralStatsQuery.refetch(); },
@@ -856,6 +868,54 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
               <div><span className="text-white/40 text-xs block">Node Version</span><span className="text-white font-mono">{systemHealthQuery.data?.nodeVersion ?? "?"}</span></div>
               <div><span className="text-white/40 text-xs block">Last Check</span><span className="text-white font-mono text-xs">{systemHealthQuery.data?.timestamp ? new Date(systemHealthQuery.data.timestamp).toLocaleTimeString() : "—"}</span></div>
             </div>
+          </div>
+
+          <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+              <div>
+                <h3 className="text-white font-semibold flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-teal-400" /> Upstox Fixed-IP Egress
+                </h3>
+                <p className="text-white/50 text-sm mt-1 max-w-2xl">
+                  Runs an allowlisted IP probe and an authenticated, read-only GET to the Upstox profile API through the same proxy client. No order endpoint is called.
+                </p>
+              </div>
+              <Button
+                className="bg-teal-500 hover:bg-teal-600 text-white shrink-0"
+                disabled={verifyUpstoxProfileEgressMutation.isPending || !mobileAuthMeQuery.data?.sessionToken}
+                onClick={() => {
+                  const sessionToken = mobileAuthMeQuery.data?.sessionToken;
+                  if (!sessionToken) {
+                    toast.error("Authenticated session token is unavailable");
+                    return;
+                  }
+                  verifyUpstoxProfileEgressMutation.mutate({ sessionToken });
+                }}
+              >
+                {verifyUpstoxProfileEgressMutation.isPending ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Verifying…</>
+                ) : "Verify Proxy + Profile GET"}
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div><span className="text-white/40 text-xs block">Mode</span><span className="text-white font-mono">{upstoxEgressStatusQuery.data?.mode ?? "—"}</span></div>
+              <div><span className="text-white/40 text-xs block">Proxy</span><span className="text-white font-mono">{upstoxEgressStatusQuery.data?.proxyHost ?? "—"}</span></div>
+              <div><span className="text-white/40 text-xs block">Allowed IP</span><span className="text-white font-mono">{upstoxEgressStatusQuery.data?.allowedIps?.join(", ") || "—"}</span></div>
+              <div><span className="text-white/40 text-xs block">Last Verified IP</span><span className="text-white font-mono text-teal-300">{upstoxEgressStatusQuery.data?.lastVerifiedIp ?? "Not verified in this process"}</span></div>
+            </div>
+
+            {verifyUpstoxProfileEgressMutation.data && (
+              <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4">
+                <p className="text-green-300 font-semibold">Proxy and authenticated profile GET passed</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-xs">
+                  <div><span className="text-white/40 block">Observed Egress</span><span className="text-white font-mono">{verifyUpstoxProfileEgressMutation.data.observedIp}</span></div>
+                  <div><span className="text-white/40 block">Upstream Request</span><span className="text-white font-mono">GET /v2/user/profile</span></div>
+                  <div><span className="text-white/40 block">Upstream Status</span><span className="text-white font-mono">{verifyUpstoxProfileEgressMutation.data.upstreamStatus}</span></div>
+                  <div><span className="text-white/40 block">Order Endpoint Called</span><span className="text-white font-mono">No</span></div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
