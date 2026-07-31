@@ -16,12 +16,12 @@ export const PROFITABLE_LAYERS_BY_INSTRUMENT: Record<string, string[]> = {
   "Nifty Fin Service": ["BoxingStrategy", "ORB", "Pattern", "TrikalStrategy", "RedBarTheory", "MACD_BB", "MeanReversionV13"],
   
   // MCX — strong edge, include all profitable strategies (PF > 1.4)
-  "GOLD": ["VWAPReversion", "TrikalStrategy", "Trend", "RedBarTheory", "Momentum", "MACD_BB", "Pattern", "Adeeb"],
-  "SILVER": ["VWAPReversion", "RedBarTheory", "TrikalStrategy", "Momentum", "Pattern", "MACD_BB", "Trend"],
-  "CRUDEOIL": ["VWAPReversion", "TrikalStrategy", "RedBarTheory", "Momentum", "MACD_BB", "Trend", "Pattern"],
-  "CRUDE OIL": ["VWAPReversion", "TrikalStrategy", "RedBarTheory", "Momentum", "MACD_BB", "Trend", "Pattern"],
-  "NATURALGAS": ["VWAPReversion", "TrikalStrategy", "RedBarTheory", "Momentum"],
-  "NATURAL GAS": ["VWAPReversion", "TrikalStrategy", "RedBarTheory", "Momentum"],
+    "GOLD": ["VWAPReversion", "TrikalStrategy", "Trend", "RedBarTheory", "Momentum", "MACD_BB", "Pattern", "Adeeb", "MeanReversionV13"],
+  "SILVER": ["VWAPReversion", "RedBarTheory", "TrikalStrategy", "Momentum", "Pattern", "MACD_BB", "Trend", "MeanReversionV13"],
+  "CRUDEOIL": ["VWAPReversion", "TrikalStrategy", "RedBarTheory", "Momentum", "MACD_BB", "Trend", "Pattern", "MeanReversionV13"],
+  "CRUDE OIL": ["VWAPReversion", "TrikalStrategy", "RedBarTheory", "Momentum", "MACD_BB", "Trend", "Pattern", "MeanReversionV13"],
+  "NATURALGAS": ["VWAPReversion", "TrikalStrategy", "RedBarTheory", "Momentum", "MeanReversionV13"],
+  "NATURAL GAS": ["VWAPReversion", "TrikalStrategy", "RedBarTheory", "Momentum", "MeanReversionV13"],
 };
 
 /**
