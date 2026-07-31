@@ -1923,7 +1923,8 @@ export default function Dashboard() {
                 { id: "Trend", label: "Supertrend", desc: "ATR-based trend following with dynamic stop", icon: "〰️" },
                 { id: "Pattern", label: "CPR Breakout", desc: "Central Pivot Range breakout with volume confirmation", icon: "📐" },
                 { id: "MACD_BB", label: "Failed Breakout", desc: "MACD + Bollinger Band squeeze → expansion reversal", icon: "💥" },
-                { id: "Adeeb", label: "Booming Bulls", desc: "Multi-indicator confluence (RSI + MACD + EMA)", icon: "🐂" },
+                { id: "Adeeb", label: "Adeeb Strategy", desc: "Proprietary Renko + EMA cloud trend-following with pullback entry", icon: "⚡" },
+                { id: "BoomingBulls", label: "Booming Bulls", desc: "ADX + Supertrend + Pivot Breakout (Anish Thakur method)", icon: "🐂" },
               ].map(s => {
                 const enabled = config.enabledLayers.includes(s.id);
                 return (
