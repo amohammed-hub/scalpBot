@@ -6488,14 +6488,14 @@ async function tick(
           }
           // CHOPPY: Disable trend-following strategies (they lose in chop)
           const choppyDisable = ["Trend", "Adeeb", "BoomingBulls"];
-          const disabled: string[] = [];
+          const removedLayers: string[] = [];
           for (const layer of choppyDisable) {
             if (state.enabledLayers?.includes(layer) && !state.userDisabledLayers?.includes(layer)) {
               state.enabledLayers = state.enabledLayers.filter(l => l !== layer);
-              disabled.push(layer);
+              removedLayers.push(layer);
             }
           }
-          emitActivity(state.sessionToken, "signal", `📊 Regime → CHOPPY (ADX ${adxVal.toFixed(0)}) +VWAPReversion,MR-V13${disabled.length ? " −" + disabled.join(",") : ""}`);
+          emitActivity(state.sessionToken, "signal", `📊 Regime → CHOPPY (ADX ${adxVal.toFixed(0)}) +VWAPReversion,MR-V13${removedLayers.length ? " −" + removedLayers.join(",") : ""}`);
         }
       }
         if (prevRegime && prevRegime !== state.currentRegime) {
