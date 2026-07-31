@@ -4396,7 +4396,10 @@ export const appRouter = router({
         console.log(`[KILL SWITCH] Found ${allBots.length} in-memory bot(s) and ${persistedSessions.length} persisted session(s) to stop`);
 
         // Attempt 1
-        let result = await executeKillSwitch(allBots, stopBot, onTradeCloseKill);
+                let result = await executeKillSwitch(allBots, stopBot, onTradeCloseKill);
+        if (result.failedExits.length > 0) {
+          failures.push(...result.failedExits.map(s => `Upstox exit failed: ${s}`));
+        }
         
         // Retry: check if any bots are still running/have open trades
         const remainingBots = getAllBotsForSession(baseSessionToken);
@@ -4439,12 +4442,14 @@ export const appRouter = router({
             eq(tradeLog.status, "open"),
           ),
         );
-        if (orphanTrades.length > 0) {
+                        if (orphanTrades.length > 0) {
+          // Close orphans with entry price (0 P&L) since we can't get live price for orphans.
+          // The exitReason flags these for manual P&L reconciliation.
           await db.update(tradeLog).set({
             status: "closed",
-            exitPrice: 0,
+            exitPrice: sql`${tradeLog.entryPrice}`,  // Use entry price (not 0) for cleaner records
             pnl: 0,
-            exitReason: "Kill Switch — orphan position cleared",
+            exitReason: "Kill Switch — orphan position cleared (verify P&L manually)",
             exitedAt: new Date(),
           }).where(
             and(
@@ -4454,6 +4459,34 @@ export const appRouter = router({
           );
           console.log(`[KILL SWITCH] Cleared ${orphanTrades.length} orphan open trade(s) from DB`);
           result.closedTrades += orphanTrades.length;
+        }
+                // ── UPSTOX POSITION VERIFICATION: Check if any positions remain on broker ──
+        // After kill switch, verify no ghost positions exist on Upstox that we missed.
+        let brokerOrphanWarning = "";
+        try {
+          // Get accessToken from the first persisted session that has one
+          const { botSessions: bs2 } = await import("../drizzle/schema");
+          const tokenRow = await db.select({ accessToken: bs2.accessToken })
+            .from(bs2)
+            .where(and(ownedSessionCondition, sql`${bs2.accessToken} IS NOT NULL`))
+            .limit(1);
+          const killAccessToken = tokenRow?.[0]?.accessToken;
+          if (killAccessToken) {
+            const { default: axios } = await import("axios");
+            const posResp = await axios.get("https://api.upstox.com/v2/portfolio/short-term-positions", {
+              headers: { Authorization: `Bearer ${killAccessToken}`, Accept: "application/json" },
+              timeout: 8000,
+            });
+            const positions: Array<{ instrument_token: string; quantity: number; trading_symbol: string }> = posResp.data?.data ?? [];
+            const openPositions = positions.filter(p => Math.abs(p.quantity) > 0);
+            if (openPositions.length > 0) {
+              brokerOrphanWarning = `⚠️ ${openPositions.length} position(s) STILL OPEN on Upstox: ${openPositions.map(p => p.trading_symbol + " qty=" + p.quantity).join(", ")}`;
+              console.error(`[KILL SWITCH] ${brokerOrphanWarning}`);
+              failures.push(brokerOrphanWarning);
+            }
+          }
+        } catch (err) {
+          console.warn("[KILL SWITCH] Could not verify Upstox positions:", err instanceof Error ? err.message : String(err));
         }
         console.log(`[KILL SWITCH] COMPLETE — ${result.stoppedBots} bots stopped, ${result.closedTrades} trades closed, ${failures.length} failures`);
         // Telegram: send consolidated kill switch alert
@@ -4472,8 +4505,9 @@ export const appRouter = router({
             if (tg?.telegramEnabled && tg.telegramBotToken && tg.telegramChatId && !sentChatIds.has(tg.telegramChatId)) {
               sentChatIds.add(tg.telegramChatId);
               await sendTelegramMessage(tg.telegramBotToken, tg.telegramChatId,
-                `🚨 <b>KILL SWITCH ACTIVATED</b>\n\n` +
+                                `🚨 <b>KILL SWITCH ACTIVATED</b>\n\n` +
                 `⚠️ ALL bots stopped, ALL positions closed\n` +
+                (brokerOrphanWarning ? `\n🔴 ${brokerOrphanWarning}\n` : "") +
                 `🤖 Bots stopped: ${result.stoppedBots}\n` +
                 `📊 Trades closed: ${result.closedTrades}\n` +
                 (failures.length > 0 ? `❌ Failures: ${failures.join(", ")}\n` : "") +
