@@ -48,12 +48,12 @@ export function signAdminAuthToken(claims: AdminAuthClaims): string {
   return jwt.sign(claims, getJwtSecret(), { expiresIn: MOBILE_AUTH_SESSION_SECONDS });
 }
 
-export function getMobileAuthCookieOptions() {
+export function getMobileAuthCookieOptions(): CookieOptions {
   return {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    maxAge: MOBILE_AUTH_COOKIE_MAX_AGE_MS,
+    sameSite: "lax",
     path: "/",
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 Days (Keeps user logged in across restarts/reopens)
   };
 }
