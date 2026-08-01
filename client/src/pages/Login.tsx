@@ -39,8 +39,17 @@ export default function Login() {
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // ── Admin Bypass (Skips Twilio DB validation for code 270290) ──
+    if (mobile === "8686742267" && otp === "270290") {
+      // Set session identifiers and redirect straight to dashboard
+      localStorage.setItem("token", "admin_bypass_token");
+      localStorage.setItem("isAuthenticated", "true");
+      window.location.href = "/dashboard";
+      return;
+    }
+
+    // ── Standard User Flow (Server OTP Validation) ──
     try {
-      // Call the actual tRPC route on your server so it sets the real scalpbot_auth cookie
       const result = await verifyOtpMutation.mutateAsync({
         mobile: mobile,
         code: otp,
@@ -53,12 +62,7 @@ export default function Login() {
         alert(result.message || "Invalid OTP code.");
       }
     } catch (err: any) {
-      // Admin static fallback
-      if (otp === "270290") {
-        window.location.href = "/dashboard";
-        return;
-      }
-      alert(err?.message || "Verification failed.");
+      alert(err?.message || "Verification failed. Please try again.");
     }
   };
 
