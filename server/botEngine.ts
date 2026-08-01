@@ -233,6 +233,7 @@ export interface BotState {
   lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
   regimeManualOverride?: boolean; // true if user manually toggled a layer since last regime check
   userDisabledLayers?: string[]; // layers the user explicitly disabled — regime won't re-enable these
+  strategyLocked?: boolean; // true = regime switcher won't modify layers (strategy testing mode)
   // VRP Regime Filter state (updated every 5 min)
   vrpRegime?: "RICH" | "FAIR" | "CHEAP" | "INVERTED";
   vrpValue?: number;
@@ -6441,10 +6442,11 @@ async function tick(
     // Trending: enable Supertrend + TrikalStrategy, disable mean-reversion layers.
     // Choppy:  disable Supertrend + TrikalStrategy, enable mean-reversion layers.
     // Guard: don't switch while a trade is open (avoids exit-logic confusion).
-    if (
+        if (
       state.adaptiveRegimeEnabled !== false &&
       state.candles.length >= 20 &&
       !state.regimeManualOverride &&
+      !state.strategyLocked &&
       !state.openTrade
     ) {
       const regimeNow = Date.now();
