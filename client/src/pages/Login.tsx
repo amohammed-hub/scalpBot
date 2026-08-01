@@ -11,13 +11,51 @@ export default function Login() {
     loginFormRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const handleSendOtp = (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (mobile.length === 10) {
+    if (mobile.length !== 10) return;
+
+    // ── Admin Bypass (Skip backend check for your admin number) ──
+    // Replace "9999999999" with your actual 10-digit mobile number
+    if (mobile === "9999999999") {
       setOtpSent(true);
+      return;
+    }
+
+    // ── Real User Logic ──
+    try {
+      // 1. Check if the user exists in your database
+      /* 
+      const response = await fetch("/api/check-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: mobile })
+      });
+      const data = await response.json();
+      */
+
+      // TEMPORARY MOCK LOGIC (Until backend is wired up)
+      // We will pretend the API responded with 'false' (user does not exist)
+      const data = { exists: false }; 
+
+      if (data.exists) {
+        // User is a paying subscriber. Backend sent the Twilio OTP.
+        setOtpSent(true);
+      } else {
+        // User is NOT in the database. Force them to buy a plan.
+        alert("Account not found! Please select a subscription plan below to sign up.");
+        
+        // Automatically scroll down to the pricing section
+        window.scrollTo({
+          top: document.body.scrollHeight,
+          behavior: "smooth"
+        });
+      }
+    } catch (error) {
+      console.error("Failed to check user status", error);
+      alert("Something went wrong checking your account. Please try again.");
     }
   };
-
   const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
     
