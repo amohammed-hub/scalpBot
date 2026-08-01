@@ -428,6 +428,9 @@ export async function executeKillSwitch(
 
   return { closedTrades, stoppedBots, failedExits };
 }
+export function getDemoCostConfig(sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
+  return demoCostBySession.get(sessionToken) ?? defaultDemoCost;
+}
 export async function setDemoCostConfig(brokerage: number, slippagePct: number, sessionToken: string = "default"): Promise<{ brokerage: number; slippagePct: number }> {
   const config = { brokerage, slippagePct };
   demoCostBySession.set(sessionToken, config);
