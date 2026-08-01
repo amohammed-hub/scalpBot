@@ -88,46 +88,6 @@ export default function Backtest() {
   const [compareMode, setCompareMode] = useState(false);
   const [compareResult, setCompareResult] = useState<any>(null);
   const [strategyFilter, setStrategyFilter] = useState("all");
-    // ── Strategy Lab: Live Testing Bot ──
-  const [labRunning, setLabRunning] = useState(false);
-  const [labMode, setLabMode] = useState<"demo" | "live">("demo");
-  const [labCapital, setLabCapital] = useState(15000);
-  const [labStrategy, setLabStrategy] = useState("MeanReversionV13");
-  const LAB_SLOT = 9; // Reserved slot for strategy testing
-
-  const startLabMutation = trpc.multiBots.startSecondary.useMutation({
-    onSuccess: () => { setLabRunning(true); toast.success(`🧪 Strategy Lab started: ${labStrategy} (${labMode})`); },
-    onError: (e) => toast.error(`Lab start failed: ${e.message}`),
-  });
-  const stopLabMutation = trpc.bot.stop.useMutation({
-    onSuccess: () => { setLabRunning(false); toast.success("🧪 Strategy Lab stopped"); },
-    onError: (e) => toast.error(`Lab stop failed: ${e.message}`),
-  });
-
-  const handleLabStart = () => {
-    if (labCapital > capital) {
-      toast.error(`Capital ₹${labCapital} exceeds allocated ₹${capital}`);
-      return;
-    }
-    startLabMutation.mutate({
-      sessionToken,
-      slot: LAB_SLOT,
-      instrumentToken,
-      instrumentSymbol: instrumentToken.split("|")[1] ?? "",
-      instrumentLabel: INSTRUMENTS.find(i => i.token === instrumentToken)?.label ?? "",
-      mode: labMode,
-      capital: labCapital,
-      enabledLayers: [labStrategy],
-      adaptiveRegimeEnabled: false,
-      strategyLocked: true,
-      maxTradesPerDay: 5,
-      riskPerTradePct: 2,
-      minConfidence: 55,
-      lotSize: 1,
-      isIndexOptions: instrumentToken.startsWith("NSE_INDEX") || instrumentToken.startsWith("BSE_INDEX"),
-      underlyingToken: instrumentToken.startsWith("NSE_INDEX") || instrumentToken.startsWith("BSE_INDEX") ? instrumentToken : undefined,
-    });
-  };
 
   const handleLabStop = () => {
     stopLabMutation.mutate({ sessionToken: `${sessionToken}-slot${LAB_SLOT}` });
