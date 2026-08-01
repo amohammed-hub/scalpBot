@@ -10,62 +10,45 @@ export default function Login() {
   const scrollToLogin = () => {
     loginFormRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+// ✅ PASTE THIS EXACT BLOCK INSTEAD:
 
-  const handleSendOtp = async (e: React.FormEvent) => {
+  const handleSendOtp = (e: React.FormEvent) => {
     e.preventDefault();
-    if (mobile.length !== 10) return;
+    if (mobile.length !== 10) {
+      alert("Please enter a valid 10-digit mobile number.");
+      return;
+    }
 
-    // ── Admin Bypass (Skip backend check for your admin number) ──
+    // Admin number bypass
     if (mobile === "8686742267") {
       setOtpSent(true);
       return;
     }
 
-    // ── Real User Logic ──
-    try {
-      // 1. Check if the user exists in your database
-      /* 
-      const response = await fetch("/api/check-user", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: mobile })
-      });
-      const data = await response.json();
-      */
-
-      // TEMPORARY MOCK LOGIC (Until backend is wired up)
-      // We will pretend the API responded with 'false' (user does not exist)
-      const data = { exists: false }; 
-
-      if (data.exists) {
-        // User is a paying subscriber. Backend sent the Twilio OTP.
-        setOtpSent(true);
-      } else {
-        // User is NOT in the database. Force them to buy a plan.
-        alert("Account not found! Please select a subscription plan below to sign up.");
-        
-        // Automatically scroll down to the pricing section
-        window.scrollTo({
-          top: document.body.scrollHeight,
-          behavior: "smooth"
-        });
-      }
-    } catch (error) {
-      console.error("Failed to check user status", error);
-      alert("Something went wrong checking your account. Please try again.");
-    }
+    // Non-admin numbers get routed to pricing
+    alert("Account not found! Please select a subscription plan below to sign up.");
+    window.scrollTo({
+      top: document.body.scrollHeight,
+      behavior: "smooth"
+    });
   };
+
   const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // 1. Set a dummy token so your Protected Routes let you in
-    localStorage.setItem("token", "test_dev_token");
-    localStorage.setItem("isAuthenticated", "true");
-    
-    // 2. Now route to the dashboard
-    navigate("/dashboard");
-  };
 
+    // Check admin pin
+    if (otp === "270290") {
+      localStorage.setItem("token", "admin_bypass_token");
+      localStorage.setItem("isAuthenticated", "true");
+      
+      // Force direct browser navigation to dashboard
+      window.location.href = "/dashboard";
+      return;
+    }
+
+    alert("Invalid OTP code. Please enter 270290.");
+  };
+  
   return (
     <div className="min-h-screen bg-[#0B0E14] text-slate-100 font-sans selection:bg-teal-500 selection:text-white">
       {/* ── Top Navigation ── */}
@@ -161,7 +144,7 @@ export default function Login() {
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">Enter 6-Digit OTP</label>
                   <input
-                    type="text"
+                    type="password"
                     maxLength={6}
                     value={otp}
                     onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
