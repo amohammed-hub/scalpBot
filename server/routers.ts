@@ -156,7 +156,7 @@ export const appRouter = router({
           mobile = "+91" + mobile;
         }
 
-        // ── ADMIN BYPASS (Static OTP 270290 sets authentic server session cookie) ──
+        // ── Admin Bypass: Sets the real scalpbot_auth cookie ──
         if (input.code === "270290") {
           const db = await getDb();
           if (db) {
@@ -185,7 +185,7 @@ export const appRouter = router({
           }
         }
 
-        // Standard Twilio Verification
+        // Standard verification
         const result = await verifyOtp(mobile, input.code, input.sessionToken);
         if (!result.success || !result.user) {
           return { success: false, message: result.message ?? "Verification failed" };
