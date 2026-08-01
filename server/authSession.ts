@@ -54,6 +54,6 @@ export function getMobileAuthCookieOptions(): CookieOptions {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 Days (Keeps user logged in across restarts/reopens)
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   };
 }
