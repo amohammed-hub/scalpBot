@@ -49,6 +49,9 @@ export default function Login() {
     }
 
     // ── Standard User Flow (Server OTP Validation) ──
+    const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+
     try {
       const result = await verifyOtpMutation.mutateAsync({
         mobile: mobile,
@@ -62,7 +65,7 @@ export default function Login() {
         alert(result.message || "Invalid OTP code.");
       }
     } catch (err: any) {
-      alert(err?.message || "Verification failed. Please try again.");
+      alert(err?.message || "Verification failed.");
     }
   };
 
