@@ -6398,11 +6398,11 @@ const isNiftyOption = state.instrumentToken.includes("NIFTY") && !isBankNiftyOpt
 const isSensexOption = state.instrumentToken.includes("SENSEX");
 
 // Calculate if today is the LAST Tuesday/Thursday of the month
-const istDate = new Date(now2.getTime() + 5.5 * 60 * 60 * 1000);
-const dayOfMonth = istDate.getUTCDate();
-const daysInMonth = new Date(istDate.getUTCFullYear(), istDate.getUTCMonth() + 1, 0).getDate();
+const expiryIstDate = new Date(now2.getTime() + 5.5 * 60 * 60 * 1000);
+const dayOfMonth = expiryIstDate.getUTCDate();
+const daysInMonth = new Date(expiryIstDate.getUTCFullYear(), expiryIstDate.getUTCMonth() + 1, 0).getDate();
 const isLastWeekOfMonth = (dayOfMonth + 7) > daysInMonth;
-
+    
 // 2026 Rules: One weekly expiry per exchange + updated monthly days
 const isExpiryDay = isOptionInstrument && (
   (isNiftyOption && dayOfWeek === 2) || // Nifty Weekly = Tuesday
