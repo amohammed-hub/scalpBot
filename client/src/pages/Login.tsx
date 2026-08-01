@@ -37,12 +37,11 @@ export default function Login() {
 
     // Admin code check
     if (otp === "270290") {
-      // Set session items so the frontend state registers the session
       localStorage.setItem("scalpbot_session_token", "admin_session");
       localStorage.setItem("isAuthenticated", "true");
 
-      // Force navigation to dashboard
-      window.location.href = "/dashboard";
+      // Redirect directly to dashboard
+      window.location.assign("/dashboard");
       return;
     }
 
@@ -63,7 +62,7 @@ export default function Login() {
           onClick={scrollToLogin}
           className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-medium text-sm transition-all shadow-lg shadow-teal-900/20"
         >
-          Login / Signup
+          Login
         </button>
       </nav>
 
@@ -109,8 +108,8 @@ export default function Login() {
               <div className="inline-flex p-3 rounded-2xl bg-teal-500/10 text-teal-400 mb-1">
                 <Shield className="w-8 h-8" />
               </div>
-              <h2 className="text-2xl font-bold text-white">Get Started with ScalpBot</h2>
-              <p className="text-xs text-slate-400">Enter your mobile number to log in or create an account</p>
+              <h2 className="text-2xl font-bold text-white">Log In to ScalpBot</h2>
+              <p className="text-xs text-slate-400">Enter your registered mobile number to continue</p>
             </div>
 
             {!otpSent ? (
@@ -180,50 +179,6 @@ export default function Login() {
         </div>
       </section>
 
-      {/* ── Details / What It Is Section ── */}
-      <section className="bg-slate-900/40 border-y border-slate-800/60 py-20 px-6">
-        <div className="max-w-7xl mx-auto space-y-12">
-          <div className="text-center space-y-3 max-w-3xl mx-auto">
-            <h2 className="text-3xl font-bold text-white">Why Automated Options Scalping Works</h2>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Eliminate emotional trading, late entries, and missed exits. ScalpBot runs directly on high-speed servers with direct broker integration.
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            <div className="bg-[#121824] border border-slate-800 rounded-2xl p-6 space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400 mb-2">
-                <Cpu className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold text-white">Multi-Strategy Engine</h3>
-              <p className="text-slate-400 text-xs leading-relaxed">
-                Executes ORB, Supertrend, Renko, VWAP Deviation, and Opening Burst setups across Nifty, BankNifty, Sensex, and MCX Crude.
-              </p>
-            </div>
-
-            <div className="bg-[#121824] border border-slate-800 rounded-2xl p-6 space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-2">
-                <Shield className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold text-white">Automated Risk Safeguards</h3>
-              <p className="text-slate-400 text-xs leading-relaxed">
-                Includes per-trade stop-loss, trailing stops, daily maximum loss limits, and consecutive loss cooldowns.
-              </p>
-            </div>
-
-            <div className="bg-[#121824] border border-slate-800 rounded-2xl p-6 space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-2">
-                <Zap className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold text-white">Instant Upstox Integration</h3>
-              <p className="text-slate-400 text-xs leading-relaxed">
-                Connect your Upstox trading account seamlessly with zero-latency order placement directly to exchange servers.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ── Subscription Plans Section ── */}
       <section className="py-20 px-6 max-w-7xl mx-auto space-y-12">
         <div className="text-center space-y-3 max-w-3xl mx-auto">
@@ -234,125 +189,6 @@ export default function Login() {
           <p className="text-slate-400 text-sm">
             Choose the plan that fits your trading capital and goals. Lock in discounted launch pricing today.
           </p>
-        </div>
-
-        {/* Pricing Cards Grid */}
-        <div className="grid lg:grid-cols-3 gap-8 items-stretch">
-          
-          {/* Plan 1: 1 Month */}
-          <div className="bg-[#121824] border border-slate-800 rounded-3xl p-8 flex flex-col justify-between space-y-6 relative hover:border-slate-700 transition-all">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xl font-bold text-white">1 Month Plan</h3>
-                <span className="px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 text-xs font-medium">Monthly</span>
-              </div>
-              <p className="text-slate-400 text-xs">Ideal for testing automated scalping strategies.</p>
-              
-              <div className="pt-2">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-slate-500 text-lg line-through font-semibold">₹14,999</span>
-                  <span className="text-4xl font-extrabold text-white">₹9,999</span>
-                  <span className="text-xs text-slate-400">/ month</span>
-                </div>
-                <span className="inline-block mt-2 px-2.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-semibold">
-                  Save 33% Launch Discount
-                </span>
-              </div>
-
-              <ul className="space-y-3 pt-4 border-t border-slate-800/80 text-xs text-slate-300">
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> Access to 4 Bot Slots</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> All Strategies (ORB, Trikal, Renko)</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> NSE Index & MCX Commodity Options</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> Real-time Telegram Alerts</li>
-              </ul>
-            </div>
-
-            <button
-              onClick={scrollToLogin}
-              className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-all"
-            >
-              Get Started
-            </button>
-          </div>
-
-          {/* Plan 2: 3 Months (Most Popular) */}
-          <div className="bg-[#121824] border-2 border-teal-500 rounded-3xl p-8 flex flex-col justify-between space-y-6 relative shadow-2xl shadow-teal-950/40">
-            <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-teal-500 text-slate-950 font-bold text-xs uppercase tracking-wider shadow-lg">
-              Most Popular
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xl font-bold text-white">3 Months Plan</h3>
-                <span className="px-2.5 py-1 rounded-md bg-teal-500/20 text-teal-300 text-xs font-medium">Quarterly</span>
-              </div>
-              <p className="text-slate-400 text-xs">Best balance for consistent quarterly profitability.</p>
-
-              <div className="pt-2">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-slate-500 text-lg line-through font-semibold">₹44,997</span>
-                  <span className="text-4xl font-extrabold text-white">₹24,999</span>
-                  <span className="text-xs text-slate-400">/ 3 months</span>
-                </div>
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="px-2.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-semibold">
-                    Save 44% (Effective ₹8,333/mo)
-                  </span>
-                </div>
-              </div>
-
-              <ul className="space-y-3 pt-4 border-t border-slate-800/80 text-xs text-slate-300">
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> Everything in Monthly Plan</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> Priority Upstox Order Routing</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> Advanced Regime Switcher Controls</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> VIP Community Support</li>
-              </ul>
-            </div>
-
-            <button
-              onClick={scrollToLogin}
-              className="w-full py-3.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs transition-all shadow-lg shadow-teal-500/20"
-            >
-              Get Started (Save 44%)
-            </button>
-          </div>
-
-          {/* Plan 3: 1 Year (Best Value) */}
-          <div className="bg-[#121824] border border-slate-800 rounded-3xl p-8 flex flex-col justify-between space-y-6 relative hover:border-slate-700 transition-all">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xl font-bold text-white">1 Year Plan</h3>
-                <span className="px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 text-xs font-medium">Annual</span>
-              </div>
-              <p className="text-slate-400 text-xs">Maximum savings for committed automated traders.</p>
-
-              <div className="pt-2">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-slate-500 text-lg line-through font-semibold">₹1,79,988</span>
-                  <span className="text-4xl font-extrabold text-white">₹79,999</span>
-                  <span className="text-xs text-slate-400">/ year</span>
-                </div>
-                <span className="inline-block mt-2 px-2.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-semibold">
-                  Save 55% (Effective ₹6,666/mo)
-                </span>
-              </div>
-
-              <ul className="space-y-3 pt-4 border-t border-slate-800/80 text-xs text-slate-300">
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> Everything in Quarterly Plan</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> Max Risk Allocation Cap Customization</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> 1-on-1 Onboarding Assistance</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" /> Locked Price for Lifetime Renewals</li>
-              </ul>
-            </div>
-
-            <button
-              onClick={scrollToLogin}
-              className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-all"
-            >
-              Get Started
-            </button>
-          </div>
-
         </div>
       </section>
 
