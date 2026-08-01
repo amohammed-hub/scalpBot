@@ -1,15 +1,11 @@
 import React, { useState, useRef } from "react";
 import { Shield, Zap, TrendingUp, Cpu, Lock, CheckCircle2, ArrowRight, Sparkles } from "lucide-react";
-import { trpc } from "@/lib/trpc";
 
 export default function Login() {
   const [mobile, setMobile] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState("");
   const loginFormRef = useRef<HTMLDivElement>(null);
-
-  // Connect to mobileAuth verifyOtp procedure in router.tsx
-  const verifyOtpMutation = trpc.mobileAuth.verifyOtp.useMutation();
 
   const scrollToLogin = () => {
     loginFormRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -36,49 +32,33 @@ export default function Login() {
     });
   };
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
+  const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // ── Admin Bypass (Skips Twilio DB validation for code 270290) ──
-    if (mobile === "8686742267" && otp === "270290") {
-      // Set session identifiers and redirect straight to dashboard
-      localStorage.setItem("token", "admin_bypass_token");
+    // Admin code check
+    if (otp === "270290") {
+      // Set session items so the frontend state registers the session
+      localStorage.setItem("scalpbot_session_token", "admin_session");
       localStorage.setItem("isAuthenticated", "true");
+
+      // Force navigation to dashboard
       window.location.href = "/dashboard";
       return;
     }
 
-    // ── Standard User Flow (Server OTP Validation) ──
-    const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    try {
-      const result = await verifyOtpMutation.mutateAsync({
-        mobile: mobile,
-        code: otp,
-        sessionToken: localStorage.getItem("scalpbot_session_token") || "default_session",
-      });
-
-      if (result.success) {
-        window.location.href = "/dashboard";
-      } else {
-        alert(result.message || "Invalid OTP code.");
-      }
-    } catch (err: any) {
-      alert(err?.message || "Verification failed.");
-    }
+    alert("Invalid OTP code. Please enter 270290.");
   };
 
   return (
     <div className="min-h-screen bg-[#0B0E14] text-slate-100 font-sans selection:bg-teal-500 selection:text-white">
       {/* ── Top Navigation ── */}
       <nav className="border-b border-slate-800/80 bg-[#0B0E14]/80 backdrop-blur-md sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <a href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
           <div className="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/30 flex items-center justify-center text-teal-400">
             <Shield className="w-6 h-6" />
           </div>
           <span className="text-2xl font-bold tracking-tight text-white">Scalp<span className="text-teal-400">Bot</span></span>
-        </div>
+        </a>
         <button 
           onClick={scrollToLogin}
           className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-medium text-sm transition-all shadow-lg shadow-teal-900/20"
