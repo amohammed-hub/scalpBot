@@ -23,7 +23,7 @@ const MORNING_DEFAULTS: InstrumentDefault[] = [
   { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → OTM Options (Auto)",   lotSize: 65,  isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
   { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → OTM Options (Auto)",  lotSize: 30,  isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
   { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → OTM Options (Auto)",   lotSize: 60,  isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
-  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → OTM Options (Auto)",  lotSize: 30,  isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
+  { token: "BSE_INDEX|SENSEX", symbol: "SENSEX", label: "Sensex → OTM Options (Auto)", lotSize: 10, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" }
 ];
 
 // Evening session: MCX Commodity Options
