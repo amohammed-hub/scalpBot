@@ -774,6 +774,7 @@ export const appRouter = router({
              crudeOilCorrelation: input.crudeOilCorrelation,
              adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
              renkoExitEnabled: input.renkoExitEnabled ?? false,
+             strategyLocked: input.strategyLocked ?? false,
            })
            .where(eq(botSessions.id, sessionId));
        } else {
@@ -813,6 +814,7 @@ export const appRouter = router({
               crudeOilCorrelation: input.crudeOilCorrelation,
               adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
               renkoExitEnabled: input.renkoExitEnabled ?? false,
+              strategyLocked: input.strategyLocked ?? false,
               consecutiveUnderlyingSLs: 0,
               lastUnderlyingSLAt: null,
               layerTradesCount: JSON.stringify({}),
@@ -980,6 +982,7 @@ export const appRouter = router({
             crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             renkoExitEnabled: input.renkoExitEnabled ?? false,
+            strategyLocked: input.strategyLocked ?? false,
             consecutiveUnderlyingSLs: restoredConsecutiveUnderlyingSLs,
             lastUnderlyingSLAt: restoredLastUnderlyingSLAt,
             layerTradesCount: restoredLayerTradesCount,
@@ -2763,6 +2766,7 @@ export const appRouter = router({
         crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
         adaptiveRegimeEnabled: z.boolean().default(true), // Fail-safe: enable adaptive switching only when explicitly selected
         renkoExitEnabled: z.boolean().default(false), // Experimental exit remains off unless explicitly selected
+        strategyLocked: z.boolean().default(false),
         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R
       }))
      .mutation(async ({ input, ctx }) => {
@@ -3033,6 +3037,7 @@ export const appRouter = router({
            crudeOilCorrelation: input.crudeOilCorrelation,
            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
            renkoExitEnabled: input.renkoExitEnabled ?? false,
+           strategyLocked: input.strategyLocked ?? false,
            consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
            layerTradesCount: JSON.stringify(slotRestoredLayerTradesCount),
@@ -3064,6 +3069,7 @@ export const appRouter = router({
             crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             renkoExitEnabled: input.renkoExitEnabled ?? false,
+            strategyLocked: input.strategyLocked ?? false,
             consecutiveUnderlyingSLs: 0,
             lastUnderlyingSLAt: null,
             layerTradesCount: JSON.stringify({}),
@@ -3142,6 +3148,7 @@ export const appRouter = router({
           crudeOilCorrelation: input.crudeOilCorrelation,
           adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
           renkoExitEnabled: input.renkoExitEnabled ?? false,
+          strategyLocked: input.strategyLocked ?? false,
           consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
           lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
           layerTradesCount: slotRestoredLayerTradesCount,
