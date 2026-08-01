@@ -2503,7 +2503,20 @@ export function generateOpeningBurstSignal(
   }
 
   // Day open = first candle's open price
-  const dayOpen = candles[0].open;
+  // ── FIX: Extract ONLY today's candles ──
+  const latestCandle = candles[candles.length - 1];
+  const latestDateStr = new Date(latestCandle.timestamp + 330 * 60000).toISOString().slice(0, 10);
+  const todaysCandles = candles.filter(c => {
+    const cDateStr = new Date(c.timestamp + 330 * 60000).toISOString().slice(0, 10);
+    return cDateStr === latestDateStr;
+  });
+
+  if (todaysCandles.length < 1) {
+    return { ...hold, reason: "Opening Burst: waiting for today's first candle" };
+  }
+
+  // Day open = TODAY'S first candle's open price
+  const dayOpen = todaysCandles[0].open;
   if (dayOpen <= 0) return { ...hold, reason: "Opening Burst: invalid day open" };
 
   // Calculate gap
@@ -2522,17 +2535,13 @@ export function generateOpeningBurstSignal(
 
   const gapDirection: "BUY" | "SELL" = gapPct > 0 ? "BUY" : "SELL";
 
-  // AGGRESSIVE ENTRY: Look for confirmation candle starting from candle 1 itself
-  // For strong gaps (>0.3%), even candle 1 can be the entry if it's gap-aligned
-  // Confirmation: body > 50% of range AND cumulative move > 0.15% from prev close AND gap-aligned
-  // Reduced from 70%/0.3% — opening candles have wicks due to volatility, 50% body is still directional
   let confirmationCandle: Candle | null = null;
   let bodyRatio = 0;
 
-  // Start from candle 0 (first candle) for strong gaps, candle 1 otherwise
-  const startIdx = absGap >= 0.003 ? 0 : (candles.length >= 2 ? 1 : 0);
-  for (let i = startIdx; i < Math.min(candles.length, 5); i++) {
-    const c = candles[i];
+  // Evaluate ONLY today's first 5 candles
+  const startIdx = absGap >= 0.003 ? 0 : (todaysCandles.length >= 2 ? 1 : 0);
+  for (let i = startIdx; i < Math.min(todaysCandles.length, 5); i++) {
+    const c = todaysCandles[i];
     const body = Math.abs(c.close - c.open);
     const range = c.high - c.low;
     if (range <= 0) continue;
@@ -2540,13 +2549,10 @@ export function generateOpeningBurstSignal(
     const ratio = body / range;
     const cumMove = Math.abs(c.close - dayOpen) / dayOpen;
 
-    // Relaxed thresholds: body > 50% (was 70%), move > 0.15% (was 0.3%)
-    // For candle 0 with strong gap: just need body > 40% and any positive move in gap direction
     const bodyThreshold = (i === 0 && absGap >= 0.003) ? 0.40 : 0.50;
     const moveThreshold = (i === 0 && absGap >= 0.003) ? 0.001 : 0.0015;
 
     if (ratio >= bodyThreshold && cumMove >= moveThreshold) {
-      // Check direction alignment with gap
       const candleBullish = c.close > c.open;
       const gapAligned = (gapDirection === "BUY" && candleBullish) || (gapDirection === "SELL" && !candleBullish);
 
@@ -2557,7 +2563,6 @@ export function generateOpeningBurstSignal(
       }
     }
   }
-
   if (!confirmationCandle) {
     return { ...hold, reason: "Opening Burst: no confirmation candle (body<50% or move<0.15% or not gap-aligned)" };
   }
