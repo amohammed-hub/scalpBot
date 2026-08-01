@@ -22,12 +22,13 @@ export default function Login() {
       return;
     }
 
-    // Admin bypass
+    // Admin number bypass
     if (mobile === "8686742267") {
       setOtpSent(true);
       return;
     }
 
+    // Non-admin numbers get routed to pricing
     alert("Account not found! Please select a subscription plan below to sign up.");
     window.scrollTo({
       top: document.body.scrollHeight,
@@ -60,23 +61,7 @@ export default function Login() {
       alert(err?.message || "Verification failed.");
     }
   };
-  
-  const handleVerifyOtp = (e: React.FormEvent) => {
-    e.preventDefault();
 
-    // Check admin pin
-    if (otp === "270290") {
-      localStorage.setItem("token", "admin_bypass_token");
-      localStorage.setItem("isAuthenticated", "true");
-      
-      // Force direct browser navigation to dashboard
-      window.location.href = "/dashboard";
-      return;
-    }
-
-    alert("Invalid OTP code. Please enter 270290.");
-  };
-  
   return (
     <div className="min-h-screen bg-[#0B0E14] text-slate-100 font-sans selection:bg-teal-500 selection:text-white">
       {/* ── Top Navigation ── */}
