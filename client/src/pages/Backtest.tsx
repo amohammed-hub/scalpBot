@@ -339,10 +339,6 @@ export default function Backtest() {
                 <GitCompare className="w-3.5 h-3.5" /> V1 vs V2 Comparison
               </span>
             </label>
-            {/* ── Strategy Lab: Live Testing Bot ────────────── */}
-            <div className="mt-4 pt-4 border-t border-white/10">
-              ... (the full Strategy Lab JSX from the artifact)
-            </div>
 
             <button onClick={handleRun} disabled={isBacktestPending}
               className={`w-full flex items-center ...`}>
