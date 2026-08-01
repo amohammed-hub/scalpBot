@@ -950,7 +950,7 @@ export function generateSignal(
   const trend5m = get5mTrend(candles5m);
 
   // Dynamic breakout threshold (ATR-relative)
-  const dynamicBreakoutThreshold = Math.max(0.0002, (atr / price) * 0.5);
+  const dynamicBreakoutThreshold = Math.max(0.0002, (atr / price) * 0.35);
 
   // Support/Resistance levels from previous day
   let srLevels: number[] = [];
@@ -979,7 +979,7 @@ export function generateSignal(
   // BEFORE: allow5mBuy/Sell was a boolean that BLOCKED signals entirely when 5m trend disagreed.
   // AFTER: All signals are ALLOWED through, but counter-trend signals receive a confidence penalty.
   // This ensures strong counter-trend signals (e.g., gap-up fade) can still fire with reduced confidence.
-  const against5mPenalty = 0.15; // 15% confidence reduction for counter-trend trades
+  const against5mPenalty = 0.05; // 5% confidence reduction for counter-trend trades
   const allow5mBuy  = true; // Never hard-block — penalty applied post-generation
   const allow5mSell = true; // Never hard-block — penalty applied post-generation
   const strict5mBuy  = true; // Never hard-block — penalty applied post-generation
@@ -6391,6 +6391,7 @@ async function tick(
   // - NIFTY: weekly expiry every Thursday (dayOfWeek === 4)
   // - BANKNIFTY: monthly expiry on LAST THURSDAY of month (weekly discontinued Nov 2024)
   // ── 2026 SEBI Expiry Day Detection ──
+// ── 2026 SEBI Expiry Day Detection ──
 const dayOfWeek = now2.getUTCDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu
 const isBankNiftyOption = state.instrumentToken.includes("BNF") || state.instrumentToken.includes("BANKNIFTY");
 const isNiftyOption = state.instrumentToken.includes("NIFTY") && !isBankNiftyOption;
@@ -6402,6 +6403,7 @@ const dayOfMonth = istDate.getUTCDate();
 const daysInMonth = new Date(istDate.getUTCFullYear(), istDate.getUTCMonth() + 1, 0).getDate();
 const isLastWeekOfMonth = (dayOfMonth + 7) > daysInMonth;
 
+// 2026 Rules: One weekly expiry per exchange + updated monthly days
 const isExpiryDay = isOptionInstrument && (
   (isNiftyOption && dayOfWeek === 2) || // Nifty Weekly = Tuesday
   (isSensexOption && dayOfWeek === 4) || // Sensex Weekly = Thursday
