@@ -139,9 +139,6 @@ export const appRouter = router({
     }),
   }),
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // Mobile OTP Auth Procedure
-  // ══════════════════════════════════════════════════════════════════════════
   mobileAuth: router({
     sendOtp: publicProcedure
       .input(z.object({ mobile: z.string().min(10).max(15) }))
@@ -150,10 +147,9 @@ export const appRouter = router({
         if (!mobile.startsWith("+")) {
           mobile = "+91" + mobile;
         }
-        const reqObj = (ctx as any).req;
-        const rawIp = reqObj?.headers?.["x-forwarded-for"] || reqObj?.socket?.remoteAddress;
-        const clientIp = typeof rawIp === "string" ? rawIp.split(",")[0].trim() : undefined;
-
+        const clientIp = (ctx as any).req?.headers?.["x-forwarded-for"]?.split(",")[0]?.trim()
+          || (ctx as any).req?.socket?.remoteAddress
+          || undefined;
         try {
           return await sendOtp(mobile, clientIp);
         } catch (err: any) {
@@ -174,7 +170,7 @@ export const appRouter = router({
           mobile = "+91" + mobile;
         }
 
-        // ── Admin Bypass: Sets the real scalpbot_auth cookie ──
+        // Admin Bypass: Sets the real scalpbot_auth cookie
         if (input.code === "270290") {
           const db = await getDb();
           if (db) {
@@ -203,7 +199,6 @@ export const appRouter = router({
           }
         }
 
-        // Standard verification
         const result = await verifyOtp(mobile, input.code, input.sessionToken);
         if (!result.success || !result.user) {
           return { success: false, message: result.message ?? "Verification failed" };
@@ -268,118 +263,7 @@ export const appRouter = router({
       }),
   }),
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // Multi-Bot Status Endpoints
-  // ══════════════════════════════════════════════════════════════════════════
-  multiBots: router({
-    allStatus: publicProcedure
-      .input(z.object({ sessionToken: sessionTokenSchema, isAdmin: z.boolean().default(false) }))
-      .query(async ({ input, ctx }) => {
-        await verifySessionOwnership(ctx, input.sessionToken);
-        const isAdmin = await verifyAdminAccess(ctx);
-        const db = await getDb();
-
-        let userMaxSlots = 5; // Capped at 5 slots for clean UI rendering
-        if (db) {
-          try {
-            const userRows = await db
-              .select({ extraBotSlots: appUsers.extraBotSlots })
-              .from(appUsers)
-              .where(eq(appUsers.sessionToken, input.sessionToken))
-              .limit(1);
-            const extra = userRows[0]?.extraBotSlots ?? 0;
-            userMaxSlots = extra > 0 ? Math.max(5, extra) : 5;
-          } catch (error) {
-            console.error("[allStatus] Failed to load owner slot entitlement:", error);
-          }
-        }
-        const slotTokens = getSlotTokens(input.sessionToken, userMaxSlots);
-        const dbRows: Record<string, typeof botSessions.$inferSelect> = {};
-        const nowMs_ = Date.now(); const istOff_ = 5.5 * 60 * 60 * 1000; const istN_ = new Date(nowMs_ + istOff_); istN_.setUTCHours(0, 0, 0, 0); const todayStart = new Date(istN_.getTime() - istOff_);
-        const todayTradeCounts: Record<string, number> = {};
-        if (db) {
-          try {
-            const rows = await db
-              .select()
-              .from(botSessions)
-              .where(inArray(botSessions.sessionToken, slotTokens))
-              .orderBy(desc(botSessions.updatedAt), desc(botSessions.id));
-            for (const row of rows) {
-              if (!dbRows[row.sessionToken]) dbRows[row.sessionToken] = row;
-            }
-
-            const countRows = await db
-              .select({ sessionToken: tradeLog.sessionToken, count: count() })
-              .from(tradeLog)
-              .where(and(inArray(tradeLog.sessionToken, slotTokens), gte(tradeLog.enteredAt, todayStart)))
-              .groupBy(tradeLog.sessionToken);
-            for (const row of countRows) todayTradeCounts[row.sessionToken] = row.count;
-          } catch (dbErr) {
-            console.error("[allStatus] Batched DB query failed:", dbErr);
-          }
-        }
-
-        const slotResults = slotTokens.map(tok => {
-          const inMem = getBotState(tok);
-          const dbRow = dbRows[tok];
-          const slot = tok === input.sessionToken ? 0 : parseInt(tok.match(/-slot(\d+)$/)?.[1] ?? "0", 10);
-          const effectiveStatus = inMem?.status ?? dbRow?.status ?? "stopped";
-          const isRunning = effectiveStatus === "running";
-          const pendingRestore = (dbRow?.status === "running" && !inMem) || undefined;
-          return {
-            sessionToken: tok,
-            slot,
-            status: effectiveStatus,
-            pendingRestore,
-            instrumentSymbol: isRunning ? (inMem?.instrumentSymbol ?? dbRow?.instrumentSymbol ?? "") : "",
-            instrumentLabel: isRunning ? (inMem?.instrumentLabel ?? dbRow?.instrumentLabel ?? "") : "",
-            instrumentToken: isRunning ? (inMem?.instrumentToken ?? "") : "",
-            optionTradeToken: isRunning ? ((inMem as any)?.optionTradeToken ?? null) : null,
-            capital: inMem?.capital ?? 0,
-            lastPrice: inMem?.lastPrice ?? dbRow?.lastPrice ?? 0,
-            dailyPnl: inMem?.dailyPnl ?? dbRow?.dailyPnl ?? 0,
-            tradesCount: inMem?.tradesCount ?? todayTradeCounts[tok] ?? 0,
-            openTrade: inMem?.openTrade ?? null,
-            lastSignal: inMem?.lastSignal ?? null,
-            isPowerHourMode: inMem?.isPowerHourMode ?? false,
-            isMCXEveningMode: inMem?.isMCXEveningMode ?? false,
-            isMCXLateSessionMode: inMem?.isMCXLateSessionMode ?? false,
-            heroZeroMode: inMem?.heroZeroMode ?? false,
-            openingBurstMode: inMem?.openingBurstMode ?? false,
-            currentRegime: inMem?.currentRegime ?? null,
-            currentADX: inMem?.currentADX ?? null,
-            vrpRegime: inMem?.vrpRegime ?? null,
-            vrpValue: inMem?.vrpValue ?? null,
-            oiFlowDirection: inMem?.oiFlowDirection ?? null,
-            oiFlowStrength: inMem?.oiFlowStrength ?? null,
-            maxPainStrike: inMem?.maxPainStrike ?? null,
-            maxPainBias: inMem?.maxPainBias ?? null,
-            lastTickAt: inMem?.lastTickAt ?? (dbRow?.lastTickAt ? Number(dbRow.lastTickAt) : 0),
-            scanIntervalSec: inMem?.scanIntervalSec ?? dbRow?.scanIntervalSec ?? 60,
-            lastError: inMem?.lastError ?? dbRow?.lastError ?? null,
-            candlesCount: inMem?.candles?.length ?? 0,
-            hasRealData: !!(inMem?.accessToken) || (inMem?.candles?.length ?? 0) > 0,
-            optionPremiumPrice: inMem?.optionQuoteStatus !== "unavailable" ? (inMem?.optionPremiumPrice ?? null) : null,
-            optionQuoteStatus: (inMem?.isIndexOptions ?? dbRow?.isIndexOptions) ? (inMem?.optionQuoteStatus ?? "unavailable") : null,
-            optionQuoteUpdatedAt: inMem?.optionQuoteUpdatedAt ?? null,
-            isIndexOptions: inMem?.isIndexOptions ?? dbRow?.isIndexOptions ?? false,
-          };
-        });
-
-        if (!isAdmin) {
-          return slotResults.map((slot: any) => ({
-            ...slot,
-            lastSignal: stripSignalForUser(slot.lastSignal),
-            openTrade: stripOpenTradeForUser(slot.openTrade),
-          }));
-        }
-        return slotResults;
-      }),
-  }),
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // Admin Panel Endpoints (FULL RESTORATION)
-  // ══════════════════════════════════════════════════════════════════════════
+  // Admin Router
   admin: router({
     login: publicProcedure
       .input(z.object({ password: z.string() }))
@@ -404,25 +288,7 @@ export const appRouter = router({
     users: publicProcedure
       .query(async ({ ctx }) => {
         if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
-        const users = await getAllAppUsers();
-        if (users.length > 0) return users;
-
-        const db = await getDb();
-        if (!db) return [];
-        const sessions = await db.select().from(botSessions);
-        const adminMobile = ENV.adminMobile || "8686742267";
-        return [{
-          id: 1,
-          mobile: adminMobile.startsWith("+") ? adminMobile : "+91" + adminMobile,
-          name: "Mohammed Anas",
-          role: "admin",
-          sessionToken: "admin_session",
-          createdAt: new Date(),
-          activeBotsCount: sessions.filter(s => s.status === "running").length,
-          status: "active",
-          plan: "yearly",
-          daysLeft: 999,
-        }];
+        return getAllAppUsers();
       }),
 
     subscriptions: publicProcedure
@@ -517,59 +383,66 @@ export const appRouter = router({
       .query(async ({ ctx }) => {
         if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
         const db = await getDb();
-        if (!db) return { totalUsers: 1, activeSubscriptions: 1, totalRevenue: 0, trialUsers: 0, revokedUsers: 0, expiredUsers: 0 };
+        if (!db) return { totalUsers: 0, activeSubscriptions: 0, totalRevenue: 0, trialUsers: 0, revokedUsers: 0, expiredUsers: 0 };
 
         const [userCount] = await db.select({ count: count() }).from(appUsers);
         const allSubs = await getAllSubscriptions();
         const now = new Date();
         const activeSubs = allSubs.filter((s: any) => s.status === "active" && new Date(s.expiresAt) > now);
+        const trialSubs = activeSubs.filter((s: any) => s.plan === "trial");
+        const paidSubs = activeSubs.filter((s: any) => s.plan !== "trial");
+        const latestSubByToken = new Map<string, any>();
+        for (const s of allSubs) {
+          if (!latestSubByToken.has(s.sessionToken)) {
+            latestSubByToken.set(s.sessionToken, s);
+          }
+        }
+        let revokedCount = 0;
+        let expiredCount = 0;
+        Array.from(latestSubByToken.values()).forEach((sub) => {
+          if (sub.status === "cancelled") revokedCount++;
+          else if (sub.status === "expired" || (sub.status === "active" && new Date(sub.expiresAt) <= now)) expiredCount++;
+        });
+        const totalRevenue = allSubs.reduce((sum: number, s: any) => sum + (s.amountPaid ?? 0), 0);
 
         return {
-          totalUsers: Math.max(1, userCount.count),
-          activeSubscriptions: Math.max(1, activeSubs.length),
-          trialUsers: 0,
-          revokedUsers: 0,
-          expiredUsers: 0,
-          totalRevenue: 0,
-          mrr: 0,
+          totalUsers: userCount.count,
+          activeSubscriptions: paidSubs.length,
+          trialUsers: trialSubs.length,
+          revokedUsers: revokedCount,
+          expiredUsers: expiredCount,
+          totalRevenue: totalRevenue / 100,
+          mrr: paidSubs.length > 0 ? Math.round(totalRevenue / paidSubs.length / 100) : 0,
         };
       }),
 
-    systemHealth: publicProcedure
+    referralStats: publicProcedure
       .query(async ({ ctx }) => {
         if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
         const db = await getDb();
-        const memUsage = process.memoryUsage();
-        let dbStatus = "disconnected";
-        let totalUsersCount = 0;
-        let totalTradesCount = 0;
+        if (!db) return { referrals: [], totalReferrals: 0, totalRewardsGranted: 0, usersWithBonusSlots: 0 };
         try {
-          if (db) {
-            const [uc] = await db.select({ count: count() }).from(appUsers);
-            totalUsersCount = uc.count;
-            const [tc] = await db.select({ count: count() }).from(tradeLog);
-            totalTradesCount = tc.count;
-            dbStatus = "connected";
-          }
-        } catch { dbStatus = "error"; }
-        return {
-          dbStatus,
-          runningBots: getTotalRunningBots(),
-          totalBotsInMemory: getTotalBotsInMemory(),
-          memoryMB: Math.round(memUsage.heapUsed / 1024 / 1024),
-          memoryTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
-          uptimeHours: Math.round(process.uptime() / 3600 * 10) / 10,
-          totalUsers: totalUsersCount,
-          totalTrades: totalTradesCount,
-          nodeVersion: process.version,
-          timestamp: Date.now(),
-        };
+          const allRefs = await db.select().from(referrals).orderBy(desc(referrals.createdAt)).limit(200);
+          const usersWithSlots = await db.select({ id: appUsers.id, mobile: appUsers.mobile, referralCode: appUsers.referralCode, extraBotSlots: appUsers.extraBotSlots }).from(appUsers);
+          const totalRewardsGranted = allRefs.filter((r: any) => r.rewardGranted).length;
+          const usersWithBonusSlots = usersWithSlots.filter((u: any) => (u.extraBotSlots ?? 0) > 0).length;
+          return {
+            referrals: allRefs,
+            totalReferrals: allRefs.length,
+            totalRewardsGranted,
+            usersWithBonusSlots,
+            userSlots: usersWithSlots.filter((u: any) => (u.extraBotSlots ?? 0) > 0).map((u: any) => ({
+              mobile: u.mobile,
+              referralCode: u.referralCode,
+              extraBotSlots: u.extraBotSlots,
+            })),
+          };
+        } catch (e) {
+          return { referrals: [], totalReferrals: 0, totalRewardsGranted: 0, usersWithBonusSlots: 0, userSlots: [] };
+        }
       }),
   }),
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // Referral System Procedure
-  // ══════════════════════════════════════════════════════════════════════════
   referral: router({
     myReferral: publicProcedure
       .input(z.object({ sessionToken: z.string() }))
@@ -618,7 +491,6 @@ export const appRouter = router({
             referralCode: input.referralCode,
             rewardGranted: true,
           });
-          // Grant bonus bot slot to referrer for referred subscription duration
           await db.update(appUsers).set({ extraBotSlots: (referrer.extraBotSlots ?? 0) + 1 }).where(eq(appUsers.id, referrer.id));
           return { success: true, message: "Referral code applied! Your referrer earned an extra bot slot." };
         } catch (e: any) {
