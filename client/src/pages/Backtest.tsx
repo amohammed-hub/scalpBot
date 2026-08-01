@@ -301,8 +301,6 @@ export default function Backtest() {
             </label>
 
             <button onClick={handleRun} disabled={isBacktestPending}
-              className={`w-full flex items-center ...`}>
-            <button onClick={handleRun} disabled={isBacktestPending}
               className={`w-full flex items-center justify-center gap-2 ${compareMode ? 'bg-purple-500 hover:bg-purple-400' : 'bg-teal-500 hover:bg-teal-400'} disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold rounded-xl py-3 transition-colors active:scale-[0.98]`}>
               {isBacktestPending
                 ? <><span className="animate-spin border-2 border-black/30 border-t-black rounded-full w-4 h-4" /> Running…</>
