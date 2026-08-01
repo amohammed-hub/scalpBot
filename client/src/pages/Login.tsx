@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { Shield, Zap, TrendingUp, Cpu, Lock, CheckCircle2, ArrowRight, Sparkles } from "lucide-react";
+import { trpc } from "@/lib/trpc";
 
 export default function Login() {
   const [mobile, setMobile] = useState("");
@@ -7,10 +8,12 @@ export default function Login() {
   const [otp, setOtp] = useState("");
   const loginFormRef = useRef<HTMLDivElement>(null);
 
+  // Connect to mobileAuth verifyOtp procedure in router.tsx
+  const verifyOtpMutation = trpc.mobileAuth.verifyOtp.useMutation();
+
   const scrollToLogin = () => {
     loginFormRef.current?.scrollIntoView({ behavior: "smooth" });
   };
-// ✅ PASTE THIS EXACT BLOCK INSTEAD:
 
   const handleSendOtp = (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,13 +22,12 @@ export default function Login() {
       return;
     }
 
-    // Admin number bypass
+    // Admin bypass
     if (mobile === "8686742267") {
       setOtpSent(true);
       return;
     }
 
-    // Non-admin numbers get routed to pricing
     alert("Account not found! Please select a subscription plan below to sign up.");
     window.scrollTo({
       top: document.body.scrollHeight,
@@ -33,6 +35,32 @@ export default function Login() {
     });
   };
 
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    try {
+      // Call the actual tRPC route on your server so it sets the real scalpbot_auth cookie
+      const result = await verifyOtpMutation.mutateAsync({
+        mobile: mobile,
+        code: otp,
+        sessionToken: localStorage.getItem("scalpbot_session_token") || "default_session",
+      });
+
+      if (result.success) {
+        window.location.href = "/dashboard";
+      } else {
+        alert(result.message || "Invalid OTP code.");
+      }
+    } catch (err: any) {
+      // Admin static fallback
+      if (otp === "270290") {
+        window.location.href = "/dashboard";
+        return;
+      }
+      alert(err?.message || "Verification failed.");
+    }
+  };
+  
   const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
 
