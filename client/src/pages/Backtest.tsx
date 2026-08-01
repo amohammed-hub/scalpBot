@@ -113,7 +113,7 @@ export default function Backtest() {
       sessionToken,
       slot: LAB_SLOT,
       instrumentToken,
-      instrumentSymbol: INSTRUMENTS.find(i => i.token === instrumentToken)?.label ?? "",
+      instrumentSymbol: instrumentToken.split("|")[1] ?? "",
       instrumentLabel: INSTRUMENTS.find(i => i.token === instrumentToken)?.label ?? "",
       mode: labMode,
       capital: labCapital,
