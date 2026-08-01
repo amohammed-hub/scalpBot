@@ -433,7 +433,7 @@ export const appRouter = router({
         unlimitedTrades: z.boolean().default(false), // Legacy workflow option; hard safety barriers remain non-bypassable
         openingBurstEnabled: z.boolean().default(false),
         crudeOilCorrelation: z.boolean().default(false),
-        adaptiveRegimeEnabled: z.boolean().default(false),
+        adaptiveRegimeEnabled: z.boolean().default(true),
         renkoExitEnabled: z.boolean().default(false),
       }))
      .mutation(async ({ input, ctx }) => {
@@ -772,7 +772,7 @@ export const appRouter = router({
              unlimitedTrades: input.unlimitedTrades,
              openingBurstEnabled: input.openingBurstEnabled,
              crudeOilCorrelation: input.crudeOilCorrelation,
-             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
              renkoExitEnabled: input.renkoExitEnabled ?? false,
            })
            .where(eq(botSessions.id, sessionId));
@@ -811,7 +811,7 @@ export const appRouter = router({
               unlimitedTrades: input.unlimitedTrades,
               openingBurstEnabled: input.openingBurstEnabled,
               crudeOilCorrelation: input.crudeOilCorrelation,
-              adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+              adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
               renkoExitEnabled: input.renkoExitEnabled ?? false,
               consecutiveUnderlyingSLs: 0,
               lastUnderlyingSLAt: null,
@@ -978,7 +978,7 @@ export const appRouter = router({
             unlimitedTrades: input.unlimitedTrades,
             openingBurstEnabled: input.openingBurstEnabled,
             crudeOilCorrelation: input.crudeOilCorrelation,
-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             renkoExitEnabled: input.renkoExitEnabled ?? false,
             consecutiveUnderlyingSLs: restoredConsecutiveUnderlyingSLs,
             lastUnderlyingSLAt: restoredLastUnderlyingSLAt,
@@ -2761,7 +2761,7 @@ export const appRouter = router({
         unlimitedTrades: z.boolean().default(false), // Admin-only: bypass maxTradesPerDay limit
         openingBurstEnabled: z.boolean().default(false), // Opening Burst strategy (9:15-9:25 AM) — default OFF for regular users
         crudeOilCorrelation: z.boolean().default(false), // Cross-Market Correlation: Crude Oil → NIFTY (default OFF)
-        adaptiveRegimeEnabled: z.boolean().default(false), // Fail-safe: enable adaptive switching only when explicitly selected
+        adaptiveRegimeEnabled: z.boolean().default(true), // Fail-safe: enable adaptive switching only when explicitly selected
         renkoExitEnabled: z.boolean().default(false), // Experimental exit remains off unless explicitly selected
         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R
       }))
@@ -3031,7 +3031,7 @@ export const appRouter = router({
            unlimitedTrades: input.unlimitedTrades ?? false,
            openingBurstEnabled: input.openingBurstEnabled ?? false,
            crudeOilCorrelation: input.crudeOilCorrelation,
-           adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+           adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
            renkoExitEnabled: input.renkoExitEnabled ?? false,
            consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
@@ -3062,7 +3062,7 @@ export const appRouter = router({
             unlimitedTrades: input.unlimitedTrades ?? false,
             openingBurstEnabled: input.openingBurstEnabled ?? false,
             crudeOilCorrelation: input.crudeOilCorrelation,
-            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+            adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             renkoExitEnabled: input.renkoExitEnabled ?? false,
             consecutiveUnderlyingSLs: 0,
             lastUnderlyingSLAt: null,
@@ -3140,7 +3140,7 @@ export const appRouter = router({
           unlimitedTrades: input.unlimitedTrades,
           openingBurstEnabled: input.openingBurstEnabled,
           crudeOilCorrelation: input.crudeOilCorrelation,
-          adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? false,
+          adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
           renkoExitEnabled: input.renkoExitEnabled ?? false,
           consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
           lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
