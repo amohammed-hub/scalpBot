@@ -6390,19 +6390,23 @@ async function tick(
   // Expiry day detection:
   // - NIFTY: weekly expiry every Thursday (dayOfWeek === 4)
   // - BANKNIFTY: monthly expiry on LAST THURSDAY of month (weekly discontinued Nov 2024)
-  const dayOfWeek = now2.getUTCDay(); // 0=Sun, 1=Mon, ... 4=Thu, 3=Wed
-  const isBankNiftyOption = state.instrumentToken.includes("BNF") || state.instrumentToken.includes("BANKNIFTY");
-  const isLastThursdayOfMonth = (() => {
-    if (dayOfWeek !== 4) return false; // Must be Thursday
-    const istDate = new Date(now2.getTime() + 5.5 * 60 * 60 * 1000);
-    const dayOfMonth = istDate.getUTCDate();
-    // Check if there's another Thursday this month (i.e., day + 7 <= days in month)
-    const year = istDate.getUTCFullYear();
-    const month = istDate.getUTCMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    return (dayOfMonth + 7) > daysInMonth; // No more Thursdays left = last Thursday
-  })();
-  const isExpiryDay = isOptionInstrument && (isBankNiftyOption ? isLastThursdayOfMonth : dayOfWeek === 4);
+  // ── 2026 SEBI Expiry Day Detection ──
+const dayOfWeek = now2.getUTCDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu
+const isBankNiftyOption = state.instrumentToken.includes("BNF") || state.instrumentToken.includes("BANKNIFTY");
+const isNiftyOption = state.instrumentToken.includes("NIFTY") && !isBankNiftyOption;
+const isSensexOption = state.instrumentToken.includes("SENSEX");
+
+// Calculate if today is the LAST Tuesday/Thursday of the month
+const istDate = new Date(now2.getTime() + 5.5 * 60 * 60 * 1000);
+const dayOfMonth = istDate.getUTCDate();
+const daysInMonth = new Date(istDate.getUTCFullYear(), istDate.getUTCMonth() + 1, 0).getDate();
+const isLastWeekOfMonth = (dayOfMonth + 7) > daysInMonth;
+
+const isExpiryDay = isOptionInstrument && (
+  (isNiftyOption && dayOfWeek === 2) || // Nifty Weekly = Tuesday
+  (isSensexOption && dayOfWeek === 4) || // Sensex Weekly = Thursday
+  (isBankNiftyOption && dayOfWeek === 2 && isLastWeekOfMonth) // BankNifty Monthly = Last Tuesday
+);
   const heroZeroWindowStart = 11 * 60;
   const heroZeroWindowEnd   = 13 * 60 + 30;
   const inHeroZeroWindow = isExpiryDay && istMin2 >= heroZeroWindowStart && istMin2 < heroZeroWindowEnd;
