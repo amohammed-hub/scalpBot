@@ -20,7 +20,13 @@ export default function Login() {
 
   const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
-    // Your OTP verification logic
+    
+    // 1. Set a dummy token so your Protected Routes let you in
+    localStorage.setItem("token", "test_dev_token");
+    localStorage.setItem("isAuthenticated", "true");
+    
+    // 2. Now route to the dashboard
+    navigate("/dashboard");
   };
 
   return (
