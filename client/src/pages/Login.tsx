@@ -16,8 +16,7 @@ export default function Login() {
     if (mobile.length !== 10) return;
 
     // ── Admin Bypass (Skip backend check for your admin number) ──
-    // Replace "9999999999" with your actual 10-digit mobile number
-    if (mobile === "9999999999") {
+    if (mobile === "8686742267") {
       setOtpSent(true);
       return;
     }
