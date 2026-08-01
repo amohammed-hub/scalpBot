@@ -15,7 +15,7 @@ export const NSE_INDEX_LOT_SIZES: Record<string, number> = {
   BANKNIFTY: 30,
   FINNIFTY: 60,
   MIDCPNIFTY: 120,
-  SENSEX: 10,
+  SENSEX: 20,
   BANKEX: 15,
 };
 
