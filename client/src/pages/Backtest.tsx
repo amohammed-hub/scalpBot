@@ -88,6 +88,50 @@ export default function Backtest() {
   const [compareMode, setCompareMode] = useState(false);
   const [compareResult, setCompareResult] = useState<any>(null);
   const [strategyFilter, setStrategyFilter] = useState("all");
+    // ── Strategy Lab: Live Testing Bot ──
+  const [labRunning, setLabRunning] = useState(false);
+  const [labMode, setLabMode] = useState<"demo" | "live">("demo");
+  const [labCapital, setLabCapital] = useState(15000);
+  const [labStrategy, setLabStrategy] = useState("MeanReversionV13");
+  const LAB_SLOT = 9; // Reserved slot for strategy testing
+
+  const startLabMutation = trpc.multiBots.startSecondary.useMutation({
+    onSuccess: () => { setLabRunning(true); toast.success(`🧪 Strategy Lab started: ${labStrategy} (${labMode})`); },
+    onError: (e) => toast.error(`Lab start failed: ${e.message}`),
+  });
+  const stopLabMutation = trpc.bot.stop.useMutation({
+    onSuccess: () => { setLabRunning(false); toast.success("🧪 Strategy Lab stopped"); },
+    onError: (e) => toast.error(`Lab stop failed: ${e.message}`),
+  });
+
+  const handleLabStart = () => {
+    if (labCapital > capital) {
+      toast.error(`Capital ₹${labCapital} exceeds allocated ₹${capital}`);
+      return;
+    }
+    startLabMutation.mutate({
+      sessionToken,
+      slot: LAB_SLOT,
+      instrumentToken,
+      instrumentSymbol: INSTRUMENTS.find(i => i.token === instrumentToken)?.label ?? "",
+      instrumentLabel: INSTRUMENTS.find(i => i.token === instrumentToken)?.label ?? "",
+      mode: labMode,
+      capital: labCapital,
+      enabledLayers: [labStrategy],
+      adaptiveRegimeEnabled: false,
+      strategyLocked: true,
+      maxTradesPerDay: 5,
+      riskPerTradePct: 2,
+      minConfidence: 55,
+      lotSize: 1,
+      isIndexOptions: instrumentToken.startsWith("NSE_INDEX") || instrumentToken.startsWith("BSE_INDEX"),
+      underlyingToken: instrumentToken.startsWith("NSE_INDEX") || instrumentToken.startsWith("BSE_INDEX") ? instrumentToken : undefined,
+    });
+  };
+
+  const handleLabStop = () => {
+    stopLabMutation.mutate({ sessionToken: `${sessionToken}-slot${LAB_SLOT}` });
+  };
   const runMutation = trpc.backtest.run.useMutation({
     onSuccess: (data) => {
       setResult(data);
@@ -295,7 +339,13 @@ export default function Backtest() {
                 <GitCompare className="w-3.5 h-3.5" /> V1 vs V2 Comparison
               </span>
             </label>
+            {/* ── Strategy Lab: Live Testing Bot ────────────── */}
+            <div className="mt-4 pt-4 border-t border-white/10">
+              ... (the full Strategy Lab JSX from the artifact)
+            </div>
 
+            <button onClick={handleRun} disabled={isBacktestPending}
+              className={`w-full flex items-center ...`}>
             <button onClick={handleRun} disabled={isBacktestPending}
               className={`w-full flex items-center justify-center gap-2 ${compareMode ? 'bg-purple-500 hover:bg-purple-400' : 'bg-teal-500 hover:bg-teal-400'} disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold rounded-xl py-3 transition-colors active:scale-[0.98]`}>
               {isBacktestPending
