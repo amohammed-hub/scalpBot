@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { Shield, Zap, TrendingUp, Cpu, Lock, CheckCircle2, ArrowRight, Sparkles } from "lucide-react";
+import { trpc } from "@/lib/trpc"; // 👈 Added this missing import
 
 export default function Login() {
   const [mobile, setMobile] = useState("");
@@ -32,20 +33,27 @@ export default function Login() {
     });
   };
 
-  const handleVerifyOtp = (e: React.FormEvent) => {
+  const verifyOtpMutation = trpc.mobileAuth.verifyOtp.useMutation();
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Admin code check
-    if (otp === "270290") {
-      localStorage.setItem("scalpbot_session_token", "admin_session");
-      localStorage.setItem("isAuthenticated", "true");
+    try {
+      // Requests the cookie from the backend
+      const result = await verifyOtpMutation.mutateAsync({
+        mobile: mobile,
+        code: otp,
+        sessionToken: localStorage.getItem("scalpbot_session_token") || "admin_session",
+      });
 
-      // Redirect directly to dashboard
-      window.location.assign("/dashboard");
-      return;
+      if (result.success) {
+        window.location.assign("/dashboard");
+      } else {
+        alert(result.message || "Invalid OTP code.");
+      }
+    } catch (err: any) {
+      alert(err?.message || "Verification failed. Please try again.");
     }
-
-    alert("Invalid OTP code. Please enter 270290.");
   };
 
   return (
