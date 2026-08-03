@@ -5330,7 +5330,7 @@ async function tick(
 
   const isMCX = state.instrumentToken.startsWith("MCX");
   const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
-  const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 22; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:22 (3 min buffer before square-off at 15:25)
+  const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 22; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:22 (3 min buffer before square-off at 15:35)
 
   // NSE Power Hour: 3:00–3:25 PM IST (extended from 3:20 — the last 5 mins are prime institutional action)
   const powerHourStart = 15 * 60;
@@ -5574,7 +5574,7 @@ async function tick(
   // Fix: Also trigger square-off when time wraps past midnight (istMin2 < 540 for MCX means after 11:30 PM)
   const shouldSquareOff = isMCX
     ? (istMin2 >= squareOffMin || istMin2 < 540) // MCX: after 23:28 OR after midnight (0-540)
-    : (istMin2 >= squareOffMin); // NSE: after 15:25
+    : (istMin2 >= squareOffMin); // NSE: after 15:35
   if (shouldSquareOff && state.openTrade) {
     // If user selected carry-forward, skip auto square-off and keep trade open overnight
     if (state.carryForward) {
@@ -5990,7 +5990,7 @@ async function tick(
       const nowUtc = new Date();
       const istMinNow = ((nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes()) + 330) % 1440;
       const isMCXInst = state.instrumentToken.startsWith("MCX");
-      const closeMin = isMCXInst ? 23 * 60 + 25 : 15 * 60 + 25; // MCX 23:25, NSE 15:25
+      const closeMin = isMCXInst ? 23 * 60 + 25 : 15 * 60 + 25; // MCX 23:25, NSE 15:35
       const notNearClose = istMinNow < closeMin - 30; // at least 30 min before close
       const dailyLossUsed = Math.abs(Math.min(0, state.dailyPnl)) / (state.capital * state.dailyLossLimitPct / 100);
       const hasCapitalHeadroom = dailyLossUsed < 0.70; // less than 70% of daily loss limit used
