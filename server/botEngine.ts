@@ -2498,7 +2498,7 @@ export function generateOpeningBurstSignal(
   }
 
   // VIX filter: skip if VIX > 20 (whipsaws more likely)
-  if (vixValue > 20) {
+  if (vixValue > 25) {
     return { ...hold, reason: `Opening Burst: VIX too high (${vixValue.toFixed(1)} > 20) — whipsaw risk` };
   }
 
@@ -5397,7 +5397,7 @@ async function tick(
 
   // ── Opening Burst Window: 9:15-9:25 AM IST (NSE only) ──────────────────────
   const openingBurstStart = 9 * 60 + 15; // 555 min
-  const openingBurstEnd   = 9 * 60 + 25; // 565 min
+  const openingBurstEnd   = 9 * 60 + 30; // 565 min
   const inOpeningBurst = !isMCX && istMin2 >= openingBurstStart && istMin2 < openingBurstEnd
     && (state.openingBurstEnabled !== false) // default enabled
     && !state.openingBurstTradeTaken; // only 1 trade per day in this window
