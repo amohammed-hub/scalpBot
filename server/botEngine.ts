@@ -7891,7 +7891,6 @@ const isExpiryDay = isOptionInstrument && (
         .select({ id: tradeLog.id })
         .from(tradeLog)
         .where(and(
-          eq(tradeLog.sessionToken, state.sessionToken),
           eq(tradeLog.symbol, tradeLabel),
           gt(tradeLog.enteredAt, thirtyMinAgo),
         ))
