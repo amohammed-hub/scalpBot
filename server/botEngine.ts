@@ -7623,6 +7623,10 @@ const isExpiryDay = isOptionInstrument && (
     } else {
       quantity = riskBasedQty;
     }
+        const MIN_LOTS_FOR_SCALPING = 2;
+    if (quantity === lotSize && maxQtyByCapital >= lotSize * MIN_LOTS_FOR_SCALPING) {
+      quantity = lotSize * MIN_LOTS_FOR_SCALPING;
+    }
     emitActivity(state.sessionToken, "signal", `📐 Position size: ${quantity} qty (${quantity/lotSize} lots) | Risk: ₹${(quantity * slDist).toFixed(0)} ≤ ₹${riskAmount.toFixed(0)} budget | SL: ₹${(optionPremiumForSizing - slDist).toFixed(2)} (30% below ₹${optionPremiumForSizing.toFixed(2)})`);
   } else {
     const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
