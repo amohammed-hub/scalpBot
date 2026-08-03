@@ -1,5 +1,5 @@
 /**
-* Bot Engine -- runs in-process on the Node.js server.
+* Bot Engine — runs in-process on the Node.js server.
 * Manages per-session bot instances and automated trading.
 */
 
@@ -21,7 +21,7 @@ import { lockDirection, recordDirectionExit, isDirectionFlipBlocked, resetDirect
 import { fetchIndiaVix } from "./riskManager";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 
-// Production log suppression -- hide strategy details in production logs
+// Production log suppression — hide strategy details in production logs
 const IS_DEV = process.env.NODE_ENV !== "production";
 const devLog = (...args: any[]) => { if (IS_DEV) console.log(...args); };
 
@@ -37,7 +37,7 @@ timestamp: number;
 
 export interface Signal {
 direction: "BUY" | "SELL" | "HOLD";
-confidence: number; // 0-1
+confidence: number; // 0–1
 entryPrice: number;
 slPrice: number;
 targetPrice: number;
@@ -138,16 +138,16 @@ lastError: string | null;
 consecutiveTickErrors: number; // auto-restart after 3 consecutive failures
 consecutiveRejections?: number; // auto-pause after 3 consecutive order rejections
 nextScanAt: number;
-// Timestamp of the last completed tick (unix ms) -- used for staleness detection
+// Timestamp of the last completed tick (unix ms) — used for staleness detection
 lastTickAt: number;
 lastSlHitAt: number | null;
 lastSlDirection: "BUY" | "SELL" | null;
 reEntryCandles: number;
-// P1: Direction-aware cooldown -- after SL, track direction to penalize same-direction re-entry
+// P1: Direction-aware cooldown — after SL, track direction to penalize same-direction re-entry
 lastSlExitDirection: "BUY" | "SELL" | null;
 lastSlExitAt: number | null;
 consecutiveSameDirectionSLs: number;
-// P2: Underlying-level cooldown -- after 2 SLs on same underlying (any direction), block for 15 min
+// P2: Underlying-level cooldown — after 2 SLs on same underlying (any direction), block for 15 min
 consecutiveUnderlyingSLs: number;
 lastUnderlyingSLAt: number | null;
 isPowerHourMode: boolean;
@@ -167,7 +167,7 @@ alertsSent: Set;
 // Options mode: when set, bot reads candles from underlyingToken but trades optionTradeToken
 // underlyingToken: NSE_INDEX|Nifty Bank, NSE_INDEX|Nifty 50, etc.
 // optionTradeToken: the actual CE/PE instrument key resolved at runtime (e.g. NFO_OPT|BANKNIFTY...)
-// optionType: "CE" | "PE" | "auto" -- auto = CE for BUY signal, PE for SELL signal
+// optionType: "CE" | "PE" | "auto" — auto = CE for BUY signal, PE for SELL signal
 isIndexOptions: boolean; // true = auto-resolve ATM CE/PE at trade time
 underlyingToken?: string;
 optionType?: "CE" | "PE" | "auto";
@@ -195,7 +195,7 @@ lastHeartbeatAt?: number; // Unix timestamp ms
 dailyLossAcknowledged?: boolean;
 // Carry-forward: if true, skip auto square-off at market close and keep trade open overnight
 carryForward?: boolean;
-// Track consecutive quote failures for open option trades -- auto-close after threshold
+// Track consecutive quote failures for open option trades — auto-close after threshold
 optionQuoteFailCount?: number;
 // Pending option token resolution promise (awaited before first tick)
 _pendingOptionResolve?: Promise;
@@ -230,9 +230,9 @@ crudeOilCorrelation?: boolean; // user toggle (default OFF)
 adaptiveRegimeEnabled?: boolean; // user toggle (default ON)
 currentRegime?: "trending" | "choppy"; // last detected regime
 currentADX?: number; // last ADX value
-lastRegimeCheckAt?: number; // unix ms -- check every 5 minutes
+lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
 regimeManualOverride?: boolean; // true if user manually toggled a layer since last regime check
-userDisabledLayers?: string[]; // layers the user explicitly disabled -- regime won't re-enable these
+userDisabledLayers?: string[]; // layers the user explicitly disabled — regime won't re-enable these
 strategyLocked?: boolean; // true = regime switcher won't modify layers (strategy testing mode)
 // VRP Regime Filter state (updated every 5 min)
 vrpRegime?: "RICH" | "FAIR" | "CHEAP" | "INVERTED";
@@ -256,7 +256,7 @@ boxFormed: boolean;
 boxFormedAt: number; // IST minute when box was locked
 tradesToday: number;
 };
-// ORB V8 Strategy state (daily) -- 30-min range breakout with VWAP+EMA21 filters
+// ORB V8 Strategy state (daily) — 30-min range breakout with VWAP+EMA21 filters
 orbV8State?: {
 orbHigh: number;
 orbLow: number;
@@ -307,10 +307,10 @@ const { getDb } = await import("./db");
 const db = await getDb();
 const { adminSettings, notificationPreferences } = await import("../drizzle/schema");
 const { eq } = await import("drizzle-orm");
-// Master switch -- if OFF, block all alerts
+// Master switch — if OFF, block all alerts
 const [masterRow] = await db.select().from(adminSettings).where(eq(adminSettings.key, "telegram_master_switch")).limit(1);
 if (masterRow && masterRow.value === "off") return;
-// User preference -- if category disabled, block
+// User preference — if category disabled, block
 const [prefs] = await db.select().from(notificationPreferences).where(eq(notificationPreferences.sessionToken, state.sessionToken)).limit(1);
 if (prefs && prefs[category] === 0) return;
 } catch {
@@ -324,7 +324,7 @@ await axios.post(
 { timeout: 8000 },
 );
 } catch {
-// Telegram errors are non-critical -- don't crash the bot
+// Telegram errors are non-critical — don't crash the bot
 }
 }
 
@@ -394,7 +394,7 @@ return cumVol === 0 ? candles[candles.length - 1]?.close ?? 0 : cumPV / cumVol;
 }
 
 /**
-* Supertrend Indicator -- used by all major Indian production algo bots
+* Supertrend Indicator — used by all major Indian production algo bots
 * ATR period=10, multiplier=3.0 (standard for Indian intraday)
 * Returns: direction ("BUY"=uptrend, "SELL"=downtrend) and the band value
 */
@@ -453,7 +453,7 @@ return { direction, band, flipped };
 
 /**
 * Convert raw candles to Heiken Ashi candles.
-* Heiken Ashi smooths price noise -- reduces false signals on 1m/3m charts.
+* Heiken Ashi smooths price noise — reduces false signals on 1m/3m charts.
 * Used by quantitative-trading-bot for BankNifty with Supertrend.
 */
 function toHeikenAshi(candles: Candle[]): Candle[] {
@@ -476,7 +476,7 @@ return ha;
 }
 
 /**
-* VWAP Pullback Detection -- explicit pullback-to-VWAP pattern
+* VWAP Pullback Detection — explicit pullback-to-VWAP pattern
 * Price was away from VWAP (>0.2%), now returning toward it and forming a reversal candle.
 * This is the highest win-rate setup for Indian intraday scalping.
 */
@@ -618,10 +618,10 @@ return "neutral";
 
 /**
 * Strategy 1: Opening Range Breakout (ORB)
-* Source: SSRN #5198458 -- Optimizing Intraday Breakout Strategies on the NSE
+* Source: SSRN #5198458 — Optimizing Intraday Breakout Strategies on the NSE
 * The first 15 minutes of trading establish the day's range. A close outside
 * that range with volume surge (1.5×) is a high-conviction directional trade.
-* Best for: 9:30-11:30 AM NSE, 9:15-10:00 AM MCX
+* Best for: 9:30–11:30 AM NSE, 9:15–10:00 AM MCX
 */
 export function calcORBSignal(
 candles: Candle[],
@@ -635,15 +635,15 @@ const orbLow = Math.min(...orbCandles.map(c => c.low));
 const price = candles[candles.length - 1].close;
 const avgVol = orbCandles.reduce((a, c) => a + c.volume, 0) / orbCandles.length;
 const lastVol = candles[candles.length - 1].volume;
-// Index instruments have volume=0 -- bypass volume check
+// Index instruments have volume=0 — bypass volume check
 const isIndex = avgVol === 0 && lastVol === 0;
 const volRatio = isIndex ? volThreshold : (avgVol > 0 ? lastVol / avgVol : 1);
 
-// Find the MOST RECENT breakout candle -- last time price crossed FROM below to above (BUY)
+// Find the MOST RECENT breakout candle — last time price crossed FROM below to above (BUY)
 // or FROM above to below (SELL). This captures re-tests, not just the first cross.
 let breakoutCandleIndex = -1;
 if (price > orbHigh && volRatio >= volThreshold) {
-// Find the LAST candle that was below/at orbHigh -- the next candle is the breakout
+// Find the LAST candle that was below/at orbHigh — the next candle is the breakout
 for (let i = candles.length - 2; i >= orbMinutes; i--) {
 if (candles[i].close <= orbHigh) { breakoutCandleIndex = i + 1; break; }
 }
@@ -651,7 +651,7 @@ if (breakoutCandleIndex === -1) breakoutCandleIndex = orbMinutes; // never dippe
 return { direction: "BUY", orbHigh, orbLow, breakoutPct: (price - orbHigh) / orbHigh, breakoutCandleIndex };
 }
 if (price < orbLow && volRatio >= volThreshold) {
-// Find the LAST candle that was above/at orbLow -- the next candle is the breakout
+// Find the LAST candle that was above/at orbLow — the next candle is the breakout
 for (let i = candles.length - 2; i >= orbMinutes; i--) {
 if (candles[i].close >= orbLow) { breakoutCandleIndex = i + 1; break; }
 }
@@ -663,10 +663,10 @@ return { direction: "HOLD", orbHigh, orbLow, breakoutPct: 0, breakoutCandleIndex
 
 /**
 * Strategy 2: VWAP Deviation Bands (Institutional Mean Reversion)
-* Source: SSRN #4631351 -- VWAP: The Holy Grail for Day Trading Systems
+* Source: SSRN #4631351 — VWAP: The Holy Grail for Day Trading Systems
 * Price stretched >1.5 standard deviations from VWAP tends to revert.
-* Institutions use VWAP as their benchmark -- they buy below and sell above.
-* Best for: 10:30 AM-2:30 PM (trending days excluded via ADX filter)
+* Institutions use VWAP as their benchmark — they buy below and sell above.
+* Best for: 10:30 AM–2:30 PM (trending days excluded via ADX filter)
 */
 export function calcVWAPDeviation(
 candles: Candle[],
@@ -681,7 +681,7 @@ const variance = diffs.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / diffs.le
 const stdDev = Math.sqrt(variance) || 1;
 const deviation = price - vwap;
 const zScore = deviation / stdDev;
-// Mean reversion: fade extreme deviations (|z| > 1.5) -- price will snap back
+// Mean reversion: fade extreme deviations (|z| > 1.5) — price will snap back
 if (zScore < -1.5) return { deviation, stdDev, zScore, signal: "BUY" }; // too far below VWAP
 if (zScore > 1.5) return { deviation, stdDev, zScore, signal: "SELL" }; // too far above VWAP
 return { deviation, stdDev, zScore, signal: "HOLD" };
@@ -689,10 +689,10 @@ return { deviation, stdDev, zScore, signal: "HOLD" };
 
 /**
 * Strategy 3: Market Regime Classifier
-* Source: SSRN #6769178 -- Regime-Adaptive Trading Framework for Indian Equities
+* Source: SSRN #6769178 — Regime-Adaptive Trading Framework for Indian Equities
 * Classifies market into 5 regimes and routes to the best strategy.
 * Regime detection uses ADX (trend strength), BB width (volatility), and
-* RSI (momentum direction) -- all available from 1-min candles.
+* RSI (momentum direction) — all available from 1-min candles.
 */
 export type MarketRegime = "strong_trend" | "weak_trend" | "ranging" | "high_vol" | "low_vol";
 export function classifyMarketRegime(candles: Candle[]): { regime: MarketRegime; label: string } {
@@ -702,24 +702,24 @@ const adx = calcADX(candles, 14);
 const bb = calcBollingerBands(closes, 20, 2);
 const rsi = calcRSI(closes, 14);
 // High volatility: BB width > 3% of price (explosive moves)
-if (bb.width > 0.03) return { regime: "high_vol", label: "High Volatility -- widen SL, reduce size" };
+if (bb.width > 0.03) return { regime: "high_vol", label: "High Volatility — widen SL, reduce size" };
 // Strong trend: ADX > 30, RSI not extreme
-if (adx > 30 && rsi > 40 && rsi < 70) return { regime: "strong_trend", label: "Strong Trend -- ride momentum, no mean reversion" };
-// Weak trend: ADX 20-30
-if (adx >= 20 && adx <= 30) return { regime: "weak_trend", label: "Weak Trend -- use breakout + momentum" };
+if (adx > 30 && rsi > 40 && rsi < 70) return { regime: "strong_trend", label: "Strong Trend — ride momentum, no mean reversion" };
+// Weak trend: ADX 20–30
+if (adx >= 20 && adx <= 30) return { regime: "weak_trend", label: "Weak Trend — use breakout + momentum" };
 // Low volatility: BB width < 0.8% (squeeze forming)
-if (bb.width < 0.008) return { regime: "low_vol", label: "Low Volatility / Squeeze -- wait for BB expansion" };
+if (bb.width < 0.008) return { regime: "low_vol", label: "Low Volatility / Squeeze — wait for BB expansion" };
 // Default: ranging
-return { regime: "ranging", label: "Ranging -- use VWAP mean reversion" };
+return { regime: "ranging", label: "Ranging — use VWAP mean reversion" };
 }
 
 /**
 * Strategy 4: Volume-Weighted Momentum (Institutional Footprint)
-* Source: QuantInsti -- Momentum Trading Strategies; FII/DII volume analysis
+* Source: QuantInsti — Momentum Trading Strategies; FII/DII volume analysis
 * Large institutional players leave a volume footprint when they enter.
 * A candle with volume > 2× average AND strong body (>70% of range) AND
 * aligned with VWAP direction = institutional directional bet.
-* Best for: any time, especially 10:00-11:30 AM and 2:00-3:00 PM
+* Best for: any time, especially 10:00–11:30 AM and 2:00–3:00 PM
 */
 export function calcInstitutionalFootprint(
 candles: Candle[],
@@ -750,8 +750,8 @@ return { detected: false, direction: "HOLD", strength: 0, reason: "No institutio
 
 /**
 * Strategy 5: Intraday Time-Series Momentum (Last-Half-Hour Effect)
-* Source: CentAUR -- Intraday Time Series Momentum: International Evidence
-* The last 30 minutes of NSE trading (3:00-3:30 PM) exhibits strong
+* Source: CentAUR — Intraday Time Series Momentum: International Evidence
+* The last 30 minutes of NSE trading (3:00–3:30 PM) exhibits strong
 * continuation of the day's direction. If the day is up >0.3%, the last
 * 30 min is statistically more likely to close higher. This is the academic
 * basis for the Power Hour strategy already implemented.
@@ -797,7 +797,7 @@ return { multiplier: 1.0, label: "Normal", skip: false };
 * Classic trend-change setup: price breaks above the recent N-candle high,
 * fails to hold, and closes back below the breakout level within a few candles.
 * This traps breakout buyers and typically leads to a sharp reversal.
-* Critically, this fires even when price is still ABOVE VWAP -- catching the
+* Critically, this fires even when price is still ABOVE VWAP — catching the
 * turn early on rally-then-fade days where VWAP-gated SELL layers stay silent.
 */
 export function detectFailedBreakout(
@@ -816,19 +816,19 @@ const last = recent[recent.length - 1];
 const pokedAbove = recent.slice(0, -1).some(c => c.high > priorHigh * 1.0003);
 const failedDown = last.close < priorHigh * 0.9995 && last.close < last.open;
 if (pokedAbove && failedDown) {
-return { detected: true, direction: "SELL", level: priorHigh, reason: `Failed breakout above ${priorHigh.toFixed(1)} -- rejection, trapped buyers` };
+return { detected: true, direction: "SELL", level: priorHigh, reason: `Failed breakout above ${priorHigh.toFixed(1)} — rejection, trapped buyers` };
 }
 // Bullish failed breakdown (mirror): poked below priorLow, closed back above.
 const pokedBelow = recent.slice(0, -1).some(c => c.low < priorLow * 0.9997);
 const failedUp = last.close > priorLow * 1.0005 && last.close > last.open;
 if (pokedBelow && failedUp) {
-return { detected: true, direction: "BUY", level: priorLow, reason: `Failed breakdown below ${priorLow.toFixed(1)} -- rejection, trapped sellers` };
+return { detected: true, direction: "BUY", level: priorLow, reason: `Failed breakdown below ${priorLow.toFixed(1)} — rejection, trapped sellers` };
 }
 return { detected: false, direction: "HOLD", level: 0, reason: "" };
 }
 
 /**
-* Uptrend Exhaustion Detection -- filters buy-the-dip signals on fading rallies.
+* Uptrend Exhaustion Detection — filters buy-the-dip signals on fading rallies.
 * Returns true when the rally is showing exhaustion:
 * - The most recent swing high is LOWER than the previous swing high (lower high), OR
 * - Price has retraced more than 50% of the last visible up-leg, OR
@@ -889,7 +889,7 @@ export function generateSignal(
 candles: Candle[],
 slMultiplier = 1.5,
 tpMultiplier = 3.0,
-minConf = 0.55, // lowered from 0.65 -- was too strict, caused zero trades during midday hours
+minConf = 0.55, // lowered from 0.65 — was too strict, caused zero trades during midday hours
 candles5m: Candle[] = [],
 prevDayHigh = 0,
 prevDayLow = 0,
@@ -923,7 +923,7 @@ const avgVol = candles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
 const lastVol = candles[candles.length - 1].volume;
 // NSE/BSE index instruments (Nifty, BankNifty, Sensex) return volume=0 from Upstox.
 // Only bypass volume filters for instruments where ALL candles have 0 volume (index instruments).
-// MCX instruments (CRUDEOIL, GOLD, SILVER) DO have real volume data -- use it.
+// MCX instruments (CRUDEOIL, GOLD, SILVER) DO have real volume data — use it.
 const allVolZero = candles.slice(-10).every(c => c.volume === 0);
 const volRatio = allVolZero ? 1.5 : (avgVol > 0 ? lastVol / avgVol : 1.0);
 
@@ -943,7 +943,7 @@ return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - a
 // Time-of-day filter
 const tod = getTimeOfDayMultiplier(istMin);
 if (tod.skip) {
-return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `Skipping ${tod.label} (9:15-9:25 AM opening volatility)`, layer: "None" };
+return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `Skipping ${tod.label} (9:15–9:25 AM opening volatility)`, layer: "None" };
 }
 
 // Multi-timeframe confirmation
@@ -958,7 +958,7 @@ if (prevDayHigh > 0 && prevDayLow > 0 && prevDayClose > 0) {
 const pivots = calcPivotPoints(prevDayHigh, prevDayLow, prevDayClose);
 srLevels = [pivots.pp, pivots.r1, pivots.r2, pivots.s1, pivots.s2];
 }
-// Tightened S/R proximity filter: 0.05% (was 0.1%) -- 0.1% was too wide for BankNifty
+// Tightened S/R proximity filter: 0.05% (was 0.1%) — 0.1% was too wide for BankNifty
 // e.g. BankNifty at 53000: 0.1% = ±53 pts (too many rejections), 0.05% = ±26 pts
 const nearSR = srLevels.length > 0 && isNearSupportResistance(price, srLevels, 0.0002);
 
@@ -980,10 +980,10 @@ const breakoutDnPct = (lowestLow - lastCandle.close) / lowestLow;
 // AFTER: All signals are ALLOWED through, but counter-trend signals receive a confidence penalty.
 // This ensures strong counter-trend signals (e.g., gap-up fade) can still fire with reduced confidence.
 const against5mPenalty = 0.05; // 5% confidence reduction for counter-trend trades
-const allow5mBuy = true; // Never hard-block -- penalty applied post-generation
-const allow5mSell = true; // Never hard-block -- penalty applied post-generation
-const strict5mBuy = true; // Never hard-block -- penalty applied post-generation
-const strict5mSell = true; // Never hard-block -- penalty applied post-generation
+const allow5mBuy = true; // Never hard-block — penalty applied post-generation
+const allow5mSell = true; // Never hard-block — penalty applied post-generation
+const strict5mBuy = true; // Never hard-block — penalty applied post-generation
+const strict5mSell = true; // Never hard-block — penalty applied post-generation
 // Calculate per-direction penalty based on 5m trend disagreement
 const buyPenalty = (candles5m.length >= 5 && trend5m === "bearish") ? against5mPenalty : 0;
 const sellPenalty = (candles5m.length >= 5 && trend5m === "bullish") ? against5mPenalty : 0;
@@ -1044,7 +1044,7 @@ layer = "Pattern";
 }
 
 // ── Layer 3: EMA/VWAP Trend ───────────────────────────────────────────────
-// ADX threshold raised to 20 -- research shows ADX > 20 needed for reliable trends
+// ADX threshold raised to 20 — research shows ADX > 20 needed for reliable trends
 // (Omega-Xi production bot uses ADX > 20; below 20 = ranging/choppy market)
 // RSI tightened: BUY only when RSI > 55 (confirmed uptrend) or RSI < 40 (oversold bounce)
 // No entries in RSI 40-55 no-man's land (choppy, no conviction)
@@ -1068,7 +1068,7 @@ layer = "Trend";
 }
 
 // ── Layer 4: Momentum ─────────────────────────────────────────────────────
-// Momentum threshold raised from 0.03% to 0.1% -- 0.03% is noise, not real momentum
+// Momentum threshold raised from 0.03% to 0.1% — 0.03% is noise, not real momentum
 // Pullback requirement: price must be within 0.4% of EMA9 or VWAP (widened from 0.15%)
 if (_v1LayerOk("Momentum") && direction === "HOLD" && candles.length >= 5) {
 const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
@@ -1108,8 +1108,8 @@ layer = "MACD_BB";
 }
 
 // ── Layer 6: Opening Range Breakout (ORB) ─────────────────────────────────
-// Valid from 9:30 AM to 2:00 PM only (no new ORB entries after 2 PM -- backtested result)
-// Volume threshold raised from 1.5x to 2.0x -- research shows 2x+ needed for reliable breakouts
+// Valid from 9:30 AM to 2:00 PM only (no new ORB entries after 2 PM — backtested result)
+// Volume threshold raised from 1.5x to 2.0x — research shows 2x+ needed for reliable breakouts
 // Added minimum range width filter: 0.2% of price (filters weak ORB days)
 if (_v1LayerOk("ORB") && direction === "HOLD" && istMin >= 570 && istMin <= 840 && candles.length >= 17) {
 const orbMinRangeWidth = price * 0.002; // 0.2% minimum range width
@@ -1129,10 +1129,10 @@ layer = "ORB";
 } else {
 // Rule 1: Only fire within 3 candles of the ACTUAL breakout candle
 // Rule 2: After 3 candles, require price within 0.1% of breakout level
-// Rule 3: If price has already moved 40+ pts from ORB edge, it's CHASING -- reject
+// Rule 3: If price has already moved 40+ pts from ORB edge, it's CHASING — reject
 const currentCandleIdx = candles.length - 1;
 // The engine needs ~20 candles minimum to generate signals, so breakouts
-// before candle 20 should not count as "stale" -- the engine couldn't have acted earlier.
+// before candle 20 should not count as "stale" — the engine couldn't have acted earlier.
 const MIN_ENGINE_CANDLES = 20;
 const effectiveBreakoutStart = orb.breakoutCandleIndex >= 0
 ? Math.max(orb.breakoutCandleIndex, MIN_ENGINE_CANDLES)
@@ -1154,14 +1154,14 @@ let orbFresh = false;
 let orbRejectReason = "";
 
 if (candlesSinceBreakout <= freshnessWindow) {
-// Within freshness window -- fresh, but still reject if chasing
+// Within freshness window — fresh, but still reject if chasing
 if (distPct <= 0.0015) {
 orbFresh = true;
 } else {
 orbRejectReason = `chasing(${distFromEdge.toFixed(1)}pts / ${(distPct*100).toFixed(3)}% from ORB edge, even within 3-candle window)`;
 }
 } else {
-// After freshness window -- ORB is STALE, do not fire regardless of proximity
+// After freshness window — ORB is STALE, do not fire regardless of proximity
 orbRejectReason = `stale(${candlesSinceBreakout} candles since breakout, window=${freshnessWindow})`;
 }
 
@@ -1180,7 +1180,7 @@ layer = "ORB";
 }
 
 // ── Layer 7: VWAP Deviation Mean Reversion ───────────────────────────────────
-// Only valid in midday lull (10:30 AM-2:30 PM) when market is ranging (ADX < 25)
+// Only valid in midday lull (10:30 AM–2:30 PM) when market is ranging (ADX < 25)
 if (_v1LayerOk("VWAPReversion") && direction === "HOLD" && istMin >= 630 && istMin <= 870 && candles.length >= 20) {
 const vwapDev = calcVWAPDeviation(candles);
 const regime = classifyMarketRegime(candles);
@@ -1197,7 +1197,7 @@ layer = "VWAPReversion";
 }
 
 // ── Layer 8: Institutional Footprint ─────────────────────────────────────────
-// Valid all day -- detects large institutional candles (vol >2×, body >70%)
+// Valid all day — detects large institutional candles (vol >2×, body >70%)
 if (_v1LayerOk("InstFootprint") && direction === "HOLD" && candles.length >= 10) {
 const inst = calcInstitutionalFootprint(candles);
 if (inst.detected && inst.direction !== "HOLD") {
@@ -1231,19 +1231,19 @@ layer = "FailedBreakout";
 }
 
 // ── Layer 9: VWAP Pullback (Highest win-rate Indian scalping setup) ──────────
-// Source: tradejini.com -- VWAP Pullback Scalping Strategy
+// Source: tradejini.com — VWAP Pullback Scalping Strategy
 // Price was trending above/below VWAP, pulls back to VWAP, forms reversal candle
 // This is the #1 setup used by professional Indian options scalpers
 // EXHAUSTION VETO: skip BUY pullbacks when the rally shows exhaustion (lower highs,
-// deep retracement, or RSI bleed) -- prevents buying every dip of a failing rally.
+// deep retracement, or RSI bleed) — prevents buying every dip of a failing rally.
 if (_v1LayerOk("VWAPPullback") && direction === "HOLD" && candles.length >= 10) {
 const pullback = detectVWAPPullback(candles, vwap);
 if (pullback.detected && pullback.direction !== "HOLD") {
 if ((pullback.direction === "BUY" && allow5mBuy) || (pullback.direction === "SELL" && allow5mSell)) {
 const exhaustion = pullback.direction === "BUY" ? detectUptrendExhaustion(candles) : { exhausted: false, reason: "" };
 if (exhaustion.exhausted) {
-// Rally is rolling over -- do not buy this dip; log via reason passthrough
-reason = `[VWAPPullback] BUY vetoed -- uptrend exhaustion: ${exhaustion.reason}`;
+// Rally is rolling over — do not buy this dip; log via reason passthrough
+reason = `[VWAPPullback] BUY vetoed — uptrend exhaustion: ${exhaustion.reason}`;
 } else {
 direction = pullback.direction;
 confidence = Math.min(0.91, 0.68 + pullback.strength * 0.15);
@@ -1255,8 +1255,8 @@ layer = "VWAPPullback";
 }
 
 // ── Layer 10: Supertrend on Heiken Ashi (production bot standard) ────────────
-// Source: henilcalagiya/quantitative-trading-bot -- BankNifty live trading
-// Supertrend(10, 3.0) on Heiken Ashi candles -- smooths noise, reduces false signals
+// Source: henilcalagiya/quantitative-trading-bot — BankNifty live trading
+// Supertrend(10, 3.0) on Heiken Ashi candles — smooths noise, reduces false signals
 // Only fires when Supertrend just flipped direction (fresh signal, not stale)
 if (_v1LayerOk("Trend") && direction === "HOLD" && candles.length >= 15) {
 const haCandles = toHeikenAshi(candles);
@@ -1277,11 +1277,11 @@ layer = "Trend";
 }
 
 // ── Layer 11: 1-Hour Candle Close Strategy (HourlyClose) ────────────────────
-// Wait for the first 1-hour candle (9:15-10:15 AM IST) to close.
+// Wait for the first 1-hour candle (9:15–10:15 AM IST) to close.
 // If body > 60% of total range → strong directional signal.
 // Fires ONCE per day. SL at opposite end of the hourly candle.
 if (_v1LayerOk("HourlyClose") && direction === "HOLD" && candles.length >= 60 && istMin >= 615 && istMin <= 625) {
-// Aggregate first ~60 one-minute candles to form the 1-hour candle (9:15-10:15)
+// Aggregate first ~60 one-minute candles to form the 1-hour candle (9:15–10:15)
 const firstHourCandles = candles.slice(0, Math.min(60, candles.length));
 const hourOpen = firstHourCandles[0].open;
 const hourClose = firstHourCandles[firstHourCandles.length - 1].close;
@@ -1363,7 +1363,7 @@ layer = "BoomingBulls";
 }
 }
 
-// S/R proximity filter -- reject entries near major levels
+// S/R proximity filter — reject entries near major levels
 // ── Layer 13: CPR (Central Pivot Range) Strategy ──────────────────────────────
 // Uses previous day's H/L/C to calculate Pivot, BC (Bottom CPR), TC (Top CPR).
 // Narrow CPR = trending day expected → trade breakout of CPR range.
@@ -1404,7 +1404,7 @@ reason = `[CPR] Narrow CPR breakdown below BC ₹${bc.toFixed(0)} | Pivot ₹${p
 layer = "CPR";
 }
 } else {
-// WIDE CPR: Mean reversion -- fade extremes back to pivot
+// WIDE CPR: Mean reversion — fade extremes back to pivot
 // Price at/above R1 and showing reversal = SELL (target: pivot)
 // Price at/below S1 and showing reversal = BUY (target: pivot)
 const nearR1 = price >= r1 * 0.998 && price <= r1 * 1.003;
@@ -1426,12 +1426,12 @@ layer = "CPR";
 }
 }
 
-// S/R proximity filter -- reject entries near major levels (exempt CPR -- it uses pivot levels intentionally)
+// S/R proximity filter — reject entries near major levels (exempt CPR — it uses pivot levels intentionally)
 if (direction !== "HOLD" && nearSR && layer !== "CPR") {
 return {
 direction: "HOLD", confidence: 0, entryPrice: price,
 slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
-reason: `Near S/R level -- entry rejected (within 0.02% of pivot/support/resistance)`,
+reason: `Near S/R level — entry rejected (within 0.02% of pivot/support/resistance)`,
 layer: "None",
 };
 }
@@ -1440,7 +1440,7 @@ layer: "None",
 // Require at least 2 consecutive candles in the signal direction before entry.
 // This prevents entering on a single spike candle (falling knife / dead cat bounce).
 // Only applies to Trend, Momentum, MACD_BB layers (not Breakout/Pattern which have their own confirmation).
-// EXCEPTION: When ADX > 30 (strong trend), the trend itself is confirmation -- skip this filter.
+// EXCEPTION: When ADX > 30 (strong trend), the trend itself is confirmation — skip this filter.
 // This was causing BankNifty to miss strong trend entries because 1-min candles often have
 // micro-bounces even in a strong directional move (e.g. RSI 23, ADX 35, but last 2 candles green).
 const strongTrend = adx > 30;
@@ -1456,7 +1456,7 @@ if (!confirmed) {
 return {
 direction: "HOLD", confidence: 0, entryPrice: price,
 slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr,
-reason: `2-candle confirmation failed -- waiting for consecutive ${direction === "BUY" ? "bullish" : "bearish"} candles | ${reason}`,
+reason: `2-candle confirmation failed — waiting for consecutive ${direction === "BUY" ? "bullish" : "bearish"} candles | ${reason}`,
 layer: "None",
 };
 }
@@ -1465,8 +1465,8 @@ layer: "None",
 
 // ── Apply 5m trend soft bias penalty (Fix #1) ──────────────────────────────
 // Reduce confidence for counter-trend signals instead of blocking them entirely.
-// A strong signal (0.75) against 5m trend becomes 0.60 -- still above minConf (0.55).
-// A weak signal (0.58) against 5m trend becomes 0.43 -- filtered out by minConf.
+// A strong signal (0.75) against 5m trend becomes 0.60 — still above minConf (0.55).
+// A weak signal (0.58) against 5m trend becomes 0.43 — filtered out by minConf.
 if (direction === "BUY" && buyPenalty > 0) {
 reason += ` | 5m-penalty:-${(buyPenalty * 100).toFixed(0)}%`;
 confidence -= buyPenalty;
@@ -1523,17 +1523,17 @@ const volRatio = avgVol > 0 ? recentVol / avgVol : 1;
 const allVolZero = candles.slice(-20).every(c => c.volume === 0);
 
 // VOLATILE: ATR > 1.5x average (explosive moves)
-if (atrRatio > 1.5) return { regime: "VOLATILE", label: `Volatile -- ATR ${atrRatio.toFixed(1)}x avg`, adx, atrRatio };
+if (atrRatio > 1.5) return { regime: "VOLATILE", label: `Volatile — ATR ${atrRatio.toFixed(1)}x avg`, adx, atrRatio };
 // DEAD: ADX < 15 with low ATR, or very low volume
-if (atrRatio < 0.5 && !allVolZero && volRatio < 0.6) return { regime: "DEAD", label: `Dead -- ATR ${atrRatio.toFixed(1)}x, vol ${volRatio.toFixed(1)}x`, adx, atrRatio };
-if (adx < 15 && atrRatio < 0.6) return { regime: "DEAD", label: `Dead -- ADX(${adx.toFixed(0)}), ATR ${atrRatio.toFixed(1)}x`, adx, atrRatio };
+if (atrRatio < 0.5 && !allVolZero && volRatio < 0.6) return { regime: "DEAD", label: `Dead — ATR ${atrRatio.toFixed(1)}x, vol ${volRatio.toFixed(1)}x`, adx, atrRatio };
+if (adx < 15 && atrRatio < 0.6) return { regime: "DEAD", label: `Dead — ADX(${adx.toFixed(0)}), ATR ${atrRatio.toFixed(1)}x`, adx, atrRatio };
 // TRENDING: ADX > 25
 const vwapDist = Math.abs(price - vwap) / vwap;
-if (adx > 25 && vwapDist > 0.001) return { regime: "TRENDING", label: `Trending -- ADX(${adx.toFixed(0)}) ${price > vwap ? "above" : "below"} VWAP`, adx, atrRatio };
+if (adx > 25 && vwapDist > 0.001) return { regime: "TRENDING", label: `Trending — ADX(${adx.toFixed(0)}) ${price > vwap ? "above" : "below"} VWAP`, adx, atrRatio };
 // Weak trend (ADX 20-25): still TRENDING but lower confidence
-if (adx >= 20 && adx <= 25) return { regime: "TRENDING", label: `Weak trend -- ADX(${adx.toFixed(0)})`, adx, atrRatio };
+if (adx >= 20 && adx <= 25) return { regime: "TRENDING", label: `Weak trend — ADX(${adx.toFixed(0)})`, adx, atrRatio };
 // RANGING: ADX < 20
-return { regime: "RANGING", label: `Ranging -- ADX(${adx.toFixed(0)})`, adx, atrRatio };
+return { regime: "RANGING", label: `Ranging — ADX(${adx.toFixed(0)})`, adx, atrRatio };
 }
 
 // Build 15m candles from 1m candles
@@ -1585,7 +1585,7 @@ return levels.some(level => Math.abs(price - level) / price < threshold);
 }
 
 /**
-* generateSignalV2 -- 2-Layer Regime-Based Signal Engine
+* generateSignalV2 — 2-Layer Regime-Based Signal Engine
 *
 * Layer 1: Detect market regime (TRENDING / RANGING / VOLATILE / DEAD)
 * Layer 2: Only run strategies that match the current regime
@@ -1599,7 +1599,7 @@ return levels.some(level => Math.abs(price - level) / price < threshold);
 * 1. 15m trend must agree with direction
 * 2. Price within 0.3% of a key level (support/resistance/VWAP/round)
 * 3. R:R must be >= 1:2 (target distance / SL distance)
-* 4. No entry in first 15 min (9:15-9:30 AM)
+* 4. No entry in first 15 min (9:15–9:30 AM)
 * 5. After 2 consecutive SLs same direction, require 75% confidence
 */
 export function generateSignalV2(
@@ -1649,7 +1649,7 @@ if (candles.length < 20) {
 return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `Collecting data (${candles.length}/20)`, layer: "None" };
 }
 
-// ── Quality Filter 4: No entry in first 15 min (9:15-9:30 AM) ─────────────
+// ── Quality Filter 4: No entry in first 15 min (9:15–9:30 AM) ─────────────
 if (istMin < 565) {
 return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: "Skipping first 10 min (opening volatility)", layer: "None" };
 }
@@ -1659,7 +1659,7 @@ const regime = detectRegimeV2(candles);
 
 // DEAD regime → no trades
 if (regime.regime === "DEAD") {
-return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[DEAD] ${regime.label} -- no trades`, layer: "None", regimeV2: "DEAD" };
+return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[DEAD] ${regime.label} — no trades`, layer: "None", regimeV2: "DEAD" };
 }
 
 // Time-of-day multiplier
@@ -1704,7 +1704,7 @@ reason = `[V2:HourlyClose] 1H body ${(bodyRatio * 100).toFixed(0)}% | O:${hourOp
 layer = "HourlyClose";
 }
 }
-// ORB: Opening Range Breakout -- fresh breakout of 15-min range, no chasing
+// ORB: Opening Range Breakout — fresh breakout of 15-min range, no chasing
 if (_layerOk("ORB") && direction === "HOLD" && istMin >= 570 && istMin <= 840 && candles.length >= 17) {
 const orbMinRangeWidth = price * 0.002;
 const orb = calcORBSignal(candles, 15, 2.0);
@@ -1740,7 +1740,7 @@ if (_layerOk("Trend") && direction === "HOLD" && candles.length >= 21 && adx > 2
 const emaDiffPct = Math.abs(e9 - e21) / e21;
 const distFromEma9 = Math.abs(price - e9) / e9;
 const distFromVwap = Math.abs(price - vwap) / vwap;
-// Widened from 0.15% to 0.4% -- 0.15% was too tight for NIFTY (only ₹36 window),
+// Widened from 0.15% to 0.4% — 0.15% was too tight for NIFTY (only ₹36 window),
 // forcing entries at exact inflection points that often reverse immediately.
 const nearPullback = distFromEma9 < 0.004 || distFromVwap < 0.004;
 if (e9 > e21 && price > vwap && (rsi > 55 || rsi < 40) && nearPullback) {
@@ -1762,7 +1762,7 @@ if ((_layerOk("Momentum") || _layerOk("TrendMomentum")) && direction === "HOLD" 
 const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
 const distFromEma9_m = Math.abs(price - e9) / e9;
 const distFromVwap_m = Math.abs(price - vwap) / vwap;
-// Widened from 0.15% to 0.4% -- same fix as Trend layer
+// Widened from 0.15% to 0.4% — same fix as Trend layer
 const nearPullback_m = distFromEma9_m < 0.004 || distFromVwap_m < 0.004;
 if (rsi > 55 && roc3 > 0.001 && price > vwap && nearPullback_m) {
 direction = "BUY";
@@ -1798,7 +1798,7 @@ layer = "Trend";
 // FIX: No FailedBreakout entries (all 6 lost in Stage 1 replay)
 // FIX: Require price at range extreme (top 30% for SELL, bottom 30% for BUY)
 // FIX: Anti-chasing: last 5 candles must show price moving TOWARD extreme (retracement)
-// Strategy A: VWAP Deviation Mean Reversion -- only at range extremes
+// Strategy A: VWAP Deviation Mean Reversion — only at range extremes
 if (_layerOk("VWAPReversion") && direction === "HOLD" && candles.length >= 20) {
 const vwapDev = calcVWAPDeviation(candles);
 if (vwapDev.signal !== "HOLD") {
@@ -1827,7 +1827,7 @@ layer = "VWAPReversion";
 }
 }
 }
-// Strategy B: VWAP Pullback -- only at range extremes with anti-chasing
+// Strategy B: VWAP Pullback — only at range extremes with anti-chasing
 if (_layerOk("VWAPPullback") && direction === "HOLD" && candles.length >= 10) {
 const pullback = detectVWAPPullback(candles, vwap);
 if (pullback.detected && pullback.direction !== "HOLD") {
@@ -1913,7 +1913,7 @@ layer = "Breakout";
 }
 
 // ── If no signal generated, return HOLD ───────────────────────────────────
-// ── CPR (Central Pivot Range) -- also in V2 ─────────────────────────────────
+// ── CPR (Central Pivot Range) — also in V2 ─────────────────────────────────
 if (_layerOk("CPR") && direction === "HOLD" && prevDayHigh > 0 && prevDayLow > 0 && prevDayClose > 0 && candles.length >= 10) {
 const pivot = (prevDayHigh + prevDayLow + prevDayClose) / 3;
 const bc = (prevDayHigh + prevDayLow) / 2;
@@ -1990,7 +1990,7 @@ layer: "None", regimeV2: regime.regime,
 // Filter 2: Price should be near a key level (entry at support/resistance = better R:R)
 const nearKey = isNearKeyLevelV2(price, vwap, prevDayHigh, prevDayLow, prevDayClose, 0.003);
 if (!nearKey) {
-// Not near key level -- reduce confidence by 5% (soft penalty, never blocks alone)
+// Not near key level — reduce confidence by 5% (soft penalty, never blocks alone)
 // Reduced from 10% because MCX Evening doesn't use this filter at all and performs better.
 confidence -= 0.05;
 reason += ` | not-near-key-level:-5%`;
@@ -2043,7 +2043,7 @@ sizeReduction,
 };
 }
 
-// ── Power Hour Signal (3:00-3:20 PM) -- whole-day context ─────────────────────
+// ── Power Hour Signal (3:00–3:20 PM) — whole-day context ─────────────────────
 // Institutional players close/build positions in this window.
 // We read the full day's candle history to determine trend, range, and conviction.
 export function generatePowerHourSignal(
@@ -2093,14 +2093,14 @@ const e9arr = ema(closes1m, 9);
 const e21arr = ema(closes1m, 21);
 const e9 = e9arr[e9arr.length - 1];
 const e21 = e21arr[e21arr.length - 1];
-// Index instruments (NIFTY, BANKNIFTY) return volume=0 -- bypass volume condition entirely
+// Index instruments (NIFTY, BANKNIFTY) return volume=0 — bypass volume condition entirely
 const isIndexInstrument = avgDayVol === 0;
 const last5Vol = candles1m.slice(-5).reduce((a, c) => a + c.volume, 0) / 5;
 const recentVolRatio = avgDayVol > 0 ? last5Vol / avgDayVol : 1;
 // Volume condition: always true for index instruments (they have no volume data)
 const volConditionMet = isIndexInstrument ? true : (volSurge >= 1.2 || recentVolRatio >= 1.3);
 
-// Score-based approach -- 5 core conditions (volume excluded for index instruments)
+// Score-based approach — 5 core conditions (volume excluded for index instruments)
 // Threshold: 3/5 for entry (was 4/6 which was too strict with volume always failing)
 const bullConditions = [
 dayTrendStrength > 0.001, // day is up >0.1% (relaxed from 0.2%)
@@ -2129,18 +2129,18 @@ let reason = "";
 if (bullScore >= POWER_HOUR_THRESHOLD && bullScore > bearScore && volConditionMet) {
 // Don't buy if price is already at day high (range exhausted)
 if (pricePositionInRange > 0.95) {
-return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[PowerHour] Price at day high -- range exhausted, skipping BUY`, layer: "None", isPowerHour: true };
+return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[PowerHour] Price at day high — range exhausted, skipping BUY`, layer: "None", isPowerHour: true };
 }
 direction = "BUY";
 confidence = Math.min(0.95, 0.65 + bullScore * 0.06 + Math.max(0, dayTrendStrength * 10));
-reason = `[PowerHour] Bullish day(${(dayTrendStrength * 100).toFixed(2)}%) | Above VWAP(${dayVwap.toFixed(1)}) | Vol:${isIndexInstrument ? "idx-bypass" : volSurge.toFixed(1) + "x"} | Score:${bullScore}/5 | RSI(${rsi1m.toFixed(0)}) | ADX(${adx5m.toFixed(0)}) | Range:${dayLow.toFixed(1)}-${dayHigh.toFixed(1)}`;
+reason = `[PowerHour] Bullish day(${(dayTrendStrength * 100).toFixed(2)}%) | Above VWAP(${dayVwap.toFixed(1)}) | Vol:${isIndexInstrument ? "idx-bypass" : volSurge.toFixed(1) + "x"} | Score:${bullScore}/5 | RSI(${rsi1m.toFixed(0)}) | ADX(${adx5m.toFixed(0)}) | Range:${dayLow.toFixed(1)}–${dayHigh.toFixed(1)}`;
 } else if (bearScore >= POWER_HOUR_THRESHOLD && bearScore > bullScore && volConditionMet) {
 if (pricePositionInRange < 0.05) {
-return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[PowerHour] Price at day low -- range exhausted, skipping SELL`, layer: "None", isPowerHour: true };
+return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[PowerHour] Price at day low — range exhausted, skipping SELL`, layer: "None", isPowerHour: true };
 }
 direction = "SELL";
 confidence = Math.min(0.95, 0.65 + bearScore * 0.06 + Math.max(0, Math.abs(dayTrendStrength) * 10));
-reason = `[PowerHour] Bearish day(${(dayTrendStrength * 100).toFixed(2)}%) | Below VWAP(${dayVwap.toFixed(1)}) | Vol:${isIndexInstrument ? "idx-bypass" : volSurge.toFixed(1) + "x"} | Score:${bearScore}/5 | RSI(${rsi1m.toFixed(0)}) | ADX(${adx5m.toFixed(0)}) | Range:${dayLow.toFixed(1)}-${dayHigh.toFixed(1)}`;
+reason = `[PowerHour] Bearish day(${(dayTrendStrength * 100).toFixed(2)}%) | Below VWAP(${dayVwap.toFixed(1)}) | Vol:${isIndexInstrument ? "idx-bypass" : volSurge.toFixed(1) + "x"} | Score:${bearScore}/5 | RSI(${rsi1m.toFixed(0)}) | ADX(${adx5m.toFixed(0)}) | Range:${dayLow.toFixed(1)}–${dayHigh.toFixed(1)}`;
 }
 
 if (direction === "HOLD") {
@@ -2157,7 +2157,7 @@ const targetPrice = direction === "BUY" ? price + atr * tpMultiplier : price - a
 return { direction, confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "PowerHour", isPowerHour: true };
 }
 
-// ── MCX Evening Power Hour Signal (7:30-9:30 PM IST) ────────────────────────
+// ── MCX Evening Power Hour Signal (7:30–9:30 PM IST) ────────────────────────
 /**
 * Reads whole-day 1m candles + 5m MACD to identify the day's directional bias,
 * then applies a high-conviction entry for the US market open window.
@@ -2166,7 +2166,7 @@ return { direction, confidence, entryPrice: price, slPrice, targetPrice, atr, re
 export function generateMCXEveningSignal(
 candles1m: Candle[],
 candles5m: Candle[],
-isWednesdayCrude = false, // EIA data day -- widen SL
+isWednesdayCrude = false, // EIA data day — widen SL
 slMultiplier = 1.2,
 tpMultiplier = 2.5,
 ): Signal {
@@ -2241,14 +2241,14 @@ let reason = "";
 
 if (bullScore >= 4 && bullScore > bearScore) {
 if (pricePos > 0.93) {
-return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMult, targetPrice: price + atr * tpMultiplier, atr, reason: `[MCXEvening] At day high -- range exhausted`, layer: "None", isMCXEvening: true };
+return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMult, targetPrice: price + atr * tpMultiplier, atr, reason: `[MCXEvening] At day high — range exhausted`, layer: "None", isMCXEvening: true };
 }
 direction = "BUY";
 confidence = Math.min(0.95, 0.62 + bullScore * 0.05 + Math.max(0, dayTrendStrength * 8));
 reason = `[MCXEvening] Bullish day(${(dayTrendStrength * 100).toFixed(2)}%) | Above VWAP(${dayVwap.toFixed(1)}) | VolSurge:${volSurge.toFixed(1)}x | Score:${bullScore}/6 | RSI(${rsi1m.toFixed(0)})${isWednesdayCrude ? " | EIA-day SL widened" : ""}`;
 } else if (bearScore >= 4 && bearScore > bullScore) {
 if (pricePos < 0.07) {
-return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price + atr * slMult, targetPrice: price - atr * tpMultiplier, atr, reason: `[MCXEvening] At day low -- range exhausted`, layer: "None", isMCXEvening: true };
+return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price + atr * slMult, targetPrice: price - atr * tpMultiplier, atr, reason: `[MCXEvening] At day low — range exhausted`, layer: "None", isMCXEvening: true };
 }
 direction = "SELL";
 confidence = Math.min(0.95, 0.62 + bearScore * 0.05 + Math.max(0, Math.abs(dayTrendStrength) * 8));
@@ -2265,19 +2265,19 @@ return { direction, confidence, entryPrice: price, slPrice, targetPrice, atr, re
 }
 
 
-// ── MCX Late Session Signal (9:30-11:20 PM IST) ─────────────────────────────
+// ── MCX Late Session Signal (9:30–11:20 PM IST) ─────────────────────────────
 /**
-* MCX Late Session: 21:30-23:20 IST -- after US market open volatility settles.
+* MCX Late Session: 21:30–23:20 IST — after US market open volatility settles.
 * This window catches MOMENTUM CONTINUATION moves that start during MCX Evening
-* (19:30-21:30) and continue into the late session. The CRUDEOIL 4.5× move
+* (19:30–21:30) and continue into the late session. The CRUDEOIL 4.5× move
 * (₹22→₹101 on 16JUL26) happened in this exact window.
 *
 * Key differences from generic signal generator:
-* 1. NO pullback requirement -- strong MCX moves don't pull back, they accelerate
-* 2. Looser 5m trend confirmation -- we trust 1m momentum more in late session
-* 3. Lower score threshold (3/6 with strong momentum) -- MCX late moves are decisive
-* 4. Higher target multiplier -- late session moves tend to be larger
-* 5. Momentum-first approach -- ROC and EMA slope are primary signals
+* 1. NO pullback requirement — strong MCX moves don't pull back, they accelerate
+* 2. Looser 5m trend confirmation — we trust 1m momentum more in late session
+* 3. Lower score threshold (3/6 with strong momentum) — MCX late moves are decisive
+* 4. Higher target multiplier — late session moves tend to be larger
+* 5. Momentum-first approach — ROC and EMA slope are primary signals
 */
 export function generateMCXLateSessionSignal(
 candles1m: Candle[],
@@ -2341,7 +2341,7 @@ const pricePos = dayRange > 0 ? (price - dayLow) / dayRange : 0.5;
 // CONTINUATION of moves that already started. Key: ROC, EMA slope, trend strength.
 const bullConditions = [
 roc5 > 0.001, // 5-candle momentum positive (>0.1%)
-roc10 > 0.002, // 10-candle momentum positive (>0.2%) -- sustained
+roc10 > 0.002, // 10-candle momentum positive (>0.2%) — sustained
 emaSlope > 0.0005, // EMA9 accelerating upward
 e9 > e21, // Short-term above long-term
 price > dayVwap, // Above day VWAP
@@ -2349,7 +2349,7 @@ adx > 18 || volSurge >= 1.1, // Trending OR volume surge (looser than Evening)
 ];
 const bearConditions = [
 roc5 < -0.001, // 5-candle momentum negative
-roc10 < -0.002, // 10-candle momentum negative -- sustained
+roc10 < -0.002, // 10-candle momentum negative — sustained
 emaSlope < -0.0005, // EMA9 accelerating downward
 e9 < e21, // Short-term below long-term
 price < dayVwap, // Below day VWAP
@@ -2371,7 +2371,7 @@ const strongMomentumBear = roc10 < -0.005 && emaSlope < -0.001 && e9 < e21;
 if ((bullScore >= 4 || (bullScore >= 3 && strongMomentumBull)) && bullScore > bearScore) {
 // Don't enter at absolute day high (range exhaustion)
 if (pricePos > 0.95) {
-return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[MCXLate] At day high -- range exhausted (${(pricePos * 100).toFixed(0)}%)`, layer: "None", isMCXLateSession: true };
+return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price - atr * slMultiplier, targetPrice: price + atr * tpMultiplier, atr, reason: `[MCXLate] At day high — range exhausted (${(pricePos * 100).toFixed(0)}%)`, layer: "None", isMCXLateSession: true };
 }
 direction = "BUY";
 confidence = Math.min(0.93, 0.60 + bullScore * 0.06 + Math.abs(roc10) * 30 + (adx > 25 ? 0.05 : 0));
@@ -2379,7 +2379,7 @@ reason = `[MCXLate] Bullish momentum | ROC5:+${(roc5 * 100).toFixed(2)}% ROC10:+
 } else if ((bearScore >= 4 || (bearScore >= 3 && strongMomentumBear)) && bearScore > bullScore) {
 // Don't enter at absolute day low
 if (pricePos < 0.05) {
-return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price + atr * slMultiplier, targetPrice: price - atr * tpMultiplier, atr, reason: `[MCXLate] At day low -- range exhausted (${(pricePos * 100).toFixed(0)}%)`, layer: "None", isMCXLateSession: true };
+return { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price + atr * slMultiplier, targetPrice: price - atr * tpMultiplier, atr, reason: `[MCXLate] At day low — range exhausted (${(pricePos * 100).toFixed(0)}%)`, layer: "None", isMCXLateSession: true };
 }
 direction = "SELL";
 confidence = Math.min(0.93, 0.60 + bearScore * 0.06 + Math.abs(roc10) * 30 + (adx > 25 ? 0.05 : 0));
@@ -2396,8 +2396,8 @@ return { direction, confidence, entryPrice: price, slPrice, targetPrice, atr, re
 }
 // ── Hero Zero Signal (Expiry-day OTM options) ────────────────────────────────
 /**
-* Hero Zero: buy deep OTM options on weekly expiry day when premium is ₹2-50.
-* Target: 5× premium. Cut: 50% loss. Window: 11:00 AM - 1:30 PM IST.
+* Hero Zero: buy deep OTM options on weekly expiry day when premium is ₹2–50.
+* Target: 5× premium. Cut: 50% loss. Window: 11:00 AM – 1:30 PM IST.
 * Works on NIFTY and BANKNIFTY weekly expiry options.
 *
 * NOTE: This function receives the current OTM option premium as `price`
@@ -2411,9 +2411,9 @@ optionType: "CE" | "PE", // call or put
 strikeDistance: number, // how far OTM in points (e.g., 200 for Nifty)
 slMultiplier = 1.0,
 ): Signal {
-// Entry filter: premium must be ₹2-50 (deep OTM, near-zero)
+// Entry filter: premium must be ₹2–50 (deep OTM, near-zero)
 if (optionPremium < 2 || optionPremium > 50) {
-return { direction: "HOLD", confidence: 0, entryPrice: optionPremium, slPrice: optionPremium * 0.5, targetPrice: optionPremium * 5, atr: 0, reason: `[HeroZero] Premium ₹${optionPremium.toFixed(1)} outside ₹2-50 range`, layer: "None", isHeroZero: true };
+return { direction: "HOLD", confidence: 0, entryPrice: optionPremium, slPrice: optionPremium * 0.5, targetPrice: optionPremium * 5, atr: 0, reason: `[HeroZero] Premium ₹${optionPremium.toFixed(1)} outside ₹2–50 range`, layer: "None", isHeroZero: true };
 }
 
 if (underlyingCandles.length < 20) {
@@ -2434,7 +2434,7 @@ const avgVol = underlyingCandles.reduce((a, c) => a + c.volume, 0) / underlyingC
 const last10Vol = underlyingCandles.slice(-10).reduce((a, c) => a + c.volume, 0) / 10;
 const volSurge = avgVol > 0 ? last10Vol / avgVol : 1;
 
-// Strike distance filter: 1-5% OTM for Nifty (50pt = 0.2%, 500pt = 2%)
+// Strike distance filter: 1–5% OTM for Nifty (50pt = 0.2%, 500pt = 2%)
 const otmPct = (strikeDistance / price) * 100;
 if (otmPct > 5) {
 return { direction: "HOLD", confidence: 0, entryPrice: optionPremium, slPrice: optionPremium * 0.5, targetPrice: optionPremium * 5, atr: 0, reason: `[HeroZero] Strike too far OTM (${otmPct.toFixed(1)}% > 5%)`, layer: "None", isHeroZero: true };
@@ -2468,20 +2468,20 @@ atr: optionPremium * 0.2, // ATR proxy for options
 reason,
 layer: "HeroZero",
 isHeroZero: true,
-// Do NOT set partial1RPrice/partial2RPrice here -- let the trade-open code use configurable state.partial1Pct/partial2Pct
+// Do NOT set partial1RPrice/partial2RPrice here — let the trade-open code use configurable state.partial1Pct/partial2Pct
 };
 }
 
 // ── Opening Burst Strategy (9:15-9:25 AM IST) ────────────────────────────────
-// V2: Captures the biggest move of the day -- the opening gap follow-through.
+// V2: Captures the biggest move of the day — the opening gap follow-through.
 // PREMIUM-BASED RULES (options move 5-10x at open due to gamma + IV):
 // 1. Gap must be > 0.2% from previous close (skip flat opens < 0.1%)
 // 2. Wait for 2nd/3rd candle confirmation: body > 70% of range AND move > 0.3% from open
 // 3. Direction must align with gap direction (gap-aligned filter)
 // 4. Candle contradiction filter: first 2 candles must NOT contradict (1 green + 1 red = skip)
-// 5. Target: 80-100% premium gain (NOT ATR-based -- options move differently at open)
+// 5. Target: 80-100% premium gain (NOT ATR-based — options move differently at open)
 // 6. SL: 30% premium drop (fixed %, NOT ATR-based)
-// 7. Full exit at target -- NO partial booking (moves happen in 2-3 min, reversals violent)
+// 7. Full exit at target — NO partial booking (moves happen in 2-3 min, reversals violent)
 // 8. Time limit: 10 minutes max. If not at target by 9:25, close at market.
 // 9. Only 1 trade per day in this window (win or lose, done)
 // 10. VIX > 20 = skip (whipsaws more likely)
@@ -2497,9 +2497,9 @@ if (!candles || candles.length < 1 || prevDayClose <= 0) {
 return { ...hold, reason: "Opening Burst: insufficient data" };
 }
 
-// VIX filter: skip if VIX > 25 (whipsaws more likely) [FIX: raised from 20 → 25, India VIX often 18-22]
-if (vixValue > 25) {
-return { ...hold, reason: `Opening Burst: VIX too high (${vixValue.toFixed(1)} > 25) -- whipsaw risk` };
+// VIX filter: skip if VIX > 20 (whipsaws more likely)
+if (vixValue > 20) {
+return { ...hold, reason: `Opening Burst: VIX too high (${vixValue.toFixed(1)} > 20) — whipsaw risk` };
 }
 
 // Day open = first candle's open price
@@ -2576,7 +2576,7 @@ const direction: "BUY" | "SELL" = isBullish ? "BUY" : "SELL";
 // Lower base confidence since we're entering earlier/more aggressively
 const confidence = Math.min(0.75 + (bodyRatio - 0.40) * 0.33, 0.95);
 
-// PREMIUM-BASED exits (NOT ATR-based -- options move differently at open):
+// PREMIUM-BASED exits (NOT ATR-based — options move differently at open):
 // Target: 80-100% premium gain → index move ~0.4-0.5% (gamma amplifies at open)
 // SL: 30% premium drop → index move ~0.15%
 // These are FIXED percentages because ATR hasn't formed yet at 9:15
@@ -2652,7 +2652,7 @@ bricks.push({ open: brickOpen, close: brickClose, color: "red" });
 }
 basePrice = basePrice - numBricks * brickSize;
 }
-// If |diff| < brickSize, no new brick -- price hasn't moved enough
+// If |diff| < brickSize, no new brick — price hasn't moved enough
 }
 
 return bricks;
@@ -2685,7 +2685,7 @@ let consecutiveRed = 0;
 // Count consecutive bricks from the end
 for (let i = lastBricks.length - 1; i >= 0; i--) {
 if (lastBricks[i].color === "green") {
-if (consecutiveRed > 0) break; // mixed -- stop counting
+if (consecutiveRed > 0) break; // mixed — stop counting
 consecutiveGreen++;
 } else {
 if (consecutiveGreen > 0) break;
@@ -2746,10 +2746,10 @@ const lastBrick = bricks[bricks.length - 1];
 
 // BUY trade exits on first RED brick; SELL trade exits on first GREEN brick
 if (tradeDirection === "BUY" && lastBrick.color === "red") {
-return { shouldExit: true, reason: `Red Bar Theory Exit -- first red brick after BUY entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
+return { shouldExit: true, reason: `Red Bar Theory Exit — first red brick after BUY entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
 }
 if (tradeDirection === "SELL" && lastBrick.color === "green") {
-return { shouldExit: true, reason: `Red Bar Theory Exit -- first green brick after SELL entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
+return { shouldExit: true, reason: `Red Bar Theory Exit — first green brick after SELL entry (brick close: ₹${lastBrick.close.toFixed(2)})` };
 }
 
 return { shouldExit: false, reason: "" };
@@ -2833,7 +2833,7 @@ return { ...hold, atr, entryPrice: price, reason: `[PremiumRenko] No 4-brick str
 }
 
 // ── Boxing Strategy Layer (1st High/Low + Engulfing Pattern + SEMA) ─────────────
-// Source: Backtested V5 variant -- 1 year NIFTY data, PF 1.38, 92% profitable months.
+// Source: Backtested V5 variant — 1 year NIFTY data, PF 1.38, 92% profitable months.
 // Logic:
 // 1. First 15 candles (9:15-9:30): Record high and low → "the Box"
 // 2. Top 20% of box = SELL zone, Bottom 20% = BUY zone
@@ -2886,9 +2886,9 @@ return { ...hold, reason: "[Boxing] No candles found in 9:15-9:30 window" };
 
 const boxWidth = boxHigh - boxLow;
 if (boxWidth < 15) {
-// Too narrow -- skip today
+// Too narrow — skip today
 state.boxingState = { firstHigh: boxHigh, firstLow: boxLow, boxFormed: true, boxFormedAt: istMin, tradesToday: 99 };
-return { ...hold, reason: `[Boxing] Box too narrow (${boxWidth.toFixed(1)} pts < 15) -- skipping today` };
+return { ...hold, reason: `[Boxing] Box too narrow (${boxWidth.toFixed(1)} pts < 15) — skipping today` };
 }
 
 state.boxingState = { firstHigh: boxHigh, firstLow: boxLow, boxFormed: true, boxFormedAt: istMin, tradesToday: 0 };
@@ -2907,9 +2907,9 @@ if (istMin < 570) {
 return { ...hold, reason: "[Boxing] Waiting for box to form (before 9:30)" };
 }
 
-// Stop trading after 3:00 PM (minute 900) -- too close to close
+// Stop trading after 3:00 PM (minute 900) — too close to close
 if (istMin >= 900) {
-return { ...hold, entryPrice: price, reason: "[Boxing] Past 3:00 PM -- no new entries" };
+return { ...hold, entryPrice: price, reason: "[Boxing] Past 3:00 PM — no new entries" };
 }
 
 // ── Step 2: Define zones ──
@@ -2966,7 +2966,7 @@ entryPrice,
 slPrice,
 targetPrice,
 atr,
-reason: `[Boxing] BUY -- Bullish Engulfing in bottom zone | Box: ${firstLow.toFixed(0)}-${firstHigh.toFixed(0)} (${boxWidth.toFixed(0)}pts) | SL: ${slPoints}pts | Target: ${(targetPrice - entryPrice).toFixed(0)}pts`,
+reason: `[Boxing] BUY — Bullish Engulfing in bottom zone | Box: ${firstLow.toFixed(0)}-${firstHigh.toFixed(0)} (${boxWidth.toFixed(0)}pts) | SL: ${slPoints}pts | Target: ${(targetPrice - entryPrice).toFixed(0)}pts`,
 layer: "BoxingStrategy",
 };
 }
@@ -2984,7 +2984,7 @@ entryPrice,
 slPrice,
 targetPrice,
 atr,
-reason: `[Boxing] SELL -- Bearish Engulfing in top zone | Box: ${firstLow.toFixed(0)}-${firstHigh.toFixed(0)} (${boxWidth.toFixed(0)}pts) | SL: ${slPoints}pts | Target: ${(entryPrice - targetPrice).toFixed(0)}pts`,
+reason: `[Boxing] SELL — Bearish Engulfing in top zone | Box: ${firstLow.toFixed(0)}-${firstHigh.toFixed(0)} (${boxWidth.toFixed(0)}pts) | SL: ${slPoints}pts | Target: ${(entryPrice - targetPrice).toFixed(0)}pts`,
 layer: "BoxingStrategy",
 };
 }
@@ -3001,7 +3001,7 @@ return { ...hold, entryPrice: price, reason: `[Boxing] Watching... Box: ${firstL
 // Source: Backtested 18 months NIFTY data (329 days), PF 1.20, +441 pts
 // V8 params: 30-min range (9:15-9:45), VWAP+EMA21 filters, 30pt SL, 50% target, trail@60%
 // Complements Boxing: Boxing=inside range (mean reversion), ORB=outside range (momentum breakout)
-// They CANNOT conflict -- one fires inside, other fires outside.
+// They CANNOT conflict — one fires inside, other fires outside.
 /**
 * ORB V8 Strategy: 30-minute Opening Range Breakout with VWAP and EMA21 confirmation.
 *
@@ -3013,7 +3013,7 @@ return { ...hold, entryPrice: price, reason: `[Boxing] Watching... Box: ${firstL
 * 5. SL: 30 pts (capped) or opposite end of range (whichever is smaller)
 * 6. Target: 50% of range, then trail at 60% of move
 * 7. Max 1 trade per day from ORB layer
-* 8. Time window: 9:45 AM - 11:30 AM only
+* 8. Time window: 9:45 AM – 11:30 AM only
 * 9. Skip if range > 100 pts (too volatile) or < 10 pts (too narrow)
 * 10. SHORT-ONLY mode (V11): only take SELL breakouts (PF 1.28, 50% WR)
 */
@@ -3060,11 +3060,11 @@ const orbRange = orbHigh - orbLow;
 
 if (orbRange > MAX_RANGE) {
 state.orbV8State = { orbHigh, orbLow, orbRange, orbFormed: true, orbFormedAt: istMin, tradesToday: 99, shortOnlyMode: state.orbV8State?.shortOnlyMode ?? false };
-return { ...hold, reason: `[ORB_V8] Range too wide (${orbRange.toFixed(1)} pts > ${MAX_RANGE}) -- skipping today` };
+return { ...hold, reason: `[ORB_V8] Range too wide (${orbRange.toFixed(1)} pts > ${MAX_RANGE}) — skipping today` };
 }
 if (orbRange < MIN_RANGE) {
 state.orbV8State = { orbHigh, orbLow, orbRange, orbFormed: true, orbFormedAt: istMin, tradesToday: 99, shortOnlyMode: state.orbV8State?.shortOnlyMode ?? false };
-return { ...hold, reason: `[ORB_V8] Range too narrow (${orbRange.toFixed(1)} pts < ${MIN_RANGE}) -- skipping today` };
+return { ...hold, reason: `[ORB_V8] Range too narrow (${orbRange.toFixed(1)} pts < ${MIN_RANGE}) — skipping today` };
 }
 state.orbV8State = { orbHigh, orbLow, orbRange, orbFormed: true, orbFormedAt: istMin, tradesToday: 0, shortOnlyMode: state.orbV8State?.shortOnlyMode ?? false };
 }
@@ -3076,12 +3076,12 @@ if (tradesToday >= 1) {
 return { ...hold, entryPrice: price, reason: `[ORB_V8] Daily limit reached (${tradesToday}/1 trades)` };
 }
 
-// Only trade 9:45 AM - 11:30 AM
+// Only trade 9:45 AM – 11:30 AM
 if (istMin < ORB_FORM_TIME) {
-return { ...hold, reason: "[ORB_V8] Before 9:45 AM -- waiting for range" };
+return { ...hold, reason: "[ORB_V8] Before 9:45 AM — waiting for range" };
 }
 if (istMin > MAX_ENTRY_TIME) {
-return { ...hold, entryPrice: price, reason: "[ORB_V8] Past 11:30 AM -- no new entries" };
+return { ...hold, entryPrice: price, reason: "[ORB_V8] Past 11:30 AM — no new entries" };
 }
 
 // ── Step 2: Check for breakout using 5-candle aggregation ──
@@ -3133,7 +3133,7 @@ entryPrice,
 slPrice,
 targetPrice,
 atr,
-reason: `[ORB_V8] BUY -- Breakout above range | Range: ${orbLow.toFixed(0)}-${orbHigh.toFixed(0)} (${orbRange.toFixed(0)}pts) | VWAP: ${vwap.toFixed(0)} | EMA21: rising | SL: ${slPoints.toFixed(0)}pts | Target: ${targetPoints.toFixed(0)}pts`,
+reason: `[ORB_V8] BUY — Breakout above range | Range: ${orbLow.toFixed(0)}-${orbHigh.toFixed(0)} (${orbRange.toFixed(0)}pts) | VWAP: ${vwap.toFixed(0)} | EMA21: rising | SL: ${slPoints.toFixed(0)}pts | Target: ${targetPoints.toFixed(0)}pts`,
 layer: "ORB",
 };
 }
@@ -3154,7 +3154,7 @@ entryPrice,
 slPrice,
 targetPrice,
 atr,
-reason: `[ORB_V8] SELL -- Breakdown below range | Range: ${orbLow.toFixed(0)}-${orbHigh.toFixed(0)} (${orbRange.toFixed(0)}pts) | VWAP: ${vwap.toFixed(0)} | EMA21: falling | SL: ${slPoints.toFixed(0)}pts | Target: ${targetPoints.toFixed(0)}pts${shortOnlyMode ? " [SHORT-ONLY]" : ""}`,
+reason: `[ORB_V8] SELL — Breakdown below range | Range: ${orbLow.toFixed(0)}-${orbHigh.toFixed(0)} (${orbRange.toFixed(0)}pts) | VWAP: ${vwap.toFixed(0)} | EMA21: falling | SL: ${slPoints.toFixed(0)}pts | Target: ${targetPoints.toFixed(0)}pts${shortOnlyMode ? " [SHORT-ONLY]" : ""}`,
 layer: "ORB",
 };
 }
@@ -3220,7 +3220,7 @@ consecutiveRed++;
 const isUptrend = consecutiveGreen >= 2; // DEFAULT: 3
 const isDowntrend = consecutiveRed >= 2; // DEFAULT: 3
 if (!isUptrend && !isDowntrend) {
-return { ...hold, atr, entryPrice: closes[closes.length - 1], reason: `[Trikal Strategy] No trend (G:${consecutiveGreen} R:${consecutiveRed}) -- mixed, no trade` };
+return { ...hold, atr, entryPrice: closes[closes.length - 1], reason: `[Trikal Strategy] No trend (G:${consecutiveGreen} R:${consecutiveRed}) — mixed, no trade` };
 }
 
 const price = candles[candles.length - 1].close;
@@ -3251,13 +3251,13 @@ const targetPrice = price + Math.max(riskPerUnit * 2.5, atr * tpMultiplier);
 
 const confidence = Math.min(0.90, 0.60 + (consecutiveGreen - 3) * 0.05 + (hadPullback ? 0.10 : 0) + (breakoutAboveResistance ? 0.05 : 0));
 const reason = breakoutAboveResistance
-? `[Trikal Strategy] BUY -- ${consecutiveGreen} green bricks + breakout above ₹${resistance.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
-: `[Trikal Strategy] BUY -- ${consecutiveGreen} green bricks + pullback to cloud + close above | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
+? `[Trikal Strategy] BUY — ${consecutiveGreen} green bricks + breakout above ₹${resistance.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
+: `[Trikal Strategy] BUY — ${consecutiveGreen} green bricks + pullback to cloud + close above | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
 
 return { direction: "BUY", confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "TrikalStrategy" };
 }
 
-return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Uptrend (${consecutiveGreen}G) + bullish cloud -- waiting for pullback` };
+return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Uptrend (${consecutiveGreen}G) + bullish cloud — waiting for pullback` };
 }
 
 // ── SELL SIGNAL ──
@@ -3285,17 +3285,17 @@ const targetPrice = price - Math.max(riskPerUnit * 2.5, atr * tpMultiplier);
 
 const confidence = Math.min(0.90, 0.60 + (consecutiveRed - 3) * 0.05 + (hadRally ? 0.10 : 0) + (breakdownBelowSupport ? 0.05 : 0));
 const reason = breakdownBelowSupport
-? `[Trikal Strategy] SELL -- ${consecutiveRed} red bricks + breakdown below ₹${support.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
-: `[Trikal Strategy] SELL -- ${consecutiveRed} red bricks + rally to cloud + close below | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
+? `[Trikal Strategy] SELL — ${consecutiveRed} red bricks + breakdown below ₹${support.toFixed(0)} | Cloud: ₹${cloudBottom.toFixed(0)}-${cloudTop.toFixed(0)}`
+: `[Trikal Strategy] SELL — ${consecutiveRed} red bricks + rally to cloud + close below | EMA9: ₹${ema9.toFixed(0)} EMA21: ₹${ema21.toFixed(0)}`;
 
 return { direction: "SELL", confidence, entryPrice: price, slPrice, targetPrice, atr, reason, layer: "TrikalStrategy" };
 }
 
-return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Downtrend (${consecutiveRed}R) + bearish cloud -- waiting for rally to cloud` };
+return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Downtrend (${consecutiveRed}R) + bearish cloud — waiting for rally to cloud` };
 }
 
-// Trend and cloud disagree -- no trade (master filter prevents choppy trades)
-return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Trend/cloud mismatch (${isUptrend ? "UP" : "DOWN"} trend vs ${cloudBullish ? "bullish" : "bearish"} cloud) -- no trade` };
+// Trend and cloud disagree — no trade (master filter prevents choppy trades)
+return { ...hold, atr, entryPrice: price, reason: `[Trikal Strategy] Trend/cloud mismatch (${isUptrend ? "UP" : "DOWN"} trend vs ${cloudBullish ? "bullish" : "bearish"} cloud) — no trade` };
 }
 
 /**
@@ -3322,19 +3322,19 @@ const bricks = buildRenkoBricks(candles, atr);
 if (bricks.length > 0) {
 const lastBrick = bricks[bricks.length - 1];
 if (tradeDirection === "BUY" && lastBrick.color === "red") {
-return { shouldExit: true, reason: `SmartRed Bar Theory Exit -- red brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
+return { shouldExit: true, reason: `SmartRed Bar Theory Exit — red brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
 }
 if (tradeDirection === "SELL" && lastBrick.color === "green") {
-return { shouldExit: true, reason: `SmartRed Bar Theory Exit -- green brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
+return { shouldExit: true, reason: `SmartRed Bar Theory Exit — green brick formed (trend weakening) | ₹${lastBrick.close.toFixed(0)}` };
 }
 }
 
 // Exit condition 2: price closes on wrong side of cloud
 if (tradeDirection === "BUY" && price < cloudBottom) {
-return { shouldExit: true, reason: `SmartRed Bar Theory Exit -- price below cloud (₹${price.toFixed(0)} < ₹${cloudBottom.toFixed(0)})` };
+return { shouldExit: true, reason: `SmartRed Bar Theory Exit — price below cloud (₹${price.toFixed(0)} < ₹${cloudBottom.toFixed(0)})` };
 }
 if (tradeDirection === "SELL" && price > cloudTop) {
-return { shouldExit: true, reason: `SmartRed Bar Theory Exit -- price above cloud (₹${price.toFixed(0)} > ₹${cloudTop.toFixed(0)})` };
+return { shouldExit: true, reason: `SmartRed Bar Theory Exit — price above cloud (₹${price.toFixed(0)} > ₹${cloudTop.toFixed(0)})` };
 }
 return { shouldExit: false, reason: "" };
 }
@@ -3372,7 +3372,7 @@ const adx = calcADX(candles, 14);
 // Asymmetric ADX: BUY needs 22+, SELL needs 27+ (from Bank Nifty 15m backtest)
 const adxMinBuy = 18; // DEFAULT: 22
 const adxMinSell = 22; // DEFAULT: 27
-if (adx < adxMinBuy) return { ...hold, atr, entryPrice: price, reason: `[Adeeb] ADX too low (${adx.toFixed(0)} < ${adxMinBuy}) -- no trade in choppy market` };
+if (adx < adxMinBuy) return { ...hold, atr, entryPrice: price, reason: `[Adeeb] ADX too low (${adx.toFixed(0)} < ${adxMinBuy}) — no trade in choppy market` };
 
 // ── STEP 2: CPR Daily Bias ──
 if (prevDayHigh <= 0 || prevDayLow <= 0 || prevDayClose <= 0) {
@@ -3385,7 +3385,7 @@ const tc = 2 * pivot - bc;
 const isBullishBias = price > tc;
 const isBearishBias = price < bc;
 if (!isBullishBias && !isBearishBias) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price inside CPR range (₹${bc.toFixed(0)}-₹${tc.toFixed(0)}) -- no clear bias` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price inside CPR range (₹${bc.toFixed(0)}-₹${tc.toFixed(0)}) — no clear bias` };
 }
 
 // ── STEP 3: Renko Trend Confirmation (0.5×ATR bricks, 2 consecutive minimum) ──
@@ -3413,18 +3413,18 @@ else consecutiveRed++;
 const renkoUptrend = consecutiveGreen >= 2;
 const renkoDowntrend = consecutiveRed >= 2;
 if (!renkoUptrend && !renkoDowntrend) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] No 2-brick Renko streak (G:${consecutiveGreen} R:${consecutiveRed}) -- waiting` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] No 2-brick Renko streak (G:${consecutiveGreen} R:${consecutiveRed}) — waiting` };
 }
 
 // ── STEP 4: Renko direction must agree with CPR bias ──
 if (renkoUptrend && !isBullishBias) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko UP but CPR bearish (price < BC ₹${bc.toFixed(0)}) -- conflict, no trade` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko UP but CPR bearish (price < BC ₹${bc.toFixed(0)}) — conflict, no trade` };
 }
 if (renkoDowntrend && !isBearishBias) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko DOWN but CPR bullish (price > TC ₹${tc.toFixed(0)}) -- conflict, no trade` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko DOWN but CPR bullish (price > TC ₹${tc.toFixed(0)}) — conflict, no trade` };
 }
 
-// ── STEP 5: EMA Cloud (9/21) -- price must have pulled back to cloud ──
+// ── STEP 5: EMA Cloud (9/21) — price must have pulled back to cloud ──
 const ema9arr = ema(closes, 9);
 const ema21arr = ema(closes, 21);
 if (ema9arr.length === 0 || ema21arr.length === 0) return { ...hold, atr, reason: "[Adeeb] EMA calc failed" };
@@ -3442,21 +3442,21 @@ if (renkoUptrend) {
 // For BUY: price should be near or touching cloud from above (pullback)
 // Cloud bullish = EMA9 > EMA21
 if (ema9 < ema21) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko UP but EMA cloud bearish (EMA9 < EMA21) -- conflict` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko UP but EMA cloud bearish (EMA9 < EMA21) — conflict` };
 }
-// Price must be close to cloud (pullback) -- not chasing far above
-if (distFromCloud > 0.005) { // DEFAULT: 0.003 (0.3%) -- loosened to 0.5% for more trades
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% above cloud (max 0.5%) -- too far, skip` };
+// Price must be close to cloud (pullback) — not chasing far above
+if (distFromCloud > 0.005) { // DEFAULT: 0.003 (0.3%) — loosened to 0.5% for more trades
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% above cloud (max 0.5%) — too far, skip` };
 }
 // Price must be above cloud bottom (not broken below)
 if (price < cloudBottom) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price below EMA cloud -- trend broken, no BUY` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price below EMA cloud — trend broken, no BUY` };
 }
 // Bounce confirmation: current candle closes above cloud after touching it
 const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-const touchedCloud = prevClose <= cloudTop * 1.003; // DEFAULT: 1.001 -- loosened for more trades
+const touchedCloud = prevClose <= cloudTop * 1.003; // DEFAULT: 1.001 — loosened for more trades
 const bouncedUp = price > prevClose && price > cloudTop;
-if (!touchedCloud && distFromCloud > 0.003) { // DEFAULT: 0.001 -- loosened for more trades
+if (!touchedCloud && distFromCloud > 0.003) { // DEFAULT: 0.001 — loosened for more trades
 return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Waiting for pullback to cloud (EMA9: ₹${ema9.toFixed(0)})` };
 }
 
@@ -3480,7 +3480,7 @@ const slPrice = cloudBottom - atr * 0.3; // SL below cloud
 const targetPrice = price + atr * 1.8; // Optimized from backtest (1.8×ATR)
 return {
 direction: "BUY", confidence, entryPrice: price, slPrice, targetPrice, atr,
-reason: `[Adeeb] BUY -- ${consecutiveGreen}G Renko(0.5ATR) + CPR bullish (>TC ₹${tc.toFixed(0)}) + cloud pullback + ADX(${adx.toFixed(0)})`,
+reason: `[Adeeb] BUY — ${consecutiveGreen}G Renko(0.5ATR) + CPR bullish (>TC ₹${tc.toFixed(0)}) + cloud pullback + ADX(${adx.toFixed(0)})`,
 layer: "Adeeb",
 };
 }
@@ -3488,28 +3488,28 @@ layer: "Adeeb",
 if (renkoDowntrend) {
 // For SELL: price should be near or touching cloud from below (pullback/rally)
 if (ema9 > ema21) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko DOWN but EMA cloud bullish (EMA9 > EMA21) -- conflict` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Renko DOWN but EMA cloud bullish (EMA9 > EMA21) — conflict` };
 }
-// Price must be close to cloud (rally back) -- not chasing far below
-if (distFromCloud > 0.005) { // DEFAULT: 0.003 (0.3%) -- loosened to 0.5% for more trades
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% below cloud (max 0.5%) -- too far, skip` };
+// Price must be close to cloud (rally back) — not chasing far below
+if (distFromCloud > 0.005) { // DEFAULT: 0.003 (0.3%) — loosened to 0.5% for more trades
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Anti-chase: price ${(distFromCloud * 100).toFixed(2)}% below cloud (max 0.5%) — too far, skip` };
 }
 // Price must be below cloud top (not broken above)
 if (price > cloudTop) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price above EMA cloud -- trend broken, no SELL` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Price above EMA cloud — trend broken, no SELL` };
 }
 // Bounce confirmation: current candle closes below cloud after touching it
 const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price;
-const touchedCloud = prevClose >= cloudBottom * 0.997; // DEFAULT: 0.999 -- loosened for more trades
+const touchedCloud = prevClose >= cloudBottom * 0.997; // DEFAULT: 0.999 — loosened for more trades
 const bouncedDown = price < prevClose && price < cloudBottom;
-if (!touchedCloud && distFromCloud > 0.003) { // DEFAULT: 0.001 -- loosened for more trades
+if (!touchedCloud && distFromCloud > 0.003) { // DEFAULT: 0.001 — loosened for more trades
 return { ...hold, atr, entryPrice: price, reason: `[Adeeb] Waiting for rally to cloud (EMA21: ₹${ema21.toFixed(0)})` };
 }
 
 // ── ALL CONDITIONS MET: SELL ──
 // Asymmetric: SELL requires ADX > 27
 if (adx < adxMinSell) {
-return { ...hold, atr, entryPrice: price, reason: `[Adeeb] ADX too low for SELL (${adx.toFixed(0)} < ${adxMinSell}) -- need stronger trend (DEFAULT: 27)` };
+return { ...hold, atr, entryPrice: price, reason: `[Adeeb] ADX too low for SELL (${adx.toFixed(0)} < ${adxMinSell}) — need stronger trend (DEFAULT: 27)` };
 }
 let confidence = 0.70;
 if (adx > 35) confidence += 0.08;
@@ -3530,7 +3530,7 @@ const slPrice = cloudTop + atr * 0.3; // SL above cloud
 const targetPrice = price - atr * 1.8; // Optimized from backtest
 return {
 direction: "SELL", confidence, entryPrice: price, slPrice, targetPrice, atr,
-reason: `[Adeeb] SELL -- ${consecutiveRed}R Renko(0.5ATR) + CPR bearish ( layer: "Adeeb",
+reason: `[Adeeb] SELL — ${consecutiveRed}R Renko(0.5ATR) + CPR bearish ( layer: "Adeeb",
 };
 }
 
@@ -3539,8 +3539,8 @@ return { ...hold, atr, entryPrice: price, reason: "[Adeeb] No valid setup" };
 
 /**
 * Adeeb exit check (optimized from Bank Nifty 15-min backtest):
-* 1. Max hold 60 min (4 candles on 15-min) -- checked in tick loop
-* 2. Target hit (1.8×ATR) -- checked in tick loop
+* 1. Max hold 60 min (4 candles on 15-min) — checked in tick loop
+* 2. Target hit (1.8×ATR) — checked in tick loop
 * 3. Trailing SL: after +0.8×ATR profit, move SL to entry+0.2×ATR
 * NOTE: EMA cloud break exit REMOVED (backtest showed 0% WR, all losses)
 * NOTE: Single opposite Renko brick exit REMOVED (too aggressive)
@@ -3557,10 +3557,10 @@ const bricks = buildRenkoBricks(candles, brickSize);
 if (bricks.length >= 2) {
 const last2 = bricks.slice(-2);
 if (tradeDirection === "BUY" && last2.every(b => b.color === "red")) {
-return { shouldExit: true, reason: `Adeeb Exit -- 2 consecutive red Renko bricks (reversal confirmed)` };
+return { shouldExit: true, reason: `Adeeb Exit — 2 consecutive red Renko bricks (reversal confirmed)` };
 }
 if (tradeDirection === "SELL" && last2.every(b => b.color === "green")) {
-return { shouldExit: true, reason: `Adeeb Exit -- 2 consecutive green Renko bricks (reversal confirmed)` };
+return { shouldExit: true, reason: `Adeeb Exit — 2 consecutive green Renko bricks (reversal confirmed)` };
 }
 }
 
@@ -3627,16 +3627,16 @@ const price = candles[candles.length - 1].close;
 const currCandle = candles[candles.length - 1];
 const prevCandle = candles[candles.length - 2];
 
-// ── Time Filter: 9:30 AM - 3:00 PM IST ──
+// ── Time Filter: 9:30 AM – 3:00 PM IST ──
 const latestTs = currCandle.timestamp;
 const istDate = new Date(latestTs + 330 * 60000);
 const istMin = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
 
 if (istMin < 540) {
-return { ...hold, reason: "[MR-V13] Before 9:00 AM -- markets not open" };
+return { ...hold, reason: "[MR-V13] Before 9:00 AM — markets not open" };
 }
 if (istMin >= 1410) {
-return { ...hold, reason: "[MR-V13] After 11:30 PM -- markets closed" };
+return { ...hold, reason: "[MR-V13] After 11:30 PM — markets closed" };
 }
 
 const closes = candles.map(c => c.close);
@@ -3649,7 +3649,7 @@ const priceAtUpperBB = price >= bb.upper;
 const priceAtLowerBB = price <= bb.lower;
 
 if (!priceAtUpperBB && !priceAtLowerBB) {
-return { ...hold, entryPrice: price, reason: `[MR-V13] Price ${price.toFixed(1)} inside BB [${bb.lower.toFixed(1)}, ${bb.upper.toFixed(1)}] -- no extreme` };
+return { ...hold, entryPrice: price, reason: `[MR-V13] Price ${price.toFixed(1)} inside BB [${bb.lower.toFixed(1)}, ${bb.upper.toFixed(1)}] — no extreme` };
 }
 
 // ═══ HARD TRIGGER 2: RSI(14) extreme ═══
@@ -3664,7 +3664,7 @@ return { ...hold, entryPrice: price, reason: `[MR-V13] BB upper touched but RSI=
 const vwapData = calcMeanReversionV13Deviation(candles);
 const absZScore = Math.abs(vwapData.zScore);
 if (absZScore < 1.5) {
-return { ...hold, entryPrice: price, reason: `[MR-V13] VWAP Z=${vwapData.zScore.toFixed(2)} -- not extreme enough (need |z| >= 1.5)` };
+return { ...hold, entryPrice: price, reason: `[MR-V13] VWAP Z=${vwapData.zScore.toFixed(2)} — not extreme enough (need |z| >= 1.5)` };
 }
 if (priceAtLowerBB && vwapData.zScore > 0) {
 return { ...hold, entryPrice: price, reason: `[MR-V13] Conflict: BB-lower but VWAP Z positive (${vwapData.zScore.toFixed(2)})` };
@@ -3683,7 +3683,7 @@ const volumeAvailable = vwapData.volumeAvailable && avgVol20 > 0;
 const volRatio = volumeAvailable ? currVol / avgVol20 : 0;
 
 if (volumeAvailable && volRatio < 1.2) {
-return { ...hold, entryPrice: price, reason: `[MR-V13] Volume ratio ${volRatio.toFixed(2)}x < 1.2x -- no institutional confirmation` };
+return { ...hold, entryPrice: price, reason: `[MR-V13] Volume ratio ${volRatio.toFixed(2)}x < 1.2x — no institutional confirmation` };
 }
 
 if (!volumeAvailable) {
@@ -3696,7 +3696,7 @@ const upperWick = Math.max(0, currCandle.high - Math.max(currCandle.open, currCa
 const bullishRejection = currCandle.close > currCandle.open || lowerWick >= Math.max(body, candleRange * 0.25);
 const bearishRejection = currCandle.close < currCandle.open || upperWick >= Math.max(body, candleRange * 0.25);
 if ((priceAtLowerBB && !bullishRejection) || (priceAtUpperBB && !bearishRejection)) {
-return { ...hold, entryPrice: price, reason: "[MR-V13] Zero-volume index feed -- waiting for a confirming rejection candle" };
+return { ...hold, entryPrice: price, reason: "[MR-V13] Zero-volume index feed — waiting for a confirming rejection candle" };
 }
 }
 
@@ -3743,7 +3743,7 @@ confidence = Math.min(0.92, Math.max(0, confidence));
 if (confidence < 0.55) {
 return {
 ...hold, entryPrice: price,
-reason: `[MR-V13] Setup found but confidence too low (${(confidence*100).toFixed(0)}%) -- ADX(${adx.toFixed(0)}) EMA-slope(${ema50Slope.toFixed(3)}%) penalized`,
+reason: `[MR-V13] Setup found but confidence too low (${(confidence*100).toFixed(0)}%) — ADX(${adx.toFixed(0)}) EMA-slope(${ema50Slope.toFixed(3)}%) penalized`,
 };
 }
 
@@ -3759,7 +3759,7 @@ const targetPrice = direction === "BUY" ? entryPrice + targetDistance : entryPri
 const partial1RPrice = direction === "BUY" ? entryPrice + risk : entryPrice - risk;
 
 const confirmationLabel = volumeAvailable ? `Vol(${volRatio.toFixed(1)}x)` : "IndexRejection(no-volume-feed)";
-const reason = `[MR-V13] ${direction} -- BB${direction === "BUY" ? "lower" : "upper"} + RSI(${rsi.toFixed(0)}) + Z(${vwapData.zScore.toFixed(2)},${vwapData.anchor}) + ${confirmationLabel} + Decel | ADX(${adx.toFixed(0)}) EMA(${ema50Slope.toFixed(2)}%) | SL:${slDistance.toFixed(0)}pts Tgt:${targetDistance.toFixed(0)}pts (1:${rewardMultiple}) | Conf:${(confidence*100).toFixed(0)}%`;
+const reason = `[MR-V13] ${direction} — BB${direction === "BUY" ? "lower" : "upper"} + RSI(${rsi.toFixed(0)}) + Z(${vwapData.zScore.toFixed(2)},${vwapData.anchor}) + ${confirmationLabel} + Decel | ADX(${adx.toFixed(0)}) EMA(${ema50Slope.toFixed(2)}%) | SL:${slDistance.toFixed(0)}pts Tgt:${targetDistance.toFixed(0)}pts (1:${rewardMultiple}) | Conf:${(confidence*100).toFixed(0)}%`;
 
 return {
 direction,
@@ -3793,7 +3793,7 @@ crudeOpen: number;
 let _crudeBiasCache: { result: CrudeBiasResult; fetchedAt: number } | null = null;
 const CRUDE_BIAS_CACHE_MS = 60_000; // 60 seconds
 
-// The crude oil futures token (front-month) -- resolved dynamically at first call
+// The crude oil futures token (front-month) — resolved dynamically at first call
 const CRUDE_OIL_FALLBACK_TOKEN = "MCX_FO|560977"; // CRUDE OIL Aug 2026 front-month
 
 export async function getCrudeOilBias(accessToken?: string | null): Promise {
@@ -3855,18 +3855,18 @@ let tag = "";
 
 if (crudeBias.bias === "CrudeUp") {
 if (effectiveType === "CE") {
-adjustment = -0.15; // REDUCE -- crude up contradicts bullish nifty
+adjustment = -0.15; // REDUCE — crude up contradicts bullish nifty
 tag = `CrudeUp(+${crudeBias.changePct.toFixed(1)}%)→CE penalty -15%`;
 } else {
-adjustment = +0.10; // BOOST -- crude up confirms bearish nifty
+adjustment = +0.10; // BOOST — crude up confirms bearish nifty
 tag = `CrudeUp(+${crudeBias.changePct.toFixed(1)}%)→PE boost +10%`;
 }
 } else if (crudeBias.bias === "CrudeDown") {
 if (effectiveType === "CE") {
-adjustment = +0.10; // BOOST -- crude down confirms bullish nifty
+adjustment = +0.10; // BOOST — crude down confirms bullish nifty
 tag = `CrudeDown(${crudeBias.changePct.toFixed(1)}%)→CE boost +10%`;
 } else {
-adjustment = -0.15; // REDUCE -- crude down contradicts bearish nifty
+adjustment = -0.15; // REDUCE — crude down contradicts bearish nifty
 tag = `CrudeDown(${crudeBias.changePct.toFixed(1)}%)→PE penalty -15%`;
 }
 }
@@ -3885,7 +3885,7 @@ const headers: Record<string, string> = { Accept: "application/json" };
 if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
 const candles = resp.data?.data?.candles ?? [];
-return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending order -- reverse to ascending
+return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending order — reverse to ascending
 } catch { return []; }
 }
 
@@ -3900,7 +3900,7 @@ const headers: Record<string, string> = { Accept: "application/json" };
 if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
 const candles = resp.data?.data?.candles ?? [];
-return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending -- reverse to ascending
+return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
 } catch { return []; }
 }
 
@@ -3913,7 +3913,7 @@ const headers: Record<string, string> = { Accept: "application/json" };
 if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
 const candles = resp.data?.data?.candles ?? [];
-return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending -- reverse to ascending
+return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
 } catch { return []; }
 }
 
@@ -3963,7 +3963,7 @@ return ema;
 // ── Fetch full quote ──────────────────────────────────────────────────────────
 /**
 * Refresh access token from DB for a given session.
-* Used when a 401 is detected -- fetches the latest token from the database
+* Used when a 401 is detected — fetches the latest token from the database
 * in case it was refreshed via Settings/OAuth while the bot was running.
 */
 export async function refreshTokenFromDB(sessionToken: string): Promise {
@@ -4191,7 +4191,7 @@ console.error(`[BotEngine] resolveAtmOptionToken: final expiry guard rejected ${
 return null;
 }
 
-// NOTE: Same-day expiry is ALLOWED -- expiry day has highest gamma = biggest moves for scalping.
+// NOTE: Same-day expiry is ALLOWED — expiry day has highest gamma = biggest moves for scalping.
 // The key is tighter SL + faster exit on expiry day, not avoiding it entirely.
 if (chainExpiry) {
 console.log(`[BotEngine] NSE: using chain expiry ${chainExpiry} (same-day expiry allowed for high-gamma scalping)`);
@@ -4242,7 +4242,7 @@ const availableOtm = otmCandidates.filter(s => !excludeStrikes.includes(s.strike
 const otm1 = availableOtm[0] ?? otmCandidates[0]; // prefer non-excluded, fallback to first OTM
 
 if (otm1 && otm1.premium >= 5) {
-// Check if this strike is excluded -- if so, try next available
+// Check if this strike is excluded — if so, try next available
 if (excludeStrikes.includes(otm1.strike) && availableOtm.length > 0) {
 const next = availableOtm[0];
 best = { token: next.token, premium: next.premium, strike: next.strike, expiry: chainExpiry };
@@ -4252,7 +4252,7 @@ best = { token: otm1.token, premium: otm1.premium, strike: otm1.strike, expiry: 
 console.log(`[BotEngine] Selected 1-OTM ${optionType}: strike ${otm1.strike} premium Rs${otm1.premium.toFixed(1)} (ATM was ${atm.strike} @ Rs${atm.premium.toFixed(1)})`);
 }
 } else {
-// Fallback to ATM if OTM is illiquid -- but skip if ATM is excluded too
+// Fallback to ATM if OTM is illiquid — but skip if ATM is excluded too
 const atmCandidate = excludeStrikes.includes(atm.strike) && sorted.length > 1
 ? sorted.find(s => !excludeStrikes.includes(s.strike)) ?? atm
 : atm;
@@ -4437,7 +4437,7 @@ return futures[0].instrument_key;
 }
 }
 
-// Final fallback: match by name (less reliable -- may pick GOLDGUINEA etc.)
+// Final fallback: match by name (less reliable — may pick GOLDGUINEA etc.)
 const NAME_MAP: Record<string, string> = {
 'CRUDE': 'CRUDE OIL', 'CRUDEOIL': 'CRUDE OIL',
 'GOLD': 'GOLD', 'SILVER': 'SILVER', 'NATURALGAS': 'NATURALGAS',
@@ -4539,10 +4539,10 @@ console.warn(`[BotEngine] resolveAtmMcxOptionToken: no price available for ${fut
 return null;
 }
 
-// Step 2 (PRIMARY): Use the public MCX instruments JSON -- it lists every live
+// Step 2 (PRIMARY): Use the public MCX instruments JSON — it lists every live
 // option contract with its REAL expiry, strike, lot size, and underlying_key
 // linking it directly to the futures contract. No expiry guessing needed.
-// (Previous approach guessed Tuesdays -- but e.g. Crude Oil options expire on
+// (Previous approach guessed Tuesdays — but e.g. Crude Oil options expire on
 // a Thursday, so every guess failed and trades were wrongly skipped.)
 try {
 const instruments = await getMcxInstruments();
@@ -4592,7 +4592,7 @@ console.warn(`[BotEngine] MCX: could not fetch options underlying price, using b
 }
 }
 if (optionCandidates.length > 0) {
-// NOTE: Same-day expiry is ALLOWED -- expiry day has highest gamma = biggest moves for scalping.
+// NOTE: Same-day expiry is ALLOWED — expiry day has highest gamma = biggest moves for scalping.
 // MCX options on expiry day have maximum gamma → fast premium moves → ideal for scalping.
 const nearestExpiry = Math.min(...optionCandidates.map(c => c.expiry ?? Infinity));
 const chain = optionCandidates
@@ -4605,8 +4605,8 @@ return strike >= effectiveUnderlyingPrice;
 })
 .sort((a, b) => Math.abs((a.strike_price ?? 0) - effectiveUnderlyingPrice) - Math.abs((b.strike_price ?? 0) - effectiveUnderlyingPrice));
 // Take the 10 strikes closest to ATM and fetch their live premiums in one call
-// (MCX options can be illiquid -- checking only 4 often misses liquid contracts)
-const MCX_MIN_PREMIUM = 0.10; // MCX options are less liquid than NSE -- lower threshold
+// (MCX options can be illiquid — checking only 4 often misses liquid contracts)
+const MCX_MIN_PREMIUM = 0.10; // MCX options are less liquid than NSE — lower threshold
 const near = chain.slice(0, 10).filter(c => c.instrument_key);
 if (near.length > 0) {
 const keys = near.map(c => c.instrument_key).join(",");
@@ -4651,7 +4651,7 @@ tradingSymbol: c.trading_symbol,
 const quoteFailureReason = quoteFetchOk
 ? `all ${near.length} quoted contracts were at or below ₹${MCX_MIN_PREMIUM}`
 : "authenticated option quote request failed";
-console.warn(`[BotEngine] MCX ${optionType}: ${quoteFailureReason} for nearest expiry -- refusing unquoted contracts and trying the next expiry.`);
+console.warn(`[BotEngine] MCX ${optionType}: ${quoteFailureReason} for nearest expiry — refusing unquoted contracts and trying the next expiry.`);
 // FALLBACK: Try next-week expiry if nearest expiry options are all illiquid
 const expirySet = new Set(optionCandidates.map(c => c.expiry ?? Infinity));
 const uniqueExpiries = Array.from(expirySet).sort((a, b) => a - b);
@@ -4753,7 +4753,7 @@ return null;
 }
 
 // ── Place order via Upstox API ────────────────────────────────────────────────
-// Last rejection reason per instrument -- surfaced in activity log so the user
+// Last rejection reason per instrument — surfaced in activity log so the user
 // sees the REAL Upstox error (e.g. lot size mismatch) instead of a generic message.
 let lastOrderRejectionReason: string | null = null;
 export function getLastOrderRejectionReason(): string | null {
@@ -4762,9 +4762,9 @@ return lastOrderRejectionReason;
 
 // ── MARGIN CHECK: Call Upstox funds API before placing any BUY order ──────────────────────
 // Returns available margin for the relevant segment (equity or commodity).
-// Returns null if API call fails (we proceed with order in that case -- don't block on API failure).
+// Returns null if API call fails (we proceed with order in that case — don't block on API failure).
 async function checkUpstoxMargin(accessToken: string, isMcx: boolean): Promise {
-// Demo mode: skip real margin check -- return null (unlimited) so demo trades always go through
+// Demo mode: skip real margin check — return null (unlimited) so demo trades always go through
 if (accessToken === "DEMO_NO_TOKEN" || !accessToken) {
 return null;
 }
@@ -4795,7 +4795,7 @@ return null; // Don't block trading if margin API is down
 export async function placeUpstoxOrder(
 accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number, mcxLotSize?: number, useSandbox?: boolean,
 ): Promise {
-// ── DEMO MODE: Simulate order locally -- do NOT call Upstox sandbox API ──
+// ── DEMO MODE: Simulate order locally — do NOT call Upstox sandbox API ──
 // The sandbox API is unreliable, requires a separate sandbox token, and often rejects orders.
 // For demo mode, we just return a fake orderId immediately. The trade is tracked in our DB.
 if (useSandbox) {
@@ -4991,34 +4991,34 @@ onTradeOpen: (trade: TradeInsert) => Promise,
 onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise,
 onTick?: (state: BotState) => Promise,
 ) {
-if (state.status !== "running" && state.status !== "paused") { console.log(`[tick] SKIP -- status=${state.status} (${state.sessionToken.slice(0,8)})`); return; }
+if (state.status !== "running" && state.status !== "paused") { console.log(`[tick] SKIP — status=${state.status} (${state.sessionToken.slice(0,8)})`); return; }
 // SANITY CHECK: Paused bots with NO open trade have nothing to monitor.
-// Auto-resume them instead of staying stuck in "Paused -- monitoring SL/target" forever.
+// Auto-resume them instead of staying stuck in "Paused — monitoring SL/target" forever.
 if (state.status === "paused" && !state.openTrade) {
 state.status = "running";
 state.consecutiveRejections = 0;
 state.lastError = null;
 state.isOpeningTrade = false;
 emitActivity(state.sessionToken, "bot_resume", `🔄 Auto-resumed: was paused with no open position (nothing to monitor). Scanning for signals.`);
-console.log(`[tick] AUTO-RESUME -- ${state.sessionToken.slice(0,8)} was paused with no open trade, resuming to scan.`);
+console.log(`[tick] AUTO-RESUME — ${state.sessionToken.slice(0,8)} was paused with no open trade, resuming to scan.`);
 }
 // Prevent overlapping ticks: if previous tick is still running (slow network, API timeout), skip
 if (state.tickInProgress) {
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- tick skipped (previous still running)`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — tick skipped (previous still running)`);
 return;
 }
 state.tickInProgress = true;
-console.log(`[tick] START -- ${state.sessionToken.slice(0,8)} | status=${state.status} | candles=${state.candles.length} | openTrade=${!!state.openTrade}`);
+console.log(`[tick] START — ${state.sessionToken.slice(0,8)} | status=${state.status} | candles=${state.candles.length} | openTrade=${!!state.openTrade}`);
 try {
 
 const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100;
 if (state.dailyPnl <= maxDailyLoss && !state.alertsSent.has("daily_loss_hard_stop")) {
 // Hard capital-protection barrier: keep managing any open position, but never permit a new one.
 state.alertsSent.add("daily_loss_hard_stop");
-console.warn(`[tick] 🛑 DAILY LOSS LIMIT HIT -- ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} -- new entries blocked`);
-emitActivity(state.sessionToken, "error", `🛑 Daily loss limit hit -- P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit. New entries are blocked.`);
+console.warn(`[tick] 🛑 DAILY LOSS LIMIT HIT — ${state.sessionToken.slice(0,8)} | dailyPnl=₹${state.dailyPnl.toFixed(0)} | maxLoss=₹${maxDailyLoss.toFixed(0)} — new entries blocked`);
+emitActivity(state.sessionToken, "error", `🛑 Daily loss limit hit — P&L: ₹${state.dailyPnl.toFixed(0)} exceeds ₹${maxDailyLoss.toFixed(0)} limit. New entries are blocked.`);
 sendTelegramAlert(state,
-`🛑 DAILY LOSS LIMIT -- NEW ENTRIES BLOCKED\n` +
+`🛑 DAILY LOSS LIMIT — NEW ENTRIES BLOCKED\n` +
 `📊 ${state.instrumentLabel}\n` +
 `💸 Day P&L: ₹${state.dailyPnl.toFixed(0)} | Limit: ₹${maxDailyLoss.toFixed(0)}\n` +
 `Existing positions remain under exit management.`,
@@ -5037,7 +5037,7 @@ if (prevSession && prevSession !== currentSession && currentSession !== "closed"
 if (!(state as any)._userManualInstrument) {
 const defaultInst = getSessionDefault(state.botSlot, currentSession);
 if (defaultInst && state.instrumentToken !== defaultInst.token) {
-console.log(`[SessionSwitch] ${state.sessionToken.slice(0,8)} -- Slot ${state.botSlot}: ${prevSession} → ${currentSession} | Switching to ${defaultInst.label}`);
+console.log(`[SessionSwitch] ${state.sessionToken.slice(0,8)} — Slot ${state.botSlot}: ${prevSession} → ${currentSession} | Switching to ${defaultInst.label}`);
 state.instrumentToken = defaultInst.token;
 state.instrumentSymbol = defaultInst.symbol;
 state.instrumentLabel = defaultInst.label;
@@ -5070,8 +5070,8 @@ let signalToken = isOptionsMode && state.underlyingToken ? state.underlyingToken
 // auto-resolve the current front-month token on the first tick (when candles are empty)
 // OR when the token has never successfully fetched candles (expired token scenario).
 const shouldAutoResolve = signalToken.startsWith("MCX_FO|") && !(state as any)._mcxTokenResolved && (
-state.candles.length === 0 || // first tick -- no candles yet
-(state.tickCount ?? 0) <= 3 // first 3 ticks -- give resolution a chance even if candles were stale
+state.candles.length === 0 || // first tick — no candles yet
+(state.tickCount ?? 0) <= 3 // first 3 ticks — give resolution a chance even if candles were stale
 );
 if (shouldAutoResolve) {
 (state as any)._mcxTokenResolved = true; // prevent repeated resolution attempts
@@ -5090,17 +5090,17 @@ state.instrumentToken = resolved;
 }
 signalToken = resolved;
 } else {
-// Resolution failed -- allow retry on next bot restart
+// Resolution failed — allow retry on next bot restart
 (state as any)._mcxTokenResolved = false;
-console.warn(`[BotEngine] MCX auto-resolve FAILED for ${symbol} -- will retry on next restart`);
-emitActivity(state.sessionToken, "signal", `⚠ MCX token resolution failed for ${symbol} -- check if market is open`);
+console.warn(`[BotEngine] MCX auto-resolve FAILED for ${symbol} — will retry on next restart`);
+emitActivity(state.sessionToken, "signal", `⚠ MCX token resolution failed for ${symbol} — check if market is open`);
 }
 }
 }
 
 // Fetch candles + quote
 // The Upstox intraday candle API works WITHOUT authentication for NSE_INDEX and MCX_FO tokens.
-// Demo mode uses real candle data from Upstox -- no access token needed.
+// Demo mode uses real candle data from Upstox — no access token needed.
 // Diagnostic: log signalToken on first few ticks to verify MCX resolution worked
 if ((state.tickCount ?? 0) <= 3 && signalToken.startsWith("MCX_FO|")) {
 console.log(`[BotEngine] CANDLE-FETCH tick#${state.tickCount ?? 0} session=${state.sessionToken.slice(0,8)} signalToken=${signalToken} underlying=${state.underlyingToken ?? "none"}`);
@@ -5120,7 +5120,7 @@ if (dayCandles.length > 0) state.candlesDay = dayCandles.slice(-10);
 if (quote) { state.lastPrice = quote.ltp; state.bidPrice = quote.bid; state.askPrice = quote.ask; }
 else { state.lastPrice = newCandle.close; state.bidPrice = newCandle.close * 0.9999; state.askPrice = newCandle.close * 1.0001; }
 } else {
-// Real candle fetch returned empty -- market closed, token error, or outside trading hours.
+// Real candle fetch returned empty — market closed, token error, or outside trading hours.
 // DO NOT generate fake/mock candles. Set HOLD signal and return early.
 // The bot will retry on the next tick interval.
 // ── AUTO-REFRESH TOKEN FROM DB: If during market hours, try loading fresh token ──
@@ -5133,12 +5133,12 @@ const mcxCloseAR = 23 * 60 + 30; // 11:30 PM IST
 const isMCXar = state.instrumentToken.startsWith("MCX");
 const marketOpen = isMCXar ? (istMinAutoRefresh >= mcxOpenAR && istMinAutoRefresh <= mcxCloseAR) : (istMinAutoRefresh >= nseOpen && istMinAutoRefresh <= nseClose);
 if (marketOpen && state.mode === "live") {
-// Market is open but no data -- likely expired token. Try refreshing from DB.
+// Market is open but no data — likely expired token. Try refreshing from DB.
 const freshToken = await refreshTokenFromDB(state.sessionToken);
 if (freshToken && freshToken !== state.accessToken) {
 state.accessToken = freshToken;
-emitActivity(state.sessionToken, "bot_start", `🔑 Token auto-refreshed from DB (was expired) -- retrying on next tick`);
-console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} -- auto-refreshed token from DB during market hours`);
+emitActivity(state.sessionToken, "bot_start", `🔑 Token auto-refreshed from DB (was expired) — retrying on next tick`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — auto-refreshed token from DB during market hours`);
 }
 }
 // ── MCX Token Retry: If candles are empty during market hours, the token might be expired ──
@@ -5148,35 +5148,35 @@ const istMinRetry = ((nowRetry.getUTCHours() * 60 + nowRetry.getUTCMinutes()) + 
 const mcxOpen = 9 * 60; // 9:00 AM IST
 const mcxClose = 23 * 60 + 30; // 11:30 PM IST
 if (istMinRetry >= mcxOpen && istMinRetry <= mcxClose) {
-// Market should be open but no candles -- likely expired token. Reset flag to retry.
+// Market should be open but no candles — likely expired token. Reset flag to retry.
 (state as any)._mcxTokenResolved = false;
-console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- MCX candles empty during market hours. Token ${signalToken} may be expired. Will re-resolve on next tick.`);
-emitActivity(state.sessionToken, "signal", `⚠ No candle data during MCX hours -- will re-resolve token on next tick`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — MCX candles empty during market hours. Token ${signalToken} may be expired. Will re-resolve on next tick.`);
+emitActivity(state.sessionToken, "signal", `⚠ No candle data during MCX hours — will re-resolve token on next tick`);
 }
 }
 state.lastSignal = {
 direction: "HOLD", confidence: 0,
 entryPrice: state.lastPrice, slPrice: state.lastPrice, targetPrice: state.lastPrice, atr: 0,
-reason: "No real candle data -- market closed or outside trading hours",
+reason: "No real candle data — market closed or outside trading hours",
 layer: "None",
 };
 state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
 state.lastTickAt = Date.now();
 // Log to activity so the user can see the bot is alive and waiting for market data
 emitActivity(state.sessionToken, "signal",
-`⏳ Waiting for market data -- token: ${signalToken} | Next scan in ${state.scanIntervalSec}s`);
+`⏳ Waiting for market data — token: ${signalToken} | Next scan in ${state.scanIntervalSec}s`);
 if (onTick) onTick(state).catch(() => {});
 // PHANTOM TRADE AUTO-DETECTION: If entry price is impossibly low (< ₹5), this trade
 // was never actually filled on Upstox. Close it immediately.
 if (state.openTrade && state.openTrade.entryPrice < 5.0) {
-console.warn(`[PHANTOM] ${state.sessionToken.slice(0,8)} -- Detected phantom trade: ${state.openTrade.symbolLabel} entry ₹${state.openTrade.entryPrice}. Auto-closing.`);
-emitActivity(state.sessionToken, "trade_close", `🚫 PHANTOM TRADE DETECTED: ${state.openTrade.symbolLabel} entry ₹${state.openTrade.entryPrice} -- never filled on Upstox. Auto-closing as phantom.`);
-try { await onTradeClose(state.openTrade.dbId, 0, 0, "Phantom -- entry < ₹5, never filled on Upstox"); } catch (e) { console.error("[PHANTOM] DB close failed:", e); }
+console.warn(`[PHANTOM] ${state.sessionToken.slice(0,8)} — Detected phantom trade: ${state.openTrade.symbolLabel} entry ₹${state.openTrade.entryPrice}. Auto-closing.`);
+emitActivity(state.sessionToken, "trade_close", `🚫 PHANTOM TRADE DETECTED: ${state.openTrade.symbolLabel} entry ₹${state.openTrade.entryPrice} — never filled on Upstox. Auto-closing as phantom.`);
+try { await onTradeClose(state.openTrade.dbId, 0, 0, "Phantom — entry < ₹5, never filled on Upstox"); } catch (e) { console.error("[PHANTOM] DB close failed:", e); }
 state.openTrade = null;
 state.optionPremiumPrice = undefined;
 }
 // CRITICAL: If market is closed and there is an open trade, force square-off NOW.
-// This handles the case where server restarts after market close -- candles are empty
+// This handles the case where server restarts after market close — candles are empty
 // but open trades must not carry overnight.
 if (state.openTrade) {
 const now3 = new Date();
@@ -5186,7 +5186,7 @@ const sqOffMin3 = isMCX3 ? 23 * 60 + 28 : 15 * 60 + 25;
 if (istMin3 >= sqOffMin3 || (!isMCX3 && (istMin3 < 9 * 60 + 15))) {
 // Respect carry-forward: if user chose to hold overnight, skip force-close
 if (state.carryForward) {
-console.log(`[BotEngine] ${state.sessionToken} -- carry forward active, skipping force-close (no candle data)`);
+console.log(`[BotEngine] ${state.sessionToken} — carry forward active, skipping force-close (no candle data)`);
 } else {
 // Never mark a live broker position closed merely because market data is absent.
 // Demo positions may close only from a trustworthy last exact-contract mark.
@@ -5195,7 +5195,7 @@ const exitPx = trade.isIndexOptions
 ? (state.optionPremiumPrice && state.optionPremiumPrice > 0 ? state.optionPremiumPrice : 0)
 : (state.lastPrice > 0 ? state.lastPrice : 0);
 if (state.mode === "live") {
-state.lastError = `Auto square-off could not be verified without market data -- confirm ${trade.symbolLabel} in Upstox`;
+state.lastError = `Auto square-off could not be verified without market data — confirm ${trade.symbolLabel} in Upstox`;
 emitActivity(state.sessionToken, "error", `⚠ Live position retained: no market data to verify square-off for ${trade.symbolLabel}. Check Upstox manually.`);
 sendTelegramAlert(state,
 `⚠ LIVE POSITION REQUIRES VERIFICATION\n` +
@@ -5205,18 +5205,8 @@ sendTelegramAlert(state,
 return;
 }
 if (!(exitPx > 0)) {
-state.lastError = `Demo square-off deferred -- no trustworthy mark for ${trade.symbolLabel}`;
-emitActivity(state.sessionToken, "error", `⚠ Demo: exact quote unavailable for ${trade.symbolLabel}. Using underlying proxy for SL/TP check.`);
-// FIX: In demo mode, use underlying price movement as proxy instead of retaining forever
-// Option premium moves ~1.5-2x the underlying % move (rough delta proxy)
-if (state.mode === "demo" && trade.entryUnderlyingPrice && trade.entryUnderlyingPrice > 0) {
-const underlyingMove = (price - trade.entryUnderlyingPrice) / trade.entryUnderlyingPrice;
-const deltaProxy = 1.8; // approximate delta for ATM options
-const estimatedPremiumMove = underlyingMove * deltaProxy * (trade.direction === "BUY" ? 1 : -1);
-const estimatedCurrentPrice = trade.entryPrice * (1 + estimatedPremiumMove);
-effectivePrice = estimatedCurrentPrice;
-devLog(`[DemoProxy] ${state.sessionToken.slice(0,8)} -- underlying moved ${(underlyingMove*100).toFixed(2)}% → estimated premium ₹${estimatedCurrentPrice.toFixed(2)}`);
-}
+state.lastError = `Demo square-off deferred — no trustworthy mark for ${trade.symbolLabel}`;
+emitActivity(state.sessionToken, "error", `⚠ Demo position retained: exact quote unavailable for ${trade.symbolLabel}. P&L remains unavailable until a trustworthy mark returns.`);
 return;
 }
 const noDataRemQty = trade.quantity - (trade.bookedQty ?? 0);
@@ -5234,9 +5224,9 @@ state.capitalUsed = 0; // BUG 26: Release capital on close
 state.openTrade = null;
 if (pnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX3); recordDirectionExit(state.sessionToken, trade.direction, false); }
 else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
-await onTradeClose(trade.dbId, exitPx, pnl, "Market Close -- Auto Square-Off (no live data)");
+await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
 emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
-console.log(`[BotEngine] ${state.sessionToken} -- forced square-off (no candle data, market closed)`);
+console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
 // Telegram: auto square-off alert
 const sqPnlSign1 = pnl >= 0 ? "+" : "";
 sendTelegramAlert(state,
@@ -5255,9 +5245,9 @@ const price = state.lastPrice;
 // Update lastTickAt so Dashboard can detect staleness
 state.lastTickAt = Date.now();
 
-console.log(`[tick] CANDLES OK -- ${state.sessionToken.slice(0,8)} | price=${price} | candles1m=${state.candles.length} | 5m=${state.candles5m.length}`);
+console.log(`[tick] CANDLES OK — ${state.sessionToken.slice(0,8)} | price=${price} | candles1m=${state.candles.length} | 5m=${state.candles5m.length}`);
 
-// Persist live price to DB on every tick -- fires regardless of open trade state
+// Persist live price to DB on every tick — fires regardless of open trade state
 // This is the primary mechanism for keeping the Dashboard current price updated
 if (onTick) onTick(state).catch(() => {});
 
@@ -5268,7 +5258,7 @@ const istMin2 = ((now2.getUTCHours() * 60 + now2.getUTCMinutes()) + 330) % (24 *
 const istDate = new Date(now2.getTime() + 330 * 60000);
 const todayStr = istDate.toISOString().slice(0, 10);
 if (state.lastTradingDay && state.lastTradingDay !== todayStr) {
-// New trading day detected -- reset daily counters
+// New trading day detected — reset daily counters
 state.dailyPnl = 0;
 state.tradesCount = 0;
 state.layerTradesCount = {}; // Reset per-layer trade counts for new day
@@ -5287,7 +5277,7 @@ instrumentCooldowns.clear(); // Reset per-instrument cooldowns for new day
 resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
 resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
 resetDirectionFlipLock(state.sessionToken); // Clear direction flip-flop lock for new day
-emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) -- daily counters reset`);
+emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
 }
 state.lastTradingDay = todayStr;
 
@@ -5307,7 +5297,7 @@ if (testResp.status === 401 || testResp.status === 403) {
 tokenExpired = true;
 }
 } catch {
-// Network error -- assume token might be expired
+// Network error — assume token might be expired
 tokenExpired = true;
 }
 }
@@ -5316,8 +5306,8 @@ if (tokenExpired) {
 const freshToken = await refreshTokenFromDB(state.sessionToken);
 if (freshToken && freshToken !== state.accessToken) {
 state.accessToken = freshToken;
-emitActivity(state.sessionToken, "bot_start", `🔑 Token auto-refreshed from DB -- bot continuing with new token`);
-devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} -- auto-refreshed token from DB ✓`);
+emitActivity(state.sessionToken, "bot_start", `🔑 Token auto-refreshed from DB — bot continuing with new token`);
+devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — auto-refreshed token from DB ✓`);
 } else {
 const reminderMsg = `⚠️ TOKEN EXPIRED\n\n` +
 `🕕 Daily Upstox token has expired (6:30 AM reset).\n` +
@@ -5326,13 +5316,13 @@ const reminderMsg = `⚠️ TOKEN EXPIRED\n\n` +
 `1. Open Upstox login page\n` +
 `2. Complete OAuth flow\n` +
 `3. Bot will auto-detect new token\n\n` +
-`⏰ Market opens at 9:15 AM -- refresh before then!`;
+`⏰ Market opens at 9:15 AM — refresh before then!`;
 sendTelegramAlert(state, reminderMsg, "criticalAlerts");
-emitActivity(state.sessionToken, "error", `⚠ Token expired -- Telegram reminder sent. Refresh before market open (9:15 AM).`);
-devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} -- token expired/missing, Telegram alert sent`);
+emitActivity(state.sessionToken, "error", `⚠ Token expired — Telegram reminder sent. Refresh before market open (9:15 AM).`);
+devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — token expired/missing, Telegram alert sent`);
 }
 } else {
-devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} -- token valid ✓`);
+devLog(`[TokenReminder] ${state.sessionToken.slice(0,8)} — token valid ✓`);
 }
 }
 
@@ -5340,7 +5330,7 @@ const isMCX = state.instrumentToken.startsWith("MCX");
 const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
 const stopScanMin = isMCX ? 23 * 60 + 20 : 15 * 60 + 22; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:22 (3 min buffer before square-off at 15:35)
 
-// NSE Power Hour: 3:00-3:25 PM IST (extended from 3:20 -- the last 5 mins are prime institutional action)
+// NSE Power Hour: 3:00–3:25 PM IST (extended from 3:20 — the last 5 mins are prime institutional action)
 const powerHourStart = 15 * 60;
 const powerHourEnd = 15 * 60 + 25;
 const inPowerHour = !isMCX && istMin2 >= powerHourStart && istMin2 < powerHourEnd;
@@ -5360,34 +5350,34 @@ sendTelegramAlert(state,
 `📈 Day: H₹${dayHigh.toFixed(0)} / L₹${dayLow.toFixed(0)} / VWAP₹${vwap.toFixed(0)}\n` +
 `🧭 Trend: ${dayTrend} | ${side}\n` +
 `💯 Institutional Score: ${phScore}/3\n` +
-`⏰ Window: 3:00-3:20 PM IST | High-conviction institutional trades`,
+`⏰ Window: 3:00–3:20 PM IST | High-conviction institutional trades`,
 );
 }
 state.isPowerHourMode = inPowerHour;
 
-// EIA Crude Oil inventory: Wednesday ~8:00 PM IST -- widen SL for Crude
+// EIA Crude Oil inventory: Wednesday ~8:00 PM IST — widen SL for Crude
 const isWednesday = now2.getUTCDay() === 3; // Wednesday UTC (IST Wed evening = UTC Wed)
 const isCrude = state.instrumentToken.includes("CRUDEOIL") || state.instrumentToken.includes("CRUDE");
 const isEIAWindow = isWednesday && istMin2 >= 19 * 60 + 55 && istMin2 <= 20 * 60 + 5;
 const isWednesdayCrude = isCrude && isEIAWindow;
 
-// MCX Evening Power Hour: 7:30-9:30 PM IST (US market open)
+// MCX Evening Power Hour: 7:30–9:30 PM IST (US market open)
 const mcxEveningStart = 19 * 60 + 30;
 const mcxEveningEnd = 21 * 60 + 30;
 const inMCXEvening = isMCX && istMin2 >= mcxEveningStart && istMin2 < mcxEveningEnd;
 // Send Telegram alert when MCX Evening window opens (once per session)
 if (inMCXEvening && !state.alertsSent.has("mcxEvening")) {
 state.alertsSent.add("mcxEvening");
-const eiaNote = isWednesdayCrude ? "\n⚠️ EIA Wednesday -- SL widened 30% for Crude Oil" : "";
+const eiaNote = isWednesdayCrude ? "\n⚠️ EIA Wednesday — SL widened 30% for Crude Oil" : "";
 sendTelegramAlert(state,
 `🌙 MCX EVENING POWER HOUR 🌙\n` +
 `📊 ${state.instrumentLabel} | ₹${price.toFixed(2)}\n` +
-`🇺🇸 US Market Open window: 7:30-9:30 PM IST\n` +
+`🇺🇸 US Market Open window: 7:30–9:30 PM IST\n` +
 `🔥 High-volatility institutional moves expected${eiaNote}`,
 );
 }
 state.isMCXEveningMode = inMCXEvening;
-// MCX Late Session: 9:30-11:20 PM IST (momentum continuation after US open settles)
+// MCX Late Session: 9:30–11:20 PM IST (momentum continuation after US open settles)
 const mcxLateStart = 21 * 60 + 30;
 const mcxLateEnd = 23 * 60 + 20; // same as stopScanMin for MCX
 const inMCXLateSession = isMCX && istMin2 >= mcxLateStart && istMin2 < mcxLateEnd;
@@ -5397,15 +5387,15 @@ state.alertsSent.add("mcxLateSession");
 sendTelegramAlert(state,
 `🌃 MCX LATE SESSION 🌃\n` +
 `📊 ${state.instrumentLabel} | ₹${price.toFixed(2)}\n` +
-`🔄 Momentum continuation window: 9:30-11:20 PM IST\n` +
+`🔄 Momentum continuation window: 9:30–11:20 PM IST\n` +
 `📈 Tracking strong directional moves from US session`,
 );
 }
 state.isMCXLateSessionMode = inMCXLateSession;
 
-// ── Opening Burst Window: 9:15-9:30 AM IST (NSE only) ──────────────────────
+// ── Opening Burst Window: 9:15-9:25 AM IST (NSE only) ──────────────────────
 const openingBurstStart = 9 * 60 + 15; // 555 min
-const openingBurstEnd = 9 * 60 + 30; // 570 min [FIX: extended from 9:25→9:30]
+const openingBurstEnd = 9 * 60 + 25; // 565 min
 const inOpeningBurst = !isMCX && istMin2 >= openingBurstStart && istMin2 < openingBurstEnd
 && (state.openingBurstEnabled !== false) // default enabled
 && !state.openingBurstTradeTaken; // only 1 trade per day in this window
@@ -5420,7 +5410,7 @@ sendTelegramAlert(state,
 `🚀 OPENING BURST ACTIVATED 🚀\n` +
 `📊 ${state.instrumentLabel} | ₹${price.toFixed(2)}\n` +
 `📈 Gap: ${gapPct}% from prev close\n` +
-`⏰ Window: 9:15-9:30 AM IST | Scanning for entry\n` +
+`⏰ Window: 9:15–9:25 AM IST | Scanning for entry\n` +
 `🎯 Rules: Body>50% + Move>0.15% + Gap-aligned (instant on gap>0.3%)`,
 );
 }
@@ -5441,11 +5431,11 @@ if (state.accessToken && openTradeAtTick.instrumentToken) {
 const realOptToken = state.optionTradeToken ?? openTradeAtTick.instrumentToken;
 const isPaperToken = realOptToken.startsWith("PAPER_OPT|");
 if (isPaperToken) {
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- P&L: using PAPER_OPT token (no real token resolved). optionTradeToken=${state.optionTradeToken}`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — P&L: using PAPER_OPT token (no real token resolved). optionTradeToken=${state.optionTradeToken}`);
 }
 const optQuote = isPaperToken ? null : await fetchFullQuote(realOptToken, state.accessToken);
 if (optQuote && optQuote.ltp > 0) {
-// Real quote fetched successfully -- use it for P&L
+// Real quote fetched successfully — use it for P&L
 // BUG FIX: In illiquid options (MCX after-hours, deep OTM), bid/ask can be wildly inflated
 // (e.g., LTP ₹956 but bid ₹2,037 with zero volume). Using bid creates fake P&L.
 // FIX: For PAPER mode, always use LTP (last actually traded price).
@@ -5460,8 +5450,8 @@ const entryPx = openTradeAtTick.entryPrice;
 // Detection: if LTP > 10× entry price, it's clearly NOT an option premium.
 const priceLeakRatio = entryPx > 0 ? optQuote.ltp / entryPx : 1;
 if (priceLeakRatio > 10) {
-// Underlying price leaked through -- freeze at entry (P&L = 0)
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- UNDERLYING LEAK DETECTED: fetchFullQuote(${realOptToken}) returned LTP ₹${optQuote.ltp.toFixed(2)} which is ${priceLeakRatio.toFixed(0)}× entry ₹${entryPx.toFixed(2)}. This is the underlying futures price, NOT option premium. Freezing at entry.`);
+// Underlying price leaked through — freeze at entry (P&L = 0)
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — UNDERLYING LEAK DETECTED: fetchFullQuote(${realOptToken}) returned LTP ₹${optQuote.ltp.toFixed(2)} which is ${priceLeakRatio.toFixed(0)}× entry ₹${entryPx.toFixed(2)}. This is the underlying futures price, NOT option premium. Freezing at entry.`);
 effectivePrice = entryPx;
 state.optionPremiumPrice = undefined;
 state.optionQuoteStatus = "unavailable";
@@ -5478,7 +5468,7 @@ if (ltpMovePct < 0.005) {
 // LTP within 0.5% of entry = no real movement = illiquid/frozen
 bestExitPrice = entryPx; // P&L stays at 0 until real movement happens
 } else if (state.mode === "demo") {
-// Demo mode: LTP only -- no phantom bid inflation
+// Demo mode: LTP only — no phantom bid inflation
 bestExitPrice = optQuote.ltp;
 } else {
 // Live mode: use bid (real exit price) but sanity-check against LTP
@@ -5493,7 +5483,7 @@ bestExitPrice = optQuote.ltp;
 // (no option realistically gains 150% in one 5-second tick)
 const maxReasonablePrice = openTradeAtTick.entryPrice * 2.5;
 if (bestExitPrice > maxReasonablePrice) {
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- SANITY: effectivePrice ₹${bestExitPrice.toFixed(2)} exceeds 2.5× entry ₹${openTradeAtTick.entryPrice.toFixed(2)}. Capping to LTP ₹${optQuote.ltp.toFixed(2)}`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — SANITY: effectivePrice ₹${bestExitPrice.toFixed(2)} exceeds 2.5× entry ₹${openTradeAtTick.entryPrice.toFixed(2)}. Capping to LTP ₹${optQuote.ltp.toFixed(2)}`);
 bestExitPrice = optQuote.ltp;
 }
 effectivePrice = bestExitPrice;
@@ -5502,14 +5492,14 @@ state.optionQuoteStatus = "live";
 state.optionQuoteUpdatedAt = Date.now();
 } // end of priceLeakRatio <= 10 block
 } else {
-// fetchFullQuote failed -- retry once after 1s delay
+// fetchFullQuote failed — retry once after 1s delay
 await new Promise(r => setTimeout(r, 1000));
 const retryQuote = await fetchFullQuote(realOptToken, state.accessToken!);
 if (retryQuote && retryQuote.ltp > 0) {
 // Apply same underlying leak check on retry
 const retryRatio = openTradeAtTick.entryPrice > 0 ? retryQuote.ltp / openTradeAtTick.entryPrice : 1;
 if (retryRatio > 10) {
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- UNDERLYING LEAK (retry): LTP ₹${retryQuote.ltp.toFixed(2)} is ${retryRatio.toFixed(0)}× entry. Freezing at entry.`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — UNDERLYING LEAK (retry): LTP ₹${retryQuote.ltp.toFixed(2)} is ${retryRatio.toFixed(0)}× entry. Freezing at entry.`);
 effectivePrice = openTradeAtTick.entryPrice;
 state.optionPremiumPrice = undefined;
 state.optionQuoteStatus = "unavailable";
@@ -5519,10 +5509,10 @@ effectivePrice = retryQuote.ltp;
 state.optionPremiumPrice = retryQuote.ltp;
 state.optionQuoteStatus = "live";
 state.optionQuoteUpdatedAt = Date.now();
-console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} -- fetchFullQuote retry SUCCEEDED: LTP=₹${retryQuote.ltp}`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote retry SUCCEEDED: LTP=₹${retryQuote.ltp}`);
 }
 } else {
-// Both attempts failed -- use LAST KNOWN good price for SL monitoring.
+// Both attempts failed — use LAST KNOWN good price for SL monitoring.
 // If we never got a good price, freeze at entry (P&L = 0).
 // state.optionPremiumPrice retains the last successful value from a previous tick.
 const lastKnown = state.optionPremiumPrice ?? 0;
@@ -5531,28 +5521,28 @@ if (lastKnown > 0 && lastKnown !== entryPremium) {
 // Use last known good price for SL monitoring (stale but better than entry)
 effectivePrice = lastKnown;
 state.optionQuoteStatus = "stale";
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- fetchFullQuote FAILED (2 attempts) for ${realOptToken}. Using last known ₹${lastKnown.toFixed(2)} for SL and marking it stale.`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. Using last known ₹${lastKnown.toFixed(2)} for SL and marking it stale.`);
 } else {
-// Never got a real quote -- freeze at entry (P&L = 0, SL won't fire)
+// Never got a real quote — freeze at entry (P&L = 0, SL won't fire)
 effectivePrice = entryPremium;
 state.optionPremiumPrice = undefined;
 state.optionQuoteStatus = "unavailable";
 state.optionQuoteUpdatedAt = undefined;
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- fetchFullQuote FAILED (2 attempts) for ${realOptToken}. No last known price -- P&L is unavailable; entry is used internally only to prevent unsafe exits.`);
-// Track consecutive failures -- auto-close trade if option token is expired/invalid
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — fetchFullQuote FAILED (2 attempts) for ${realOptToken}. No last known price — P&L is unavailable; entry is used internally only to prevent unsafe exits.`);
+// Track consecutive failures — auto-close trade if option token is expired/invalid
 state.optionQuoteFailCount = Math.min(10, (state.optionQuoteFailCount ?? 0) + 1);
 if (state.optionQuoteFailCount === 10 && !state.alertsSent.has("option_quote_reconciliation_required")) {
 state.alertsSent.add("option_quote_reconciliation_required");
 state.lastError = `Exact option quote unavailable for ${realOptToken}; position preserved for broker reconciliation`;
-console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} -- exact option quote failed 10 consecutive times for ${realOptToken}. Position remains open; no synthetic exit was written.`);
-emitActivity(state.sessionToken, "error", `Exact option quote unavailable 10× for ${realOptToken} -- position preserved; verify the contract with Upstox before closing.`);
+console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — exact option quote failed 10 consecutive times for ${realOptToken}. Position remains open; no synthetic exit was written.`);
+emitActivity(state.sessionToken, "error", `Exact option quote unavailable 10× for ${realOptToken} — position preserved; verify the contract with Upstox before closing.`);
 }
 }
 }
 }
 } else {
 // Demo mode (no access token): cannot fetch real option quote.
-// Freeze P&L at entry (show 0) -- delta approximation is unreliable and gives fake P&L.
+// Freeze P&L at entry (show 0) — delta approximation is unreliable and gives fake P&L.
 const entryPremium = openTradeAtTick.entryPrice;
 effectivePrice = entryPremium; // Internal safety baseline only; never presented as a live mark.
 state.optionPremiumPrice = undefined;
@@ -5567,7 +5557,7 @@ if (openTradeIsOption && state.openTrade && effectivePrice > 0) {
 const entryPx = state.openTrade.entryPrice;
 const ratio = effectivePrice / entryPx;
 if (ratio > 5 || ratio < 0.01) {
-// Price is wildly off (probably fell back to underlying) -- freeze at last known
+// Price is wildly off (probably fell back to underlying) — freeze at last known
 // ALSO reset optionPremiumPrice to prevent Dashboard from showing wrong value
 const safePrice = (state.optionPremiumPrice && state.optionPremiumPrice > 0 && state.optionPremiumPrice / entryPx <= 5)
 ? state.optionPremiumPrice : entryPx;
@@ -5594,20 +5584,20 @@ const unrealizedPnl = trade.direction === "BUY"
 ? (effectivePrice - trade.entryPrice) * cfRemQty
 : (trade.entryPrice - effectivePrice) * cfRemQty;
 const totalPnl = unrealizedPnl + (trade.bookedPnlAddedToDaily ? 0 : trade.bookedPnl);
-emitActivity(state.sessionToken, "market_closed", `🌙 Carry Forward Active -- ${trade.symbolLabel} held overnight | Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
-sendTelegramAlert(state, `🌙 CARRY FORWARD\n📊 ${trade.symbolLabel}\n💰 Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}\n⏰ Trade held overnight -- will resume tomorrow`, "tradeExit");
-console.log(`[BotEngine] ${state.sessionToken} -- carry forward active, skipping auto square-off | Unrealized P&L: ₹${totalPnl.toFixed(0)}`);
+emitActivity(state.sessionToken, "market_closed", `🌙 Carry Forward Active — ${trade.symbolLabel} held overnight | Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
+sendTelegramAlert(state, `🌙 CARRY FORWARD\n📊 ${trade.symbolLabel}\n💰 Unrealized P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}\n⏰ Trade held overnight — will resume tomorrow`, "tradeExit");
+console.log(`[BotEngine] ${state.sessionToken} — carry forward active, skipping auto square-off | Unrealized P&L: ₹${totalPnl.toFixed(0)}`);
 }
-return; // Skip square-off -- trade stays open
+return; // Skip square-off — trade stays open
 }
 const trade = state.openTrade;
 if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
 const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", (trade.quantity - (trade.bookedQty ?? 0)), state.lotSize, state.mode === "demo");
 if (!sqOffId) {
-state.lastError = `Auto square-off REJECTED -- close ${trade.symbolLabel} manually on Upstox`;
-emitActivity(state.sessionToken, "error", `⚠ AUTO SQUARE-OFF FAILED -- ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
+state.lastError = `Auto square-off REJECTED — close ${trade.symbolLabel} manually on Upstox`;
+emitActivity(state.sessionToken, "error", `⚠ AUTO SQUARE-OFF FAILED — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
 sendTelegramAlert(state, `🚨 AUTO SQUARE-OFF FAILED\n📊 ${trade.symbolLabel}\n❌ Market close order rejected. CLOSE MANUALLY ON UPSTOX NOW.`, "criticalAlerts");
-return; // do NOT close trade in DB -- position still open
+return; // do NOT close trade in DB — position still open
 }
 }
 const sqRemaining = trade.quantity - (trade.bookedQty ?? 0);
@@ -5628,8 +5618,8 @@ recordTradeClose(state.sessionToken, state.scanIntervalSec);
 const sqTotalPnl = pnl + trade.bookedPnl;
 if (sqTotalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
 else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
-await onTradeClose(trade.dbId, effectivePrice, sqTotalPnl, "Market Close -- Auto Square-Off");
-console.log(`[BotEngine] ${state.sessionToken} -- auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
+await onTradeClose(trade.dbId, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
+console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
 emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${sqTotalPnl >= 0 ? "+" : ""}₹${sqTotalPnl.toFixed(0)}`, { price: effectivePrice, pnl: sqTotalPnl });
 // Telegram: auto square-off alert
 const sqPnlSign2 = sqTotalPnl >= 0 ? "+" : "";
@@ -5645,20 +5635,20 @@ return;
 
 const nearClose = istMin2 >= stopScanMin;
 if (nearClose) {
-state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Market closing soon -- no new trades", layer: "None" };
+state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Market closing soon — no new trades", layer: "None" };
 }
 
 // ── CRITICAL: MCX midnight wraparound fix ──────────────────────────────────
 // At 12:00 AM IST, istMin2 wraps to 0 (modulo 1440). This means:
-// - nearClose (0 >= 1400) = FALSE -- bot thinks market is open!
-// - inMCXSession (0 >= 540) = FALSE -- but signal gen still runs in else branch
-// - squareOffMin (1408) -- 0 < 1408 so auto square-off doesn't trigger
+// - nearClose (0 >= 1400) = FALSE — bot thinks market is open!
+// - inMCXSession (0 >= 540) = FALSE — but signal gen still runs in else branch
+// - squareOffMin (1408) — 0 < 1408 so auto square-off doesn't trigger
 // Fix: For MCX, if istMin2 < 540 (before 9 AM), market is CLOSED. Block everything.
 // For NSE, if istMin2 < 555 (before 9:15 AM) or istMin2 > 930 (after 3:30 PM), market is CLOSED.
 const mcxMarketClosed = isMCX && (istMin2 < 540 || istMin2 > 1410);
 const nseMarketClosed = !isMCX && (istMin2 < 555 || istMin2 > 930);
 if ((mcxMarketClosed || nseMarketClosed) && !state.openTrade) {
-state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Market closed -- outside trading hours", layer: "None" };
+state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Market closed — outside trading hours", layer: "None" };
 return;
 }
 // If market is closed but there IS an open trade, force square-off (unless carry-forward)
@@ -5667,7 +5657,7 @@ if (state.carryForward) {
 // Carry-forward: keep trade open, just skip signal generation
 return;
 }
-// Force close the open trade -- market is closed
+// Force close the open trade — market is closed
 const trade = state.openTrade;
 const exitPx = state.optionPremiumPrice && state.optionPremiumPrice > 0
 ? state.optionPremiumPrice
@@ -5685,7 +5675,7 @@ state.openTrade = null;
 state.capitalUsed = 0; // BUG 26: Release capital on close
 if (totalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
 else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
-await onTradeClose(trade.dbId, exitPx, totalPnl, "Market Closed -- Auto Square-Off (midnight wraparound fix)");
+await onTradeClose(trade.dbId, exitPx, totalPnl, "Market Closed — Auto Square-Off (midnight wraparound fix)");
 emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: exitPx, pnl: totalPnl });
 sendTelegramAlert(state,
 `⏰ AUTO SQUARE-OFF (market closed)\n` +
@@ -5705,18 +5695,18 @@ if (trade.isHeroZero && trade.heroZeroPremiumEntry) {
 const heroTarget = trade.heroZeroPremiumEntry * 5;
 const heroCut = trade.heroZeroPremiumEntry * 0.5;
 let heroExit: string | null = null;
-if (effectivePrice >= heroTarget) heroExit = "Hero Zero -- 5× Target Hit";
-else if (effectivePrice <= heroCut) heroExit = "Hero Zero -- 50% Cut";
+if (effectivePrice >= heroTarget) heroExit = "Hero Zero — 5× Target Hit";
+else if (effectivePrice <= heroCut) heroExit = "Hero Zero — 50% Cut";
 if (heroExit) {
 const heroRemQty = trade.quantity - (trade.bookedQty ?? 0);
 let pnl = (effectivePrice - trade.entryPrice) * heroRemQty;
 if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
 const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", heroRemQty, state.lotSize, state.mode === "demo");
 if (!heroOrderId2) {
-state.lastError = `Hero Zero exit order REJECTED -- close ${trade.symbolLabel} manually on Upstox`;
-emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED -- ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
+state.lastError = `Hero Zero exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
+emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
 sendTelegramAlert(state, `🚨 HERO ZERO EXIT FAILED\n📊 ${trade.symbolLabel}\n❌ Exit order rejected. CLOSE MANUALLY ON UPSTOX.`, "criticalAlerts");
-return; // do NOT close trade in DB -- position still open
+return; // do NOT close trade in DB — position still open
 }
 }
 // v3: demo-mode brokerage + slippage simulation
@@ -5735,15 +5725,15 @@ recordTradeClose(state.sessionToken, state.scanIntervalSec);
 if (pnl + trade.bookedPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
 else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
 await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
-console.log(`[BotEngine] ${state.sessionToken} -- ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
+console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
 return;
 }
-// Hero Zero: do NOT return here -- fall through to partial booking below
+// Hero Zero: do NOT return here — fall through to partial booking below
 // This allows partial profit booking to work for Hero Zero trades too
 }
 
 // ── Partial profit booking (pyramid exit) ────────────────────────────────
-// SKIP partial booking for Opening Burst trades -- full exit at target (moves are fast, reversals violent)
+// SKIP partial booking for Opening Burst trades — full exit at target (moves are fast, reversals violent)
 if (trade.partialBooked === 0 && trade.signalLayer !== "OpeningBurst") {
 // Safety guard: partial1RPrice must be a valid non-zero price above/below entry
 // A value of 0 would immediately trigger on any price (e.g. after DB restore without recalculation)
@@ -5755,13 +5745,13 @@ if (hit1R) {
 // Book 50% of position at 1R
 const rawBookQty = Math.floor(trade.quantity * 0.5);
 const effectiveLotSize = state.lotSize || 1;
-// Round bookQty DOWN to nearest lot size multiple -- Upstox rejects non-multiples
+// Round bookQty DOWN to nearest lot size multiple — Upstox rejects non-multiples
 const bookQty = Math.floor(rawBookQty / effectiveLotSize) * effectiveLotSize;
 if (bookQty < effectiveLotSize) {
-// 50% of position is less than 1 lot -- skip partial booking, let full target exit handle it
+// 50% of position is less than 1 lot — skip partial booking, let full target exit handle it
 // Mark as "booked" with 0 qty so we don't retry every tick
 trade.partialBooked = 1;
-console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} -- SKIP partial 1R: 50% of ${trade.quantity} = ${rawBookQty} < lot size ${effectiveLotSize}. Full exit at target instead.`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — SKIP partial 1R: 50% of ${trade.quantity} = ${rawBookQty} < lot size ${effectiveLotSize}. Full exit at target instead.`);
 } else {
 const bookPnl = trade.direction === "BUY"
 ? (trade.partial1RPrice - trade.entryPrice) * bookQty
@@ -5769,13 +5759,13 @@ const bookPnl = trade.direction === "BUY"
 if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
 const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "demo");
 if (!partialOrderId) {
-state.lastError = `Partial 1R booking REJECTED -- ${trade.symbolLabel}. Position unchanged.`;
-emitActivity(state.sessionToken, "error", `⚠ PARTIAL 1R BOOKING FAILED -- ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
+state.lastError = `Partial 1R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
+emitActivity(state.sessionToken, "error", `⚠ PARTIAL 1R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
 sendTelegramAlert(state, `🚨 PARTIAL BOOKING FAILED (1R)\n📊 ${trade.symbolLabel}\n❌ Could not book 50% profit. Will retry.`, "criticalAlerts");
-// Don't return -- fall through to target/SL exit check below
+// Don't return — fall through to target/SL exit check below
 // This prevents partial booking failures from blocking target exits
 trade.partialBooked = 1; // Mark as attempted so we don't retry every tick
-console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} -- Partial 1R order failed, skipping partial booking. Will proceed to target/SL check.`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — Partial 1R order failed, skipping partial booking. Will proceed to target/SL check.`);
 }
 else {
 trade.bookedQty += bookQty;
@@ -5787,7 +5777,7 @@ state.capitalUsed = Math.max(0, state.capitalUsed - (trade.entryPrice * bookQty)
 trade.currentSl = trade.entryPrice;
 state.dailyPnl += bookPnl;
 trade.bookedPnlAddedToDaily = true;
-console.log(`[BotEngine] ${state.sessionToken} -- PARTIAL BOOK 50% @ ₹${trade.partial1RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→BE`);
+console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 50% @ ₹${trade.partial1RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→BE`);
 sendTelegramAlert(state,
 `💰 PARTIAL PROFIT BOOKED (50%)\n` +
 `📊 ${state.instrumentLabel} | ₹${trade.partial1RPrice.toFixed(2)}\n` +
@@ -5827,9 +5817,9 @@ const effectiveLotSize2 = state.lotSize || 1;
 // Round bookQty DOWN to nearest lot size multiple
 const bookQty = Math.floor(rawBookQty2 / effectiveLotSize2) * effectiveLotSize2;
 if (bookQty < effectiveLotSize2) {
-// Remaining 25% is less than 1 lot -- skip partial booking, let full target exit handle it
+// Remaining 25% is less than 1 lot — skip partial booking, let full target exit handle it
 trade.partialBooked = 2;
-console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} -- SKIP partial 2R: 25% of remaining = ${rawBookQty2} < lot size ${effectiveLotSize2}. Full exit at target instead.`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — SKIP partial 2R: 25% of remaining = ${rawBookQty2} < lot size ${effectiveLotSize2}. Full exit at target instead.`);
 } else {
 const bookPnl = trade.direction === "BUY"
 ? (trade.partial2RPrice - trade.entryPrice) * bookQty
@@ -5837,12 +5827,12 @@ const bookPnl = trade.direction === "BUY"
 if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
 const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "demo");
 if (!partialOrderId) {
-state.lastError = `Partial 2R booking REJECTED -- ${trade.symbolLabel}. Position unchanged.`;
-emitActivity(state.sessionToken, "error", `⚠ PARTIAL 2R BOOKING FAILED -- ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
+state.lastError = `Partial 2R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
+emitActivity(state.sessionToken, "error", `⚠ PARTIAL 2R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
 sendTelegramAlert(state, `🚨 PARTIAL BOOKING FAILED (2R)\n📊 ${trade.symbolLabel}\n❌ Could not book 25% profit. Will retry.`, "criticalAlerts");
-// Don't return -- fall through to target/SL exit check below
+// Don't return — fall through to target/SL exit check below
 trade.partialBooked = 2; // Mark as attempted so we don't retry every tick
-console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} -- Partial 2R order failed, skipping. Will proceed to target/SL check.`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — Partial 2R order failed, skipping. Will proceed to target/SL check.`);
 }
 else {
 trade.bookedQty += bookQty;
@@ -5854,7 +5844,7 @@ state.capitalUsed = Math.max(0, state.capitalUsed - (trade.entryPrice * bookQty)
 trade.currentSl = trade.partial1RPrice;
 state.dailyPnl += bookPnl;
 trade.bookedPnlAddedToDaily = true;
-console.log(`[BotEngine] ${state.sessionToken} -- PARTIAL BOOK 25% @ ₹${trade.partial2RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→1R`);
+console.log(`[BotEngine] ${state.sessionToken} — PARTIAL BOOK 25% @ ₹${trade.partial2RPrice.toFixed(2)} | Booked P&L: ₹${bookPnl.toFixed(0)} | SL→1R`);
 sendTelegramAlert(state,
 `💰 PARTIAL PROFIT BOOKED (25% more)\n` +
 `📊 ${state.instrumentLabel} | ₹${trade.partial2RPrice.toFixed(2)}\n` +
@@ -5894,61 +5884,27 @@ else { const newSl = effectivePrice + trailDist; if (newSl < trade.currentSl) tr
 }
 }
 
-// ── Premium Trailing Stop (options mode) -- SCALPING-OPTIMIZED ─────────────
-// FIX: Added tighter steps for scalping (+3% breakeven, +5% lock, +7% lock, +10% lock)
-// Old thresholds (+7%/+12%) were too far -- scalpers take 3-8% profits
+// ── Premium Trailing Stop (options mode) ─────────────────────────────────
+// If price ≥ entry × 1.07 → move SL to breakeven (entry)
+// If price ≥ entry × 1.12 → move SL to entry × 1.07 (lock +7%)
 if (trade.isIndexOptions || isOptionsMode) {
 const premEntry = trade.entryPrice;
 if (trade.direction === "BUY") {
-// Step 4: +10% profit → lock +7%
-if (effectivePrice >= premEntry * 1.10 && trade.currentSl < premEntry * 1.07) {
+if (effectivePrice >= premEntry * 1.12 && trade.currentSl < premEntry * 1.07) {
 trade.currentSl = premEntry * 1.07;
-devLog(`[TrailingStop] ${state.sessionToken} -- SL locked at +7% (₹${trade.currentSl.toFixed(2)})`);
-emitActivity(state.sessionToken, "signal", `🔒 Trail: +10% reached → SL locked at +7% (₹${trade.currentSl.toFixed(2)})`);
-}
-// Step 3: +7% profit → lock +4%
-else if (effectivePrice >= premEntry * 1.07 && trade.currentSl < premEntry * 1.04) {
-trade.currentSl = premEntry * 1.04;
-devLog(`[TrailingStop] ${state.sessionToken} -- SL locked at +4% (₹${trade.currentSl.toFixed(2)})`);
-emitActivity(state.sessionToken, "signal", `🔒 Trail: +7% reached → SL locked at +4% (₹${trade.currentSl.toFixed(2)})`);
-}
-// Step 2: +5% profit → lock +2%
-else if (effectivePrice >= premEntry * 1.05 && trade.currentSl < premEntry * 1.02) {
-trade.currentSl = premEntry * 1.02;
-devLog(`[TrailingStop] ${state.sessionToken} -- SL locked at +2% (₹${trade.currentSl.toFixed(2)})`);
-emitActivity(state.sessionToken, "signal", `🔒 Trail: +5% reached → SL locked at +2% (₹${trade.currentSl.toFixed(2)})`);
-}
-// Step 1: +3% profit → move SL to breakeven
-else if (effectivePrice >= premEntry * 1.03 && trade.currentSl < premEntry) {
+devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to +7% (₹${trade.currentSl.toFixed(2)})`);
+} else if (effectivePrice >= premEntry * 1.07 && trade.currentSl < premEntry) {
 trade.currentSl = premEntry;
-devLog(`[TrailingStop] ${state.sessionToken} -- SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
-emitActivity(state.sessionToken, "signal", `🔒 Trail: +3% reached → SL at breakeven (₹${trade.currentSl.toFixed(2)})`);
+devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
 }
 } else {
 // SELL direction (PE options): price going DOWN is profitable
-// Step 4: -10% → lock at -7%
-if (effectivePrice <= premEntry * 0.90 && trade.currentSl > premEntry * 0.93) {
+if (effectivePrice <= premEntry * 0.88 && trade.currentSl > premEntry * 0.93) {
 trade.currentSl = premEntry * 0.93;
-devLog(`[TrailingStop] ${state.sessionToken} -- SL locked at -7% (₹${trade.currentSl.toFixed(2)})`);
-emitActivity(state.sessionToken, "signal", `🔒 Trail: -10% reached → SL locked at -7% (₹${trade.currentSl.toFixed(2)})`);
-}
-// Step 3: -7% → lock at -4%
-else if (effectivePrice <= premEntry * 0.93 && trade.currentSl > premEntry * 0.96) {
-trade.currentSl = premEntry * 0.96;
-devLog(`[TrailingStop] ${state.sessionToken} -- SL locked at -4% (₹${trade.currentSl.toFixed(2)})`);
-emitActivity(state.sessionToken, "signal", `🔒 Trail: -7% reached → SL locked at -4% (₹${trade.currentSl.toFixed(2)})`);
-}
-// Step 2: -5% → lock at -2%
-else if (effectivePrice <= premEntry * 0.95 && trade.currentSl > premEntry * 0.98) {
-trade.currentSl = premEntry * 0.98;
-devLog(`[TrailingStop] ${state.sessionToken} -- SL locked at -2% (₹${trade.currentSl.toFixed(2)})`);
-emitActivity(state.sessionToken, "signal", `🔒 Trail: -5% reached → SL locked at -2% (₹${trade.currentSl.toFixed(2)})`);
-}
-// Step 1: -3% → breakeven
-else if (effectivePrice <= premEntry * 0.97 && trade.currentSl > premEntry) {
+devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to -7% (₹${trade.currentSl.toFixed(2)})`);
+} else if (effectivePrice <= premEntry * 0.93 && trade.currentSl > premEntry) {
 trade.currentSl = premEntry;
-devLog(`[TrailingStop] ${state.sessionToken} -- SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
-emitActivity(state.sessionToken, "signal", `🔒 Trail: -3% reached → SL at breakeven (₹${trade.currentSl.toFixed(2)})`);
+devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
 }
 }
 }
@@ -6000,7 +5956,7 @@ const shouldTighten = trade.direction === "BUY"
 
 if (shouldTighten) {
 trade.currentSl = tightSl;
-devLog(`[TEST-D] ${state.sessionToken.slice(0,8)} -- RED BRICK EXIT: opposite brick formed (${lastBrick.color}) | Profit: ₹${currentPnlForRenko.toFixed(1)} | SL tightened to ₹${tightSl.toFixed(2)} (lock profit)`);
+devLog(`[TEST-D] ${state.sessionToken.slice(0,8)} — RED BRICK EXIT: opposite brick formed (${lastBrick.color}) | Profit: ₹${currentPnlForRenko.toFixed(1)} | SL tightened to ₹${tightSl.toFixed(2)} (lock profit)`);
 emitActivity(state.sessionToken, "signal", `🧱 Red Brick Exit: ${lastBrick.color} brick formed after ₹${currentPnlForRenko.toFixed(0)} profit | SL → ₹${tightSl.toFixed(2)}`);
 }
 }
@@ -6086,18 +6042,18 @@ const avgOrderValue = avgPrice * avgQty;
 const isMcxAvg = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
 const avgMargin = await checkUpstoxMargin(state.accessToken, isMcxAvg);
 if (avgMargin !== null && avgMargin < avgOrderValue) {
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- AVERAGING MARGIN CHECK FAILED: need ₹${avgOrderValue.toFixed(0)}, have ₹${avgMargin.toFixed(0)}`);
-emitActivity(state.sessionToken, "error", `⛔ Averaging blocked -- insufficient margin (need ₹${avgOrderValue.toFixed(0)}, have ₹${avgMargin.toFixed(0)})`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — AVERAGING MARGIN CHECK FAILED: need ₹${avgOrderValue.toFixed(0)}, have ₹${avgMargin.toFixed(0)}`);
+emitActivity(state.sessionToken, "error", `⛔ Averaging blocked — insufficient margin (need ₹${avgOrderValue.toFixed(0)}, have ₹${avgMargin.toFixed(0)})`);
 sendTelegramAlert(state, `🚫 MARGIN BLOCK (AVG)\n${trade.symbolLabel}\nNeed: ₹${avgOrderValue.toFixed(0)} | Available: ₹${avgMargin.toFixed(0)}`, "criticalAlerts");
 trade.averageCount = 1; // Prevent retry spam
 return;
 }
 const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty, state.lotSize, state.mode === "demo");
 if (!avgOrderId) {
-// Order failed -- don't average, just log
-console.warn(`[BotEngine] ${state.sessionToken} -- AVERAGING order REJECTED by Upstox`);
-emitActivity(state.sessionToken, "error", `⚠ Averaging order rejected -- ${trade.symbolLabel} ${avgOrderDir} ${avgQty} qty`);
-// Don't try again -- set averageCount to prevent retry spam
+// Order failed — don't average, just log
+console.warn(`[BotEngine] ${state.sessionToken} — AVERAGING order REJECTED by Upstox`);
+emitActivity(state.sessionToken, "error", `⚠ Averaging order rejected — ${trade.symbolLabel} ${avgOrderDir} ${avgQty} qty`);
+// Don't try again — set averageCount to prevent retry spam
 trade.averageCount = 1;
 return;
 }
@@ -6123,9 +6079,9 @@ trade.averagedAt = Date.now();
 // BUG 26: Increase capitalUsed by the additional averaged quantity
 state.capitalUsed += avgPrice * avgQty;
 
-// New SL: tighter -- new average - ATR * 0.8 (protect the larger position)
+// New SL: tighter — new average - ATR * 0.8 (protect the larger position)
 if (trade.isIndexOptions) {
-// FIX C: Options -- SL = 30% loss on premium (same rule as entry SL)
+// FIX C: Options — SL = 30% loss on premium (same rule as entry SL)
 trade.slPrice = newAvgEntry * 0.70;
 } else {
 const newSlDist = atrNow * 0.8;
@@ -6178,10 +6134,10 @@ const avgMsg = `📊 AVERAGING DOWN\n` +
 `📉 Original entry: ₹${trade.originalEntryPrice?.toFixed(2)} → New avg: ₹${newAvgEntry.toFixed(2)}\n` +
 `📦 Total qty: ${combinedQty} | New SL: ₹${trade.slPrice.toFixed(2)} | Target: ₹${trade.targetPrice.toFixed(2)}\n` +
 `🔄 RSI: ${rsiNow.toFixed(0)} (was ${rsiPrev.toFixed(0)}) | Loss was ${(lossPct * 100).toFixed(0)}%`;
-console.log(`[BotEngine] ${state.sessionToken} -- AVERAGING: +${avgQty} @ ₹${avgPrice.toFixed(2)} | New avg: ₹${newAvgEntry.toFixed(2)} | Old: ₹${trade.originalEntryPrice?.toFixed(2)}`);
+console.log(`[BotEngine] ${state.sessionToken} — AVERAGING: +${avgQty} @ ₹${avgPrice.toFixed(2)} | New avg: ₹${newAvgEntry.toFixed(2)} | Old: ₹${trade.originalEntryPrice?.toFixed(2)}`);
 emitActivity(state.sessionToken, "trade_open", `📊 AVERAGING ${trade.symbolLabel} +${avgQty} @ ₹${avgPrice.toFixed(2)} | New avg: ₹${newAvgEntry.toFixed(2)} | SL: ₹${trade.slPrice.toFixed(2)} | Target: ₹${trade.targetPrice.toFixed(2)}`, { price: avgPrice, confidence: 0.7 });
 sendTelegramAlert(state, avgMsg);
-return; // Don't check SL/Target this tick -- let the new average settle
+return; // Don't check SL/Target this tick — let the new average settle
 }
 }
 }
@@ -6200,7 +6156,7 @@ if (!exitReason && optionTimeExitReason) exitReason = optionTimeExitReason;
 
 // SAFETY GUARD: For options trades where effectivePrice is frozen at entry (no real quote available),
 // skip SL/Target checks for the FIRST 5 minutes (grace period for token resolution / quote fetching).
-// After 5 minutes, SL/Target checks resume -- if effectivePrice is still frozen at entry, P&L = 0 so neither SL nor Target will fire.
+// After 5 minutes, SL/Target checks resume — if effectivePrice is still frozen at entry, P&L = 0 so neither SL nor Target will fire.
 const isOptionsWithBrokenDelta = trade.isIndexOptions
 && !state.optionTradeToken
 && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.01
@@ -6209,8 +6165,8 @@ if (isOptionsWithBrokenDelta) {
 // Grace period: skip SL/Target for first 5 minutes while token resolves / quote fetching stabilizes
 if (!state.alertsSent.has("broken_delta_guard")) {
 state.alertsSent.add("broken_delta_guard");
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- SAFETY: skipping SL/Target for 5min grace period (no real quote, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
-emitActivity(state.sessionToken, "error", `⚠ No real option quote yet -- grace period (5min) for token resolution. SL/Target will activate after.`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — SAFETY: skipping SL/Target for 5min grace period (no real quote, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
+emitActivity(state.sessionToken, "error", `⚠ No real option quote yet — grace period (5min) for token resolution. SL/Target will activate after.`);
 }
 } else {
 // For options: direction in trade is always "BUY" (we buy CE or PE).
@@ -6245,7 +6201,7 @@ const matchingPos = positions.find(p => p.instrument_token === trade.instrumentT
 if (matchingPos) {
 const netQty = Math.abs(matchingPos.quantity);
 if (netQty > remainingQty) {
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- POSITION SYNC: Upstox has ${netQty} qty but bot knows ${remainingQty}. Exiting full ${netQty} qty.`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — POSITION SYNC: Upstox has ${netQty} qty but bot knows ${remainingQty}. Exiting full ${netQty} qty.`);
 emitActivity(state.sessionToken, "signal", `⚠ Position sync: Upstox has ${netQty} qty (bot expected ${remainingQty}). Exiting full position.`);
 actualExitQty = netQty;
 }
@@ -6255,16 +6211,16 @@ console.warn(`[BotEngine] Position sync failed, using bot's qty (${remainingQty}
 }
 let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "demo");
 if (!exitOrderId) {
-// Retry once after 2 seconds -- network blip or brief Upstox outage
+// Retry once after 2 seconds — network blip or brief Upstox outage
 await new Promise(r => setTimeout(r, 2000));
 exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "demo");
 }
 if (!exitOrderId) {
-// Both attempts failed -- keep trade open, alert user to close manually
-state.lastError = `EXIT ORDER FAILED -- close ${trade.symbolLabel} manually on Upstox`;
-emitActivity(state.sessionToken, "error", `⚠ EXIT ORDER FAILED (${exitReason}) -- ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
-sendTelegramAlert(state, `🚨 EXIT ORDER FAILED -- ${exitReason}\n📊 ${trade.symbolLabel}\n❌ Could not place exit order after 2 attempts.\n⚠ CLOSE MANUALLY ON UPSTOX NOW.`, "criticalAlerts");
-return; // do NOT close in DB -- trade remains open until manual intervention
+// Both attempts failed — keep trade open, alert user to close manually
+state.lastError = `EXIT ORDER FAILED — close ${trade.symbolLabel} manually on Upstox`;
+emitActivity(state.sessionToken, "error", `⚠ EXIT ORDER FAILED (${exitReason}) — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
+sendTelegramAlert(state, `🚨 EXIT ORDER FAILED — ${exitReason}\n📊 ${trade.symbolLabel}\n❌ Could not place exit order after 2 attempts.\n⚠ CLOSE MANUALLY ON UPSTOX NOW.`, "criticalAlerts");
+return; // do NOT close in DB — trade remains open until manual intervention
 }
 // ── EXIT ORDER VERIFICATION: Confirm fill before closing in DB ──
 let exitVerification: { status: string; avgPrice?: number } = { status: "unknown" };
@@ -6275,15 +6231,15 @@ if (exitVerification.status === "complete" || exitVerification.status === "trade
 if (exitVerification.status === "rejected" || exitVerification.status === "cancelled") break;
 }
 if (exitVerification.status === "rejected" || exitVerification.status === "cancelled") {
-state.lastError = `EXIT ORDER REJECTED -- close ${trade.symbolLabel} manually on Upstox`;
-emitActivity(state.sessionToken, "error", `🚨 EXIT ORDER REJECTED (${exitReason}) -- ${trade.symbolLabel}. CLOSE MANUALLY.`);
+state.lastError = `EXIT ORDER REJECTED — close ${trade.symbolLabel} manually on Upstox`;
+emitActivity(state.sessionToken, "error", `🚨 EXIT ORDER REJECTED (${exitReason}) — ${trade.symbolLabel}. CLOSE MANUALLY.`);
 sendTelegramAlert(state, `🚨 EXIT ORDER REJECTED\n📊 ${trade.symbolLabel}\n❌ Exchange rejected exit. CLOSE MANUALLY.`, "criticalAlerts");
 return; // do NOT close in DB
 }
 // Use actual fill price from Upstox if available
 if (exitVerification.avgPrice && exitVerification.avgPrice > 0) {
 effectivePrice = exitVerification.avgPrice;
-console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} -- EXIT verified: actual fill ₹${effectivePrice} (overrides estimate)`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — EXIT verified: actual fill ₹${effectivePrice} (overrides estimate)`);
 }
 }
 // Track SL hit for re-entry (only on full SL, not BE)
@@ -6300,7 +6256,7 @@ state.consecutiveSameDirectionSLs = 1;
 state.lastSlExitDirection = trade.direction;
 state.lastSlExitAt = Date.now();
 }
-// P2: Underlying-level cooldown -- track consecutive SLs regardless of direction (CE/PE)
+// P2: Underlying-level cooldown — track consecutive SLs regardless of direction (CE/PE)
 state.consecutiveUnderlyingSLs += 1;
 state.lastUnderlyingSLAt = Date.now();
 // If bookedPnl was already added to dailyPnl during partial booking in THIS session,
@@ -6322,13 +6278,13 @@ state.consecutiveUnderlyingSLs = 0;
 state.lastUnderlyingSLAt = null;
 }
 await onTradeClose(trade.dbId, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
-console.log(`[BotEngine] ${state.sessionToken} -- ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
+console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
 emitActivity(state.sessionToken, "trade_close", `${exitReason} ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)} | Day: ₹${state.dailyPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
 // Telegram exit alert
 const exitEmoji = totalPnl >= 0 ? "✅" : "❌";
 const pnlSign = totalPnl >= 0 ? "+" : "";
 sendTelegramAlert(state,
-`${exitEmoji} TRADE CLOSED -- ${exitReason.toUpperCase()}\n` +
+`${exitEmoji} TRADE CLOSED — ${exitReason.toUpperCase()}\n` +
 `📊 ${state.instrumentLabel} | Exit: ₹${effectivePrice.toFixed(2)}\n` +
 `💰 Total P&L: ${pnlSign}₹${totalPnl.toFixed(0)}` +
 (trade.bookedPnl > 0 ? ` (locked: ₹${trade.bookedPnl.toFixed(0)})` : "") +
@@ -6345,7 +6301,7 @@ if (state.isOpeningTrade) return;
 // ── PAUSED CHECK: Skip signal generation when bot is paused ─────────────────
 // Paused bots still monitor open trades (SL/target/trailing above), but do NOT open new trades.
 if (state.status === "paused") {
-state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Bot PAUSED -- monitoring open trade only (no new signals)", layer: "None" };
+state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: "Bot PAUSED — monitoring open trade only (no new signals)", layer: "None" };
 return;
 }
 // Cooldown guard: minimum 2 minutes between trade entries to prevent rapid-fire
@@ -6357,21 +6313,21 @@ state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPric
 return;
 }
 if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade) {
-// Don't pause -- just block new trade entries. Bot continues monitoring open trades & prices.
+// Don't pause — just block new trade entries. Bot continues monitoring open trades & prices.
 if ((state.tickCount ?? 0) % 20 === 1) {
-console.warn(`[tick] ⚠ Max trades reached -- ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} -- blocking new entries only`);
+console.warn(`[tick] ⚠ Max trades reached — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} — blocking new entries only`);
 }
 state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Max trades reached (${state.tradesCount}/${state.maxTradesPerDay})`, layer: "None" };
 return;
 }
-// HARD ABSOLUTE CAP per slot per day -- NO BYPASS, even for admin/unlimitedTrades.
+// HARD ABSOLUTE CAP per slot per day — NO BYPASS, even for admin/unlimitedTrades.
 // MCX gets higher cap (12) because it trades across morning+evening sessions (longer hours).
 // NSE/indices get 8 to prevent overtrading.
 const isMcxBot = state.instrumentToken?.startsWith("MCX_FO") || state.instrumentSymbol?.startsWith("MCX_");
 const ABSOLUTE_MAX_TRADES_PER_SLOT = isMcxBot ? 12 : 8;
 if (state.tradesCount >= ABSOLUTE_MAX_TRADES_PER_SLOT && !state.openTrade) {
 if ((state.tickCount ?? 0) % 20 === 1) {
-console.warn(`[tick] ⚠ HARD CAP: ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${ABSOLUTE_MAX_TRADES_PER_SLOT} -- absolute daily limit`);
+console.warn(`[tick] ⚠ HARD CAP: ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${ABSOLUTE_MAX_TRADES_PER_SLOT} — absolute daily limit`);
 }
 state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `HARD CAP: Max ${ABSOLUTE_MAX_TRADES_PER_SLOT} trades/day reached (${state.tradesCount})`, layer: "None" };
 return;
@@ -6392,9 +6348,9 @@ const ddCheck = checkPortfolioDrawdown(portfolioBots, state.dailyLossLimitPct, b
 if (ddCheck.halted && !state.openTrade) {
 // Portfolio drawdown is a hard capital-protection barrier and cannot be bypassed.
 if ((state.tickCount ?? 0) % 20 === 1) {
-console.warn(`[tick] ⚠ Portfolio drawdown active -- ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} -- blocking new trades only`);
+console.warn(`[tick] ⚠ Portfolio drawdown active — ${state.sessionToken.slice(0,8)} | ${ddCheck.reason} — blocking new trades only`);
 }
-state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: ddCheck.reason ?? "Portfolio drawdown limit -- no new trades", layer: "None" };
+state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: ddCheck.reason ?? "Portfolio drawdown limit — no new trades", layer: "None" };
 return;
 }
 // 3. CooldownPeriod: mandatory 2-candle wait after any trade close
@@ -6404,7 +6360,7 @@ state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPric
 return;
 }
 
-// Re-entry cooldown logic -- time-based (120s = 2 candles worth regardless of scan interval)
+// Re-entry cooldown logic — time-based (120s = 2 candles worth regardless of scan interval)
 let isReEntry = false;
 if (state.lastSlHitAt && state.lastSlDirection) {
 const elapsedSinceSlMs = Date.now() - state.lastSlHitAt;
@@ -6419,7 +6375,7 @@ state.lastSlDirection = null;
 state.reEntryCandles = 0;
 }
 
-// Generate signal -- extract prev-day OHLC from daily candles for S/R pivot filter
+// Generate signal — extract prev-day OHLC from daily candles for S/R pivot filter
 const slMult = isReEntry ? state.stopLossMultiplier * 0.8 : state.stopLossMultiplier;
 // V4 SL Strategy override: B = 1:2 R:R, D = 1:1.5 R:R
 const effectiveTargetMult = state.slStrategy === "D" ? 1.5 : state.slStrategy === "B" ? 2.0 : state.targetMultiplier;
@@ -6431,7 +6387,7 @@ const prevDayHigh = prevDayCandle?.high ?? 0;
 const prevDayLow = prevDayCandle?.low ?? 0;
 const prevDayClose = prevDayCandle?.close ?? 0;
 
-// Hero Zero: expiry-day OTM options (11:00 AM - 1:30 PM IST, NIFTY/BANKNIFTY option instruments)
+// Hero Zero: expiry-day OTM options (11:00 AM – 1:30 PM IST, NIFTY/BANKNIFTY option instruments)
 const isOptionInstrument = state.instrumentToken.includes("_CE") || state.instrumentToken.includes("_PE");
 const optionType: "CE" | "PE" = state.instrumentToken.includes("_CE") ? "CE" : "PE";
 // Expiry day detection:
@@ -6461,7 +6417,7 @@ const heroZeroWindowEnd = 13 * 60 + 30;
 const inHeroZeroWindow = isExpiryDay && istMin2 >= heroZeroWindowStart && istMin2 < heroZeroWindowEnd;
 state.heroZeroMode = inHeroZeroWindow;
 
-devLog(`[tick] PRE-SIGNAL -- ${state.sessionToken.slice(0,8)} | openingBurst=${inOpeningBurst} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
+devLog(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | openingBurst=${inOpeningBurst} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
 if (inOpeningBurst && state.candles.length >= 2) {
 // Fetch VIX for Opening Burst filter (cached 60s, fail-open returns 0)
 const vixNow = await fetchIndiaVix(state.accessToken ?? undefined);
@@ -6576,10 +6532,10 @@ emitActivity(state.sessionToken, "signal",
 (reEnabledLayers.length ? ` +${reEnabledLayers.join("+")}` : "")
 );
 }
-devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} -- switched ${prevRegimeState ?? "init"} → ${newRegime} (ADX=${adxNow.toFixed(1)})`);
+devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched ${prevRegimeState ?? "init"} → ${newRegime} (ADX=${adxNow.toFixed(1)})`);
 } else if (!state.currentRegime) {
 state.currentRegime = newRegime || (adxNow > 25 ? "trending" : "choppy");
-devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} -- initial regime: ${state.currentRegime} (ADX=${adxNow.toFixed(1)})`);
+devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — initial regime: ${state.currentRegime} (ADX=${adxNow.toFixed(1)})`);
 }
 }
 }
@@ -6613,7 +6569,7 @@ const LAYER_LIMITS: Record<string, number> = {
 "MeanReversionV13": 2, // max 2 mean reversion trades per day
 };
 // HARD CAP: max 6 trades per day per bot slot across ALL strategies.
-// This is a HARD limit -- even unlimitedTrades cannot bypass it.
+// This is a HARD limit — even unlimitedTrades cannot bypass it.
 // MCX gets higher limit (10) due to longer trading hours (morning + evening sessions).
 const isMcxInstrument = state.instrumentToken?.startsWith("MCX_FO") || state.instrumentSymbol?.startsWith("MCX_");
 const TOTAL_LAYER_LIMIT = isMcxInstrument ? 10 : 6;
@@ -6630,14 +6586,14 @@ if (rbtSignal.direction !== "HOLD") candidateSignals.push(rbtSignal);
 } catch (e) { console.warn(`[MultiStrategy] RedBarTheory error:`, (e as Error).message); }
 }
 
-// Layer 1b: PremiumRenko (option premium Renko bricks -- smaller brick, RSI filter)
+// Layer 1b: PremiumRenko (option premium Renko bricks — smaller brick, RSI filter)
 if (state.enabledLayers.includes("PremiumRenko")) {
 try {
 const prSignal = generatePremiumRenkoSignal(state.candles);
 if (prSignal.direction !== "HOLD") candidateSignals.push(prSignal);
 } catch (e) { console.warn(`[MultiStrategy] PremiumRenko error:`, (e as Error).message); }
 }
-// Layer 1c: BoxingStrategy (1st High/Low + Engulfing + SEMA -- backtested PF 1.38)
+// Layer 1c: BoxingStrategy (1st High/Low + Engulfing + SEMA — backtested PF 1.38)
 if (state.enabledLayers.includes("BoxingStrategy")) {
 try {
 const boxSignal = generateBoxingSignal(state.candles, state);
@@ -6648,7 +6604,7 @@ candidateSignals.push(boxSignal);
 }
 } catch (e) { console.warn(`[MultiStrategy] BoxingStrategy error:`, (e as Error).message); }
 }
-// Layer 1d: ORB V8 (30-min Opening Range Breakout -- backtested PF 1.20, +441 pts/18mo)
+// Layer 1d: ORB V8 (30-min Opening Range Breakout — backtested PF 1.20, +441 pts/18mo)
 if (state.enabledLayers.includes("ORB")) {
 try {
 const orbSignal = generateORBV8Signal(state.candles, state);
@@ -6661,11 +6617,11 @@ candidateSignals.push(orbSignal);
 // Layer 2: TrendMomentum (3 consecutive same-color candles + RSI/ROC)
 // Already handled by generateSignalV2 above (regime=TRENDING, layer="TrendMomentum")
 // If V2 engine produced a TrendMomentum signal but it was overridden by regime logic,
-// we don't re-run it here -- it's already in the main signal path.
+// we don't re-run it here — it's already in the main signal path.
 
 // Layer 3: VWAPReversion (mean reversion at VWAP extremes)
 // Already handled by generateSignalV2 above (regime=RANGING, layer="VWAPReversion")
-// Same as TrendMomentum -- already in main signal path.
+// Same as TrendMomentum — already in main signal path.
 
 // Layer 4: TrikalStrategy (smart Renko with multiple confirmations)
 if (state.enabledLayers.includes("TrikalStrategy")) {
@@ -6682,7 +6638,7 @@ const adeebSignal = generateAdeebSignal(state.candles, prevDayHigh, prevDayLow, 
 if (adeebSignal.direction !== "HOLD") candidateSignals.push(adeebSignal);
 } catch (e) { console.warn(`[MultiStrategy] Adeeb error:`, (e as Error).message); }
 }
-// Layer 8: MeanReversionV13 (BB+RSI+VWAP confluence mean reversion -- ranging markets)
+// Layer 8: MeanReversionV13 (BB+RSI+VWAP confluence mean reversion — ranging markets)
 if (state.enabledLayers.includes("MeanReversionV13")) {
 try {
 const mrSignal = generateMeanReversionV13Signal(state.candles, state.candles5m);
@@ -6759,17 +6715,17 @@ console.warn(`[MultiStrategy] MaxPainGravity error:`, mpErr instanceof Error ? m
 
 // ── PARALLEL SELECTION: Pick the BEST signal that hasn't exceeded per-layer limit ──
 if (candidateSignals.length > 0) {
-// Sort by confidence (highest first) -- first valid signal wins
+// Sort by confidence (highest first) — first valid signal wins
 candidateSignals.sort((a, b) => b.confidence - a.confidence);
 
-// Only check TOTAL daily limit (no per-layer limits -- let each layer contribute)
+// Only check TOTAL daily limit (no per-layer limits — let each layer contribute)
 const totalLayerTrades = Object.values(state.layerTradesCount).reduce((s, v) => s + v, 0);
 
 if (totalLayerTrades >= TOTAL_LAYER_LIMIT) {
-// HARD CAP: 6 trades/day/slot -- even admin unlimitedTrades cannot bypass this
-devLog(`[MultiStrategy] All candidates skipped -- total daily limit reached (${totalLayerTrades}/${TOTAL_LAYER_LIMIT})`);
+// HARD CAP: 6 trades/day/slot — even admin unlimitedTrades cannot bypass this
+devLog(`[MultiStrategy] All candidates skipped — total daily limit reached (${totalLayerTrades}/${TOTAL_LAYER_LIMIT})`);
 } else {
-// First valid signal wins -- quality filters already prevent bad entries
+// First valid signal wins — quality filters already prevent bad entries
 signal = candidateSignals[0];
 devLog(`[MultiStrategy] ✓ Selected: ${signal.layer} ${signal.direction} conf=${signal.confidence.toFixed(2)} (${candidateSignals.length} candidates evaluated)`);
 emitActivity(state.sessionToken, "signal", `🔀 MultiStrategy: ${signal.layer} selected (${candidateSignals.length} layers evaluated, conf=${(signal.confidence*100).toFixed(0)}%)`);
@@ -6777,7 +6733,7 @@ emitActivity(state.sessionToken, "signal", `🔀 MultiStrategy: ${signal.layer} 
 }
 }
 
-devLog(`[tick] SIGNAL OK -- ${state.sessionToken.slice(0,8)} | dir=${signal.direction} | conf=${signal.confidence.toFixed(2)} | layer=${signal.layer}`);
+devLog(`[tick] SIGNAL OK — ${state.sessionToken.slice(0,8)} | dir=${signal.direction} | conf=${signal.confidence.toFixed(2)} | layer=${signal.layer}`);
 
 // ── Shadow Mode: compare old logic vs new logic ───────────────────────────
 // When shadowMode=true: OLD logic (no P0, no P1) executes trades.
@@ -6808,7 +6764,7 @@ if (newSignal.direction === "HOLD" && oldSignal.direction !== "HOLD") {
 newDecision = "BLOCKED_BY_P0(ORB_stale)";
 }
 
-// OLD decision: no P1 cooldown, no P0 gate -- just whether signal fires
+// OLD decision: no P1 cooldown, no P0 gate — just whether signal fires
 const oldDecision = oldSignal.direction === "HOLD" ? "HOLD" : "ENTER";
 
 // Only log when at least one side has a non-HOLD signal (skip pure HOLD/HOLD)
@@ -6845,14 +6801,14 @@ emitActivity(state.sessionToken, "signal", `👁 SHADOW: ${signalDesc} | Old: ${
 
 signal = oldSignal;
 } catch (shadowErr: unknown) {
-// Shadow mode crash should NOT kill the tick -- just log and continue with current signal
+// Shadow mode crash should NOT kill the tick — just log and continue with current signal
 console.error(`[BotEngine] Shadow mode error (${state.sessionToken.slice(0, 8)}):`, shadowErr);
 emitActivity(state.sessionToken, "error", `Shadow mode error: ${shadowErr instanceof Error ? shadowErr.message : String(shadowErr)}`);
 }
 }
 // ── Cross-Market Correlation: Crude Oil → NIFTY soft bias ─────────────────
 // Only applies to NIFTY/BANKNIFTY instruments during NSE session (not MCX evening).
-// This is a SOFT BIAS -- adjusts confidence, doesn't block trades.
+// This is a SOFT BIAS — adjusts confidence, doesn't block trades.
 const isNiftyInstrument = !isMCX && (
 state.instrumentToken.includes("Nifty") ||
 state.instrumentToken.includes("NIFTY") ||
@@ -6880,7 +6836,7 @@ emitActivity(state.sessionToken, "signal",
 }
 }
 } catch (err) {
-// Non-critical -- don't crash the tick
+// Non-critical — don't crash the tick
 console.warn("[CrudeCorrelation] Error in tick:", err instanceof Error ? err.message : String(err));
 }
 }
@@ -6920,7 +6876,7 @@ if (signal.direction !== "HOLD" && state.enabledLayers && state.enabledLayers.le
 if (!state.enabledLayers.includes(signal.layer)) {
 emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal from ${signal.layer} skipped (layer disabled)`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Layer ${signal.layer} disabled`);
-// Don't return -- set signal to HOLD so multi-layer cascade can try enabled layers
+// Don't return — set signal to HOLD so multi-layer cascade can try enabled layers
 signal = { direction: "HOLD", confidence: 0, entryPrice: signal.entryPrice, slPrice: signal.slPrice, targetPrice: signal.targetPrice, atr: signal.atr, reason: `[Blocked] ${signal.layer} disabled`, layer: "None" };
 }
 }
@@ -6933,9 +6889,9 @@ emitActivity(state.sessionToken, "signal", `◆ ${signal.direction} signal @ ₹
 if (signal.direction === "HOLD") return; // confidence already checked inside generateSignal (tod multiplier applied there)
 
 // ── ADX MOMENTUM FILTER (BankNifty only) ─────────────────────────────────────
-// Backtest (Oct 2025 - Jul 2026) showed BankNifty loses ₹-6,148 without filter
+// Backtest (Oct 2025 – Jul 2026) showed BankNifty loses ₹-6,148 without filter
 // but only ₹-918 with ADX > 25 (85% reduction in losses).
-// Nifty and Crude Oil are profitable WITHOUT this filter -- keep them unchanged.
+// Nifty and Crude Oil are profitable WITHOUT this filter — keep them unchanged.
 const isBankNiftyInstrument = (
 state.instrumentSymbol === "BANKNIFTY" ||
 state.instrumentToken.includes("BANKNIFTY") ||
@@ -6945,7 +6901,7 @@ state.instrumentToken.includes("Nifty Bank") ||
 if (isBankNiftyInstrument && state.candles.length >= 20) {
 const adxNow = calcADX(state.candles, 14);
 if (adxNow < 25) {
-emitActivity(state.sessionToken, "signal", `⊘ ADX FILTER: ${signal.direction} from ${signal.layer} blocked -- ADX(${adxNow.toFixed(1)}) < 25 (BankNifty needs momentum to trend). Waiting for stronger move.`);
+emitActivity(state.sessionToken, "signal", `⊘ ADX FILTER: ${signal.direction} from ${signal.layer} blocked — ADX(${adxNow.toFixed(1)}) < 25 (BankNifty needs momentum to trend). Waiting for stronger move.`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `ADX filter: ${adxNow.toFixed(1)} < 25 (BankNifty)`);
 logSignalToJournal({
 sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
@@ -6965,7 +6921,7 @@ return;
 // ORB, Trend, Momentum, Adeeb, RedBarTheory (5 red/green bricks = 5 same-dir candles).
 // Applies to: BoomingBulls, CPR, FailedBreakout, HourlyClose, etc.
 // EXEMPTION: RedBarTheory and Momentum signals are BASED on consecutive same-direction
-// candles -- the anti-chase gate would ALWAYS block them (5 red bricks = 5 red candles).
+// candles — the anti-chase gate would ALWAYS block them (5 red bricks = 5 red candles).
 // These layers have their own built-in confirmation logic (brick size, strength score).
 const antiChaseExemptLayers = ["RedBarTheory", "Momentum", "Trend", "ORB", "Adeeb"];
 if (signal.entryPrice > 0 && state.candles.length >= 3 && !antiChaseExemptLayers.includes(signal.layer)) {
@@ -6981,12 +6937,12 @@ const moveFrom3CandlesAgo = signal.direction === "BUY"
 ? (lastCandle.close - prev2Candle.open) / prev2Candle.open
 : (prev2Candle.open - lastCandle.close) / prev2Candle.open;
 // If 3 consecutive same-direction candles AND moved > threshold → chasing
-// MCX instruments (CrudeOil, NatGas, Gold) trend strongly -- 3 same-direction candles is NORMAL.
+// MCX instruments (CrudeOil, NatGas, Gold) trend strongly — 3 same-direction candles is NORMAL.
 // Use 1.5% threshold for MCX vs 0.3% for NSE to avoid blocking valid trend entries.
 const CHASE_THRESHOLD = isMCX ? 0.015 : 0.003; // MCX: 1.5%, NSE: 0.3%
 if (allSameDir && moveFrom3CandlesAgo > CHASE_THRESHOLD) {
 const movePct = (moveFrom3CandlesAgo * 100).toFixed(2);
-emitActivity(state.sessionToken, "signal", `⊘ ANTI-CHASE: ${signal.direction} from ${signal.layer} rejected -- 3 consecutive ${signal.direction === "BUY" ? "green" : "red"} candles moved ${movePct}% (>${(CHASE_THRESHOLD*100).toFixed(1)}%). Wait for pullback.`);
+emitActivity(state.sessionToken, "signal", `⊘ ANTI-CHASE: ${signal.direction} from ${signal.layer} rejected — 3 consecutive ${signal.direction === "BUY" ? "green" : "red"} candles moved ${movePct}% (>${(CHASE_THRESHOLD*100).toFixed(1)}%). Wait for pullback.`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Anti-chase: 3 same-dir candles moved ${movePct}%`);
 logSignalToJournal({
 sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
@@ -7006,15 +6962,15 @@ console.log(`[MCX-DIAG] ${state.sessionToken.slice(0,8)} ${state.instrumentSymbo
 }
 // This protection cannot be cleared by restart or legacy unlimited mode.
 const elapsedSinceUnderlyingSL = Date.now() - state.lastUnderlyingSLAt;
-// MCX trends strongly -- reduce cooldown from 15min to 8min for MCX to avoid missing trend continuations
+// MCX trends strongly — reduce cooldown from 15min to 8min for MCX to avoid missing trend continuations
 const P2_COOLDOWN_MS = isMCX ? 480_000 : 900_000; // MCX: 8 min, NSE: 15 min
 if (elapsedSinceUnderlyingSL < P2_COOLDOWN_MS) {
 const remainMin = Math.ceil((P2_COOLDOWN_MS - elapsedSinceUnderlyingSL) / 60000);
-emitActivity(state.sessionToken, "signal", `⊘ Underlying cooldown -- ${state.consecutiveUnderlyingSLs} consecutive SLs on ${state.instrumentLabel} (${remainMin}min remaining)`);
+emitActivity(state.sessionToken, "signal", `⊘ Underlying cooldown — ${state.consecutiveUnderlyingSLs} consecutive SLs on ${state.instrumentLabel} (${remainMin}min remaining)`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Underlying cooldown: ${state.consecutiveUnderlyingSLs} SLs in ${state.instrumentLabel}`);
 return;
 } else {
-// Cooldown expired -- reset counter
+// Cooldown expired — reset counter
 state.consecutiveUnderlyingSLs = 0;
 state.lastUnderlyingSLAt = null;
 }
@@ -7034,7 +6990,7 @@ if (signalMatchesSLDirection) {
 const P1_CONSECUTIVE_BLOCK_MS = isMCX ? 300_000 : 600_000; // MCX: 5 min, NSE: 10 min
 if (state.consecutiveSameDirectionSLs >= 2 && elapsedSinceSl < P1_CONSECUTIVE_BLOCK_MS) {
 const remainMin = Math.ceil((P1_CONSECUTIVE_BLOCK_MS - elapsedSinceSl) / 60000);
-emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked -- ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs (${remainMin}min cooldown remaining)`);
+emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked — ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs (${remainMin}min cooldown remaining)`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Direction cooldown: ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs`);
 return;
 }
@@ -7042,7 +6998,7 @@ return;
 const P1_SHORT_BLOCK_MS = isMCX ? 90_000 : 180_000; // MCX: 90s, NSE: 3 min
 if (elapsedSinceSl < P1_SHORT_BLOCK_MS) {
 const remainSec = Math.ceil((P1_SHORT_BLOCK_MS - elapsedSinceSl) / 1000);
-emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked -- same direction as recent SL (${remainSec}s cooldown)`);
+emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked — same direction as recent SL (${remainSec}s cooldown)`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Same-direction cooldown (${remainSec}s remaining)`);
 return;
 }
@@ -7054,23 +7010,23 @@ pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer
 return;
 }
 } else {
-// Opposite direction signal after SL -- this is GOOD (market flipped), clear the cooldown
+// Opposite direction signal after SL — this is GOOD (market flipped), clear the cooldown
 state.lastSlExitDirection = null;
 state.lastSlExitAt = null;
 state.consecutiveSameDirectionSLs = 0;
 }
 }
 
-// (Layer filter moved to immediately after signal generation -- see BUG FIX 2 above)
+// (Layer filter moved to immediately after signal generation — see BUG FIX 2 above)
 
 // ── HourlyClose one-shot guard: only fire once per day ─────────────────────
 // ── Same-direction loss-streak guard: block direction after 2 consecutive losses ─
 // If the last 2 trades in this direction were losses within 90 min, the read is
 // wrong (e.g. buying CE dips on a fading rally). Block that direction for 30 min;
-// opposite-direction signals stay allowed -- that's the flip the market is signaling.
+// opposite-direction signals stay allowed — that's the flip the market is signaling.
 const dirBlock = isDirectionBlocked(state.sessionToken, signal.direction as "BUY" | "SELL");
 if (dirBlock.blocked) {
-emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal blocked -- 2 consecutive ${signal.direction} losses, direction cooldown ${dirBlock.remainingMin}min (opposite direction still allowed)`);
+emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal blocked — 2 consecutive ${signal.direction} losses, direction cooldown ${dirBlock.remainingMin}min (opposite direction still allowed)`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Direction blocked after consecutive losses (${dirBlock.remainingMin}min left)`);
 return;
 }
@@ -7081,7 +7037,7 @@ return;
 const flipCheck = isDirectionFlipBlocked(state.sessionToken, signal.direction as "BUY" | "SELL");
 if (flipCheck.blocked) {
 emitActivity(state.sessionToken, "signal",
-`⊘ DIRECTION FLIP BLOCKED: ${signal.direction} rejected -- ${flipCheck.reason}`);
+`⊘ DIRECTION FLIP BLOCKED: ${signal.direction} rejected — ${flipCheck.reason}`);
 pushRejectedSignal(state,
 { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
 `Direction flip blocked: ${flipCheck.remainingMin}min remaining`);
@@ -7102,18 +7058,18 @@ const htfTrend = await getHigherTimeframeTrend(state.instrumentToken, state.acce
 if (htfTrend !== "neutral") {
 const sigDir = signal.direction as "BUY" | "SELL";
 if ((htfTrend === "bullish" && sigDir === "SELL") || (htfTrend === "bearish" && sigDir === "BUY")) {
-emitActivity(state.sessionToken, "signal", `⊘ HTF Filter: ${sigDir} rejected -- 1h trend is ${htfTrend} (EMA10 ${htfTrend === "bullish" ? ">" : "<"} EMA30)`);
+emitActivity(state.sessionToken, "signal", `⊘ HTF Filter: ${sigDir} rejected — 1h trend is ${htfTrend} (EMA10 ${htfTrend === "bullish" ? ">" : "<"} EMA30)`);
 pushRejectedSignal(state, { direction: sigDir, layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `HTF filter: 1h trend is ${htfTrend}, ${sigDir} blocked`);
 return;
 }
 }
-} catch { /* non-fatal -- allow trade if HTF fetch fails */ }
+} catch { /* non-fatal — allow trade if HTF fetch fails */ }
 }
 
 // ── VRP REGIME FILTER + OI FLOW + MAX PAIN GRAVITY GATE ─────────────────────
 // Evaluates three strategy layers to boost/penalize signal confidence:
-// 1. VRP: IV vs Realized Vol -- blocks buying when no premium edge exists
-// 2. OI Flow: Option chain directional bias -- boosts/penalizes based on OI agreement
+// 1. VRP: IV vs Realized Vol — blocks buying when no premium edge exists
+// 2. OI Flow: Option chain directional bias — boosts/penalizes based on OI agreement
 // 3. Max Pain Gravity: On expiry day, biases toward max pain strike
 if (isOptionsMode && state.accessToken) {
 try {
@@ -7197,7 +7153,7 @@ console.warn(`[BotEngine] VRP/OI gate error (fail-open):`, vrpErr instanceof Err
 // ── CROSS-BOT DIRECTION LOCK ──────────────────────────────────────────────────────────────
 // Correlated NSE/BSE indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, BANKEX, MIDCPNIFTY) MUST
 // agree on direction. If any bot has a PE open (bearish), block CE entries on all correlated
-// indices, and vice versa. These indices are 85%+ correlated -- opposite positions cancel out.
+// indices, and vice versa. These indices are 85%+ correlated — opposite positions cancel out.
 if (isOptionsMode) {
 const CORRELATED_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"]);
 const thisSymbol = (state.instrumentSymbol ?? "").toUpperCase();
@@ -7219,7 +7175,7 @@ const otherHasPE = otherTradeSym.includes("_PE_") || otherTradeSym.includes(" PE
 
 if (wantsCE && otherHasPE) {
 emitActivity(state.sessionToken, "signal",
-`⊘ DIRECTION LOCK: Blocked CE entry -- ${otherSymbol} (Bot ${otherState.botSlot + 1}) has PE open. Correlated indices must agree.`);
+`⊘ DIRECTION LOCK: Blocked CE entry — ${otherSymbol} (Bot ${otherState.botSlot + 1}) has PE open. Correlated indices must agree.`);
 pushRejectedSignal(state,
 { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
 `Direction lock: ${otherSymbol} has PE open, CE blocked`);
@@ -7227,7 +7183,7 @@ return;
 }
 if (!wantsCE && otherHasCE) {
 emitActivity(state.sessionToken, "signal",
-`⊘ DIRECTION LOCK: Blocked PE entry -- ${otherSymbol} (Bot ${otherState.botSlot + 1}) has CE open. Correlated indices must agree.`);
+`⊘ DIRECTION LOCK: Blocked PE entry — ${otherSymbol} (Bot ${otherState.botSlot + 1}) has CE open. Correlated indices must agree.`);
 pushRejectedSignal(state,
 { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
 `Direction lock: ${otherSymbol} has CE open, PE blocked`);
@@ -7248,7 +7204,7 @@ console.log(`[DUPLICATE CHECK] ${cooldownSymbol} last entry was ${minutesAgo} mi
 if (elapsedMs < INSTRUMENT_COOLDOWN_MS) {
 const remainMin = Math.ceil((INSTRUMENT_COOLDOWN_MS - elapsedMs) / 60000);
 emitActivity(state.sessionToken, "signal",
-`⊘ INSTRUMENT COOLDOWN: ${cooldownSymbol} traded ${minutesAgo}min ago -- waiting ${remainMin}min before next entry`);
+`⊘ INSTRUMENT COOLDOWN: ${cooldownSymbol} traded ${minutesAgo}min ago — waiting ${remainMin}min before next entry`);
 pushRejectedSignal(state,
 { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
 `Instrument cooldown: ${remainMin}min remaining`);
@@ -7279,7 +7235,7 @@ const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
 : signal.direction === "BUY" ? "CE" : "PE";
 if (isMCX) { console.log("[MCX-DIAG] " + state.sessionToken.slice(0,8) + " " + state.instrumentSymbol + " entering option resolution: ceOrPe=" + ceOrPe + " underlying=" + state.underlyingToken); }
 
-// Detect MCX placeholder token (e.g. MCX_FO|GOLDM -- no numeric ID)
+// Detect MCX placeholder token (e.g. MCX_FO|GOLDM — no numeric ID)
 // MCX uses /v2/option/contract; NSE/NFO uses /v2/option/chain
 const rawUnderlying = state.underlyingToken!;
 const isMcxPlaceholder = rawUnderlying.startsWith("MCX_FO|") && !/\|\d+$/.test(rawUnderlying);
@@ -7296,11 +7252,11 @@ state.underlyingToken = realToken;
 emitActivity(state.sessionToken, "signal", `✅ MCX futures resolved: ${symbol} → ${realToken}`);
 } else {
 // MCX futures token resolve failed.
-// Skip the trade in ALL cases when a token is present -- the token is likely expired.
+// Skip the trade in ALL cases when a token is present — the token is likely expired.
 // Only use mock premiums when there is NO token at all (no-token demo mode).
-console.warn(`[BotEngine] ${state.sessionToken} -- Could not resolve MCX futures token for ${symbol}. Skipping trade.`);
-emitActivity(state.sessionToken, "error", `⚠ MCX futures resolve failed for ${symbol} -- cannot find active futures contract. Upstox instruments API may be down or token expired. Refresh token in Settings.`);
-// Don't return -- let trade continue with estimated premium below
+console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve MCX futures token for ${symbol}. Skipping trade.`);
+emitActivity(state.sessionToken, "error", `⚠ MCX futures resolve failed for ${symbol} — cannot find active futures contract. Upstox instruments API may be down or token expired. Refresh token in Settings.`);
+// Don't return — let trade continue with estimated premium below
 }
 } // end isMcxPlaceholder
 
@@ -7315,7 +7271,7 @@ if (otherKey === state.sessionToken) continue;
 if (otherState.status !== "running") continue;
 const otherUnderlying = otherState.underlyingToken || otherState.instrumentToken;
 if (otherUnderlying !== thisUnderlying) continue;
-// Same underlying -- check if other bot has an open trade with same option type
+// Same underlying — check if other bot has an open trade with same option type
 if (otherState.openTrade) {
 const otherSym = (otherState.openTrade.symbol ?? "").toUpperCase();
 const otherIsCall = otherSym.includes("_CE_") || otherSym.includes(" CE");
@@ -7343,7 +7299,7 @@ const resolved = isMcxToken
 
 if (!resolved) {
 // Option resolve failed.
-// In demo mode WITH a token: the token is likely expired -- skip the trade, do NOT use fake mock premiums.
+// In demo mode WITH a token: the token is likely expired — skip the trade, do NOT use fake mock premiums.
 // In demo mode WITHOUT a token: fall back to mock premium (handled by the else-if block below).
 // In live mode: always skip.
 if (state.mode === "live" || (state.mode === "demo" && state.accessToken && state.accessToken !== "DEMO_NO_TOKEN")) {
@@ -7360,7 +7316,7 @@ const wouldBuy = `${state.instrumentLabel} ${estimatedStrike} ${ceOrPe}`;
 const reason = state.mode === "live"
 ? "live order requires a confirmed contract"
 : "paper trade requires a real, verified option contract and premium";
-console.warn(`[BotEngine] ${state.sessionToken} -- Could not resolve ATM ${ceOrPe} option (${reason}). Skipping trade.`);
+console.warn(`[BotEngine] ${state.sessionToken} — Could not resolve ATM ${ceOrPe} option (${reason}). Skipping trade.`);
 emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Would buy ${wouldBuy}, but Upstox did not return a verified option contract and premium for ${resolvedUnderlying}. The access token may be expired or unauthorized, or no matching contract may be available. Refresh the regular Upstox access token and retry; no price or trade was fabricated.`);
 return;
 }
@@ -7383,7 +7339,7 @@ optionPremiumForSizing = demoPremium;
 state.optionTradeToken = tradeInstrumentToken;
 state.optionPremiumPrice = demoPremium;
 emitActivity(state.sessionToken, "signal", `🎮 DEMO: Simulated ${ceOrPe} @ strike ${demoStrike} | Est. premium ₹${demoPremium.toFixed(2)}`);
-console.log(`[BotEngine] ${state.sessionToken} -- DEMO option: ${ceOrPe} @ ${demoStrike}, est. premium ₹${demoPremium.toFixed(2)}`);
+console.log(`[BotEngine] ${state.sessionToken} — DEMO option: ${ceOrPe} @ ${demoStrike}, est. premium ₹${demoPremium.toFixed(2)}`);
 } else {
 tradeInstrumentToken = resolved.token;
 tradeSymbol = `${state.instrumentSymbol}_${ceOrPe}_${resolved.strike}`;
@@ -7396,13 +7352,13 @@ state.optionPremiumPrice = resolved.premium;
 if (resolved.lotSize && resolved.lotSize > 0) {
 state.lotSize = resolved.lotSize;
 } else if (state.accessToken && (resolvedUnderlying.startsWith("NSE_INDEX|") || resolvedUnderlying.startsWith("BSE_INDEX|"))) {
-// NSE option chain doesn't return lot_size -- fetch it live from /v2/option/contract
+// NSE option chain doesn't return lot_size — fetch it live from /v2/option/contract
 // (self-correcting: exchanges revise lot sizes; stale client configs sent 25 for NIFTY → rejected orders)
 const liveLot = await resolveNseLotSize(resolvedUnderlying, state.accessToken);
 const fallbackLot = getNseIndexLotSize(state.instrumentSymbol);
 const correctLot = liveLot ?? fallbackLot;
 if (correctLot && correctLot > 0 && correctLot !== state.lotSize) {
-emitActivity(state.sessionToken, "signal", `⚙ Lot size corrected: ${state.lotSize} → ${correctLot} (${liveLot ? "live from Upstox" : "NSE Jan-2026 revision"}) -- orders must be lot multiples`);
+emitActivity(state.sessionToken, "signal", `⚙ Lot size corrected: ${state.lotSize} → ${correctLot} (${liveLot ? "live from Upstox" : "NSE Jan-2026 revision"}) — orders must be lot multiples`);
 state.lotSize = correctLot;
 }
 }
@@ -7412,14 +7368,14 @@ state.sessionToken,
 "signal",
 `📋 Contract: ${contractName} | Strike ${resolved.strike} | Premium ₹${resolved.premium.toFixed(2)}${resolved.expiry ? ` | Expiry ${resolved.expiry}` : ""}${resolved.lotSize ? ` | Lot ${resolved.lotSize}` : ""}`,
 );
-console.log(`[BotEngine] ${state.sessionToken} -- Options mode: ${ceOrPe} @ strike ${resolved.strike}, premium ₹${resolved.premium.toFixed(2)}, token: ${resolved.token}`);
+console.log(`[BotEngine] ${state.sessionToken} — Options mode: ${ceOrPe} @ strike ${resolved.strike}, premium ₹${resolved.premium.toFixed(2)}, token: ${resolved.token}`);
 }
 } // end !optionPremiumForSizing guard
 } else if (isOptionsMode && !state.accessToken) {
-// No access token at all (not even DEMO_NO_TOKEN) -- SKIP the trade entirely
+// No access token at all (not even DEMO_NO_TOKEN) — SKIP the trade entirely
 if (state.mode === "live") {
-console.warn(`[BotEngine] ${state.sessionToken} -- Options mode but no access token. Skipping trade.`);
-emitActivity(state.sessionToken, "error", `⚠ SKIPPED: No Upstox access token -- cannot resolve option contract or get real prices. Connect your account in Settings.`);
+console.warn(`[BotEngine] ${state.sessionToken} — Options mode but no access token. Skipping trade.`);
+emitActivity(state.sessionToken, "error", `⚠ SKIPPED: No Upstox access token — cannot resolve option contract or get real prices. Connect your account in Settings.`);
 return;
 }
 }
@@ -7428,7 +7384,7 @@ return;
 // If isOptionsMode=true but optionPremiumForSizing is still null/0, skip the trade.
 // This prevents spot price from leaking as entry price (₹24,000+ entries).
 if (isOptionsMode && !optionPremiumForSizing) {
-console.warn(`[BotEngine] ${state.sessionToken} -- Options mode but optionPremiumForSizing is null/0. Skipping trade to prevent fake entry.`);
+console.warn(`[BotEngine] ${state.sessionToken} — Options mode but optionPremiumForSizing is null/0. Skipping trade to prevent fake entry.`);
 emitActivity(state.sessionToken, "error", `⚠ SKIPPED: Could not determine option premium. This usually means the option contract lookup failed. Try refreshing your Upstox token.`);
 return;
 }
@@ -7460,7 +7416,7 @@ const reason = validation.reason ?? "unknown contract validation failure";
 state.lastError = `Option entry blocked: ${reason}`;
 state.lastTradeOpenedAt = Date.now();
 state.isOpeningTrade = false;
-console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} -- OPTION ENTRY BLOCKED: ${tradeInstrumentToken}: ${reason}`);
+console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — OPTION ENTRY BLOCKED: ${tradeInstrumentToken}: ${reason}`);
 emitActivity(state.sessionToken, "error", `⛔ SKIPPED: Unverified option contract ${tradeLabel}. ${reason}. No order or demo trade was created.`);
 return;
 }
@@ -7470,7 +7426,7 @@ if (!finalQuote || !Number.isFinite(finalQuote.ltp) || finalQuote.ltp <= 0) {
 state.lastError = `Option entry blocked: no authenticated live premium for ${tradeInstrumentToken}`;
 state.lastTradeOpenedAt = Date.now();
 state.isOpeningTrade = false;
-console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} -- OPTION ENTRY BLOCKED: final premium quote unavailable for ${tradeInstrumentToken}`);
+console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — OPTION ENTRY BLOCKED: final premium quote unavailable for ${tradeInstrumentToken}`);
 emitActivity(state.sessionToken, "error", `⛔ SKIPPED: No authenticated live premium for ${tradeLabel}. No order or demo trade was created.`);
 return;
 }
@@ -7488,7 +7444,7 @@ if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
 const isMcxSegment = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
 const PREMIUM_FLOOR = isMcxSegment ? 3 : 30;
 if (optionPremiumForSizing < PREMIUM_FLOOR) {
-emitActivity(state.sessionToken, "signal", `⛔ SKIPPED: Premium ₹${optionPremiumForSizing.toFixed(1)} below ₹${PREMIUM_FLOOR} floor -- too illiquid`);
+emitActivity(state.sessionToken, "signal", `⛔ SKIPPED: Premium ₹${optionPremiumForSizing.toFixed(1)} below ₹${PREMIUM_FLOOR} floor — too illiquid`);
 state.isOpeningTrade = false;
 return;
 }
@@ -7500,7 +7456,7 @@ const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 const isZeroDTE = resolvedExpiry === today;
 if (isZeroDTE && tradeInstrumentToken !== state.instrumentToken) {
 emitActivity(state.sessionToken, "signal", `📋 0DTE enforcement: forcing ATM selection (OTM theta decay too high on expiry day)`);
-console.log(`[BotEngine] ${state.sessionToken} -- 0DTE: re-resolving to ATM (was OTM)`);
+console.log(`[BotEngine] ${state.sessionToken} — 0DTE: re-resolving to ATM (was OTM)`);
 const ceOrPe0dte = signal.direction === "BUY" ? "CE" as const : "PE" as const;
 const resolvedUnderlying0dte = state.underlyingToken || state.instrumentToken;
 if (state.accessToken) {
@@ -7528,8 +7484,8 @@ const spreadAbs = optQuote.ask - optQuote.bid;
 const midPrice = (optQuote.ask + optQuote.bid) / 2;
 const spreadPct = midPrice > 0 ? (spreadAbs / midPrice) * 100 : 0;
 if (spreadPct > 12) {
-const reason = `Entry blocked -- spread too wide (${spreadPct.toFixed(1)}%). Bid: ₹${optQuote.bid.toFixed(1)}, Ask: ₹${optQuote.ask.toFixed(1)}, Spread: ₹${spreadAbs.toFixed(1)}`;
-console.log(`[BotEngine] ${state.sessionToken} -- ${reason}`);
+const reason = `Entry blocked — spread too wide (${spreadPct.toFixed(1)}%). Bid: ₹${optQuote.bid.toFixed(1)}, Ask: ₹${optQuote.ask.toFixed(1)}, Spread: ₹${spreadAbs.toFixed(1)}`;
+console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
 emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Spread too wide (${spreadPct.toFixed(1)}%)`);
 logSignalToJournal({
@@ -7558,7 +7514,7 @@ return;
 // ══════════════════════════════════════════════════════════════════════════════════
 
 // ── Position sizing ───────────────────────────────────────────────────────────────
-// For options: RISK-BASED sizing -- SL = 30% below premium, size to keep loss ≤ riskAmount.
+// For options: RISK-BASED sizing — SL = 30% below premium, size to keep loss ≤ riskAmount.
 // This ensures SL stays at entry × 0.88 (12% buffer) and quantity is capped by risk.
 // For futures/equity: use signal SL distance as before.
 // ── CAPITAL GUARD: Dynamic Allocation ──────────────────────────────────────
@@ -7570,14 +7526,14 @@ const MAX_OPEN_POSITIONS = 4;
 const userBots = getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, ""));
 const currentOpenCount = userBots.filter(b => b.openTrade !== null).length;
 if (currentOpenCount >= MAX_OPEN_POSITIONS) {
-emitActivity(state.sessionToken, "signal", `⛔ Max ${MAX_OPEN_POSITIONS} open positions reached -- skipping entry`);
+emitActivity(state.sessionToken, "signal", `⛔ Max ${MAX_OPEN_POSITIONS} open positions reached — skipping entry`);
 state.isOpeningTrade = false;
 return;
 }
-// BUG 26: Per-bot capital guard -- if this bot already has capital deployed (open position), block new entry
+// BUG 26: Per-bot capital guard — if this bot already has capital deployed (open position), block new entry
 // This prevents the scenario where a bot with an existing open trade somehow tries to open another.
 if (state.capitalUsed > 0 && state.openTrade) {
-emitActivity(state.sessionToken, "signal", `⛔ Capital already deployed (₹${state.capitalUsed.toFixed(0)}) -- bot has open position, skipping entry`);
+emitActivity(state.sessionToken, "signal", `⛔ Capital already deployed (₹${state.capitalUsed.toFixed(0)}) — bot has open position, skipping entry`);
 state.isOpeningTrade = false;
 return;
 }
@@ -7586,19 +7542,19 @@ const lotSize = state.lotSize ?? 1;
 let quantity: number;
 
 if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
-// Options sizing: RISK-BASED -- size position so max loss (at 30% SL) ≤ riskAmount
+// Options sizing: RISK-BASED — size position so max loss (at 30% SL) ≤ riskAmount
 // Formula: qty = riskAmount / (premium × 0.30) rounded down to lot size
 const slDistPct = 0.30; // 30% of premium = SL distance
 const slDist = optionPremiumForSizing * slDistPct;
 const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
 // Also cap by capital (can't buy more than capital allows)
 const maxQtyByCapital = Math.floor(Math.min(state.capital, MAX_CAPITAL_PER_TRADE) / optionPremiumForSizing / lotSize) * lotSize;
-// MAX LOT CAP REMOVED per user request -- risk-based sizing formula handles quantity.
+// MAX LOT CAP REMOVED per user request — risk-based sizing formula handles quantity.
 // Capital guard: max ₹3,250 per trade. If premium × 1 lot > 3250, skip.
 const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital);
 
 if (riskBasedQty < lotSize) {
-// Even 1 lot exceeds risk budget -- still allow 1 lot if capital permits
+// Even 1 lot exceeds risk budget — still allow 1 lot if capital permits
 if (maxQtyByCapital >= lotSize) {
 quantity = lotSize; // Allow minimum 1 lot, SL tightening below will handle risk
 } else {
@@ -7652,10 +7608,10 @@ state.lotSize = cheaperResolved.lotSize;
 }
 quantity = state.lotSize ?? lotSize;
 emitActivity(state.sessionToken, "signal", `✅ Capital fallback: picked cheaper OTM strike ${cheaperResolved.strike} ${ceOrPe2} @ ₹${cheaperResolved.premium.toFixed(2)} (fits ₹${state.capital.toFixed(0)} capital)`);
-console.log(`[BotEngine] Capital fallback: ${state.sessionToken.slice(0,8)} -- cheaper OTM ${cheaperResolved.strike} ${ceOrPe2} @ ₹${cheaperResolved.premium.toFixed(2)}`);
+console.log(`[BotEngine] Capital fallback: ${state.sessionToken.slice(0,8)} — cheaper OTM ${cheaperResolved.strike} ${ceOrPe2} @ ₹${cheaperResolved.premium.toFixed(2)}`);
 } else {
-// Even deeper OTM doesn't fit -- truly insufficient capital
-const reason = `Insufficient capital for 1 lot (need ₹${(optionPremiumForSizing * lotSize).toFixed(0)}, have ₹${state.capital.toFixed(0)}). Tried cheaper OTM -- none available within budget.`;
+// Even deeper OTM doesn't fit — truly insufficient capital
+const reason = `Insufficient capital for 1 lot (need ₹${(optionPremiumForSizing * lotSize).toFixed(0)}, have ₹${state.capital.toFixed(0)}). Tried cheaper OTM — none available within budget.`;
 const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
 state.lastSignal = rejectSignal;
 emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
@@ -7665,14 +7621,6 @@ return;
 } else {
 quantity = riskBasedQty;
 }
-// ── FIX: Minimum 2 lots when capital affords it (scalping needs size for meaningful P&L) ──
-// If risk-based gives only 1 lot but capital can afford 2+, override to 2 lots minimum
-// This means slightly exceeding the risk budget, but scalp exits are fast (< 5 min hold)
-const MIN_LOTS_FOR_SCALPING = 2;
-if (quantity === lotSize && maxQtyByCapital >= lotSize * MIN_LOTS_FOR_SCALPING) {
-quantity = lotSize * MIN_LOTS_FOR_SCALPING;
-emitActivity(state.sessionToken, "signal", `📐 Lot boost: risk-based=1 lot, capital allows ${Math.floor(maxQtyByCapital/lotSize)} lots → using ${MIN_LOTS_FOR_SCALPING} lots (scalp mode)`);
-}
 emitActivity(state.sessionToken, "signal", `📐 Position size: ${quantity} qty (${quantity/lotSize} lots) | Risk: ₹${(quantity * slDist).toFixed(0)} ≤ ₹${riskAmount.toFixed(0)} budget | SL: ₹${(optionPremiumForSizing - slDist).toFixed(2)} (30% below ₹${optionPremiumForSizing.toFixed(2)})`);
 } else {
 const slDistance = Math.abs(signal.entryPrice - signal.slPrice);
@@ -7681,7 +7629,7 @@ quantity = Math.max(lotSize, Math.floor(rawQty / lotSize) * lotSize);
 // Per-bot capital cap: max ₹3,250 per trade
 const maxQtyByCapital = Math.floor(Math.min(state.capital, MAX_CAPITAL_PER_TRADE) / signal.entryPrice / lotSize) * lotSize;
 if (maxQtyByCapital < lotSize) {
-// Too expensive for capital guard -- reject trade
+// Too expensive for capital guard — reject trade
 const reason = `Insufficient capital for 1 lot (need ₹${(signal.entryPrice * lotSize).toFixed(0)}, max ₹${MAX_CAPITAL_PER_TRADE} per trade)`;
 const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason, layer: "None" };
 state.lastSignal = rejectSignal;
@@ -7698,7 +7646,7 @@ quantity = Math.min(quantity, maxQtyByCapital);
 if (signal.sizeReduction && signal.sizeReduction > 0 && signal.sizeReduction < 1) {
 const reducedQty = Math.max(lotSize, Math.floor((quantity * signal.sizeReduction) / lotSize) * lotSize);
 if (reducedQty < quantity) {
-devLog(`[tick] SIZE REDUCTION -- ${state.sessionToken.slice(0,8)} | regime=${signal.regimeV2} | qty ${quantity} → ${reducedQty} (${(signal.sizeReduction * 100).toFixed(0)}% reduction)`);
+devLog(`[tick] SIZE REDUCTION — ${state.sessionToken.slice(0,8)} | regime=${signal.regimeV2} | qty ${quantity} → ${reducedQty} (${(signal.sizeReduction * 100).toFixed(0)}% reduction)`);
 quantity = reducedQty;
 }
 }
@@ -7709,7 +7657,7 @@ const exposureCheck = canOpenNewTrade(getAllRunningBotsForSession(state.sessionT
 if (!exposureCheck.allowed) {
 const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: exposureCheck.reason ?? "Portfolio exposure cap reached", layer: "None" };
 state.lastSignal = rejectSignal;
-emitActivity(state.sessionToken, "signal", `⛔ Entry blocked -- ${exposureCheck.reason}`);
+emitActivity(state.sessionToken, "signal", `⛔ Entry blocked — ${exposureCheck.reason}`);
 pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, exposureCheck.reason ?? "Exposure cap");
 logSignalToJournal({
 sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
@@ -7745,7 +7693,7 @@ const reason = validation.reason ?? "unknown contract validation failure";
 state.lastError = `Order blocked: ${reason}`;
 state.lastTradeOpenedAt = Date.now();
 state.isOpeningTrade = false;
-console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} -- ORDER BLOCKED before Upstox call: ${tradeInstrumentToken}: ${reason}`);
+console.error(`[BotEngine] ${state.sessionToken.slice(0,8)} — ORDER BLOCKED before Upstox call: ${tradeInstrumentToken}: ${reason}`);
 emitActivity(state.sessionToken, "error", `⛔ ORDER BLOCKED: ${tradeLabel} failed final contract validation (${reason}).`);
 return;
 }
@@ -7759,35 +7707,35 @@ const isMcxForMargin = (state.underlyingToken ?? state.instrumentToken).startsWi
 const availableMargin = await checkUpstoxMargin(state.accessToken, isMcxForMargin);
 if (availableMargin !== null && availableMargin < orderValue) {
 const shortfall = orderValue - availableMargin;
-const msg = `⛔ INSUFFICIENT MARGIN -- need ₹${orderValue.toFixed(0)} but only ₹${availableMargin.toFixed(0)} available (short ₹${shortfall.toFixed(0)}). Order SKIPPED.`;
+const msg = `⛔ INSUFFICIENT MARGIN — need ₹${orderValue.toFixed(0)} but only ₹${availableMargin.toFixed(0)} available (short ₹${shortfall.toFixed(0)}). Order SKIPPED.`;
 emitActivity(state.sessionToken, "error", msg);
 sendTelegramAlert(state, `🚫 MARGIN BLOCK\n${state.instrumentLabel}\n${orderDirection} ${quantity} qty @ ₹${entryPriceForExposure.toFixed(2)}\nNeed: ₹${orderValue.toFixed(0)} | Available: ₹${availableMargin.toFixed(0)}\nShortfall: ₹${shortfall.toFixed(0)}`, "criticalAlerts");
-console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- MARGIN CHECK FAILED: need ₹${orderValue.toFixed(0)}, have ₹${availableMargin.toFixed(0)}`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — MARGIN CHECK FAILED: need ₹${orderValue.toFixed(0)}, have ₹${availableMargin.toFixed(0)}`);
 state.lastTradeOpenedAt = Date.now(); // Cooldown to prevent spam
 state.isOpeningTrade = false;
 return;
 }
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- PLACING LIVE ORDER: ${tradeInstrumentToken} ${orderDirection} qty=${quantity}`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — PLACING LIVE ORDER: ${tradeInstrumentToken} ${orderDirection} qty=${quantity}`);
 const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity, state.lotSize, state.mode === "demo");
 if (!oid) {
 // CRITICAL: if the order was rejected by Upstox, do NOT record a phantom trade.
 // Log the failure and skip this tick entirely.
-state.lastError = `Order rejected by Upstox -- ${tradeInstrumentToken} ${orderDirection} ${quantity} qty`;
+state.lastError = `Order rejected by Upstox — ${tradeInstrumentToken} ${orderDirection} ${quantity} qty`;
 const rejReason = getLastOrderRejectionReason();
-emitActivity(state.sessionToken, "error", `⚠ Live order REJECTED -- ${tradeLabel} ${orderDirection} ${quantity} qty${rejReason ? ` | Upstox: ${rejReason}` : ". Check Upstox logs."}`);
-console.error(`[BotEngine] ${state.sessionToken} -- Live order rejected, trade NOT recorded.`);
+emitActivity(state.sessionToken, "error", `⚠ Live order REJECTED — ${tradeLabel} ${orderDirection} ${quantity} qty${rejReason ? ` | Upstox: ${rejReason}` : ". Check Upstox logs."}`);
+console.error(`[BotEngine] ${state.sessionToken} — Live order rejected, trade NOT recorded.`);
 // CRITICAL: Set cooldown to prevent infinite retry loop.
 // Without this, the bot retries every tick (3-5 sec) and floods Upstox with failed orders.
 state.lastTradeOpenedAt = Date.now(); // Triggers 2-min cooldown before next attempt
-// Track consecutive rejections -- pause bot after 5 to prevent margin drain
+// Track consecutive rejections — pause bot after 5 to prevent margin drain
 // (Increased from 3 to 5: IP-based rejections are transient and shouldn't cause permanent pause)
 state.consecutiveRejections = (state.consecutiveRejections ?? 0) + 1;
-// Don't count IP restriction errors (UDAPI1154) toward pause threshold -- they're transient
+// Don't count IP restriction errors (UDAPI1154) toward pause threshold — they're transient
 const isIpRestriction = rejReason?.includes("UDAPI1154");
 if (isIpRestriction) {
-// IP restriction is transient -- don't increment, just cooldown
+// IP restriction is transient — don't increment, just cooldown
 state.consecutiveRejections = Math.max(0, (state.consecutiveRejections ?? 1) - 1);
-emitActivity(state.sessionToken, "signal", `⚠ IP restriction (UDAPI1154) -- transient, will retry in 2 min. Not counting toward pause threshold.`);
+emitActivity(state.sessionToken, "signal", `⚠ IP restriction (UDAPI1154) — transient, will retry in 2 min. Not counting toward pause threshold.`);
 return;
 }
 if (state.consecutiveRejections >= 5) {
@@ -7804,30 +7752,30 @@ state.consecutiveRejections = 0;
 // CRITICAL: Verify order was actually FILLED by exchange (not just accepted by API).
 // Upstox API can return orderId but exchange may reject it async (margin, invalid token, etc.)
 // We verify BEFORE recording the trade to prevent ghost trades.
-emitActivity(state.sessionToken, "signal", `📤 Order submitted: ${orderId} -- verifying exchange fill...`);
+emitActivity(state.sessionToken, "signal", `📤 Order submitted: ${orderId} — verifying exchange fill...`);
 // RETRY LOOP: Wait for exchange to confirm fill (up to 3 attempts, ~10s total)
 // This prevents ghost trades from "pending" orders that never fill.
 let verification: { status: string; rejectionReason?: string; filledQty?: number; avgPrice?: number } = { status: "unknown" };
 for (let attempt = 1; attempt <= 3; attempt++) {
 await new Promise(r => setTimeout(r, attempt === 1 ? 2500 : 3000)); // 2.5s first, then 3s
 verification = await verifyUpstoxOrderStatus(state.accessToken, orderId, state.mode === "demo");
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- Order ${orderId} verify attempt ${attempt}/3: status=${verification.status} | filled=${verification.filledQty} | avgPrice=${verification.avgPrice} | reason=${verification.rejectionReason ?? "none"}`);
-// Definitive answers -- stop retrying
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Order ${orderId} verify attempt ${attempt}/3: status=${verification.status} | filled=${verification.filledQty} | avgPrice=${verification.avgPrice} | reason=${verification.rejectionReason ?? "none"}`);
+// Definitive answers — stop retrying
 if (verification.status === "complete" || verification.status === "traded" ||
 verification.status === "rejected" || verification.status === "cancelled") {
 break;
 }
-// Still pending/open/unknown -- retry
+// Still pending/open/unknown — retry
 if (attempt < 3) {
-emitActivity(state.sessionToken, "signal", `⏳ Order still ${verification.status} (attempt ${attempt}/3) -- waiting...`);
+emitActivity(state.sessionToken, "signal", `⏳ Order still ${verification.status} (attempt ${attempt}/3) — waiting...`);
 }
 }
 
 if (verification.status === "rejected" || verification.status === "cancelled") {
-// ORDER WAS REJECTED BY EXCHANGE -- do NOT record a ghost trade
+// ORDER WAS REJECTED BY EXCHANGE — do NOT record a ghost trade
 state.lastError = `Order REJECTED by exchange: ${verification.rejectionReason ?? "unknown reason"}`;
-emitActivity(state.sessionToken, "error", `🚨 GHOST TRADE PREVENTED -- Order ${orderId} REJECTED by exchange: ${verification.rejectionReason ?? "unknown"}. Trade NOT recorded.`);
-console.error(`[BotEngine] ${state.sessionToken} -- GHOST TRADE PREVENTED: order ${orderId} rejected. Reason: ${verification.rejectionReason}`);
+emitActivity(state.sessionToken, "error", `🚨 GHOST TRADE PREVENTED — Order ${orderId} REJECTED by exchange: ${verification.rejectionReason ?? "unknown"}. Trade NOT recorded.`);
+console.error(`[BotEngine] ${state.sessionToken} — GHOST TRADE PREVENTED: order ${orderId} rejected. Reason: ${verification.rejectionReason}`);
 sendTelegramAlert(state, `🚨 ORDER REJECTED BY EXCHANGE\n📊 ${tradeLabel} ${orderDirection}\n❌ ${verification.rejectionReason ?? "unknown"}\n🆔 ${orderId}\n\n⚠️ Check Upstox order book.`, "criticalAlerts");
 state.lastTradeOpenedAt = Date.now(); // Cooldown
 state.consecutiveRejections = (state.consecutiveRejections ?? 0) + 1;
@@ -7839,34 +7787,34 @@ emitActivity(state.sessionToken, "error", `🛑 Bot AUTO-PAUSED after ${state.co
 return;
 }
 
-// If STILL pending/open/unknown after 3 attempts (~10s) -- DO NOT record trade
+// If STILL pending/open/unknown after 3 attempts (~10s) — DO NOT record trade
 if (verification.status !== "complete" && verification.status !== "traded") {
-state.lastError = `Order still ${verification.status} after 10s -- NOT recording trade. Check Upstox order book.`;
-emitActivity(state.sessionToken, "error", `⚠️ Order ${orderId} still "${verification.status}" after 10s -- trade NOT recorded. Check Upstox order book manually.`);
-console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- Order ${orderId} NOT FILLED after 10s (status: ${verification.status}). Trade NOT recorded to prevent ghost.`);
-sendTelegramAlert(state, `⚠️ ORDER NOT FILLED\n📊 ${tradeLabel} ${orderDirection}\n⏱ Status: ${verification.status} after 10s\n🆔 ${orderId}\n\n⚠️ Check Upstox order book -- order may still be open.`, "criticalAlerts");
+state.lastError = `Order still ${verification.status} after 10s — NOT recording trade. Check Upstox order book.`;
+emitActivity(state.sessionToken, "error", `⚠️ Order ${orderId} still "${verification.status}" after 10s — trade NOT recorded. Check Upstox order book manually.`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Order ${orderId} NOT FILLED after 10s (status: ${verification.status}). Trade NOT recorded to prevent ghost.`);
+sendTelegramAlert(state, `⚠️ ORDER NOT FILLED\n📊 ${tradeLabel} ${orderDirection}\n⏱ Status: ${verification.status} after 10s\n🆔 ${orderId}\n\n⚠️ Check Upstox order book — order may still be open.`, "criticalAlerts");
 state.lastTradeOpenedAt = Date.now(); // Cooldown
 return;
 }
 
-// ORDER CONFIRMED FILLED -- use ACTUAL fill price from Upstox (not candle estimate)
+// ORDER CONFIRMED FILLED — use ACTUAL fill price from Upstox (not candle estimate)
 // Use ONLY avgPrice from Upstox (never filledQty which is a QUANTITY not a price)
 // Also validate: avgPrice must be > 0.5 to avoid sandbox garbage values like ₹0.05 or ₹3.23
 const rawFillPrice = verification.avgPrice;
 const actualFillPrice = (rawFillPrice && rawFillPrice > 0.5) ? rawFillPrice : optionPremiumForSizing;
 if (actualFillPrice && actualFillPrice > 0.5) {
 signal.entryPrice = actualFillPrice;
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- ✅ Using ACTUAL fill price from Upstox: ₹${actualFillPrice} (raw avgPrice: ${rawFillPrice}, optionPremium: ${optionPremiumForSizing})`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ✅ Using ACTUAL fill price from Upstox: ₹${actualFillPrice} (raw avgPrice: ${rawFillPrice}, optionPremium: ${optionPremiumForSizing})`);
 } else {
-console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- ⚠️ Invalid fill price from Upstox (avgPrice=${rawFillPrice}). Using optionPremium estimate: ₹${optionPremiumForSizing}`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ⚠️ Invalid fill price from Upstox (avgPrice=${rawFillPrice}). Using optionPremium estimate: ₹${optionPremiumForSizing}`);
 }
 emitActivity(state.sessionToken, "signal", `✅ Order FILLED & VERIFIED: ${orderId} @ ₹${actualFillPrice ?? "market"} (actual Upstox fill price)`);
 } else if ((state.mode === "live" || state.mode === "demo") && !state.accessToken) {
 // CRITICAL FIX: If mode is "live" but accessToken is null, do NOT silently record a demo trade.
 // This was the root cause of "trades on dashboard but not in Upstox" bug.
-state.lastError = `LIVE mode but no access token -- cannot place real order. Refresh your Upstox token.`;
+state.lastError = `LIVE mode but no access token — cannot place real order. Refresh your Upstox token.`;
 emitActivity(state.sessionToken, "error", `🚨 BLOCKED: Bot is in LIVE mode but has no Upstox access token. Trade NOT placed. Go to Settings → refresh your token.`);
-console.error(`[BotEngine] ${state.sessionToken} -- CRITICAL: mode=live but accessToken is NULL. Trade blocked to prevent phantom recording.`);
+console.error(`[BotEngine] ${state.sessionToken} — CRITICAL: mode=live but accessToken is NULL. Trade blocked to prevent phantom recording.`);
 return;
 }
 
@@ -7885,10 +7833,10 @@ const optionEntry = isOptionsMode && optionPremiumForSizing ? optionPremiumForSi
 // For options: book 50% at +20% profit, book 25% at +40% profit (= target)
 // e.g., entry ₹556 → partial1R = ₹667 (+20%), partial2R = ₹778 (+40% = target)
 const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode
-? optionEntry * 1.07 // 7% gain -- book 50% here (breakeven trail)
+? optionEntry * 1.07 // 7% gain — book 50% here (breakeven trail)
 : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
 const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode
-? optionEntry * 1.15 // 15% gain -- book 25% here (= target)
+? optionEntry * 1.15 // 15% gain — book 25% here (= target)
 : (signal.direction === "BUY" ? optionEntry + slDist * (p2Pct / p1Pct) : optionEntry - slDist * (p2Pct / p1Pct)));
 
 // For options: entry/SL/target are based on option premium, not underlying price
@@ -7914,15 +7862,15 @@ const existingOpen = await dbCheck
 .where(and(eq(tradeLog.sessionToken, state.sessionToken), eq(tradeLog.status, "open")))
 .limit(1);
 if (existingOpen.length > 0) {
-console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- DB has open trade #${existingOpen[0].id}, skipping new entry`);
-emitActivity(state.sessionToken, "signal", `⊘ Signal skipped -- DB already has open trade #${existingOpen[0].id}`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — DB has open trade #${existingOpen[0].id}, skipping new entry`);
+emitActivity(state.sessionToken, "signal", `⊘ Signal skipped — DB already has open trade #${existingOpen[0].id}`);
 state.isOpeningTrade = false;
 return;
 }
 }
 } catch (dbErr) {
 console.error(`[BotEngine] DB guard check failed:`, dbErr);
-// Continue anyway -- the in-memory guard is still active
+// Continue anyway — the in-memory guard is still active
 }
 // ── Anti-Duplicate: 30-min cooldown per EXACT symbol ──────────────────────
 // If the same exact symbol (e.g. "GOLD 148500 CE") was traded in the last 30 min, skip.
@@ -7937,15 +7885,14 @@ const recentSameSymbol = await dbDup
 .select({ id: tradeLog.id })
 .from(tradeLog)
 .where(and(
-// FIX: Removed sessionToken filter -- check ALL bots, not just this one
-// Old: eq(tradeLog.sessionToken, state.sessionToken), ← caused duplicate trades across bots
+eq(tradeLog.sessionToken, state.sessionToken),
 eq(tradeLog.symbol, tradeLabel),
 gt(tradeLog.enteredAt, thirtyMinAgo),
 ))
 .limit(1);
 if (recentSameSymbol.length > 0) {
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- Duplicate blocked: ${tradeLabel} traded within 30 min`);
-emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked -- ${tradeLabel} traded in last 30 min`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${tradeLabel} traded within 30 min`);
+emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — ${tradeLabel} traded in last 30 min`);
 state.isOpeningTrade = false;
 return;
 }
@@ -7961,13 +7908,13 @@ state.isOpeningTrade = true;
 // ── Cross-bot STRIKE guard: Multiple bots CAN trade same underlying instrument.
 // But they MUST pick DIFFERENT strikes for diversification.
 // BLOCK: same exact option token (same strike + same expiry + same direction) across bots.
-// This is checked AFTER option resolution (below) -- see "Strike Diversification" section.
+// This is checked AFTER option resolution (below) — see "Strike Diversification" section.
 // At this point we only block if another bot is opening on the EXACT same tick with same direction
-// (race condition guard -- both bots would resolve to the same strike otherwise).
+// (race condition guard — both bots would resolve to the same strike otherwise).
 // The actual strike exclusion happens in resolveAtmOptionToken via excludeStrikes param.
 // FINAL SAFETY: Double-check no open trade exists (guards against any code path that might skip the early return)
 if (state.openTrade) {
-emitActivity(state.sessionToken, "signal", `⊘ Trade blocked -- already has open position`);
+emitActivity(state.sessionToken, "signal", `⊘ Trade blocked — already has open position`);
 state.isOpeningTrade = false;
 return;
 }
@@ -8006,8 +7953,8 @@ state.layerTradesCount[layerKey] -= 1;
 state.lastTradeOpenedAt = undefined;
 const errMsg = tradeOpenErr instanceof Error ? tradeOpenErr.message : String(tradeOpenErr);
 state.lastError = `Trade open DB write failed: ${errMsg}`;
-console.error(`[BotEngine] ${state.sessionToken} -- onTradeOpen failed, mutex released:`, errMsg);
-emitActivity(state.sessionToken, "error", `⚠ Trade open failed (DB write error): ${errMsg}. Mutex released -- bot will retry next signal.`);
+console.error(`[BotEngine] ${state.sessionToken} — onTradeOpen failed, mutex released:`, errMsg);
+emitActivity(state.sessionToken, "error", `⚠ Trade open failed (DB write error): ${errMsg}. Mutex released — bot will retry next signal.`);
 return;
 }
 
@@ -8066,7 +8013,7 @@ const displayEntry = isOptionsMode && optionPremiumForSizing ? optionPremiumForS
 const displaySl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.88 : signal.slPrice;
 const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 1.15 : signal.targetPrice;
 const displayLabel = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
-devLog(`[BotEngine] ${state.sessionToken} -- ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
+devLog(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
 const capitalDeployed = displayEntry * quantity;
 emitActivity(state.sessionToken, "trade_open", `${tradeType} ${signal.direction} ${displayLabel} @ ₹${displayEntry.toFixed(2)} | SL: ₹${displaySl.toFixed(2)} | Target: ₹${displayTarget.toFixed(2)} | Qty: ${quantity} (${Math.floor(quantity / lotSize)} lot${Math.floor(quantity / lotSize) > 1 ? "s" : ""}) | 💰 Capital: ₹${capitalDeployed.toLocaleString("en-IN", { maximumFractionDigits: 0 })} | Risk: ₹${riskAmount.toFixed(0)} | ${(signal.confidence * 100).toFixed(0)}% conf | ${signal.layer}`, { price: displayEntry, confidence: signal.confidence });
 
@@ -8085,7 +8032,7 @@ sendTelegramAlert(state,
 );
 } else {
 sendTelegramAlert(state,
-`${dirEmoji} ${signal.direction} SIGNAL -- ${layerTag}\n` +
+`${dirEmoji} ${signal.direction} SIGNAL — ${layerTag}\n` +
 `📊 ${state.instrumentLabel} | ₹${signal.entryPrice.toFixed(2)}\n` +
 `🛑 SL: ₹${signal.slPrice.toFixed(2)} | 🎯 Target: ₹${signal.targetPrice.toFixed(2)}\n` +
 `💯 Confidence: ${(signal.confidence * 100).toFixed(0)}% | Qty: ${quantity}\n` +
@@ -8118,7 +8065,7 @@ direction: "BUY" | "SELL"; mode: "demo" | "live";
 entryPrice: number; quantity: number; slPrice: number; targetPrice: number;
 atr: number; confidence: number; status: "open" | "closed" | "cancelled";
 upstoxOrderId?: string; signalReason: string; enteredAt: Date;
-// Partial profit levels -- stored in DB so they survive server restarts exactly
+// Partial profit levels — stored in DB so they survive server restarts exactly
 partial1RPrice: number;
 partial2RPrice: number;
 // Options mode: underlying price at entry (stored for reference; delta approximation removed)
@@ -8160,7 +8107,7 @@ alertsSent: new Set(),
 layerTradesCount: config.layerTradesCount ?? {},
 };
 
-// Mark that user explicitly chose this instrument -- prevent session auto-switch from overriding
+// Mark that user explicitly chose this instrument — prevent session auto-switch from overriding
 (state as any)._userManualInstrument = true;
 // CRITICAL: Log whether accessToken was passed to startBot
 console.log(`[BotEngine] startBot: session=${config.sessionToken.slice(0, 8)}... mode=${config.mode} accessToken=${config.accessToken ? `SET (${config.accessToken.slice(0, 8)}...)` : "NULL ⚠"} instrument=${config.instrumentSymbol}`);
@@ -8202,13 +8149,13 @@ if (isMcxToken) {
 const mcxResolved = await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, state.accessToken!, [], state.lastPrice);
 if (mcxResolved?.token && Math.abs(mcxResolved.strike - exactStrike) < 100) {
 resolvedToken = mcxResolved.token;
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- MCX resolved strike ${mcxResolved.strike} ${ceOrPe} (target: ${exactStrike}): ${resolvedToken}`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — MCX resolved strike ${mcxResolved.strike} ${ceOrPe} (target: ${exactStrike}): ${resolvedToken}`);
 emitActivity(state.sessionToken, "bot_start", `✓ MCX Resolved strike ${mcxResolved.strike} ${ceOrPe} → token ${resolvedToken.slice(-20)}`, { price: exactStrike });
 }
 } else {
 resolvedToken = await resolveSpecificOptionToken(underlyingToken, ceOrPe, exactStrike, state.accessToken!);
 if (resolvedToken) {
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- resolved EXACT strike ${exactStrike} ${ceOrPe}: ${resolvedToken}`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — resolved EXACT strike ${exactStrike} ${ceOrPe}: ${resolvedToken}`);
 emitActivity(state.sessionToken, "bot_start", `✓ Resolved EXACT strike ${exactStrike} ${ceOrPe} → token ${resolvedToken.slice(-20)}`, { price: exactStrike });
 }
 }
@@ -8221,7 +8168,7 @@ const resolved = isMcxToken
 : await resolveAtmOptionToken(underlyingToken, ceOrPe, state.accessToken!);
 if (resolved?.token) {
 resolvedToken = resolved.token;
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- fell back to ATM resolution: ${resolvedToken}`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — fell back to ATM resolution: ${resolvedToken}`);
 emitActivity(state.sessionToken, "bot_start", `⚠ Fell back to ATM resolution (not exact strike): ${resolvedToken?.slice(-20)}`, { price: 0 });
 }
 }
@@ -8233,14 +8180,14 @@ const quote = await fetchFullQuote(resolvedToken, state.accessToken!);
 if (quote && quote.ltp > 0) {
 state.optionPremiumPrice = quote.ltp;
 }
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- option token set: ${resolvedToken} | premium: ₹${state.optionPremiumPrice ?? "N/A"}`);
-emitActivity(state.sessionToken, "bot_start", `Option token restored -- premium ₹${(state.optionPremiumPrice ?? 0).toFixed(1)} | token: ...${resolvedToken.slice(-15)}`, { price: state.optionPremiumPrice ?? 0 });
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — option token set: ${resolvedToken} | premium: ₹${state.optionPremiumPrice ?? "N/A"}`);
+emitActivity(state.sessionToken, "bot_start", `Option token restored — premium ₹${(state.optionPremiumPrice ?? 0).toFixed(1)} | token: ...${resolvedToken.slice(-15)}`, { price: state.optionPremiumPrice ?? 0 });
 } else {
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- option re-resolution returned no token`);
-emitActivity(state.sessionToken, "error", `Option token re-resolution FAILED -- P&L will show ₹0 until next tick resolves it`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — option re-resolution returned no token`);
+emitActivity(state.sessionToken, "error", `Option token re-resolution FAILED — P&L will show ₹0 until next tick resolves it`);
 }
 } catch (e) {
-console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} -- failed to re-resolve option token: ${(e as Error).message}`);
+console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — failed to re-resolve option token: ${(e as Error).message}`);
 emitActivity(state.sessionToken, "error", `Option token re-resolve error: ${(e as Error).message}`);
 }
 })();
@@ -8255,8 +8202,8 @@ if (mcxSignalToken.startsWith("MCX_FO|")) {
 const isPlaceholder = !/\|\d+$/.test(mcxSignalToken); // "MCX_FO|GOLDM" vs "MCX_FO|555922"
 const mcxSymbol = state.instrumentSymbol ?? "";
 if (isPlaceholder && mcxSymbol) {
-// Placeholder token -- MUST resolve before any candle fetch
-console.log(`[BotEngine] MCX START-RESOLVE: ${mcxSymbol} has placeholder token "${mcxSignalToken}" -- resolving now...`);
+// Placeholder token — MUST resolve before any candle fetch
+console.log(`[BotEngine] MCX START-RESOLVE: ${mcxSymbol} has placeholder token "${mcxSignalToken}" — resolving now...`);
 const mcxResolvePromise = (async () => {
 try {
 const resolved = await resolveMcxFuturesToken(mcxSymbol, state.accessToken);
@@ -8270,8 +8217,8 @@ state.instrumentToken = resolved;
 (state as any)._mcxTokenResolved = true;
 emitActivity(state.sessionToken, "bot_start", `✅ MCX token resolved at start: ${mcxSymbol} → ${resolved.split("|")[1]}`);
 } else {
-console.warn(`[BotEngine] MCX START-RESOLVE FAILED: ${mcxSymbol} -- will retry on first tick`);
-emitActivity(state.sessionToken, "error", `⚠ MCX token resolution failed at start for ${mcxSymbol} -- will retry`);
+console.warn(`[BotEngine] MCX START-RESOLVE FAILED: ${mcxSymbol} — will retry on first tick`);
+emitActivity(state.sessionToken, "error", `⚠ MCX token resolution failed at start for ${mcxSymbol} — will retry`);
 }
 } catch (err) {
 console.error(`[BotEngine] MCX START-RESOLVE ERROR: ${mcxSymbol}:`, err instanceof Error ? err.message : String(err));
@@ -8284,7 +8231,7 @@ state._pendingOptionResolve = state._pendingOptionResolve.then(() => mcxResolveP
 state._pendingOptionResolve = mcxResolvePromise;
 }
 } else if (!isPlaceholder) {
-// Numeric token -- mark as resolved so tick doesn't re-resolve unnecessarily
+// Numeric token — mark as resolved so tick doesn't re-resolve unnecessarily
 (state as any)._mcxTokenResolved = true;
 console.log(`[BotEngine] MCX token already numeric at start: ${mcxSignalToken} (${mcxSymbol})`);
 }
@@ -8315,13 +8262,13 @@ emitActivity(config.sessionToken, "error", `⚠ Tick error (${state.consecutiveT
 // removed this bot while the failing tick was still in flight.
 if (state.consecutiveTickErrors >= 3) {
 if (state.status === "stopped" || !bots.has(state.sessionToken)) {
-console.log(`[BotEngine] Auto-restart cancelled for ${config.sessionToken} -- bot was explicitly stopped`);
+console.log(`[BotEngine] Auto-restart cancelled for ${config.sessionToken} — bot was explicitly stopped`);
 return;
 }
 console.warn(`[BotEngine] Auto-restarting bot ${config.sessionToken} after 3 consecutive tick failures`);
-emitActivity(config.sessionToken, "bot_start", `🔄 Auto-restarting bot after 3 consecutive tick errors -- preserving open trade`);
+emitActivity(config.sessionToken, "bot_start", `🔄 Auto-restarting bot after 3 consecutive tick errors — preserving open trade`);
 sendTelegramAlert(state,
-`🔄 BOT AUTO-RESTARTED -- ${state.instrumentLabel}\n` +
+`🔄 BOT AUTO-RESTARTED — ${state.instrumentLabel}\n` +
 `Reason: 3 consecutive tick errors\nLast error: ${msg}\nMode: ${state.mode}`
 ).catch(() => {});
 // Clear the old interval and restart
@@ -8379,8 +8326,8 @@ tokenReminderSent: state.tokenReminderSent,
 }, intervalMs);
 state.intervalHandle = handle;
 bots.set(config.sessionToken, state);
-console.log(`[startBot] ✓ Bot added to Map -- token=${config.sessionToken.slice(0,8)}, mapSize=${bots.size}, status=${state.status}`);
-emitActivity(config.sessionToken, "bot_start", `Bot registered -- ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s | MapSize: ${bots.size}`);
+console.log(`[startBot] ✓ Bot added to Map — token=${config.sessionToken.slice(0,8)}, mapSize=${bots.size}, status=${state.status}`);
+emitActivity(config.sessionToken, "bot_start", `Bot registered — ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s | MapSize: ${bots.size}`);
 
 const initialTick = (async () => {
 try {
@@ -8426,7 +8373,7 @@ emitActivity(sessionToken, "bot_stop", `Bot stopped | Day P&L: ₹${state?.daily
 if (state) {
 const pnlSign = (state.dailyPnl ?? 0) >= 0 ? "+" : "";
 sendTelegramAlert(state,
-`⏹ BOT STOPPED -- ${state.instrumentLabel}\n` +
+`⏹ BOT STOPPED — ${state.instrumentLabel}\n` +
 `Mode: ${state.mode} | Day P&L: ${pnlSign}₹${(state.dailyPnl ?? 0).toFixed(0)} | Trades: ${state.tradesCount ?? 0}`
 );
 }
@@ -8435,20 +8382,20 @@ bots.delete(sessionToken);
 }
 
 
-/** Pause bot -- keeps interval running for SL/target monitoring but blocks new signals */
+/** Pause bot — keeps interval running for SL/target monitoring but blocks new signals */
 export function pauseBot(sessionToken: string) {
 const state = bots.get(sessionToken);
 if (!state) return;
 state.status = "paused";
-emitActivity(sessionToken, "bot_pause", `Bot PAUSED -- monitoring open trade only | Day P&L: ₹${state.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state.tradesCount ?? 0}`);
+emitActivity(sessionToken, "bot_pause", `Bot PAUSED — monitoring open trade only | Day P&L: ₹${state.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state.tradesCount ?? 0}`);
 sendTelegramAlert(state,
-`⏸ BOT PAUSED -- ${state.instrumentLabel}\n` +
+`⏸ BOT PAUSED — ${state.instrumentLabel}\n` +
 `Open trade: ${state.openTrade ? state.openTrade.symbol + " @ " + state.openTrade.entryPrice.toFixed(2) : "None"}\n` +
 `Mode: ${state.mode} | Day P&L: ₹${(state.dailyPnl ?? 0).toFixed(0)}`
 );
 }
 
-/** Resume bot -- set status back to running so it generates new signals again */
+/** Resume bot — set status back to running so it generates new signals again */
 export function resumeBot(sessionToken: string) {
 const state = bots.get(sessionToken);
 if (!state) return;
@@ -8457,9 +8404,9 @@ state.status = "running";
 state.consecutiveRejections = 0;
 state.lastError = null;
 state.isOpeningTrade = false; // Clear stale mutex
-emitActivity(sessionToken, "bot_resume", `Bot RESUMED -- scanning for signals | Day P&L: ₹${state.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state.tradesCount ?? 0}`);
+emitActivity(sessionToken, "bot_resume", `Bot RESUMED — scanning for signals | Day P&L: ₹${state.dailyPnl?.toFixed(0) ?? "0"} | Trades: ${state.tradesCount ?? 0}`);
 sendTelegramAlert(state,
-`▶️ BOT RESUMED -- ${state.instrumentLabel}\n` +
+`▶️ BOT RESUMED — ${state.instrumentLabel}\n` +
 `Mode: ${state.mode} | Day P&L: ₹${(state.dailyPnl ?? 0).toFixed(0)}`
 );
 }
@@ -8498,7 +8445,7 @@ return results;
 /**
 * Force manual average-down on the current open trade.
 * Called from the dashboard "Force Average" button.
-* Bypasses the automatic reversal detection -- user decides when to average.
+* Bypasses the automatic reversal detection — user decides when to average.
 * Still respects: max 1 average per trade, not already averaged, has open trade.
 */
 export async function forceAverageDown(sessionToken: string): Promise<{ success: boolean; error?: string; newAvgEntry?: number; addedQty?: number }> {
@@ -8520,7 +8467,7 @@ if (!effectivePrice || effectivePrice <= 0) return { success: false, error: "No 
 const lossPct = trade.direction === "BUY"
 ? (trade.entryPrice - effectivePrice) / trade.entryPrice
 : (effectivePrice - trade.entryPrice) / trade.entryPrice;
-if (lossPct <= 0) return { success: false, error: "Trade is in profit -- no need to average" };
+if (lossPct <= 0) return { success: false, error: "Trade is in profit — no need to average" };
 
 // Calculate averaging quantity
 const avgPrice = effectivePrice;
@@ -8537,8 +8484,8 @@ const manualAvgOrderValue = avgPrice * avgQty;
 const isMcxManualAvg = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
 const manualAvgMargin = await checkUpstoxMargin(state.accessToken, isMcxManualAvg);
 if (manualAvgMargin !== null && manualAvgMargin < manualAvgOrderValue) {
-console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} -- MANUAL AVG MARGIN CHECK FAILED: need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)}`);
-emitActivity(state.sessionToken, "error", `⛔ Manual averaging blocked -- insufficient margin (need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)})`);
+console.warn(`[BotEngine] ${state.sessionToken.slice(0,8)} — MANUAL AVG MARGIN CHECK FAILED: need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)}`);
+emitActivity(state.sessionToken, "error", `⛔ Manual averaging blocked — insufficient margin (need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)})`);
 sendTelegramAlert(state, `🚫 MARGIN BLOCK (Manual AVG)\n${trade.symbolLabel}\nNeed: ₹${manualAvgOrderValue.toFixed(0)} | Available: ₹${manualAvgMargin.toFixed(0)}`, "criticalAlerts");
 return { success: false, error: `Insufficient margin: need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)}` };
 }
@@ -8607,7 +8554,7 @@ const avgMsg = `📊 MANUAL AVERAGE DOWN\n` +
 `➕ Added ${avgQty} qty @ ₹${avgPrice.toFixed(2)}\n` +
 `📉 Original: ₹${trade.originalEntryPrice?.toFixed(2)} → New avg: ₹${newAvgEntry.toFixed(2)}\n` +
 `📦 Total qty: ${combinedQty} | SL: ₹${trade.slPrice.toFixed(2)} | Target: ₹${trade.targetPrice.toFixed(2)}\n` +
-`⚡ Manual override -- loss was ${(lossPct * 100).toFixed(0)}%`;
+`⚡ Manual override — loss was ${(lossPct * 100).toFixed(0)}%`;
 sendTelegramAlert(state, avgMsg);
 emitActivity(state.sessionToken, "trade_open", `📊 MANUAL AVG ${trade.symbolLabel} +${avgQty} @ ₹${avgPrice.toFixed(2)} | New avg: ₹${newAvgEntry.toFixed(2)}`, { price: avgPrice, confidence: 1.0 });
 
@@ -8622,7 +8569,7 @@ strike: number,
 accessToken: string,
 ): Promise {
 try {
-// MCX not supported here -- use resolveAtmMcxOptionToken
+// MCX not supported here — use resolveAtmMcxOptionToken
 if (underlyingToken.startsWith("MCX_FO|")) return null;
 
 // Use the same authoritative exact-date expiry policy as new option entry.
@@ -8680,7 +8627,7 @@ state.shadowMode = enabled;
 if (enabled && !state.shadowLog) {
 state.shadowLog = [];
 }
-emitActivity(state.sessionToken, "signal", `👁 Shadow mode ${enabled ? "ENABLED" : "DISABLED"} -- ${enabled ? "old logic trades, new logic (P0+P1) logs only" : "normal mode resumed"}`);
+emitActivity(state.sessionToken, "signal", `👁 Shadow mode ${enabled ? "ENABLED" : "DISABLED"} — ${enabled ? "old logic trades, new logic (P0+P1) logs only" : "normal mode resumed"}`);
 return { success: true };
 }
 
@@ -8722,7 +8669,7 @@ return { success: true };
 }
 
 /**
-* Get ALL bots for a session (running, paused, or any status) -- used by Kill Switch.
+* Get ALL bots for a session (running, paused, or any status) — used by Kill Switch.
 * Unlike getAllRunningBotsForSession which only returns running bots.
 */
 export function getAllBotsForSession(sessionToken: string): BotState[] {
@@ -8737,7 +8684,7 @@ return results;
 
 /**
 * Hot-reload access token for ALL running bots.
-* Called after user re-authenticates Upstox -- updates in-memory token
+* Called after user re-authenticates Upstox — updates in-memory token
 * so bots don't need to be stopped and restarted.
 */
 export function hotReloadAccessToken(newToken: string, sessionToken?: string, isSandbox?: boolean): number {
