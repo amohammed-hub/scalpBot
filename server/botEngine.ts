@@ -228,6 +228,10 @@ export interface BotState {
   crudeOilCorrelation?: boolean; // user toggle (default OFF)
   // Adaptive Regime Switching: auto-toggle Supertrend vs Trikal Strategy based on ADX
   adaptiveRegimeEnabled?: boolean; // user toggle (default ON)
+  optionSlPct?: number;    // Option SL % (default 5). UI: "SL %" dropdown
+  optionTpPct?: number;    // Option Target % (default 8). UI: "Target %" dropdown  
+  quantityMode?: "auto" | "manual";  // auto = risk-based, manual = user qty
+  manualQuantity?: number;            // used when quantityMode = "manual"
   currentRegime?: "trending" | "choppy"; // last detected regime
   currentADX?: number; // last ADX value
   lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
@@ -294,6 +298,30 @@ const bots = new Map<string, BotState>();
 
 // Per-instrument cooldown: blocks re-entry on the same instrument within 30 minutes
 const instrumentCooldowns = new Map<string, number>(); // symbol → last entry timestamp (ms)
+// ── GLOBAL CROSS-BOT SYMBOL LOCK (FIX: duplicate trades across bot slots) ─────
+// Synchronous in-memory guard. When Bot A starts entering "BANKNIFTY 57800 CE",
+// it locks the symbol instantly. Bot B sees the lock on the same event loop tick.
+// Solves the DB race condition where both bots pass the async DB check simultaneously.
+const globalSymbolLock: Map<string, number> = new Map(); // symbol → lock timestamp
+
+function isSymbolGloballyLocked(symbol: string): boolean {
+  const lockTime = globalSymbolLock.get(symbol);
+  if (!lockTime) return false;
+  if (Date.now() - lockTime > 60_000) { // 60 sec auto-expiry
+    globalSymbolLock.delete(symbol);
+    return false;
+  }
+  return true;
+}
+
+function lockSymbolGlobally(symbol: string): void {
+  globalSymbolLock.set(symbol, Date.now());
+  setTimeout(() => globalSymbolLock.delete(symbol), 60_000);
+}
+
+function unlockSymbolGlobally(symbol: string): void {
+  globalSymbolLock.delete(symbol);
+}
 
 // ── Telegram alert helper ─────────────────────────────────────────────────────
 export type AlertCategory = "tradeEntry" | "tradeExit" | "dailySummary" | "criticalAlerts" | "announcements";
@@ -6483,16 +6511,21 @@ const isExpiryDay = isOptionInstrument && (
           const layers = state.enabledLayers || [];
           const userBlocked = state.userDisabledLayers || [];
 
-          if (newRegime === "trending") {
+                    if (newRegime === "trending") {
             const trendingEnable = ["Trend", "TrikalStrategy"];
             const trendingDisable = ["VWAPReversion", "MeanReversionV13"];
             const addedLayers: string[] = [];
             const removedLayers: string[] = [];
+            // Regime-managed strategies can override user toggles
+            const REGIME_MANAGED = new Set(["Trend", "TrikalStrategy", "VWAPReversion", "MeanReversionV13"]);
 
             for (const lyr of trendingEnable) {
-              if (!layers.includes(lyr) && !userBlocked.includes(lyr)) {
+              if (!layers.includes(lyr) && (!userBlocked.includes(lyr) || REGIME_MANAGED.has(lyr))) {
                 layers.push(lyr);
                 addedLayers.push(lyr);
+                // Remove from userBlocked so UI reflects regime decision
+                const ubIdx = (state.userDisabledLayers || []).indexOf(lyr);
+                if (ubIdx !== -1) (state.userDisabledLayers || []).splice(ubIdx, 1);
               }
             }
             for (const lyr of trendingDisable) {
@@ -6508,16 +6541,19 @@ const isExpiryDay = isOptionInstrument && (
               (addedLayers.length ? ` +${addedLayers.join("+")}` : "") +
               (removedLayers.length ? ` −${removedLayers.join(",")}` : "")
             );
-          } else {
+            } else {
             const choppyEnable = ["VWAPReversion", "MeanReversionV13"];
             const choppyDisable = ["Trend", "TrikalStrategy"];
             const reEnabledLayers: string[] = [];
             const droppedLayers: string[] = [];
+            const REGIME_MANAGED_C = new Set(["Trend", "TrikalStrategy", "VWAPReversion", "MeanReversionV13"]);
 
             for (const lyr of choppyEnable) {
-              if (!layers.includes(lyr) && !userBlocked.includes(lyr)) {
+              if (!layers.includes(lyr) && (!userBlocked.includes(lyr) || REGIME_MANAGED_C.has(lyr))) {
                 layers.push(lyr);
                 reEnabledLayers.push(lyr);
+                const ubIdx = (state.userDisabledLayers || []).indexOf(lyr);
+                if (ubIdx !== -1) (state.userDisabledLayers || []).splice(ubIdx, 1);
               }
             }
             for (const lyr of choppyDisable) {
@@ -7546,15 +7582,21 @@ const isExpiryDay = isOptionInstrument && (
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
     // Options sizing: RISK-BASED — size position so max loss (at 30% SL) ≤ riskAmount
     // Formula: qty = riskAmount / (premium × 0.30) rounded down to lot size
-    const slDistPct = 0.30; // 30% of premium = SL distance
+    const slDistPct = (state.optionSlPct ?? 5) / 100; // Match configured SL% (default 5%)
     const slDist = optionPremiumForSizing * slDistPct;
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
     const maxQtyByCapital = Math.floor(Math.min(state.capital, MAX_CAPITAL_PER_TRADE) / optionPremiumForSizing / lotSize) * lotSize;
     // MAX LOT CAP REMOVED per user request — risk-based sizing formula handles quantity.
     // Capital guard: max ₹3,250 per trade. If premium × 1 lot > 3250, skip.
-    const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital);
-    
+        const riskBasedQty = Math.min(rawQtyByRisk, maxQtyByCapital);
+
+    // ── QUANTITY MODE: Auto (risk-based) vs Manual (user-specified) ──────────
+    if (state.quantityMode === "manual" && state.manualQuantity && state.manualQuantity >= lotSize) {
+      quantity = Math.floor(state.manualQuantity / lotSize) * lotSize;
+      emitActivity(state.sessionToken, "signal", 
+        `📐 Manual qty: ${quantity} (${quantity/lotSize} lots) | User override`);
+    } else    
     if (riskBasedQty < lotSize) {
       // Even 1 lot exceeds risk budget — still allow 1 lot if capital permits
       if (maxQtyByCapital >= lotSize) {
@@ -7847,13 +7889,28 @@ const isExpiryDay = isOptionInstrument && (
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  // ── ABSOLUTE Premium SL = entry × 0.88 (12% max loss) ──
-  const tradeSl = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.88 : signal.slPrice;
+    // ── Configurable Premium SL & Target (user-settable via dashboard) ──
+  const optSlPct = (state.optionSlPct ?? 5) / 100;  // default 5% SL (was 12%!)
+  const optTpPct = (state.optionTpPct ?? 8) / 100;  // default 8% TP (was 15%)
+  const tradeSl = isOptionsMode && optionPremiumForSizing 
+    ? optionPremiumForSizing * (1 - optSlPct)  // e.g., ₹800 × 0.95 = ₹760 SL
+    : signal.slPrice;
   const tradeTarget = isOptionsMode && optionPremiumForSizing
-    ? optionPremiumForSizing * 1.15 // target = 15% gain on premium
+    ? optionPremiumForSizing * (1 + optTpPct)  // e.g., ₹800 × 1.08 = ₹864 target
     : signal.targetPrice;
 
   // Set mutex before async DB write to prevent concurrent duplicate opens
+      // ── GLOBAL CROSS-BOT LOCK: Instant synchronous check ───────────────────────
+  // This catches the race condition BEFORE the async DB query.
+  // If another bot is already opening this exact symbol, BLOCK immediately.
+  if (isSymbolGloballyLocked(tradeLabel)) {
+    console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ⛔ CROSS-BOT BLOCKED: "${tradeLabel}" locked by another bot slot`);
+    emitActivity(state.sessionToken, "signal", `⊘ Cross-bot duplicate blocked — ${tradeLabel} already being opened by another bot`);
+    state.isOpeningTrade = false;
+    return;
+  }
+  // Lock immediately (all other bots in this process see it on next tick)
+  lockSymbolGlobally(tradeLabel);
   // DB-level guard: check if there's already an open trade for this session in the database.
   // This catches edge cases where openTrade state was lost (server restart, crash) but DB still has an open trade.
   try {
@@ -7949,6 +8006,7 @@ const isExpiryDay = isOptionInstrument && (
     });
   } catch (tradeOpenErr) {
     state.isOpeningTrade = false;
+    unlockSymbolGlobally(tradeLabel); // Release lock on failure
     // Rollback counter on failure
     state.tradesCount -= 1;
     // Rollback per-layer counter
