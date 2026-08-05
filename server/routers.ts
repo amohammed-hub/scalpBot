@@ -4456,9 +4456,6 @@ const tokenRow = await db.select({ accessToken: uc2.accessToken })
   .from(uc2)
   .where(eq(uc2.sessionToken, baseSessionToken))
   .limit(1);
-            .from(bs2)
-            .where(ownedSessionCondition)
-            .limit(1);
           const killAccessToken = tokenRow?.[0]?.accessToken;
           if (killAccessToken) {
             const { default: axios } = await import("axios");
