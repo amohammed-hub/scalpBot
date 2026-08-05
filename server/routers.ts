@@ -752,7 +752,7 @@ export const appRouter = router({
              crudeOilCorrelation: input.crudeOilCorrelation,
              adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
              renkoExitEnabled: input.renkoExitEnabled ?? false,
-             strategyLocked: input.strategyLocked ?? false,
+             strategyLocked: (input as any).strategyLocked ?? false,
            })
            .where(eq(botSessions.id, sessionId));
        } else {
@@ -792,7 +792,7 @@ export const appRouter = router({
               crudeOilCorrelation: input.crudeOilCorrelation,
               adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
               renkoExitEnabled: input.renkoExitEnabled ?? false,
-              strategyLocked: z.boolean().optional(),
+              strategyLocked: (input as any).strategyLocked ?? false,
               consecutiveUnderlyingSLs: 0,
               lastUnderlyingSLAt: null,
               layerTradesCount: JSON.stringify({}),
@@ -960,7 +960,7 @@ export const appRouter = router({
             crudeOilCorrelation: input.crudeOilCorrelation,
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             renkoExitEnabled: input.renkoExitEnabled ?? false,
-            strategyLocked: input.strategyLocked ?? false,
+            strategyLocked: (input as any).strategyLocked ?? false,
             consecutiveUnderlyingSLs: restoredConsecutiveUnderlyingSLs,
             lastUnderlyingSLAt: restoredLastUnderlyingSLAt,
             layerTradesCount: restoredLayerTradesCount,
@@ -4381,6 +4381,7 @@ export const appRouter = router({
         console.log(`[KILL SWITCH] Found ${allBots.length} in-memory bot(s) and ${persistedSessions.length} persisted session(s) to stop`);
 
         // Attempt 1
+       const failures: string[] = [];
                 let result = await executeKillSwitch(allBots, stopBot, onTradeCloseKill);
         if (result.failedExits.length > 0) {
           failures.push(...result.failedExits.map(s => `Upstox exit failed: ${s}`));
@@ -4403,7 +4404,7 @@ export const appRouter = router({
         for (const bot of finalCheck) {
           if (bot.status !== "stopped" || bot.openTrade) {
             console.error(`[KILL SWITCH] FORCE STOP — bot ${bot.sessionToken.slice(0, 8)} still alive`);
-                    const failures: string[] = [];
+                    
             try { stopBot(bot.sessionToken); result.stoppedBots++; } catch {}
             if (bot.openTrade) failures.push(bot.openTrade.symbolLabel ?? bot.openTrade.symbol ?? bot.sessionToken.slice(0, 8));
           }
@@ -4450,10 +4451,13 @@ export const appRouter = router({
         let brokerOrphanWarning = "";
         try {
           // Get accessToken from the first persisted session that has one
-          const { botSessions: bs2 } = await import("../drizzle/schema");
-          const tokenRow = await db.select({ accessToken: any.accessToken })
+          const { upstoxCredentials: uc2 } = await import("../drizzle/schema");
+const tokenRow = await db.select({ accessToken: uc2.accessToken })
+  .from(uc2)
+  .where(eq(uc2.sessionToken, baseSessionToken))
+  .limit(1);
             .from(bs2)
-            .where(and(ownedSessionCondition, sql`${any.accessToken} IS NOT NULL`))
+            .where(ownedSessionCondition)
             .limit(1);
           const killAccessToken = tokenRow?.[0]?.accessToken;
           if (killAccessToken) {
