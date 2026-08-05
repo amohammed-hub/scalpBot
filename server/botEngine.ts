@@ -5212,7 +5212,7 @@ async function tick(
       const now3 = new Date();
       const istMin3 = ((now3.getUTCHours() * 60 + now3.getUTCMinutes()) + 330) % 1440;
       const isMCX3 = state.instrumentToken.startsWith("MCX");
-      const sqOffMin3 = isMCX3 ? 23 * 60 + 28 : 15 * 60 + 25;
+      const sqOffMin3 = isMCX3 ? 23 * 60 + 28 : 15 * 60 + 35;
       if (istMin3 >= sqOffMin3 || (!isMCX3 && (istMin3 < 9 * 60 + 15))) {
         // Respect carry-forward: if user chose to hold overnight, skip force-close
         if (state.carryForward) {
@@ -6018,7 +6018,7 @@ async function tick(
       const nowUtc = new Date();
       const istMinNow = ((nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes()) + 330) % 1440;
       const isMCXInst = state.instrumentToken.startsWith("MCX");
-      const closeMin = isMCXInst ? 23 * 60 + 25 : 15 * 60 + 25; // MCX 23:25, NSE 15:35
+      const closeMin = isMCXInst ? 23 * 60 + 25 : 15 * 60 + 35; // MCX 23:25, NSE 15:35
       const notNearClose = istMinNow < closeMin - 30; // at least 30 min before close
       const dailyLossUsed = Math.abs(Math.min(0, state.dailyPnl)) / (state.capital * state.dailyLossLimitPct / 100);
       const hasCapitalHeadroom = dailyLossUsed < 0.70; // less than 70% of daily loss limit used
