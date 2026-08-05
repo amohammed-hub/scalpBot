@@ -14,6 +14,16 @@ import { classifyMarketRegime, placeUpstoxOrder } from "./botEngine";
 import { upstoxAxios } from "./upstoxHttp";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 
+interface DemoCostConfig {
+  slippagePct: number;
+  brokeragePer: number;
+  sttPct: number;
+}
+
+const defaultDemoCost: DemoCostConfig = { slippagePct: 0.05, brokeragePer: 20, sttPct: 0.025 };
+const demoCostBySession = new Map<string, DemoCostConfig>();
+let _demoCostLoadedFromDb = false;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface MarketRiskScore {
   score: number; // 0-100 (0=safest, 100=extreme risk)
