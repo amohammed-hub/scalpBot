@@ -5357,7 +5357,7 @@ async function tick(
   }
 
   const isMCX = state.instrumentToken.startsWith("MCX");
-  const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
+  const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 35;
   const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 22; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:22 (3 min buffer before square-off at 15:35)
 
   // NSE Power Hour: 3:00–3:25 PM IST (extended from 3:20 — the last 5 mins are prime institutional action)
