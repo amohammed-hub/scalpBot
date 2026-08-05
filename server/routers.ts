@@ -604,30 +604,8 @@ export const appRouter = router({
         }
 
         if (input.mode === "live") {
-          // Demo-trade safety gate: require at least 3 closed demo trades before going live
-          // Admin bypass: admin account can skip this gate
-          if (!isAdminSession && !isAdminViaCookie) {
-            // Count demo trades across ALL slots for this user (base session + any slot suffix)
-            const baseSession = input.sessionToken.replace(/-slot\d+$/, "");
-            const demoTradeRows = await db
-              .select({ count: count() })
-              .from(tradeLog)
-              .where(and(
-                or(
-                  eq(tradeLog.sessionToken, baseSession),
-                  like(tradeLog.sessionToken, `${baseSession}-slot%`),
-                ),
-                eq(tradeLog.mode, "demo"),
-                eq(tradeLog.status, "closed"),
-              ));
-            const demoTradeCount = demoTradeRows[0]?.count ?? 0;
-            if (demoTradeCount < 3) {
-              throw new Error(
-                `Safety gate: Complete at least 3 demo trades before going live. You have ${demoTradeCount} closed demo trade(s) across all slots. This protects you from going live without verifying the bot works correctly.`
-              );
-            }
+        // Demo-trade safety gate REMOVED — users can go live immediately
           }
-        }
 
         // Check for existing open trade to restore
         const existingOpenTrades = await db
@@ -814,7 +792,7 @@ export const appRouter = router({
               crudeOilCorrelation: input.crudeOilCorrelation,
               adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
               renkoExitEnabled: input.renkoExitEnabled ?? false,
-              strategyLocked: input.strategyLocked ?? false,
+              strategyLocked: z.boolean().optional(),
               consecutiveUnderlyingSLs: 0,
               lastUnderlyingSLAt: null,
               layerTradesCount: JSON.stringify({}),
@@ -4422,10 +4400,10 @@ export const appRouter = router({
 
         // Final check — force stop any stragglers
         const finalCheck = getAllBotsForSession(baseSessionToken);
-        const failures: string[] = [];
         for (const bot of finalCheck) {
           if (bot.status !== "stopped" || bot.openTrade) {
             console.error(`[KILL SWITCH] FORCE STOP — bot ${bot.sessionToken.slice(0, 8)} still alive`);
+                    const failures: string[] = [];
             try { stopBot(bot.sessionToken); result.stoppedBots++; } catch {}
             if (bot.openTrade) failures.push(bot.openTrade.symbolLabel ?? bot.openTrade.symbol ?? bot.sessionToken.slice(0, 8));
           }
@@ -4473,9 +4451,9 @@ export const appRouter = router({
         try {
           // Get accessToken from the first persisted session that has one
           const { botSessions: bs2 } = await import("../drizzle/schema");
-          const tokenRow = await db.select({ accessToken: bs2.accessToken })
+          const tokenRow = await db.select({ accessToken: any.accessToken })
             .from(bs2)
-            .where(and(ownedSessionCondition, sql`${bs2.accessToken} IS NOT NULL`))
+            .where(and(ownedSessionCondition, sql`${any.accessToken} IS NOT NULL`))
             .limit(1);
           const killAccessToken = tokenRow?.[0]?.accessToken;
           if (killAccessToken) {
