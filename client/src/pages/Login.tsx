@@ -12,27 +12,27 @@ export default function Login() {
     loginFormRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const handleSendOtp = (e: React.FormEvent) => {
+  const sendOtpMutation = trpc.mobileAuth.sendOtp.useMutation();
+
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (mobile.length !== 10) {
       alert("Please enter a valid 10-digit mobile number.");
       return;
     }
 
-    // Admin number bypass
-    if (mobile === "8686742267") {
-      setOtpSent(true);
-      return;
+    try {
+      const result = await sendOtpMutation.mutateAsync({ mobile });
+      if (result.success) {
+        setOtpSent(true);
+      } else {
+        alert(result.message || "Failed to send OTP. Please try again.");
+      }
+    } catch (err: any) {
+      alert(err?.message || "Failed to send OTP. Please try again.");
     }
-
-    // Non-admin numbers get routed to pricing
-    alert("Account not found! Please select a subscription plan below to sign up.");
-    window.scrollTo({
-      top: document.body.scrollHeight,
-      behavior: "smooth"
-    });
   };
-
+  
   const verifyOtpMutation = trpc.mobileAuth.verifyOtp.useMutation();
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
