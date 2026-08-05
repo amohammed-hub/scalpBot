@@ -1,3 +1,5 @@
+type CookieOptions = { maxAge?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "lax" | "strict" | "none"; path?: string; domain?: string; };
+
 import jwt from "jsonwebtoken";
 
 export const MOBILE_AUTH_SESSION_DAYS = 30;
