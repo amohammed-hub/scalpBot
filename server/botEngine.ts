@@ -8073,8 +8073,8 @@ const isExpiryDay = isOptionInstrument && (
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 0.88 : signal.slPrice;
-  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * 1.15 : signal.targetPrice;
+  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 - (state.optionSlPct ?? 5) / 100) : signal.slPrice;
+  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + (state.optionTpPct ?? 8) / 100) : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   devLog(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
   const capitalDeployed = displayEntry * quantity;
