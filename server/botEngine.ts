@@ -4850,7 +4850,7 @@ export async function placeUpstoxOrder(
   // Using "I" for MCX options causes exchange rejection (ghost trades).
   const isMcx = instrumentToken.startsWith("MCX_FO|") || instrumentToken.startsWith("MCX|");
   const isFnO = instrumentToken.includes("_FO|");
-  const product = isMcx ? "D" : "I"; // MCX requires NRML; NSE F&O uses MIS (less margin for scalping)
+  const product = "D"; // NRML for both MCX and NSE F&O (full premium margin, no broker auto-exit)
   // ── QUANTITY: For MCX commodity, Upstox expects NUMBER OF LOTS, not units ──
   // API docs: "For commodity - number of lots is accepted"
   // Our internal quantity is in units (lotSize multiples). Convert to lots for MCX.
