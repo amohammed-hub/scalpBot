@@ -3912,7 +3912,7 @@ export async function fetchUpstoxCandles(instrumentToken: string, accessToken?: 
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/1minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization = \`Bearer ${accessToken}\`;
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending order — reverse to ascending
@@ -3927,7 +3927,7 @@ async function fetchUpstoxDayCandles(instrumentToken: string, accessToken?: stri
     const fromDate = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split("T")[0];
     const url = `https://api.upstox.com/v2/historical-candle/${encoded}/day/${toDate}/${fromDate}`;
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization = `Bearer ${accessToken}`;
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
@@ -3940,7 +3940,7 @@ export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/5minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
@@ -3953,7 +3953,7 @@ export async function fetchUpstox1hCandles(instrumentToken: string, accessToken?
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/60minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse();
@@ -5137,8 +5137,8 @@ async function tick(
   }
   let newCandle: Candle;
   const [candles1m, candles5m, dayCandles, quote] = await Promise.all([
-    fetchUpstoxCandles(signalToken, state.accessToken ?? undefined),
-    fetchUpstox5mCandles(signalToken, state.accessToken ?? undefined),
+    fetchUpstox5mCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined),
+    fetchUpstoxDayCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined),
     state.candlesDay.length < 2 ? fetchUpstoxDayCandles(signalToken, state.accessToken ?? undefined) : Promise.resolve(state.candlesDay),
     state.accessToken ? fetchFullQuote(signalToken, state.accessToken) : Promise.resolve(null),
   ]);
