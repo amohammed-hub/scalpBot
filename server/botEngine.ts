@@ -3940,7 +3940,7 @@ export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/5minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization
+    if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization = `Bearer ${accessToken}`;
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
