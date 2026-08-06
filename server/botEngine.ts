@@ -5137,11 +5137,11 @@ async function tick(
   }
   let newCandle: Candle;
   const [candles1m, candles5m, dayCandles, quote] = await Promise.all([
+    fetchUpstoxCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined),
     fetchUpstox5mCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined),
-    fetchUpstoxDayCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined),
-    state.candlesDay.length < 2 ? fetchUpstoxDayCandles(signalToken, state.accessToken ?? undefined) : Promise.resolve(state.candlesDay),
+    state.candlesDay.length < 2 ? fetchUpstoxDayCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined) : Promise.resolve(state.candlesDay),
     state.accessToken ? fetchFullQuote(signalToken, state.accessToken) : Promise.resolve(null),
-  ]);
+]);
   if (candles1m.length > 0) {
     state.candles = candles1m.slice(-400); // full day
     newCandle = candles1m[candles1m.length - 1];
