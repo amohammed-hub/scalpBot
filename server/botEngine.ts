@@ -7340,7 +7340,7 @@ const isExpiryDay = isOptionInstrument && (
       // In demo mode WITH a token: the token is likely expired — skip the trade, do NOT use fake mock premiums.
       // In demo mode WITHOUT a token: fall back to mock premium (handled by the else-if block below).
       // In live mode: always skip.
-      if (state.mode === "live") {
+      if (state.mode === "live" || (state.mode === "demo" && state.accessToken && state.accessToken !== "DEMO_NO_TOKEN" && resolved !== null)) {
         // Compute what the bot WOULD have bought for the activity log
         const symSkip = state.instrumentSymbol.toUpperCase();
         let strikeStepSkip = 50;
