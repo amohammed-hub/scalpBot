@@ -1139,7 +1139,7 @@ export const appRouter = router({
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .mutation(async ({ input, ctx }) => {
         await verifySessionOwnership(ctx, input.sessionToken);
-        pauseBot(input.sessionToken);
+        stopBot(input.sessionToken);
         try {
           const { clearActivity } = await import("./activityLog");
           clearActivity(input.sessionToken);
