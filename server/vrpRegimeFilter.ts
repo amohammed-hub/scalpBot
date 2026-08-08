@@ -423,6 +423,24 @@ export function evaluateStrategyGate(
     }
   }
 
+    // ── OI FLOW VETO ───────────────────────────────────────────────────────────
+  const OI_VETO_STRENGTH = 40;
+  if (
+    oiBias &&
+    oiBias.direction !== "NEUTRAL" &&
+    oiBias.direction !== signalDirection &&
+    oiBias.strength >= OI_VETO_STRENGTH
+  ) {
+    const maxPainRescue = isExpiryDay && maxPainSignal?.direction === signalDirection;
+    if (!maxPainRescue) {
+      allowed = false;
+      reasons.push(
+        `BLOCKED: OI structure opposes ${signalDirection} ` +
+        `(strength ${oiBias.strength.toFixed(0)} >= ${OI_VETO_STRENGTH}) — ${oiBias.reason}`
+      );
+    }
+  }
+
   return {
     allowed,
     vrp,
