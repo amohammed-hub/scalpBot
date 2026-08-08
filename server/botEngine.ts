@@ -5923,7 +5923,7 @@ async function tick(
         if (effectivePrice >= premEntry * 1.12 && trade.currentSl < premEntry * 1.07) {
           trade.currentSl = premEntry * 1.07;
           devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to +7% (₹${trade.currentSl.toFixed(2)})`);
-        } else if (effectivePrice >= premEntry * 1.05 && trade.currentSl < premEntry) {
+        } else if (effectivePrice >= premEntry * 1.03 && trade.currentSl < premEntry) {
           trade.currentSl = premEntry;
           devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
         }
@@ -5932,7 +5932,7 @@ async function tick(
         if (effectivePrice <= premEntry * 0.88 && trade.currentSl > premEntry * 0.93) {
           trade.currentSl = premEntry * 0.93;
           devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to -7% (₹${trade.currentSl.toFixed(2)})`);
-        } else if (effectivePrice <= premEntry * 0.93 && trade.currentSl > premEntry) {
+        } else if (effectivePrice <= premEntry * 0.97 && trade.currentSl > premEntry) {
           trade.currentSl = premEntry;
           devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
         }
@@ -7582,7 +7582,7 @@ const isExpiryDay = isOptionInstrument && (
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
     // Options sizing: RISK-BASED — size position so max loss (at 30% SL) ≤ riskAmount
     // Formula: qty = riskAmount / (premium × 0.30) rounded down to lot size
-    const slDistPct = (state.optionSlPct ?? 5) / 100; // Match configured SL% (default 5%)
+        const slDistPct = (state.optionSlPct ?? 12) / 100;
     const slDist = optionPremiumForSizing * slDistPct;
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
@@ -7890,8 +7890,8 @@ const isExpiryDay = isOptionInstrument && (
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
     // ── Configurable Premium SL & Target (user-settable via dashboard) ──
-  const optSlPct = (state.optionSlPct ?? 5) / 100;  // default 5% SL (was 12%!)
-  const optTpPct = (state.optionTpPct ?? 8) / 100;  // default 8% TP (was 15%)
+    const optSlPct = (state.optionSlPct ?? 12) / 100;
+  const optTpPct = (state.optionTpPct ?? 18) / 100;  // default 8% TP (was 15%)
   const tradeSl = isOptionsMode && optionPremiumForSizing 
     ? optionPremiumForSizing * (1 - optSlPct)  // e.g., ₹800 × 0.95 = ₹760 SL
     : signal.slPrice;
@@ -8073,8 +8073,8 @@ const isExpiryDay = isOptionInstrument && (
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 - (state.optionSlPct ?? 5) / 100) : signal.slPrice;
-  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + (state.optionTpPct ?? 8) / 100) : signal.targetPrice;
+    const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 - (state.optionSlPct ?? 12) / 100) : signal.slPrice;
+  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + (state.optionTpPct ?? 18) / 100) : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   devLog(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
   const capitalDeployed = displayEntry * quantity;
