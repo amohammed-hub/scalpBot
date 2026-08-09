@@ -6928,7 +6928,23 @@ const isExpiryDay = isOptionInstrument && (
   }
   if (signal.direction === "HOLD") return; // confidence already checked inside generateSignal (tod multiplier applied there)
 
-  // ── ADX MOMENTUM FILTER (BankNifty only) ─────────────────────────────────────
+    // ── DEAD MARKET GATE: no trades when ADX < 15 ────────────────────────────
+  // Measured on 07-Aug: 3 trades fired at ADX 9.7, 3.3 and 0.9 and lost
+  // Rs 5,340 combined (49% of that day's total loss). ADX below 15 means the
+  // market has effectively no direction, so no momentum or reversal strategy
+  // has an edge. Skip the entry entirely rather than switching strategy.
+  if (state.candles.length >= 28) {
+    const adxDead = calcADX(state.candles, 14);
+    if (adxDead < 15) {
+      emitActivity(state.sessionToken, "signal",
+        `⊘ DEAD MARKET: ${signal.direction} from ${signal.layer} blocked — ADX(${adxDead.toFixed(1)}) < 15, no directional edge`);
+      pushRejectedSignal(state,
+        { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
+        `Dead market: ADX ${adxDead.toFixed(1)} < 15`);
+      return;
+    }
+  }
+ // ── ADX MOMENTUM FILTER (BankNifty only) ─────────────────────────────────────
   // Backtest (Oct 2025 – Jul 2026) showed BankNifty loses ₹-6,148 without filter
   // but only ₹-918 with ADX > 25 (85% reduction in losses).
   // Nifty and Crude Oil are profitable WITHOUT this filter — keep them unchanged.
