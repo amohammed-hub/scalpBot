@@ -6504,6 +6504,8 @@ const isExpiryDay = isOptionInstrument && (
           newRegime = "trending";
         } else if (adxNow < ADX_CHOPPY_THRESH) {
           newRegime = "choppy";
+        } else if (!state.currentRegime) {
+          newRegime = adxNow > 25 ? "trending" : "choppy";
         }
 
         if (newRegime && newRegime !== state.currentRegime) {
