@@ -49,7 +49,7 @@ async function candles(token) {
   const j = await r.json();
   if (!j.data) { console.log("  API:", JSON.stringify(j).slice(0, 150)); return []; }
   return (j.data.candles || [])
-    .map(x => ({ t: new Date(x[0]), h: x[2], l: x[3], c: x[4] }))
+        .map(x => ({ t: new Date(x[0]), high: x[2], low: x[3], close: x[4] }))
     .reverse();
 }
 
