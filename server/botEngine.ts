@@ -3245,8 +3245,8 @@ export function generateSmartRenkoSignal(
   }
 
   // Master Filter: need 3+ same-color bricks for trend confirmation
-  const isUptrend = consecutiveGreen >= 2; // DEFAULT: 3
-  const isDowntrend = consecutiveRed >= 2; // DEFAULT: 3
+    const isUptrend = consecutiveGreen >= 3; // DEFAULT: 3
+  const isDowntrend = consecutiveRed >= 3; // DEFAULT: 3
   if (!isUptrend && !isDowntrend) {
     return { ...hold, atr, entryPrice: closes[closes.length - 1], reason: `[Trikal Strategy] No trend (G:${consecutiveGreen} R:${consecutiveRed}) — mixed, no trade` };
   }
