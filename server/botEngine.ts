@@ -5923,7 +5923,7 @@ async function tick(
         if (effectivePrice >= premEntry * 1.12 && trade.currentSl < premEntry * 1.07) {
           trade.currentSl = premEntry * 1.07;
           devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to +7% (₹${trade.currentSl.toFixed(2)})`);
-        } else if (effectivePrice >= premEntry * 1.03 && trade.currentSl < premEntry) {
+        } else if (effectivePrice >= premEntry * 1.05 && trade.currentSl < premEntry) {
           trade.currentSl = premEntry;
           devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
         }
@@ -5932,7 +5932,7 @@ async function tick(
         if (effectivePrice <= premEntry * 0.88 && trade.currentSl > premEntry * 0.93) {
           trade.currentSl = premEntry * 0.93;
           devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to -7% (₹${trade.currentSl.toFixed(2)})`);
-        } else if (effectivePrice <= premEntry * 0.97 && trade.currentSl > premEntry) {
+        } else if (effectivePrice <= premEntry * 0.93 && trade.currentSl > premEntry) {
           trade.currentSl = premEntry;
           devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
         }
