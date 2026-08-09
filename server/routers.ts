@@ -3782,8 +3782,8 @@ export const appRouter = router({
             let exitPrice = entryPrice;
             let exitTime = entryCandle.timestamp;
             let result: "WIN" | "LOSS" | "BE" = "BE";
-            const slAdj = sig.direction === "BUY" ? sig.slPrice : 2 * entryPrice - sig.slPrice;
-            const tpAdj = sig.direction === "BUY" ? sig.targetPrice : 2 * entryPrice - sig.targetPrice;
+            const slAdj = sig.slPrice;
+            const tpAdj = sig.targetPrice;
             for (let j = i + 1; j < Math.min(i + 120, candles.length); j++) {
               const c = candles[j];
               if (sig.direction === "BUY") {
