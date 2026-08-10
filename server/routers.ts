@@ -1735,7 +1735,7 @@ export const appRouter = router({
 
         // Place real exit order in live mode
         let orderId: string | null = null;
-        if (trade.mode === "live" || trade.mode === "demo") {
+                if (trade.mode === "live") {
           // Use trade's own sessionToken for credential lookup (handles cross-session fallback)
           const creds = await db
             .select()
@@ -1747,7 +1747,7 @@ export const appRouter = router({
             // Get lotSize from running bot state (for MCX lot conversion)
             const botState = getBotState(input.sessionToken);
             const lotSize = botState?.lotSize ?? 1;
-            orderId = await placeUpstoxOrder(creds[0].accessToken, trade.instrumentToken, exitDir, remainingQty, lotSize);
+                        orderId = await placeUpstoxOrder(creds[0].accessToken, trade.instrumentToken, exitDir, remainingQty, lotSize, trade.mode !== "live");
           }
         }
 
