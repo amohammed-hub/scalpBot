@@ -4823,7 +4823,7 @@ async function checkUpstoxMargin(accessToken: string, isMcx: boolean): Promise<n
 }
 
 export async function placeUpstoxOrder(
-  accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number, mcxLotSize?: number, useSandbox?: boolean,
+    accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number, mcxLotSize: number | undefined, useSandbox: boolean,
 ): Promise<string | null> {
   // ── DEMO MODE: Simulate order locally — do NOT call Upstox sandbox API ──
   // The sandbox API is unreliable, requires a separate sandbox token, and often rejects orders.
