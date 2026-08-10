@@ -397,7 +397,7 @@ export async function executeKillSwitch(
       if (trade.mode === "live" && bot.accessToken) {
         const exitDir = trade.direction === "BUY" ? "SELL" : "BUY";
         const { placeUpstoxOrder } = await import("./botEngine");
-        const killOrderId = await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)), bot.lotSize);
+                const killOrderId = await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)), bot.lotSize, trade.mode !== "live");
         if (!killOrderId) {
           // ORDER FAILED — but still close in DB and stop bot
           // The position remains OPEN on Upstox — flag for user attention
