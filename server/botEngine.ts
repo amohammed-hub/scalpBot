@@ -2656,10 +2656,10 @@ export function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
   if (candles.length < 2 || atr <= 0) return [];
   const brickSize = atr; // ATR(14) adaptive brick size
     const bricks: RenkoBrick[] = [];
-  let lastClose = candles[0].close;
+    let lastClose = Math.round(candles[0].close / brickSize) * brickSize; // grid aligned to absolute price, not to the rolling window's first candle
   let lastDir: "green" | "red" | null = null;
 
-  for (let i = 1; i < candles.length; i++) {
+    for (let i = 1; i < candles.length - 1; i++) { // last candle is still forming; build bricks from CLOSED candles only
     const price = candles[i].close;
 
     // Continuation needs 1x brickSize; a reversal needs 2x against the last brick close.
@@ -5313,9 +5313,27 @@ async function tick(
     resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
     resetDirectionFlipLock(state.sessionToken); // Clear direction flip-flop lock for new day
     emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
-  }
+    }
   state.lastTradingDay = todayStr;
 
+  // Freeze the Renko ATR reference once today's 1m series can support a full ATR(14)
+  // window. Until then this stays undefined and every Renko call site uses live ATR,
+  // which is the previous behaviour. Cleared at the daily rollover above.
+  if (state.renkoAtrRef === undefined && state.candles.length >= RENKO_FREEZE_MIN_CANDLES) {
+    const renkoFreezeAtr = calcATR(state.candles, 14);
+    if (Number.isFinite(renkoFreezeAtr) && renkoFreezeAtr > 0) {
+      state.renkoAtrRef = renkoFreezeAtr;
+      state.renkoAtrFrozenAt = Date.now();
+      console.log(
+        "[BotEngine] RENKO-ATR-FREEZE session=" + state.sessionToken.slice(0, 8) +
+        " atr=" + renkoFreezeAtr.toFixed(4) +
+        " candles=" + state.candles.length +
+        " first=" + new Date(state.candles[0].timestamp).toISOString() +
+        " last=" + new Date(state.candles[state.candles.length - 1].timestamp).toISOString() +
+        " istMin=" + istMin2
+      );
+    }
+  }
   // ── TOKEN EXPIRY REMINDER: At 6:35 AM IST, check if access token is missing/expired ──
   // Upstox tokens expire daily at ~6:30 AM IST. This reminder fires once per day.
   const TOKEN_REMINDER_MINUTE = 6 * 60 + 35; // 6:35 AM IST
