@@ -4863,7 +4863,7 @@ export async function placeUpstoxOrder(
   // Using "I" for MCX options causes exchange rejection (ghost trades).
   const isMcx = instrumentToken.startsWith("MCX_FO|") || instrumentToken.startsWith("MCX|");
   const isFnO = instrumentToken.includes("_FO|");
-  const product = isMcx ? "D" : "I"; // MCX requires NRML; NSE F&O uses MIS (less margin for scalping)
+  const product = "D"; // NRML for both MCX and NSE F&O (full premium margin, no broker auto-exit)
   // ── QUANTITY: For MCX commodity, Upstox expects NUMBER OF LOTS, not units ──
   // API docs: "For commodity - number of lots is accepted"
   // Our internal quantity is in units (lotSize multiples). Convert to lots for MCX.
@@ -7607,7 +7607,7 @@ const isExpiryDay = isOptionInstrument && (
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
     // Options sizing: RISK-BASED — size position so max loss (at 30% SL) ≤ riskAmount
     // Formula: qty = riskAmount / (premium × 0.30) rounded down to lot size
-        const slDistPct = (state.optionSlPct ?? 12) / 100; // 12% of premium = SL distance
+        const slDistPct = (state.optionSlPct ?? 5) / 100;
     const slDist = optionPremiumForSizing * slDistPct;
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
@@ -7915,8 +7915,8 @@ const isExpiryDay = isOptionInstrument && (
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
     // ── Configurable Premium SL & Target (user-settable via dashboard) ──
-    const optSlPct = (state.optionSlPct ?? 12) / 100;  // default 12% SL (configurable via dashboard)
-  const optTpPct = (state.optionTpPct ?? 15) / 100;  // default 15% TP (configurable via dashboard)
+    const optSlPct = (state.optionSlPct ?? 5) / 100;
+  const optTpPct = (state.optionTpPct ?? 8) / 100;  // default 8% TP (was 15%)
   const tradeSl = isOptionsMode && optionPremiumForSizing 
     ? optionPremiumForSizing * (1 - optSlPct)  // e.g., ₹800 × 0.95 = ₹760 SL
     : signal.slPrice;
@@ -8101,8 +8101,8 @@ const isExpiryDay = isOptionInstrument && (
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-    const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 - (state.optionSlPct ?? 12) / 100) : signal.slPrice;
-  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + (state.optionTpPct ?? 15) / 100) : signal.targetPrice;
+    const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 - (state.optionSlPct ?? 5) / 100) : signal.slPrice;
+  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + (state.optionTpPct ?? 8) / 100) : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   devLog(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
   const capitalDeployed = displayEntry * quantity;
