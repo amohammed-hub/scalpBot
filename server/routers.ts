@@ -4,7 +4,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAppUserByIdStrict, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess, createAccessGrant, listAccessGrants, revokeAccessGrant, extendAccessGrant } from "./db";
 import { getTierLimits, TIER_LIMITS, type TierLimits } from "../shared/tierLimits";
-import { upstoxCredentials, botSessions, tradeLog, type TradeLog, appUsers, notificationPreferences, adminSettings, broadcastMessages, alertTemplates, subscriptions, referrals } from "../drizzle/schema";
+import { upstoxCredentials, botSessions, tradeLog, signalJournal, type TradeLog, appUsers, notificationPreferences, adminSettings, broadcastMessages, alertTemplates, subscriptions, referrals } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
@@ -851,7 +851,13 @@ export const appRouter = router({
         };
 
         // Trade close callback — updates the trade row with exit data
-        const onTradeClose = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
+        const onTradeClose = async (
+          dbId: number,
+          exitPrice: number,
+          pnl: number,
+          exitReason: string,
+          excursions?: { maxFavorablePnl: number; maxAdversePnl: number },
+        ): Promise<void> => {
           const dbInner = await getDb();
           if (!dbInner) return;
           const entryRow = await dbInner
@@ -879,7 +885,15 @@ export const appRouter = router({
 
           // Update signal journal with trade outcome
           const holdDurationMs = entryRow[0]?.enteredAt ? Date.now() - entryRow[0].enteredAt.getTime() : 0;
-          updateJournalOnTradeClose(dbId, exitPrice, pnl, exitReason, holdDurationMs);
+          updateJournalOnTradeClose(
+            dbId,
+            exitPrice,
+            pnl,
+            exitReason,
+            holdDurationMs,
+            excursions?.maxFavorablePnl,
+            excursions?.maxAdversePnl,
+          );
 
           const state = getBotState(input.sessionToken);
           if (state) {
@@ -1371,11 +1385,32 @@ export const appRouter = router({
           const result = await dbInner.insert(tradeLog).values({ sessionToken: input.sessionToken, sessionId, ...trade });
           return Number((result as unknown as [{ insertId: number }])[0].insertId);
         };
-        const onTradeClose = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
+        const onTradeClose = async (
+          dbId: number,
+          exitPrice: number,
+          pnl: number,
+          exitReason: string,
+          excursions?: { maxFavorablePnl: number; maxAdversePnl: number },
+        ): Promise<void> => {
           const dbInner = await getDb();
           if (!dbInner) return;
           const capital = row.capital ?? 100000;
           await dbInner.update(tradeLog).set({ status: "closed", exitPrice, pnl, pnlPct: (pnl / capital) * 100, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
+          const [entryRow] = await dbInner
+            .select({ enteredAt: tradeLog.enteredAt })
+            .from(tradeLog)
+            .where(eq(tradeLog.id, dbId))
+            .limit(1);
+          const holdDurationMs = entryRow?.enteredAt ? Date.now() - entryRow.enteredAt.getTime() : 0;
+          updateJournalOnTradeClose(
+            dbId,
+            exitPrice,
+            pnl,
+            exitReason,
+            holdDurationMs,
+            excursions?.maxFavorablePnl,
+            excursions?.maxAdversePnl,
+          );
           const state = getBotState(input.sessionToken);
           if (state) await dbInner.update(botSessions).set({
             tradesCount: state.tradesCount,
@@ -2359,18 +2394,36 @@ export const appRouter = router({
         const db = await getDb();
         const isAdmin = await verifyAdminAccess(ctx);
         if (!db) return [];
-        const { inArray } = await import("drizzle-orm");
         const allTokens = [
           input.sessionToken,
           `${input.sessionToken}-slot1`,
           `${input.sessionToken}-slot2`,
+          `${input.sessionToken}-slot3`,
+          `${input.sessionToken}-slot4`,
         ];
         const trades = await db
           .select()
           .from(tradeLog)
           .where(inArray(tradeLog.sessionToken, allTokens))
           .orderBy(desc(tradeLog.enteredAt));
+        const excursionByTradeId = new Map<number, { mfe: number | null; mae: number | null }>();
+        if (trades.length > 0) {
+          const journalRows = await db
+            .select({
+              tradeId: signalJournal.tradeId,
+              mfe: signalJournal.maxFavorableExcursion,
+              mae: signalJournal.maxAdverseExcursion,
+            })
+            .from(signalJournal)
+            .where(inArray(signalJournal.tradeId, trades.map((trade: TradeLog) => trade.id)));
+          for (const journal of journalRows) {
+            if (journal.tradeId != null) {
+              excursionByTradeId.set(journal.tradeId, { mfe: journal.mfe, mae: journal.mae });
+            }
+          }
+        }
         return trades.map((t: TradeLog) => {
+          const excursions = excursionByTradeId.get(t.id);
           // Calculate duration
           let duration = "";
           if (t.enteredAt && t.exitedAt) {
@@ -2400,6 +2453,8 @@ export const appRouter = router({
             botSlot: t.botSlot ?? 0,
             strategy: t.signalReason ?? "",
             partialProfit: t.bookedPnl ?? 0,
+            mfe: excursions?.mfe ?? null,
+            mae: excursions?.mae ?? null,
             duration,
             enteredAt: t.enteredAt,
             exitedAt: t.exitedAt,
@@ -3063,7 +3118,13 @@ export const appRouter = router({
           });
           return Number((result as unknown as [{ insertId: number }])[0].insertId);
         };
-        const onTradeClose = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
+        const onTradeClose = async (
+          dbId: number,
+          exitPrice: number,
+          pnl: number,
+          exitReason: string,
+          excursions?: { maxFavorablePnl: number; maxAdversePnl: number },
+        ): Promise<void> => {
           const dbInner = await getDb();
           if (!dbInner) return;
           await dbInner.update(tradeLog).set({
@@ -3071,6 +3132,21 @@ export const appRouter = router({
             pnlPct: (pnl / input.capital) * 100,
             exitReason, exitedAt: new Date(),
           }).where(eq(tradeLog.id, dbId));
+          const [entryRow] = await dbInner
+            .select({ enteredAt: tradeLog.enteredAt })
+            .from(tradeLog)
+            .where(eq(tradeLog.id, dbId))
+            .limit(1);
+          const holdDurationMs = entryRow?.enteredAt ? Date.now() - entryRow.enteredAt.getTime() : 0;
+          updateJournalOnTradeClose(
+            dbId,
+            exitPrice,
+            pnl,
+            exitReason,
+            holdDurationMs,
+            excursions?.maxFavorablePnl,
+            excursions?.maxAdversePnl,
+          );
           // Persist dailyPnl and tradesCount to DB so they survive server restarts
           const slotState = getBotState(slotToken);
           if (slotState) {
