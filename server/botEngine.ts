@@ -5319,7 +5319,7 @@ async function tick(
   // Freeze the Renko ATR reference once today's 1m series can support a full ATR(14)
   // window. Until then this stays undefined and every Renko call site uses live ATR,
   // which is the previous behaviour. Cleared at the daily rollover above.
-  if (state.renkoAtrRef === undefined && state.candles.length >= RENKO_FREEZE_MIN_CANDLES) {
+    if (state.renkoAtrRef === undefined && state.candles.length >= 30) { // 30 = full ATR(14) window + margin
     const renkoFreezeAtr = calcATR(state.candles, 14);
     if (Number.isFinite(renkoFreezeAtr) && renkoFreezeAtr > 0) {
       state.renkoAtrRef = renkoFreezeAtr;
