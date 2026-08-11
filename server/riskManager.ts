@@ -364,6 +364,7 @@ export async function executeKillSwitch(
   allBots: BotState[],
   stopBotFn: (sessionToken: string) => void,
   onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
+  emitActivity: (sessionToken: string, category: string, message: string) => void = () => {},
 ): Promise<{ closedTrades: number; stoppedBots: number; failedExits: string[] }> {
   let closedTrades = 0;
   let stoppedBots = 0;
@@ -399,34 +400,47 @@ export async function executeKillSwitch(
         const { placeUpstoxOrder } = await import("./botEngine");
                 const killOrderId = await placeUpstoxOrder(bot.accessToken, trade.instrumentToken, exitDir, (trade.quantity - (trade.bookedQty ?? 0)), bot.lotSize, trade.mode !== "live");
         if (!killOrderId) {
-          // ORDER FAILED — but still close in DB and stop bot
-          // The position remains OPEN on Upstox — flag for user attention
-          console.error(`[KillSwitch] ⚠️ EXIT ORDER FAILED for ${trade.symbolLabel ?? trade.symbol} — position may still be open on Upstox!`);
+          // LIVE EXIT ORDER FAILED — position is STILL OPEN on Upstox.
+          // SAFETY CONTRACT: do NOT close the DB trade here. Keeping the DB row
+          // open preserves the live position for the engine's retry loop so a
+          // broker-confirmed exit can still be placed (square-off window is not
+          // yet past or the engine will re-attempt at market close). Fabricating
+          // a DB-only close would leave an unmonitored live position and corrupt P&L.
+          console.error(`[KillSwitch] ⚠️ LIVE EXIT ORDER FAILED for ${trade.symbolLabel ?? trade.symbol} — position still open on Upstox, DB row intentionally left OPEN for retry`);
           failedExits.push(trade.symbolLabel ?? trade.symbol ?? bot.sessionToken.slice(0, 8));
           upstoxOrderFailed = true;
-          // Don't `continue` — ALWAYS clean up DB state below
         }
       }
 
-      // ALWAYS close trade in DB (regardless of Upstox order success)
-      const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
-      const remainingPnl = trade.direction === "BUY"
-        ? (exitPrice - trade.entryPrice) * remainingQty
-        : (trade.entryPrice - exitPrice) * remainingQty;
-      const pnl = remainingPnl + (trade.bookedPnl ?? 0);
-      const exitReason = upstoxOrderFailed
-        ? "Kill Switch — DB closed but Upstox exit FAILED (CHECK BROKER)"
-        : "Kill Switch — Emergency Close";
-      await onTradeClose(trade.dbId, exitPrice, pnl, exitReason);
-      bot.openTrade = null;
-
-      // Update daily P&L
-      if ((trade as any).bookedPnlAddedToDaily) {
-        bot.dailyPnl += remainingPnl;
+      if (upstoxOrderFailed) {
+        // Live position not broker-confirmed — DB state must stay open so the
+        // retry/square-off logic can still exit it at market price.
+        // Mark the bot's open trade with a kill-switch flag so the tick loop
+        // re-attempts exit placement before any other logic touches it.
+        if (bot.openTrade) (bot.openTrade as any).killSwitchExitFailed = true;
+        emitActivity(bot.sessionToken, "criticalAlerts",
+          `🚨 LIVE exit order FAILED during kill switch for ${trade.symbolLabel ?? trade.symbol} — position still open on Upstox. Kill switch still applied; engine will re-attempt exit.`);
+        console.error(`[KillSwitch] DB trade left open for ${trade.symbolLabel ?? trade.symbol} pending broker-confirmed exit`);
       } else {
-        bot.dailyPnl += pnl;
+        // Broker exit succeeded (or mode is paper/demo) — close trade in DB.
+        const remainingQty = trade.quantity - (trade.bookedQty ?? 0);
+        const remainingPnl = trade.direction === "BUY"
+          ? (exitPrice - trade.entryPrice) * remainingQty
+          : (trade.entryPrice - exitPrice) * remainingQty;
+        const pnl = remainingPnl + (trade.bookedPnl ?? 0);
+        await onTradeClose(trade.dbId, exitPrice, pnl, "Kill Switch — Emergency Close");
+        bot.openTrade = null;
+        // Update daily P&L only when the trade is genuinely broker-confirmed closed.
+        if ((trade as any).bookedPnlAddedToDaily) {
+          bot.dailyPnl += remainingPnl;
+        } else {
+          bot.dailyPnl += pnl;
+        }
       }
-      closedTrades++;
+      // A failed live exit means the position is STILL OPEN on Upstox — do NOT
+      // count it as closed or touch daily P&L; the engine retry loop will exit
+      // it broker-confirmed and close the DB row at that time.
+      if (!upstoxOrderFailed) closedTrades++;
     }
 
     // ALWAYS stop the bot (even if Upstox order failed)
@@ -438,11 +452,14 @@ export async function executeKillSwitch(
 
   return { closedTrades, stoppedBots, failedExits };
 }
-export function getDemoCostConfig(sessionToken: string = "default"): { brokerage: number; slippagePct: number } {
+export function getDemoCostConfig(sessionToken: string = "default"): DemoCostConfig {
   return demoCostBySession.get(sessionToken) ?? defaultDemoCost;
 }
-export async function setDemoCostConfig(brokerage: number, slippagePct: number, sessionToken: string = "default"): Promise<{ brokerage: number; slippagePct: number }> {
-  const config = { brokerage, slippagePct };
+export async function setDemoCostConfig(brokeragePer: number, slippagePct: number, sessionToken: string = "default"): Promise<{ brokeragePer: number; slippagePct: number; sttPct: number }> {
+  // Preserve the persisted STT% and fill in the other fields as a complete config —
+  // never store a partial config, which previously corrupted demo P&L math.
+  const existing = demoCostBySession.get(sessionToken) ?? defaultDemoCost;
+  const config: DemoCostConfig = { slippagePct, brokeragePer, sttPct: existing.sttPct };
   demoCostBySession.set(sessionToken, config);
   // Persist to DB so it survives Railway restarts
   try {

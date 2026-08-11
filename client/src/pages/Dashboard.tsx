@@ -740,7 +740,7 @@ export default function Dashboard() {
   const { data: demoCosts } = trpc.demoCosts.get.useQuery(undefined, { enabled: authReady, staleTime: 30000 });
   const [localBrokerage, setLocalBrokerage] = useState(20);
   const [localSlippage, setLocalSlippage] = useState(0.05);
-  useEffect(() => { if (demoCosts) { setLocalBrokerage(demoCosts.brokerage); setLocalSlippage(demoCosts.slippagePct); } }, [demoCosts]);
+  useEffect(() => { if (demoCosts) { setLocalBrokerage(demoCosts.brokeragePer); setLocalSlippage(demoCosts.slippagePct); } }, [demoCosts]);
 
   // ── Mutations ────────────────────────────────────────────────────────────────
   const startMutation = trpc.bot.start.useMutation({

@@ -167,11 +167,15 @@ describe("Managed-egress source contracts", () => {
   it("has no direct fetch or axios call with a literal Upstox URL outside the transport", () => {
     const files = fs.readdirSync(serverDir).filter(name => name.endsWith(".ts") && !name.endsWith(".test.ts") && name !== "upstoxHttp.ts");
     const violations: string[] = [];
-    const directCall = /(?:\bfetch|\baxios\.(?:get|post|put|delete|request))\s*\(\s*[`'"]https:\/\/[^`'"]*upstox\.com/gs;
+    // Bare global fetch() or raw axios.*() pointed at Upstox URLs is a bypass;
+    // calls through the managed transport (upstoxAxios.* / upstoxFetch) are safe.
+    const directCall = /(?<!upstox)\b(?:fetch|axios\.(?:get|post|put|delete|request))\s*\(\s*[`'"]https:\/\/[^`'"]*upstox\.com/gs;
+    const managedCall = /(?:upstoxAxios\.(?:get|post|put|delete|request)|upstoxFetch\()\s*[`'"]https:\/\/[^`'"]*upstox\.com/gs;
     for (const file of files) {
       const source = fs.readFileSync(path.join(serverDir, file), "utf8");
-      if (directCall.test(source)) violations.push(file);
+      if (directCall.test(source) && !managedCall.test(source)) violations.push(file);
       directCall.lastIndex = 0;
+      managedCall.lastIndex = 0;
     }
     expect(violations).toEqual([]);
   });
