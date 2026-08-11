@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import * as botEngine from "./botEngine";
 import { executeKillSwitch } from "./riskManager";
 import {
   KILL_SWITCH_LAST_ERROR,
@@ -47,7 +48,51 @@ describe("bot session lifecycle policy", () => {
 
     expect(stopBot).toHaveBeenCalledOnce();
     expect(stopBot).toHaveBeenCalledWith("owner-token-slot1");
-    expect(result).toEqual({ closedTrades: 0, stoppedBots: 1 });
+    expect(result).toEqual({ closedTrades: 0, stoppedBots: 1, failedExits: [] });
+  });
+
+  it("reports a failed live exit and leaves the DB and in-memory trade open", async () => {
+    const stopBot = vi.fn();
+    const onTradeClose = vi.fn().mockResolvedValue(undefined);
+    const placeOrder = vi.spyOn(botEngine, "placeUpstoxOrder").mockResolvedValue(null);
+    const liveBot = {
+      sessionToken: "owner-token-slot2",
+      status: "running",
+      accessToken: "live-access-token",
+      lotSize: 1,
+      dailyPnl: 0,
+      lastPrice: 110,
+      openTrade: {
+        dbId: 77,
+        mode: "live",
+        direction: "BUY",
+        entryPrice: 100,
+        quantity: 50,
+        bookedQty: 0,
+        instrumentToken: "NSE_FO|TEST",
+        symbol: "NIFTY24AUG",
+        symbolLabel: "NIFTY TEST",
+      },
+    } as any;
+
+    try {
+      const result = await executeKillSwitch([liveBot], stopBot, onTradeClose);
+
+      expect(placeOrder).toHaveBeenCalledOnce();
+      expect(onTradeClose).not.toHaveBeenCalled();
+      expect(stopBot).toHaveBeenCalledOnce();
+      expect(stopBot).toHaveBeenCalledWith("owner-token-slot2");
+      expect(liveBot.openTrade).not.toBeNull();
+      expect(liveBot.openTrade.killSwitchExitFailed).toBe(true);
+      expect(liveBot.dailyPnl).toBe(0);
+      expect(result).toEqual({
+        closedTrades: 0,
+        stoppedBots: 1,
+        failedExits: ["NIFTY TEST"],
+      });
+    } finally {
+      placeOrder.mockRestore();
+    }
   });
 });
 
