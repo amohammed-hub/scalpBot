@@ -1193,35 +1193,55 @@ export const appRouter = router({
         }
         return { success: true };
       }),
-    // Force-reset a stuck bot — clears paused state, monitoring flags, open trade reference
+    // Force-reset only transient stuck state. It must never orphan a live or demo position.
     forceReset: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema }))
       .mutation(async ({ input, ctx }) => {
         await verifySessionOwnership(ctx, input.sessionToken);
         const state = getBotState(input.sessionToken);
+        if (state?.openTrade) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Force reset blocked: this bot has an open trade. Use the monitored close/stop path; reset cannot discard position state.",
+          });
+        }
+
+        // The durable trade log is authoritative after a restart. If it cannot be
+        // checked, fail closed rather than turning a potentially managed position loose.
+        const db = await getDb();
+        if (!db) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Force reset blocked: trade state could not be verified.",
+          });
+        }
+        const [durableOpenTrade] = await db
+          .select({ id: tradeLog.id })
+          .from(tradeLog)
+          .where(and(eq(tradeLog.sessionToken, input.sessionToken), eq(tradeLog.status, "open")))
+          .limit(1);
+        if (durableOpenTrade) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Force reset blocked: an open trade exists in the durable ledger. Resolve it through the monitored close path first.",
+          });
+        }
+
         if (state) {
           state.status = "running";
           state.consecutiveRejections = 0;
           state.lastError = null;
           state.isOpeningTrade = false;
-          state.openTrade = null;
-          state.dailyLossAcknowledged = true; // Don't re-trigger loss halt after reset
-          console.log(`[ForceReset] ${state.sessionToken.slice(0,8)} — cleared all stuck states, now running.`);
+          // Preserve dailyLossAcknowledged: a reset must never acknowledge a halt.
+          console.log(`[ForceReset] ${state.sessionToken.slice(0,8)} — cleared transient stuck state; no open trade was found.`);
         } else {
-          console.warn(`[ForceReset] Bot ${input.sessionToken.slice(0,8)} not in memory.`);
+          console.warn(`[ForceReset] Bot ${input.sessionToken.slice(0,8)} not in memory; durable ledger is clear.`);
         }
-        try {
-          const db = await getDb();
-          if (db) {
-            await db
-              .update(botSessions)
-              .set({ status: "running", stoppedAt: null, lastError: null })
-              .where(eq(botSessions.sessionToken, input.sessionToken));
-          }
-        } catch (dbErr) {
-          console.error(`[ForceReset] DB update failed:`, dbErr);
-        }
-        return { success: true };
+        await db
+          .update(botSessions)
+          .set({ status: "running", stoppedAt: null, lastError: null })
+          .where(eq(botSessions.sessionToken, input.sessionToken));
+        return { success: true, hadInMemoryState: Boolean(state) };
       }),
     // Set carry-forward preference — if true, skip auto square-off at market close
     setCarryForward: publicProcedure

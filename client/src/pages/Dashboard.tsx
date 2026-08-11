@@ -826,7 +826,7 @@ export default function Dashboard() {
 
   const forceResetMutation = trpc.bot.forceReset.useMutation({
     onSuccess: (_data, variables) => {
-      toast.success("🔧 Force reset — bot is now scanning for signals.");
+      toast.success("🔧 Force reset completed — no open trade was present; bot is scanning for signals.");
       utils.multiBots.allStatus.setData({ sessionToken, isAdmin: meQuery.data?.role === "admin" }, (old: any) => {
         if (!old) return old;
         return old.map((b: any) => b.sessionToken === variables.sessionToken ? { ...b, status: "running", openTrade: null } : b);
@@ -2580,12 +2580,12 @@ export default function Dashboard() {
                       </button>
                       <button
                         onClick={() => {
-                          if (confirm("Force Reset will clear ALL bot state (paused, monitoring, stale position). Continue?")) {
+                          if (confirm("Force Reset clears only transient paused/monitoring state. It is blocked whenever an open trade exists. Continue?")) {
                             forceResetMutation.mutate({ sessionToken: bot.sessionToken });
                           }
                         }}
                         className="px-2 py-0.5 rounded-md bg-orange-500/15 border border-orange-500/30 text-orange-400 hover:bg-orange-500/25 text-[10px] font-medium flex items-center gap-0.5 transition-all"
-                        title="Force Reset — clears paused state, monitoring flags, and stale position reference"
+                        title="Force Reset — clears transient paused and monitoring state only; open trades are protected"
                       >
                         🔧 Reset
                       </button>
