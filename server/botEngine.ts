@@ -219,7 +219,10 @@ export interface BotState {
   // Legacy admin mode: may relax non-risk workflow limits, but must never bypass hard safety barriers
   unlimitedTrades?: boolean;
   // Renko profit-lock exit is explicit and disabled by default
-  renkoExitEnabled?: boolean;
+    renkoExitEnabled?: boolean;
+  // Renko ATR reference, frozen once per trading day after warmup. Undefined = use live ATR.
+  renkoAtrRef?: number;
+  renkoAtrFrozenAt?: number;
   // Opening Burst Strategy (9:15-9:25 AM)
   openingBurstMode?: boolean;
   openingBurstTradeTaken?: boolean; // true after burst trade taken today (reset daily)
@@ -5307,6 +5310,8 @@ async function tick(
     state.openingBurstTradeTaken = false; // Reset Opening Burst for new day
     state.boxingState = undefined; // Reset Boxing Strategy for new day
     state.orbV8State = undefined; // Reset ORB V8 Strategy for new day
+    state.renkoAtrRef = undefined; // Re-freeze the Renko ATR reference after the new day warms up
+    state.renkoAtrFrozenAt = undefined;
     state.dailyLossAcknowledged = false; // Reset so new day's losses trigger pause correctly
     instrumentCooldowns.clear(); // Reset per-instrument cooldowns for new day
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
