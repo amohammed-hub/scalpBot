@@ -1689,7 +1689,8 @@ export const appRouter = router({
           // Shadow mode status
           shadowMode: state.shadowMode ?? false,
           shadowLogCount: state.shadowLog?.length ?? 0,
-          // Adaptive Regime info
+          // D6 authoritative regime plus legacy ADX transition diagnostics.
+          regimeV2: state.regimeV2 ?? null,
           currentRegime: state.currentRegime ?? null,
           currentADX: state.currentADX ?? null,
           adaptiveRegimeEnabled: state.adaptiveRegimeEnabled !== false,
@@ -2654,6 +2655,7 @@ export const appRouter = router({
             isMCXLateSessionMode: inMem?.isMCXLateSessionMode ?? false,
             heroZeroMode: inMem?.heroZeroMode ?? false,
             openingBurstMode: inMem?.openingBurstMode ?? false,
+            regimeV2: inMem?.regimeV2 ?? null,
             currentRegime: inMem?.currentRegime ?? null,
             currentADX: inMem?.currentADX ?? null,
             // Health indicator fields
@@ -4378,7 +4380,7 @@ export const appRouter = router({
             .limit(20);
           recentTrades = rows;
         }
-        return computeMarketRiskScore(candles, recentTrades, input.sessionToken);
+        return computeMarketRiskScore(candles, recentTrades, input.sessionToken, undefined, primaryBot?.regimeV2);
       }),
 
     /** Cached risk score (no re-compute, fast) */

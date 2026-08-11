@@ -1033,8 +1033,8 @@ export default function Dashboard() {
   const averagingEnabled = (liveData as any)?.averagingEnabled ?? true;
   const averagingLossThreshold = (liveData as any)?.averagingLossThreshold ?? 0.20;
 
-  // Adaptive Regime info
-  const currentRegime = (liveData as any)?.currentRegime as "trending" | "choppy" | null;
+  // D6 authoritative market regime; ADX is retained as a supporting diagnostic.
+  const regimeV2 = (liveData as any)?.regimeV2 as "TRENDING" | "RANGING" | "VOLATILE" | "DEAD" | null;
   const currentADX = (liveData as any)?.currentADX as number | null;
 
   // VRP / OI Flow / Max Pain state
@@ -1575,15 +1575,19 @@ export default function Dashboard() {
               Re-entry cooldown ({reEntryCandles}/2)
             </div>
           )}
-          {/* Adaptive Regime Badge */}
-          {isRunning && currentRegime && (
+          {/* D6 authoritative market-regime badge */}
+          {isRunning && regimeV2 && (
             <div className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg ${
-              currentRegime === "trending"
+              regimeV2 === "TRENDING"
                 ? "bg-teal-500/15 border border-teal-500/30 text-teal-400"
-                : "bg-amber-500/15 border border-amber-500/30 text-amber-400"
+                : regimeV2 === "RANGING"
+                  ? "bg-amber-500/15 border border-amber-500/30 text-amber-400"
+                  : regimeV2 === "VOLATILE"
+                    ? "bg-red-500/15 border border-red-500/30 text-red-400"
+                    : "bg-slate-500/15 border border-slate-500/30 text-slate-400"
             }`}>
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
-              {currentRegime === "trending" ? "Trending" : "Choppy"} (ADX {currentADX?.toFixed(0) ?? "?"})
+              {regimeV2} (ADX {currentADX?.toFixed(0) ?? "?"})
             </div>
           )}
           {/* VRP Regime Badge */}

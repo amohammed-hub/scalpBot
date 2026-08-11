@@ -9,8 +9,8 @@
  *   6. Kill switch (close all positions + halt all bots)
  */
 
-import type { BotState, Candle } from "./botEngine";
-import { classifyMarketRegime, placeUpstoxOrder } from "./botEngine";
+import type { BotState, Candle, RegimeV2 } from "./botEngine";
+import { placeUpstoxOrder } from "./botEngine";
 import { upstoxAxios } from "./upstoxHttp";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 
@@ -123,6 +123,7 @@ export async function computeMarketRiskScore(
   recentTrades: Array<{ exitReason: string | null; pnl: number | null }>,
   sessionToken: string = "default",
   accessToken?: string | null,
+  regimeV2?: RegimeV2,
 ): Promise<MarketRiskScore> {
   const reasons: string[] = [];
   let score = 0;
@@ -133,13 +134,12 @@ export async function computeMarketRiskScore(
   else if (vix > 25) { score += 25; reasons.push(`India VIX high (${vix.toFixed(1)})`); }
   else if (vix > 20) { score += 10; reasons.push(`India VIX elevated (${vix.toFixed(1)})`); }
 
-  // 2. Market regime
-  const { regime, label } = candles.length >= 20
-    ? classifyMarketRegime(candles)
-    : { regime: "unknown" as const, label: "Insufficient data" };
-  if (regime === "high_vol") { score += 30; reasons.push(`Regime: ${label}`); }
-  else if (regime === "ranging") { score += 15; reasons.push(`Regime: ${label} (choppy)`); }
-  else if (regime === "low_vol") { score += 5; }
+  // 2. Market regime — D6: use the same per-tick V2 snapshot held by BotState.
+  // This function intentionally does not classify candles independently.
+  const regime = regimeV2 ?? "UNKNOWN";
+  if (regime === "VOLATILE") { score += 30; reasons.push(`Regime: ${regime}`); }
+  else if (regime === "RANGING") { score += 15; reasons.push(`Regime: ${regime} (choppy)`); }
+  else if (regime === "DEAD") { score += 5; reasons.push(`Regime: ${regime}`); }
 
   // 3. Consecutive stop-losses (from last 20 trades)
   const last20 = recentTrades.slice(-20);

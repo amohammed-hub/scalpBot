@@ -106,7 +106,7 @@ export interface Signal {
   partial2RPrice?: number;  // price at which to book next 25%
   // V2 regime-based additions
   sizeReduction?: number;   // 0.5 for VOLATILE regime (reduce position size by 50%)
-  regimeV2?: string;        // TRENDING | RANGING | VOLATILE | DEAD
+  regimeV2?: RegimeV2;      // authoritative regime: TRENDING | RANGING | VOLATILE | DEAD
 }
 
 export interface OpenTrade {
@@ -286,8 +286,11 @@ export interface BotState {
   optionTpPct?: number;    // Option Target % (default 8). UI: "Target %" dropdown  
   quantityMode?: "auto" | "manual";  // auto = risk-based, manual = user qty
   manualQuantity?: number;            // used when quantityMode = "manual"
-  currentRegime?: "trending" | "choppy"; // last detected regime
-  currentADX?: number; // last ADX value
+  // Legacy ADX hysteresis state used only to manage layer transitions. It is not the
+  // authoritative market classification; see regimeV2 below.
+  currentRegime?: "trending" | "choppy";
+  currentADX?: number;
+  regimeV2?: RegimeV2; // D6 authoritative per-tick regime from detectRegimeV2
   lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
   regimeManualOverride?: boolean; // true if user manually toggled a layer since last regime check
   userDisabledLayers?: string[]; // layers the user explicitly disabled — regime won't re-enable these
@@ -782,6 +785,10 @@ export function calcVWAPDeviation(
  * RSI (momentum direction) — all available from 1-min candles.
  */
 export type MarketRegime = "strong_trend" | "weak_trend" | "ranging" | "high_vol" | "low_vol";
+/**
+ * @deprecated D6 keeps this only for the legacy V1 signal path. New state, risk,
+ * dashboard, activity, and journal consumers must use the stored V2 regime.
+ */
 export function classifyMarketRegime(candles: Candle[]): { regime: MarketRegime; label: string } {
   if (candles.length < 30) return { regime: "ranging", label: "Insufficient data" };
   const closes = candles.map(c => c.close);
@@ -1588,7 +1595,14 @@ export function generateSignal(
 // ── V2 Regime Detection ─────────────────────────────────────────────────────
 export type RegimeV2 = "TRENDING" | "RANGING" | "VOLATILE" | "DEAD";
 
-export function detectRegimeV2(candles: Candle[]): { regime: RegimeV2; label: string; adx: number; atrRatio: number } {
+export interface RegimeV2Snapshot {
+  regime: RegimeV2;
+  label: string;
+  adx: number;
+  atrRatio: number;
+}
+
+export function detectRegimeV2(candles: Candle[]): RegimeV2Snapshot {
   if (candles.length < 30) return { regime: "DEAD", label: "Insufficient data", adx: 0, atrRatio: 0 };
   const closes = candles.map(c => c.close);
   const price = closes[closes.length - 1];
@@ -1701,6 +1715,7 @@ export function generateSignalV2(
   consecutiveSameDirectionSLs = 0,
   lastSlExitDirection: "BUY" | "SELL" | null = null,
   enabledLayers?: string[],
+  regimeSnapshot?: RegimeV2Snapshot,
 ): Signal {
   // ── Early returns ──────────────────────────────────────────────────────────
   if (!candles || candles.length === 0) {
@@ -1742,7 +1757,9 @@ export function generateSignalV2(
   }
 
   // ── LAYER 1: Regime Detection ─────────────────────────────────────────────
-  const regime = detectRegimeV2(candles);
+  // The tick handler supplies this snapshot so live execution computes market
+  // regime exactly once. Direct/backtest callers may omit it and compute locally.
+  const regime = regimeSnapshot ?? detectRegimeV2(candles);
 
   // DEAD regime → no trades
   if (regime.regime === "DEAD") {
@@ -5419,6 +5436,15 @@ async function tick(
 
   console.log(`[tick] CANDLES OK — ${state.sessionToken.slice(0,8)} | price=${price} | candles1m=${state.candles.length} | 5m=${state.candles5m.length}`);
 
+  // D6: calculate one authoritative regime after fresh candles are loaded. The
+  // same immutable snapshot is passed to V2 generation and surfaced everywhere.
+  const tickRegimeSnapshot = detectRegimeV2(state.candles);
+  const previousRegimeV2 = state.regimeV2;
+  state.regimeV2 = tickRegimeSnapshot.regime;
+  if (previousRegimeV2 !== state.regimeV2) {
+    emitActivity(state.sessionToken, "signal", `📊 Regime V2 → ${state.regimeV2} | ${tickRegimeSnapshot.label}`);
+  }
+
   // Persist live price to DB on every tick — fires regardless of open trade state
   // This is the primary mechanism for keeping the Dashboard current price updated
   if (onTick) onTick(state).catch(() => {});
@@ -6759,11 +6785,15 @@ const isExpiryDay = isOptionInstrument && (
         state.candles5m, prevDayHigh, prevDayLow, prevDayClose,
         state.consecutiveSameDirectionSLs, state.lastSlExitDirection,
         state.enabledLayers || [],
+        tickRegimeSnapshot,
       );
     } else {
       signal = generateSignal(state.candles, slMult, effectiveTargetMult, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, false, state.enabledLayers || []);
     }
   }
+  // Every signal path, including specialised and legacy V1 paths, is journalled
+  // against the one V2 state value calculated above.
+  signal.regimeV2 ??= state.regimeV2;
   // ── Multi-Layer Strategy Cascade: if main signal is HOLD, try Red Bar Theory, Trikal, Adeeb ──
   // ── MULTI-STRATEGY ENGINE: Run ALL 4 layers in PARALLEL, pick best signal ──
   // Per-layer trade limits (max trades per day per layer)
@@ -7153,7 +7183,7 @@ const isExpiryDay = isOptionInstrument && (
         sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
         direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
         entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-        atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `ADX ${adxNow.toFixed(1)} < 25`,
+        atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `ADX ${adxNow.toFixed(1)} < 25`,
       });
       return;
     }
@@ -7194,7 +7224,7 @@ const isExpiryDay = isOptionInstrument && (
         sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
         direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
         entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-        atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `Anti-chase: ${movePct}% in 3 candles`,
+        atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `Anti-chase: ${movePct}% in 3 candles`,
       });
       return;
     }
@@ -7377,7 +7407,7 @@ const isExpiryDay = isOptionInstrument && (
           sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
           direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
           entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-          atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `VRP/OI Gate blocked`,
+          atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `VRP/OI Gate blocked`,
         });
         return;
       }
@@ -7738,7 +7768,7 @@ const isExpiryDay = isOptionInstrument && (
             sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
             direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
             entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-            atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: `Spread ${spreadPct.toFixed(1)}% > 12%`,
+            atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `Spread ${spreadPct.toFixed(1)}% > 12%`,
           });
           return;
         }
@@ -7929,7 +7959,7 @@ const isExpiryDay = isOptionInstrument && (
       sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
       direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
       entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-      atr: signal.atr, regime: signal.marketRegime, outcome: "rejected", rejectReason: exposureCheck.reason ?? "Exposure cap",
+      atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: exposureCheck.reason ?? "Exposure cap",
     });
     return;
   }
@@ -8289,7 +8319,7 @@ const isExpiryDay = isOptionInstrument && (
     sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
     direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
     entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-    atr: signal.atr, regime: signal.marketRegime, outcome: "traded", tradeId: dbId,
+    atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "traded", tradeId: dbId,
   });
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
