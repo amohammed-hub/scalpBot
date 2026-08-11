@@ -89,9 +89,6 @@ export default function Backtest() {
   const [compareResult, setCompareResult] = useState<any>(null);
   const [strategyFilter, setStrategyFilter] = useState("all");
 
-  const handleLabStop = () => {
-    stopLabMutation.mutate({ sessionToken: `${sessionToken}-slot${LAB_SLOT}` });
-  };
   const runMutation = trpc.backtest.run.useMutation({
     onSuccess: (data) => {
       setResult(data);

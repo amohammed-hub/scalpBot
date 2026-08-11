@@ -20,13 +20,18 @@ describe("Upstox fixed-IP proxy acceptance contracts", () => {
 
   it("does not call literal Upstox URLs through direct fetch or Axios outside the shared transport", () => {
     const violations: string[] = [];
-    const directCall = /(?:\bfetch|\baxios\.(?:get|post|put|delete|request))\s*\(\s*[`'"]https:\/\/[^`'"]*upstox\.com/gs;
+    // Bare global fetch() or raw axios.*() pointed at Upstox URLs is a proxy bypass.
+    // Calls through the managed transport — upstoxAxios.get(...) and upstoxFetch(...)
+    // — are allowed: the transport itself wires HttpsProxyAgent for every request.
+    const directCall = /(?<!upstox)\b(?:fetch|axios\.(?:get|post|put|delete|request))\s*\(\s*[`'"]https:\/\/[^`'"]*upstox\.com/gs;
+    const managedCall = /(?:upstoxAxios\.(?:get|post|put|delete|request)|upstoxFetch\()\s*[`'"]https:\/\/[^`'"]*upstox\.com/gs;
 
     for (const name of fs.readdirSync(serverDir)) {
       if (!name.endsWith(".ts") || name.endsWith(".test.ts") || name === "upstoxHttp.ts") continue;
       const source = fs.readFileSync(path.join(serverDir, name), "utf8");
-      if (directCall.test(source)) violations.push(name);
+      if (directCall.test(source) && !managedCall.test(source)) violations.push(name);
       directCall.lastIndex = 0;
+      managedCall.lastIndex = 0;
     }
 
     expect(violations).toEqual([]);

@@ -1,4 +1,6 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { useLocation } from "wouter";
+import { toast } from "sonner";
 import { Shield, Zap, TrendingUp, Cpu, Lock, CheckCircle2, ArrowRight, Sparkles } from "lucide-react";
 import { trpc } from "@/lib/trpc"; // 👈 Added this missing import
 
@@ -6,6 +8,7 @@ export default function Login() {
   const [mobile, setMobile] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState("");
+  const [, navigate] = useLocation();
   const loginFormRef = useRef<HTMLDivElement>(null);
 
   const scrollToLogin = () => {
@@ -17,7 +20,7 @@ export default function Login() {
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (mobile.length !== 10) {
-      alert("Please enter a valid 10-digit mobile number.");
+      toast.error("Please enter a valid 10-digit mobile number.");
       return;
     }
 
@@ -25,11 +28,13 @@ export default function Login() {
       const result = await sendOtpMutation.mutateAsync({ mobile });
       if (result.success) {
         setOtpSent(true);
+        setResendCooldown(60);
+        toast.success("OTP sent");
       } else {
-        alert(result.message || "Failed to send OTP. Please try again.");
+        toast.error(result.message || "Failed to send OTP. Please try again.");
       }
     } catch (err: any) {
-      alert(err?.message || "Failed to send OTP. Please try again.");
+      toast.error(err?.message || "Failed to send OTP. Please try again.");
     }
   };
   
@@ -39,22 +44,39 @@ export default function Login() {
     e.preventDefault();
 
     try {
-      // Requests the cookie from the backend
+      // Requests the cookie from the backend.
       const result = await verifyOtpMutation.mutateAsync({
         mobile: mobile,
         code: otp,
-        sessionToken: localStorage.getItem("scalpbot_session_token") || "admin_session",
+        sessionToken: undefined,
       });
 
       if (result.success) {
-        window.location.assign("/dashboard");
+        // Adopt the SERVER-OWNED durable session token (never fabricate one).
+        // verifyOtp → db.ts strictUserLookup guarantees the durable token matches
+        // the tenant, so bots are never shared across users.
+        const durableSessionToken = result.user?.sessionToken;
+        if (durableSessionToken) {
+          localStorage.setItem("scalpbot_session", durableSessionToken);
+          localStorage.setItem("scalpbot_auth_token", result.token || "");
+        }
+        toast.success("Login verified — welcome back");
+        navigate("/dashboard");
       } else {
-        alert(result.message || "Invalid OTP code.");
+        toast.error(result.message || "Invalid OTP code");
       }
     } catch (err: any) {
-      alert(err?.message || "Verification failed. Please try again.");
+      toast.error(err?.message || "Verification failed. Please try again.");
     }
   };
+
+  // 60-second resend countdown after OTP is sent
+  const [resendCooldown, setResendCooldown] = useState(0);
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
 
   return (
     <div className="min-h-screen bg-[#0B0E14] text-slate-100 font-sans selection:bg-teal-500 selection:text-white">
@@ -170,10 +192,23 @@ export default function Login() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setOtpSent(false)}
-                  className="w-full text-xs text-slate-400 hover:text-slate-200 transition-colors text-center block pt-2"
+                  onClick={async () => {
+                    if (resendCooldown > 0) {
+                      toast.error(`Please wait ${resendCooldown}s before resending`);
+                      return;
+                    }
+                    const result = await sendOtpMutation.mutateAsync({ mobile });
+                    if (result.success) {
+                      setResendCooldown(60);
+                      toast.success("OTP resent");
+                    } else {
+                      toast.error(result.message || "Failed to resend OTP");
+                    }
+                  }}
+                  disabled={resendCooldown > 0}
+                  className="w-full text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-center block pt-2"
                 >
-                  Change mobile number
+                  {resendCooldown > 0 ? `Resend OTP in ${resendCooldown}s` : "Resend OTP"} · Change mobile number
                 </button>
               </form>
             )}

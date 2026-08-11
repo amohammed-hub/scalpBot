@@ -299,31 +299,36 @@ export interface ShadowSummary {
 // ── In-memory store ───────────────────────────────────────────────────────────
 const bots = new Map<string, BotState>();
 
-// Per-instrument cooldown: blocks re-entry on the same instrument within 30 minutes
-const instrumentCooldowns = new Map<string, number>(); // symbol → last entry timestamp (ms)
+// Per-instrument cooldown: blocks re-entry on the same instrument within 30 minutes, scoped per tenant
+function getTenantInstrumentKey(sessionToken: string, symbol: string): string {
+  return `${sessionToken}|${(symbol ?? "").toUpperCase()}`;
+}
+const instrumentCooldowns = new Map<string, number>(); // tenant|symbol → last entry timestamp (ms)
 // ── GLOBAL CROSS-BOT SYMBOL LOCK (FIX: duplicate trades across bot slots) ─────
-// Synchronous in-memory guard. When Bot A starts entering "BANKNIFTY 57800 CE",
-// it locks the symbol instantly. Bot B sees the lock on the same event loop tick.
+// Synchronous in-memory guard, SCOPED PER TENANT. When Bot A starts entering
+// "BANKNIFTY 57800 CE", it locks the tenant+symbol pair instantly. Bot B belonging to the
+// SAME tenant sees the lock on the same event loop tick; a DIFFERENT tenant's bots are
+// never blocked (cross-tenant isolation).
 // Solves the DB race condition where both bots pass the async DB check simultaneously.
-const globalSymbolLock: Map<string, number> = new Map(); // symbol → lock timestamp
-
-function isSymbolGloballyLocked(symbol: string): boolean {
-  const lockTime = globalSymbolLock.get(symbol);
+function getTenantSymbolLockKey(sessionToken: string, symbol: string): string {
+  return `${sessionToken}|${(symbol ?? "").toUpperCase()}`;
+}
+const globalSymbolLock: Map<string, number> = new Map(); // tenant|symbol → lock timestamp
+function isSymbolGloballyLocked(sessionToken: string, symbol: string): boolean {
+  const lockTime = globalSymbolLock.get(getTenantSymbolLockKey(sessionToken, symbol));
   if (!lockTime) return false;
   if (Date.now() - lockTime > 60_000) { // 60 sec auto-expiry
-    globalSymbolLock.delete(symbol);
+    globalSymbolLock.delete(getTenantSymbolLockKey(sessionToken, symbol));
     return false;
   }
   return true;
 }
-
-function lockSymbolGlobally(symbol: string): void {
-  globalSymbolLock.set(symbol, Date.now());
-  setTimeout(() => globalSymbolLock.delete(symbol), 60_000);
+function lockSymbolGlobally(sessionToken: string, symbol: string): void {
+  globalSymbolLock.set(getTenantSymbolLockKey(sessionToken, symbol), Date.now());
+  setTimeout(() => globalSymbolLock.delete(getTenantSymbolLockKey(sessionToken, symbol)), 60_000);
 }
-
-function unlockSymbolGlobally(symbol: string): void {
-  globalSymbolLock.delete(symbol);
+function unlockSymbolGlobally(sessionToken: string, symbol: string): void {
+  globalSymbolLock.delete(getTenantSymbolLockKey(sessionToken, symbol));
 }
 
 // ── Telegram alert helper ─────────────────────────────────────────────────────
@@ -981,7 +986,7 @@ export function generateSignal(
   const trend5m = get5mTrend(candles5m);
 
   // Dynamic breakout threshold (ATR-relative)
-  const dynamicBreakoutThreshold = Math.max(0.0002, (atr / price) * 0.35);
+  const dynamicBreakoutThreshold = Math.max(0.0002, (atr / price) * 0.5);
 
   // Support/Resistance levels from previous day
   let srLevels: number[] = [];
@@ -1010,7 +1015,7 @@ export function generateSignal(
   // BEFORE: allow5mBuy/Sell was a boolean that BLOCKED signals entirely when 5m trend disagreed.
   // AFTER: All signals are ALLOWED through, but counter-trend signals receive a confidence penalty.
   // This ensures strong counter-trend signals (e.g., gap-up fade) can still fire with reduced confidence.
-  const against5mPenalty = 0.05; // 5% confidence reduction for counter-trend trades
+  const against5mPenalty = 0.15; // 15% confidence reduction for counter-trend trades
   const allow5mBuy  = true; // Never hard-block — penalty applied post-generation
   const allow5mSell = true; // Never hard-block — penalty applied post-generation
   const strict5mBuy  = true; // Never hard-block — penalty applied post-generation
@@ -2529,7 +2534,7 @@ export function generateOpeningBurstSignal(
   }
 
   // VIX filter: skip if VIX > 20 (whipsaws more likely)
-  if (vixValue > 25) {
+  if (vixValue > 20) {
     return { ...hold, reason: `Opening Burst: VIX too high (${vixValue.toFixed(1)} > 20) — whipsaw risk` };
   }
 
@@ -4858,7 +4863,7 @@ export async function placeUpstoxOrder(
   // Using "I" for MCX options causes exchange rejection (ghost trades).
   const isMcx = instrumentToken.startsWith("MCX_FO|") || instrumentToken.startsWith("MCX|");
   const isFnO = instrumentToken.includes("_FO|");
-  const product = "D"; // NRML for both MCX and NSE F&O (full premium margin, no broker auto-exit)
+  const product = isMcx ? "D" : "I"; // MCX requires NRML; NSE F&O uses MIS (less margin for scalping)
   // ── QUANTITY: For MCX commodity, Upstox expects NUMBER OF LOTS, not units ──
   // API docs: "For commodity - number of lots is accepted"
   // Our internal quantity is in units (lotSize multiples). Convert to lots for MCX.
@@ -5220,7 +5225,7 @@ async function tick(
       const now3 = new Date();
       const istMin3 = ((now3.getUTCHours() * 60 + now3.getUTCMinutes()) + 330) % 1440;
       const isMCX3 = state.instrumentToken.startsWith("MCX");
-      const sqOffMin3 = isMCX3 ? 23 * 60 + 28 : 15 * 60 + 35;
+      const sqOffMin3 = isMCX3 ? 23 * 60 + 28 : 15 * 60 + 25;
       if (istMin3 >= sqOffMin3 || (!isMCX3 && (istMin3 < 9 * 60 + 15))) {
         // Respect carry-forward: if user chose to hold overnight, skip force-close
         if (state.carryForward) {
@@ -5385,8 +5390,8 @@ async function tick(
   }
 
   const isMCX = state.instrumentToken.startsWith("MCX");
-  const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 35;
-  const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 22; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:22 (3 min buffer before square-off at 15:35)
+  const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
+  const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 22; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:22 (3 min buffer before square-off at 15:25)
 
   // NSE Power Hour: 3:00–3:25 PM IST (extended from 3:20 — the last 5 mins are prime institutional action)
   const powerHourStart = 15 * 60;
@@ -5453,7 +5458,7 @@ async function tick(
 
   // ── Opening Burst Window: 9:15-9:25 AM IST (NSE only) ──────────────────────
   const openingBurstStart = 9 * 60 + 15; // 555 min
-  const openingBurstEnd   = 9 * 60 + 30; // 565 min
+  const openingBurstEnd   = 9 * 60 + 25; // 565 min
   const inOpeningBurst = !isMCX && istMin2 >= openingBurstStart && istMin2 < openingBurstEnd
     && (state.openingBurstEnabled !== false) // default enabled
     && !state.openingBurstTradeTaken; // only 1 trade per day in this window
@@ -5663,7 +5668,7 @@ async function tick(
     // v3: demo-mode brokerage + slippage simulation
     if (trade.mode === "demo") {
       const pc = getDemoCostConfig(state.sessionToken);
-      pnl = applyDemoCosts(pnl, trade.entryPrice, effectivePrice, sqRemaining, pc.brokerage, pc.slippagePct);
+      pnl = applyDemoCosts(pnl, trade.entryPrice, effectivePrice, sqRemaining, pc.brokeragePer, pc.slippagePct);
     }
     if (trade.bookedPnlAddedToDaily) {
       state.dailyPnl += pnl;
@@ -5770,7 +5775,7 @@ async function tick(
         // v3: demo-mode brokerage + slippage simulation
         if (trade.mode === "demo") {
           const pc = getDemoCostConfig(state.sessionToken);
-          pnl = applyDemoCosts(pnl, trade.entryPrice, effectivePrice, heroRemQty, pc.brokerage, pc.slippagePct);
+          pnl = applyDemoCosts(pnl, trade.entryPrice, effectivePrice, heroRemQty, pc.brokeragePer, pc.slippagePct);
         }
         if (trade.bookedPnlAddedToDaily) {
           state.dailyPnl += pnl;
@@ -5951,7 +5956,7 @@ async function tick(
         if (effectivePrice >= premEntry * 1.12 && trade.currentSl < premEntry * 1.07) {
           trade.currentSl = premEntry * 1.07;
           devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to +7% (₹${trade.currentSl.toFixed(2)})`);
-        } else if (effectivePrice >= premEntry * 1.05 && trade.currentSl < premEntry) {
+        } else if (effectivePrice >= premEntry * 1.07 && trade.currentSl < premEntry) {
           trade.currentSl = premEntry;
           devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
         }
@@ -5978,9 +5983,7 @@ async function tick(
       const currentPnlForRenko = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
         : trade.entryPrice - effectivePrice;
-            const profitBuffer = trade.isIndexOptions === true
-        ? trade.entryPrice * 0.02 // options: arm at +2% of entry premium (same units as PnL above)
-        : trade.atr * 0.5; // index/futures: unchanged, ATR is in points like the PnL
+      const profitBuffer = trade.atr * 0.5; // Only check after minimum profit (avoid noise exits)
       
       if (currentPnlForRenko > profitBuffer) {
         // Use candles accumulated SINCE trade entry for brick construction
@@ -6006,8 +6009,8 @@ async function tick(
               // Move SL to current price minus small buffer (lock most of the profit)
               // Instead of immediate exit, tighten SL aggressively so next tick exits if price doesn't recover
                             const tightSl = trade.direction === "BUY"
-                ? (trade.isIndexOptions === true ? effectivePrice * 0.995 : effectivePrice - trade.atr * 0.2)
-                : (trade.isIndexOptions === true ? effectivePrice * 1.005 : effectivePrice + trade.atr * 0.2);
+                ? effectivePrice - trade.atr * 0.2  // Very tight: 20% of ATR below current
+                : effectivePrice + trade.atr * 0.2;
               
               // Only tighten if this is BETTER than current SL (never widen)
               const shouldTighten = trade.direction === "BUY"
@@ -6048,7 +6051,7 @@ async function tick(
       const nowUtc = new Date();
       const istMinNow = ((nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes()) + 330) % 1440;
       const isMCXInst = state.instrumentToken.startsWith("MCX");
-      const closeMin = isMCXInst ? 23 * 60 + 25 : 15 * 60 + 35; // MCX 23:25, NSE 15:35
+      const closeMin = isMCXInst ? 23 * 60 + 25 : 15 * 60 + 25; // MCX 23:25, NSE 15:25
       const notNearClose = istMinNow < closeMin - 30; // at least 30 min before close
       const dailyLossUsed = Math.abs(Math.min(0, state.dailyPnl)) / (state.capital * state.dailyLossLimitPct / 100);
       const hasCapitalHeadroom = dailyLossUsed < 0.70; // less than 70% of daily loss limit used
@@ -6242,7 +6245,7 @@ async function tick(
       // v3: demo-mode brokerage + slippage simulation
       if (trade.mode === "demo") {
         const pc = getDemoCostConfig(state.sessionToken);
-        remainPnl = applyDemoCosts(remainPnl, trade.entryPrice, effectivePrice, remainingQty, pc.brokerage, pc.slippagePct);
+        remainPnl = applyDemoCosts(remainPnl, trade.entryPrice, effectivePrice, remainingQty, pc.brokeragePer, pc.slippagePct);
       }
       const totalPnl  = remainPnl + trade.bookedPnl;
       if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
@@ -6508,9 +6511,11 @@ const isExpiryDay = isOptionInstrument && (
     } else {
     // ── Adaptive Regime Switching: BEFORE signal generation ────────────────────
     // Every 5 min, check ADX with hysteresis. ADX > 28 → trending, ADX < 22 → choppy.
-    // Trending: enable Supertrend + TrikalStrategy, disable mean-reversion layers.
-    // Choppy:  disable Supertrend + TrikalStrategy, enable mean-reversion layers.
+    // Trending: enable Supertrend (layer "Trend") + TrikalStrategy; disable reversion layers.
+    // Choppy:   disable Supertrend + TrikalStrategy; enable VWAPReversion + MeanReversionV13.
     // Guard: don't switch while a trade is open (avoids exit-logic confusion).
+    // MANUAL DISABLE PROTECTION: a layer the user explicitly disabled is NEVER re-enabled
+    // by the regime switcher; regime actions only move layers that are NOT user-blocked.
         if (
       state.adaptiveRegimeEnabled !== false &&
       state.candles.length >= 20 &&
@@ -6541,67 +6546,39 @@ const isExpiryDay = isOptionInstrument && (
         if (newRegime && newRegime !== state.currentRegime) {
           state.currentRegime = newRegime;
           const layers = state.enabledLayers || [];
-          const userBlocked = state.userDisabledLayers || [];
+          // Regime-managed layers: only these move during an automatic regime switch.
+          const REGIME_LAYERS = new Set(["Trend", "TrikalStrategy", "VWAPReversion", "MeanReversionV13"]);
+          const userBlocked = (state.userDisabledLayers || []).slice();
+          const trendingEnable = ["Trend", "TrikalStrategy"];
+          const trendingDisable = ["VWAPReversion", "MeanReversionV13"];
+          const choppyEnable = ["VWAPReversion", "MeanReversionV13"];
+          const choppyDisable = ["Trend", "TrikalStrategy"];
+          const enableList = newRegime === "trending" ? trendingEnable : choppyEnable;
+          const disableList = newRegime === "trending" ? trendingDisable : choppyDisable;
+          const addedLayers: string[] = [];
+          const removedLayers: string[] = [];
 
-                    if (newRegime === "trending") {
-            const trendingEnable = ["Trend", "TrikalStrategy"];
-            const trendingDisable = ["VWAPReversion", "MeanReversionV13"];
-            const addedLayers: string[] = [];
-            const removedLayers: string[] = [];
-            // Regime-managed strategies can override user toggles
-            const REGIME_MANAGED = new Set(["Trend", "TrikalStrategy", "VWAPReversion", "MeanReversionV13"]);
-
-            for (const lyr of trendingEnable) {
-              if (!layers.includes(lyr) && (!userBlocked.includes(lyr) || REGIME_MANAGED.has(lyr))) {
-                layers.push(lyr);
-                addedLayers.push(lyr);
-                // Remove from userBlocked so UI reflects regime decision
-                const ubIdx = (state.userDisabledLayers || []).indexOf(lyr);
-                if (ubIdx !== -1) (state.userDisabledLayers || []).splice(ubIdx, 1);
-              }
+          for (const lyr of enableList) {
+            if (userBlocked.includes(lyr)) continue; // MANUAL DISABLE PROTECTION: never re-enable
+            if (!layers.includes(lyr)) {
+              layers.push(lyr);
+              addedLayers.push(lyr);
             }
-            for (const lyr of trendingDisable) {
-              if (layers.includes(lyr) && !userBlocked.includes(lyr)) {
-                const idx = layers.indexOf(lyr);
-                if (idx !== -1) layers.splice(idx, 1);
-                removedLayers.push(lyr);
-              }
-            }
-            state.enabledLayers = layers;
-            emitActivity(state.sessionToken, "signal",
-              `📊 Regime → TRENDING (ADX ${adxNow.toFixed(0)})` +
-              (addedLayers.length ? ` +${addedLayers.join("+")}` : "") +
-              (removedLayers.length ? ` −${removedLayers.join(",")}` : "")
-            );
-            } else {
-            const choppyEnable = ["VWAPReversion", "MeanReversionV13"];
-            const choppyDisable = ["Trend", "TrikalStrategy"];
-            const reEnabledLayers: string[] = [];
-            const droppedLayers: string[] = [];
-            const REGIME_MANAGED_C = new Set(["Trend", "TrikalStrategy", "VWAPReversion", "MeanReversionV13"]);
-
-            for (const lyr of choppyEnable) {
-              if (!layers.includes(lyr) && (!userBlocked.includes(lyr) || REGIME_MANAGED_C.has(lyr))) {
-                layers.push(lyr);
-                reEnabledLayers.push(lyr);
-                const ubIdx = (state.userDisabledLayers || []).indexOf(lyr);
-                if (ubIdx !== -1) (state.userDisabledLayers || []).splice(ubIdx, 1);
-              }
-            }
-            for (const lyr of choppyDisable) {
-              if (layers.includes(lyr) && !userBlocked.includes(lyr)) {
-                const idx = layers.indexOf(lyr);
-                if (idx !== -1) layers.splice(idx, 1);
-                droppedLayers.push(lyr);
-              }
-            }
-            state.enabledLayers = layers;
-            emitActivity(state.sessionToken, "signal",
-              `📊 Regime → CHOPPY (ADX ${adxNow.toFixed(0)})` +
-              (droppedLayers.length ? ` −${droppedLayers.join(",")}` : "") +
-              (reEnabledLayers.length ? ` +${reEnabledLayers.join("+")}` : "")
-            );
           }
+          for (const lyr of disableList) {
+            if (userBlocked.includes(lyr)) continue; // user explicitly disabled — leave disabled
+            const idx = layers.indexOf(lyr);
+            if (idx !== -1) {
+              layers.splice(idx, 1);
+              removedLayers.push(lyr);
+            }
+          }
+          state.enabledLayers = layers;
+          emitActivity(state.sessionToken, "signal",
+            `📊 Regime → ${newRegime.toUpperCase()} (ADX ${adxNow.toFixed(0)})` +
+            (addedLayers.length ? ` +${addedLayers.join("+")}` : "") +
+            (removedLayers.length ? ` −${removedLayers.join(",")}` : "")
+          );
           devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched ${prevRegimeState ?? "init"} → ${newRegime} (ADX=${adxNow.toFixed(1)})`);
         } else if (!state.currentRegime) {
           state.currentRegime = newRegime || (adxNow > 25 ? "trending" : "choppy");
@@ -7282,7 +7259,7 @@ const isExpiryDay = isOptionInstrument && (
   // ── PER-INSTRUMENT COOLDOWN (30 min between trades on same instrument) ────────────────────
   const INSTRUMENT_COOLDOWN_MS = 30 * 60 * 1000;
   const cooldownSymbol = (state.instrumentSymbol ?? "").toUpperCase();
-  const lastEntryOnInstrument = instrumentCooldowns.get(cooldownSymbol);
+  const lastEntryOnInstrument = instrumentCooldowns.get(getTenantInstrumentKey(state.sessionToken, cooldownSymbol));
   if (lastEntryOnInstrument) {
     const elapsedMs = Date.now() - lastEntryOnInstrument;
     const minutesAgo = (elapsedMs / 60000).toFixed(1);
@@ -7569,7 +7546,7 @@ const isExpiryDay = isOptionInstrument && (
         const spreadAbs = optQuote.ask - optQuote.bid;
         const midPrice = (optQuote.ask + optQuote.bid) / 2;
         const spreadPct = midPrice > 0 ? (spreadAbs / midPrice) * 100 : 0;
-        if (spreadPct > 12) {
+        if (spreadPct > 5) {
           const reason = `Entry blocked — spread too wide (${spreadPct.toFixed(1)}%). Bid: ₹${optQuote.bid.toFixed(1)}, Ask: ₹${optQuote.ask.toFixed(1)}, Spread: ₹${spreadAbs.toFixed(1)}`;
           console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
           emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
@@ -7630,7 +7607,7 @@ const isExpiryDay = isOptionInstrument && (
   if (isOptionsMode && optionPremiumForSizing && optionPremiumForSizing > 0) {
     // Options sizing: RISK-BASED — size position so max loss (at 30% SL) ≤ riskAmount
     // Formula: qty = riskAmount / (premium × 0.30) rounded down to lot size
-        const slDistPct = (state.optionSlPct ?? 5) / 100;
+        const slDistPct = (state.optionSlPct ?? 12) / 100; // 12% of premium = SL distance
     const slDist = optionPremiumForSizing * slDistPct;
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
@@ -7938,8 +7915,8 @@ const isExpiryDay = isOptionInstrument && (
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
     // ── Configurable Premium SL & Target (user-settable via dashboard) ──
-    const optSlPct = (state.optionSlPct ?? 5) / 100;
-  const optTpPct = (state.optionTpPct ?? 8) / 100;  // default 8% TP (was 15%)
+    const optSlPct = (state.optionSlPct ?? 12) / 100;  // default 12% SL (configurable via dashboard)
+  const optTpPct = (state.optionTpPct ?? 15) / 100;  // default 15% TP (configurable via dashboard)
   const tradeSl = isOptionsMode && optionPremiumForSizing 
     ? optionPremiumForSizing * (1 - optSlPct)  // e.g., ₹800 × 0.95 = ₹760 SL
     : signal.slPrice;
@@ -7951,14 +7928,14 @@ const isExpiryDay = isOptionInstrument && (
       // ── GLOBAL CROSS-BOT LOCK: Instant synchronous check ───────────────────────
   // This catches the race condition BEFORE the async DB query.
   // If another bot is already opening this exact symbol, BLOCK immediately.
-  if (isSymbolGloballyLocked(tradeLabel)) {
-    console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ⛔ CROSS-BOT BLOCKED: "${tradeLabel}" locked by another bot slot`);
+  if (isSymbolGloballyLocked(state.sessionToken, tradeLabel)) {
+    console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ⛔ CROSS-BOT BLOCKED: "${tradeLabel}" locked by another bot slot of the SAME tenant`);
     emitActivity(state.sessionToken, "signal", `⊘ Cross-bot duplicate blocked — ${tradeLabel} already being opened by another bot`);
     state.isOpeningTrade = false;
     return;
   }
   // Lock immediately (all other bots in this process see it on next tick)
-  lockSymbolGlobally(tradeLabel);
+  lockSymbolGlobally(state.sessionToken, tradeLabel);
   // DB-level guard: check if there's already an open trade for this session in the database.
   // This catches edge cases where openTrade state was lost (server restart, crash) but DB still has an open trade.
   try {
@@ -7976,6 +7953,7 @@ const isExpiryDay = isOptionInstrument && (
         console.warn(`[BotEngine] ${state.sessionToken.slice(0, 8)} — DB has open trade #${existingOpen[0].id}, skipping new entry`);
         emitActivity(state.sessionToken, "signal", `⊘ Signal skipped — DB already has open trade #${existingOpen[0].id}`);
         state.isOpeningTrade = false;
+        unlockSymbolGlobally(state.sessionToken, tradeLabel); // Release lock on skip
         return;
       }
     }
@@ -7996,6 +7974,7 @@ const isExpiryDay = isOptionInstrument && (
         .select({ id: tradeLog.id })
         .from(tradeLog)
         .where(and(
+          eq(tradeLog.sessionToken, state.sessionToken),
           eq(tradeLog.symbol, tradeLabel),
           gt(tradeLog.enteredAt, thirtyMinAgo),
         ))
@@ -8004,6 +7983,7 @@ const isExpiryDay = isOptionInstrument && (
         console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — Duplicate blocked: ${tradeLabel} traded within 30 min`);
         emitActivity(state.sessionToken, "signal", `⊘ Duplicate blocked — ${tradeLabel} traded in last 30 min`);
         state.isOpeningTrade = false;
+        unlockSymbolGlobally(state.sessionToken, tradeLabel); // Release lock on skip
         return;
       }
     }
@@ -8038,7 +8018,7 @@ const isExpiryDay = isOptionInstrument && (
   }
   state.lastTradeOpenedAt = Date.now();
   // Record per-instrument cooldown (30 min gap between trades on same symbol)
-  instrumentCooldowns.set((state.instrumentSymbol ?? "").toUpperCase(), Date.now());
+  instrumentCooldowns.set(getTenantInstrumentKey(state.sessionToken, (state.instrumentSymbol ?? "").toUpperCase()), Date.now());
   // Lock direction for 30 min (BUG #4: prevent flip-flopping)
   lockDirection(state.sessionToken, signal.direction as "BUY" | "SELL");
   let dbId: number;
@@ -8054,7 +8034,7 @@ const isExpiryDay = isOptionInstrument && (
     });
   } catch (tradeOpenErr) {
     state.isOpeningTrade = false;
-    unlockSymbolGlobally(tradeLabel); // Release lock on failure
+    unlockSymbolGlobally(state.sessionToken, tradeLabel); // Release lock on failure
     // Rollback counter on failure
     state.tradesCount -= 1;
     // Rollback per-layer counter
@@ -8121,8 +8101,8 @@ const isExpiryDay = isOptionInstrument && (
   const tradeType = signal.isPowerHour ? "⚡ POWER HOUR" : isReEntry ? "↩ RE-ENTRY" : "TRADE";
   // For options mode: show option premium prices in activity log (not underlying index price)
   const displayEntry  = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-    const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 - (state.optionSlPct ?? 5) / 100) : signal.slPrice;
-  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + (state.optionTpPct ?? 8) / 100) : signal.targetPrice;
+    const displaySl     = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 - (state.optionSlPct ?? 12) / 100) : signal.slPrice;
+  const displayTarget = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing * (1 + (state.optionTpPct ?? 15) / 100) : signal.targetPrice;
   const displayLabel  = isOptionsMode && optionPremiumForSizing ? `${tradeLabel} (premium)` : state.instrumentLabel;
   devLog(`[BotEngine] ${state.sessionToken} — ${tradeType}: ${signal.direction} ${state.instrumentSymbol} @ ₹${displayEntry.toFixed(2)} | Conf: ${(signal.confidence * 100).toFixed(0)}% | Layer: ${signal.layer}`);
   const capitalDeployed = displayEntry * quantity;
