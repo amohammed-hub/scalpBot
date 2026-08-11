@@ -31,6 +31,8 @@ interface TradeRow {
   botSlot: number;
   strategy: string;
   partialProfit: number;
+  mfe: number | null;
+  mae: number | null;
   duration: string;
   enteredAt: Date | string | null;
   exitedAt: Date | string | null;
@@ -52,6 +54,7 @@ const fmt = (n: number) => {
 const pct = (n: number) => `${n}%`;
 const clr = (n: number) => n >= 0 ? "text-emerald-400" : "text-red-400";
 const bgClr = (n: number) => n >= 0 ? "#10b981" : "#ef4444";
+const botLabelForSlot = (slot: number) => `Bot ${Math.max(0, slot) + 1}`;
 
 type ChartView = "per-trade" | "cumulative";
 type TimeTab = "daily" | "weekly" | "monthly";
@@ -111,7 +114,7 @@ export default function PnLAnalytics() {
     const bots = new Set<string>();
     const instruments = new Set<string>();
     (exportRows as TradeRow[]).forEach((r: TradeRow) => {
-      const botLabel = r.botSlot === 0 ? "Bot 1" : r.botSlot === 1 ? "Bot 2" : "Bot 3";
+      const botLabel = botLabelForSlot(r.botSlot);
       bots.add(botLabel);
       if (r.symbol) instruments.add(r.symbol);
     });
@@ -125,7 +128,7 @@ export default function PnLAnalytics() {
   const filteredTrades = useMemo(() => {
     return (exportRows as TradeRow[]).filter((r: TradeRow) => {
       if (botFilter !== "all") {
-        const botLabel = r.botSlot === 0 ? "Bot 1" : r.botSlot === 1 ? "Bot 2" : "Bot 3";
+        const botLabel = botLabelForSlot(r.botSlot);
         if (botLabel !== botFilter) return false;
       }
       if (instrumentFilter !== "all" && r.symbol !== instrumentFilter) return false;
@@ -186,15 +189,15 @@ export default function PnLAnalytics() {
     const allHeaders = [
       "Date", "Entry Time", "Exit Time", "Bot", "Symbol", "Direction",
       "Entry Price (₹)", "Exit Price (₹)", "Quantity", "Stop-Loss", "Target",
-      "P&L (₹)", "Partial Profit (₹)", "Exit Reason", "Strategy Layer",
+      "P&L (₹)", "Partial Profit (₹)", "MFE (₹)", "MAE (₹)", "Exit Reason", "Strategy Layer",
       "Confidence %", "Duration", "Mode",
     ];
     const allRows = (exportRows as TradeRow[]).map((r: TradeRow) => {
-      const botLabel = r.botSlot === 0 ? "Bot 1" : r.botSlot === 1 ? "Bot 2" : "Bot 3";
+      const botLabel = botLabelForSlot(r.botSlot);
       return [
         r.date, r.time, r.exitTime || "—", botLabel, r.symbol, r.direction,
         r.entryPrice, r.exitPrice || "—", r.quantity, r.stopLoss || "—", r.target || "—",
-        r.pnl, r.partialProfit || "—", r.exitReason || "—", r.strategy || "—",
+        r.pnl, r.partialProfit || "—", r.mfe ?? "—", r.mae ?? "—", r.exitReason || "—", r.strategy || "—",
         r.confidence ? `${Math.round(r.confidence * 100)}%` : "—", r.duration || "—", r.mode,
       ];
     });
@@ -218,15 +221,15 @@ export default function PnLAnalytics() {
     const headers = [
       "Date", "Entry Time", "Exit Time", "Bot", "Symbol", "Direction",
       "Entry Price", "Exit Price", "Quantity", "Stop-Loss", "Target",
-      "P&L", "Partial Profit", "Exit Reason", "Strategy Layer",
+      "P&L", "Partial Profit", "MFE", "MAE", "Exit Reason", "Strategy Layer",
       "Confidence %", "Duration", "Mode",
     ];
     const rows = (exportRows as TradeRow[]).map((r: TradeRow) => {
-      const botLabel = r.botSlot === 0 ? "Bot 1" : r.botSlot === 1 ? "Bot 2" : "Bot 3";
+      const botLabel = botLabelForSlot(r.botSlot);
       return [
         r.date, r.time, r.exitTime || "", botLabel, r.symbol, r.direction,
         r.entryPrice, r.exitPrice || "", r.quantity, r.stopLoss || "", r.target || "",
-        r.pnl, r.partialProfit || "", r.exitReason || "", r.strategy || "",
+        r.pnl, r.partialProfit || "", r.mfe ?? "", r.mae ?? "", r.exitReason || "", r.strategy || "",
         r.confidence ? `${Math.round(r.confidence * 100)}%` : "", r.duration || "", r.mode,
       ];
     });
@@ -634,7 +637,7 @@ export default function PnLAnalytics() {
                 </thead>
                 <tbody>
                   {filteredTrades.map((t, i) => {
-                    const botLabel = t.botSlot === 0 ? "B1" : t.botSlot === 1 ? "B2" : "B3";
+                    const botLabel = `B${Math.max(0, t.botSlot) + 1}`;
                     return (
                       <tr key={t.id} className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors ${i % 2 === 0 ? "" : "bg-zinc-900/50"}`}>
                         <td className="px-3 py-2 text-zinc-400 whitespace-nowrap">{t.date}</td>

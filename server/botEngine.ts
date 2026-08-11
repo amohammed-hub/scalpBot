@@ -12,6 +12,7 @@ import { evaluateStrategyGate, computeVRP, computeOIFlowBias, computeMaxPainGrav
 import { fetchOptionsAnalytics, getCachedAnalytics } from "./optionsAnalytics";
 import { getCurrentSession, getSessionDefault, type TradingSession } from "../shared/sessionDefaults";
 import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
+import { finalizeTradeExcursions, type TradeExcursions, updateTradeExcursions } from "../shared/tradeExcursions";
 import {
   getStoplossGuardState, checkPortfolioDrawdown, canOpenNewTrade,
   recordTradeClose, isCooldownActive, applyDemoCosts, getDemoCostConfig, resetDailyState,
@@ -100,6 +101,9 @@ export interface OpenTrade {
   averageCount?: number;         // 0 = no averaging done, 1 = averaged once (max 1)
   averagedAt?: number;           // timestamp (ms) of last averaging
   originalEntryPrice?: number;   // first entry price before any averaging (for analytics)
+  // D10: maximum observed total marked-to-market P&L, including realised partial P&L.
+  maxFavorablePnl?: number;
+  maxAdversePnl?: number;
 }
 
 export interface BotState {
@@ -5028,10 +5032,29 @@ function formatOptionContractLabel(symbol: string, strike: number, ceOrPe: strin
   return `${sym}${expiryStr} ${strike} ${ceOrPe}`;
 }
 
+type TradeCloseHandler = (
+  dbId: number,
+  exitPrice: number,
+  pnl: number,
+  exitReason: string,
+  excursions?: TradeExcursions,
+) => Promise<void>;
+
+async function persistTradeClose(
+  onTradeClose: TradeCloseHandler,
+  trade: OpenTrade,
+  exitPrice: number,
+  totalPnl: number,
+  exitReason: string,
+): Promise<void> {
+  const excursions = finalizeTradeExcursions(trade, totalPnl);
+  await onTradeClose(trade.dbId, exitPrice, totalPnl, exitReason, excursions);
+}
+
 async function tick(
   state: BotState,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,
-  onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
+  onTradeClose: TradeCloseHandler,
   onTick?: (state: BotState) => Promise<void>,
 ) {
   if (state.status !== "running" && state.status !== "paused") { console.log(`[tick] SKIP — status=${state.status} (${state.sessionToken.slice(0,8)})`); return; }
@@ -5214,7 +5237,7 @@ async function tick(
     if (state.openTrade && state.openTrade.entryPrice < 5.0) {
       console.warn(`[PHANTOM] ${state.sessionToken.slice(0,8)} — Detected phantom trade: ${state.openTrade.symbolLabel} entry ₹${state.openTrade.entryPrice}. Auto-closing.`);
       emitActivity(state.sessionToken, "trade_close", `🚫 PHANTOM TRADE DETECTED: ${state.openTrade.symbolLabel} entry ₹${state.openTrade.entryPrice} — never filled on Upstox. Auto-closing as phantom.`);
-      try { await onTradeClose(state.openTrade.dbId, 0, 0, "Phantom — entry < ₹5, never filled on Upstox"); } catch (e) { console.error("[PHANTOM] DB close failed:", e); }
+      try { await persistTradeClose(onTradeClose, state.openTrade, 0, 0, "Phantom — entry < ₹5, never filled on Upstox"); } catch (e) { console.error("[PHANTOM] DB close failed:", e); }
       state.openTrade = null;
       state.optionPremiumPrice = undefined;
     }
@@ -5267,7 +5290,7 @@ async function tick(
         state.openTrade = null;
         if (pnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX3); recordDirectionExit(state.sessionToken, trade.direction, false); }
         else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
-        await onTradeClose(trade.dbId, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
+        await persistTradeClose(onTradeClose, trade, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
         emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
         console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
         // Telegram: auto square-off alert
@@ -5631,6 +5654,14 @@ async function tick(
     }
   }
 
+  // D10: retain the best and worst observed marked-to-market P&L for export.
+  // This observes the current mark only; it does not affect exit, sizing, or order logic.
+  if (state.openTrade && Number.isFinite(effectivePrice) && effectivePrice > 0) {
+    const excursions = updateTradeExcursions(state.openTrade, effectivePrice);
+    state.openTrade.maxFavorablePnl = excursions.maxFavorablePnl;
+    state.openTrade.maxAdversePnl = excursions.maxAdversePnl;
+  }
+
   // Auto square-off at market close
   // Fix: Also trigger square-off when time wraps past midnight (istMin2 < 540 for MCX means after 11:30 PM)
   const shouldSquareOff = isMCX
@@ -5681,7 +5712,7 @@ async function tick(
     const sqTotalPnl = pnl + trade.bookedPnl;
     if (sqTotalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
     else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
-    await onTradeClose(trade.dbId, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
+    await persistTradeClose(onTradeClose, trade, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
     emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${sqTotalPnl >= 0 ? "+" : ""}₹${sqTotalPnl.toFixed(0)}`, { price: effectivePrice, pnl: sqTotalPnl });
     // Telegram: auto square-off alert
@@ -5738,7 +5769,7 @@ async function tick(
     state.capitalUsed = 0; // BUG 26: Release capital on close
     if (totalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
     else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
-    await onTradeClose(trade.dbId, exitPx, totalPnl, "Market Closed — Auto Square-Off (midnight wraparound fix)");
+    await persistTradeClose(onTradeClose, trade, exitPx, totalPnl, "Market Closed — Auto Square-Off (midnight wraparound fix)");
     emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: exitPx, pnl: totalPnl });
     sendTelegramAlert(state,
       `⏰ <b>AUTO SQUARE-OFF</b> (market closed)\n` +
@@ -5787,7 +5818,7 @@ async function tick(
         recordTradeClose(state.sessionToken, state.scanIntervalSec);
         if (pnl + trade.bookedPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
         else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
-        await onTradeClose(trade.dbId, effectivePrice, pnl + trade.bookedPnl, heroExit);
+        await persistTradeClose(onTradeClose, trade, effectivePrice, pnl + trade.bookedPnl, heroExit);
         console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
         return;
       }
@@ -6340,7 +6371,7 @@ async function tick(
         state.consecutiveUnderlyingSLs = 0;
         state.lastUnderlyingSLAt = null;
       }
-      await onTradeClose(trade.dbId, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
+      await persistTradeClose(onTradeClose, trade, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
       console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
       emitActivity(state.sessionToken, "trade_close", `${exitReason} ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)} | Day: ₹${state.dailyPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
       // Telegram exit alert
@@ -8167,7 +8198,8 @@ export type TradeInsert = {
 export function startBot(
   config: Omit<BotState, "candles" | "candles5m" | "candlesDay" | "lastSignal" | "lastPrice" | "bidPrice" | "askPrice" | "openTrade" | "intervalHandle" | "lastError" | "nextScanAt" | "lastTickAt" | "lastSlHitAt" | "lastSlDirection" | "reEntryCandles" | "lastSlExitDirection" | "lastSlExitAt" | "consecutiveSameDirectionSLs" | "isPowerHourMode" | "isMCXEveningMode" | "isMCXLateSessionMode" | "heroZeroMode" | "alertsSent">,
   onTradeOpen: (trade: TradeInsert) => Promise<number>,  
-  onTradeClose: (dbId: number, exitPrice: number, pnl: number, exitReason: string) => Promise<void>,
+    onTradeClose: TradeCloseHandler,
+
   existingOpenTrade?: OpenTrade | null,
   onTick?: (state: BotState) => Promise<void>,
 ) {
