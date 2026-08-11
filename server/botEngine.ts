@@ -2655,32 +2655,37 @@ interface RenkoBrick {
 export function buildRenkoBricks(candles: Candle[], atr: number): RenkoBrick[] {
   if (candles.length < 2 || atr <= 0) return [];
   const brickSize = atr; // ATR(14) adaptive brick size
-  const bricks: RenkoBrick[] = [];
-  let basePrice = candles[0].close;
+    const bricks: RenkoBrick[] = [];
+  let lastClose = candles[0].close;
+  let lastDir: "green" | "red" | null = null;
 
   for (let i = 1; i < candles.length; i++) {
     const price = candles[i].close;
-    const diff = price - basePrice;
 
-    // Build as many bricks as the price movement allows
-    if (diff >= brickSize) {
-      const numBricks = Math.floor(diff / brickSize);
-      for (let j = 0; j < numBricks; j++) {
-        const brickOpen = basePrice + j * brickSize;
-        const brickClose = brickOpen + brickSize;
-        bricks.push({ open: brickOpen, close: brickClose, color: "green" });
+    // Continuation needs 1x brickSize; a reversal needs 2x against the last brick close.
+    // Loop so one candle can still print several bricks on a gap.
+    let printed = true;
+    while (printed) {
+      printed = false;
+      const upNeeded = lastDir === "red" ? brickSize * 2 : brickSize;
+      const downNeeded = lastDir === "green" ? brickSize * 2 : brickSize;
+
+      if (price - lastClose >= upNeeded) {
+        const upOpen = lastDir === "red" ? lastClose + brickSize : lastClose;
+        const upClose = upOpen + brickSize;
+        bricks.push({ open: upOpen, close: upClose, color: "green" });
+        lastClose = upClose;
+        lastDir = "green";
+        printed = true;
+      } else if (lastClose - price >= downNeeded) {
+        const downOpen = lastDir === "green" ? lastClose - brickSize : lastClose;
+        const downClose = downOpen - brickSize;
+        bricks.push({ open: downOpen, close: downClose, color: "red" });
+        lastClose = downClose;
+        lastDir = "red";
+        printed = true;
       }
-      basePrice = basePrice + numBricks * brickSize;
-    } else if (diff <= -brickSize) {
-      const numBricks = Math.floor(Math.abs(diff) / brickSize);
-      for (let j = 0; j < numBricks; j++) {
-        const brickOpen = basePrice - j * brickSize;
-        const brickClose = brickOpen - brickSize;
-        bricks.push({ open: brickOpen, close: brickClose, color: "red" });
-      }
-      basePrice = basePrice - numBricks * brickSize;
     }
-    // If |diff| < brickSize, no new brick — price hasn't moved enough
   }
 
   return bricks;
@@ -5950,7 +5955,9 @@ async function tick(
       const currentPnlForRenko = trade.direction === "BUY"
         ? effectivePrice - trade.entryPrice
         : trade.entryPrice - effectivePrice;
-      const profitBuffer = trade.atr * 0.5; // Only check after minimum profit (avoid noise exits)
+            const profitBuffer = trade.isIndexOptions === true
+        ? trade.entryPrice * 0.02 // options: arm at +2% of entry premium (same units as PnL above)
+        : trade.atr * 0.5; // index/futures: unchanged, ATR is in points like the PnL
       
       if (currentPnlForRenko > profitBuffer) {
         // Use candles accumulated SINCE trade entry for brick construction
@@ -5975,9 +5982,9 @@ async function tick(
             if (redBrickExit) {
               // Move SL to current price minus small buffer (lock most of the profit)
               // Instead of immediate exit, tighten SL aggressively so next tick exits if price doesn't recover
-              const tightSl = trade.direction === "BUY"
-                ? effectivePrice - trade.atr * 0.2  // Very tight: 20% of ATR below current
-                : effectivePrice + trade.atr * 0.2;
+                            const tightSl = trade.direction === "BUY"
+                ? (trade.isIndexOptions === true ? effectivePrice * 0.995 : effectivePrice - trade.atr * 0.2)
+                : (trade.isIndexOptions === true ? effectivePrice * 1.005 : effectivePrice + trade.atr * 0.2);
               
               // Only tighten if this is BETTER than current SL (never widen)
               const shouldTighten = trade.direction === "BUY"
