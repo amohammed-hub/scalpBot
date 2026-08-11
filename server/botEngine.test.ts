@@ -744,42 +744,80 @@ describe("TEST D — Red Brick Exit (checkRenkoExit)", () => {
 });
 
 describe("buildRenkoBricks", () => {
-  it("builds correct number of green bricks for uptrend", () => {
-    // Price moves from 100 to 150 with ATR=10 → should build 5 green bricks
-    const candles: Candle[] = [
-      { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 2000 },
-      { open: 100, high: 155, low: 99, close: 150, volume: 1000, timestamp: Date.now() - 1000 },
-    ];
-    const bricks = buildRenkoBricks(candles, 10);
-    expect(bricks.length).toBe(5);
-    expect(bricks.every(b => b.color === "green")).toBe(true);
-  });
-
-  it("builds correct number of red bricks for downtrend", () => {
-    // Price moves from 200 to 160 with ATR=10 → should build 4 red bricks
-    const candles: Candle[] = [
-      { open: 200, high: 202, low: 198, close: 200, volume: 1000, timestamp: Date.now() - 2000 },
-      { open: 200, high: 201, low: 158, close: 160, volume: 1000, timestamp: Date.now() - 1000 },
-    ];
-    const bricks = buildRenkoBricks(candles, 10);
-    expect(bricks.length).toBe(4);
-    expect(bricks.every(b => b.color === "red")).toBe(true);
-  });
-
-  it("builds mixed bricks for reversal pattern", () => {
-    // Price: 100 → 130 → 100 (up 3 bricks, down 3 bricks)
+  it("builds five green bricks from a closed 100→150 uptrend", () => {
+    // The newest candle is intentionally excluded as still forming. The 100→150
+    // movement is therefore supplied by the preceding closed candle.
     const candles: Candle[] = [
       { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 3000 },
-      { open: 100, high: 135, low: 99, close: 130, volume: 1000, timestamp: Date.now() - 2000 },
-      { open: 130, high: 131, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 1000 },
+      { open: 100, high: 155, low: 99, close: 150, volume: 1000, timestamp: Date.now() - 2000 },
+      { open: 150, high: 151, low: 149, close: 150, volume: 1000, timestamp: Date.now() - 1000 },
     ];
     const bricks = buildRenkoBricks(candles, 10);
-    const greenCount = bricks.filter(b => b.color === "green").length;
-    const redCount = bricks.filter(b => b.color === "red").length;
-    expect(greenCount).toBe(3);
-    expect(redCount).toBe(3);
-    // Last brick should be red (reversal)
-    expect(bricks[bricks.length - 1].color).toBe("red");
+    expect(bricks).toEqual([
+      { open: 100, close: 110, color: "green" },
+      { open: 110, close: 120, color: "green" },
+      { open: 120, close: 130, color: "green" },
+      { open: 130, close: 140, color: "green" },
+      { open: 140, close: 150, color: "green" },
+    ]);
+  });
+
+  it("builds four red bricks from a closed 200→160 downtrend", () => {
+    // The newest candle is intentionally excluded as still forming.
+    const candles: Candle[] = [
+      { open: 200, high: 202, low: 198, close: 200, volume: 1000, timestamp: Date.now() - 3000 },
+      { open: 200, high: 201, low: 158, close: 160, volume: 1000, timestamp: Date.now() - 2000 },
+      { open: 160, high: 161, low: 159, close: 160, volume: 1000, timestamp: Date.now() - 1000 },
+    ];
+    const bricks = buildRenkoBricks(candles, 10);
+    expect(bricks).toEqual([
+      { open: 200, close: 190, color: "red" },
+      { open: 190, close: 180, color: "red" },
+      { open: 180, close: 170, color: "red" },
+      { open: 170, close: 160, color: "red" },
+    ]);
+  });
+
+  it("uses a 2× brick threshold for a reversal and keeps the 45-degree grid", () => {
+    // Standard Renko: after 100→130 prints three green 10-point bricks, a
+    // 130→100 move prints only two red continuation/reversal bricks. A third
+    // red brick needs price ≤90. This is the standard 2× reversal rule.
+    const candles: Candle[] = [
+      { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 4000 },
+      { open: 100, high: 135, low: 99, close: 130, volume: 1000, timestamp: Date.now() - 3000 },
+      { open: 130, high: 131, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 2000 },
+      { open: 100, high: 101, low: 99, close: 100, volume: 1000, timestamp: Date.now() - 1000 },
+    ];
+    expect(buildRenkoBricks(candles, 10)).toEqual([
+      { open: 100, close: 110, color: "green" },
+      { open: 110, close: 120, color: "green" },
+      { open: 120, close: 130, color: "green" },
+      { open: 120, close: 110, color: "red" },
+      { open: 110, close: 100, color: "red" },
+    ]);
+
+    // Discriminator required by the remediation brief: after a 100→110 green
+    // brick, 99 is insufficient for a red reversal; 90 is exactly sufficient.
+    const belowThreshold: Candle[] = [
+      { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 4000 },
+      { open: 100, high: 112, low: 99, close: 110, volume: 1000, timestamp: Date.now() - 3000 },
+      { open: 110, high: 111, low: 98, close: 99, volume: 1000, timestamp: Date.now() - 2000 },
+      { open: 99, high: 100, low: 98, close: 99, volume: 1000, timestamp: Date.now() - 1000 },
+    ];
+    expect(buildRenkoBricks(belowThreshold, 10)).toEqual([
+      { open: 100, close: 110, color: "green" },
+    ]);
+
+    const atThreshold: Candle[] = [
+      { open: 100, high: 102, low: 98, close: 100, volume: 1000, timestamp: Date.now() - 4000 },
+      { open: 100, high: 112, low: 99, close: 110, volume: 1000, timestamp: Date.now() - 3000 },
+      { open: 110, high: 111, low: 89, close: 90, volume: 1000, timestamp: Date.now() - 2000 },
+      { open: 90, high: 91, low: 89, close: 90, volume: 1000, timestamp: Date.now() - 1000 },
+    ];
+    expect(buildRenkoBricks(atThreshold, 10)).toEqual([
+      { open: 100, close: 110, color: "green" },
+      { open: 100, close: 90, color: "red" },
+    ]);
   });
 
   it("returns empty array for insufficient candles", () => {

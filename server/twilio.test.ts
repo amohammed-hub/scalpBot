@@ -1,41 +1,28 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 
-describe("Twilio Credentials Validation", () => {
-  it("should have valid Twilio env vars configured", () => {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const phoneNumber = process.env.TWILIO_PHONE_NUMBER;
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const phoneNumber = process.env.TWILIO_PHONE_NUMBER;
+const hasTwilioConfiguration = Boolean(accountSid && authToken && phoneNumber);
+const describeWithTwilio = hasTwilioConfiguration ? describe : describe.skip;
 
-    // Check env vars exist
-    expect(accountSid).toBeDefined();
-    expect(authToken).toBeDefined();
-    expect(phoneNumber).toBeDefined();
-    expect(accountSid!.startsWith("AC")).toBe(true);
-    // Validate phone number format (E.164)
-    expect(phoneNumber!.startsWith("+")).toBe(true);
+describeWithTwilio("Twilio credential configuration", () => {
+  it("uses locally well-formed configuration when all Twilio secrets are supplied", () => {
+    expect(accountSid).toMatch(/^AC.+/);
+    expect(authToken?.trim().length).toBeGreaterThan(0);
+    expect(phoneNumber).toMatch(/^\+\d{10,15}$/);
   });
 
-  it("should connect to Twilio API with provided credentials", async () => {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    if (!accountSid || !authToken) {
-      // Skip if env vars not available (CI/local dev without credentials)
-      console.warn("Skipping Twilio API test — credentials not available");
-      return;
-    }
+});
 
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}.json`,
-      {
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-        },
-      }
-    );
-
-    expect(response.status).toBe(200);
-    const data = await response.json();
-    expect(data.sid).toBe(accountSid);
-    expect(data.status).toBe("active");
+describe("Twilio unit-test isolation", () => {
+  it("contains no live Twilio API call", () => {
+    const source = readFileSync(fileURLToPath(import.meta.url), "utf8");
+    const liveTwilioUrl = ["https://", ["api", "twilio", "com"].join(".")].join("");
+    const fetchCallToken = ["fe", "tch", "("].join("");
+    expect(source).not.toContain(liveTwilioUrl);
+    expect(source).not.toContain(fetchCallToken);
   });
 });
