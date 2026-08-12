@@ -7479,7 +7479,12 @@ const isExpiryDay = isOptionInstrument && (
       const todayISO = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
       const isExpiryDayForGate = analytics?.expiry === todayISO;
 
-      // Run the combined strategy gate
+      // D11 seasonality context: intraday drift since today's first 1m candle (state.candles is
+      // reset daily at market open, line ~5236) and today's 1m candles for prior-hour detection.
+      const seasonDayOpen = state.candles && state.candles.length > 0 ? state.candles[0].open : 0;
+      const seasonDriftPct = seasonDayOpen > 0 ? (price - seasonDayOpen) / seasonDayOpen : 0;
+
+      // Run the combined strategy gate (4th component: seasonality regime gate — D11)
       const gateResult = evaluateStrategyGate(
         state.candlesDay,           // daily candles for VRP
         analytics,                  // option chain analytics
@@ -7488,6 +7493,13 @@ const isExpiryDay = isOptionInstrument && (
         isExpiryDayForGate,
         istMin2,
         isMCX,
+        {                           // D11 seasonality context (fail-open — never blocks on compute errors)
+          layer: signal.layer,
+          istMinutes: istMin2,
+          intradayDriftPct: seasonDriftPct,
+          todayCandles: state.candles ?? [],
+          symbol: (state.instrumentSymbol ?? "").toUpperCase(),
+        },
       );
 
       // Update state for dashboard display
@@ -7519,13 +7531,14 @@ const isExpiryDay = isOptionInstrument && (
 
       // Hard block if gate says not allowed
       if (!gateResult.allowed) {
-        emitActivity(state.sessionToken, "signal", `⊘ VRP/OI GATE BLOCKED: ${gateResult.reason}`);
+        const blockTag = gateResult.seasonality && !gateResult.seasonality.allowed ? "SEASONALITY GATE" : "VRP/OI GATE";
+        emitActivity(state.sessionToken, "signal", `⊘ ${blockTag} BLOCKED: ${gateResult.reason}`);
         pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `VRP/OI Gate: ${gateResult.reason}`);
         logSignalToJournal({
           sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
           direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
           entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-          atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `VRP/OI Gate blocked`,
+          atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `${gateResult.seasonality && !gateResult.seasonality.allowed ? "Seasonality" : "VRP/OI"} Gate blocked`,
         });
         return;
       }
