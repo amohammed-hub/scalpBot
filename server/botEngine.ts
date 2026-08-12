@@ -6701,10 +6701,10 @@ const isExpiryDay = isOptionInstrument && (
 
         if (newRegime && newRegime !== state.currentRegime) {
           state.currentRegime = newRegime;
-          const layers = state.enabledLayers || [];
-          // Regime-managed layers: only these move during an automatic regime switch.
-          const REGIME_LAYERS = new Set(["Trend", "TrikalStrategy", "VWAPReversion", "MeanReversionV13"]);
-          const userBlocked = (state.userDisabledLayers || []).slice();
+          // Work on a new enabled-layer list.  Never mutate either the source list
+          // or userDisabledLayers: the latter is an explicit user-owned setting.
+          const layers = [...(state.enabledLayers || [])];
+          const userBlocked = new Set(state.userDisabledLayers || []);
           const trendingEnable = ["Trend", "TrikalStrategy"];
           const trendingDisable = ["VWAPReversion", "MeanReversionV13"];
           const choppyEnable = ["VWAPReversion", "MeanReversionV13"];
@@ -6713,16 +6713,23 @@ const isExpiryDay = isOptionInstrument && (
           const disableList = newRegime === "trending" ? trendingDisable : choppyDisable;
           const addedLayers: string[] = [];
           const removedLayers: string[] = [];
+          const skippedUserLayers: string[] = [];
 
           for (const lyr of enableList) {
-            if (userBlocked.includes(lyr)) continue; // MANUAL DISABLE PROTECTION: never re-enable
+            if (userBlocked.has(lyr)) {
+              skippedUserLayers.push(lyr);
+              continue; // MANUAL DISABLE PROTECTION: never re-enable
+            }
             if (!layers.includes(lyr)) {
               layers.push(lyr);
               addedLayers.push(lyr);
             }
           }
           for (const lyr of disableList) {
-            if (userBlocked.includes(lyr)) continue; // user explicitly disabled — leave disabled
+            if (userBlocked.has(lyr)) {
+              skippedUserLayers.push(lyr);
+              continue; // user explicitly disabled — leave disabled
+            }
             const idx = layers.indexOf(lyr);
             if (idx !== -1) {
               layers.splice(idx, 1);
@@ -6733,9 +6740,11 @@ const isExpiryDay = isOptionInstrument && (
           emitActivity(state.sessionToken, "signal",
             `📊 Regime → ${newRegime.toUpperCase()} (ADX ${adxNow.toFixed(0)})` +
             (addedLayers.length ? ` +${addedLayers.join("+")}` : "") +
-            (removedLayers.length ? ` −${removedLayers.join(",")}` : "")
+            (removedLayers.length ? ` −${removedLayers.join(",")}` : "") +
+            (skippedUserLayers.length ? ` · user-disabled skipped: ${Array.from(new Set(skippedUserLayers)).join(",")}` : "")
           );
-          devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched ${prevRegimeState ?? "init"} → ${newRegime} (ADX=${adxNow.toFixed(1)})`);
+          devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched ${prevRegimeState ?? "init"} → ${newRegime} (ADX=${adxNow.toFixed(1)})` +
+            (skippedUserLayers.length ? `; preserved user-disabled=${Array.from(new Set(skippedUserLayers)).join(",")}` : ""));
         } else if (!state.currentRegime) {
           state.currentRegime = newRegime || (adxNow > 25 ? "trending" : "choppy");
           devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — initial regime: ${state.currentRegime} (ADX=${adxNow.toFixed(1)})`);
