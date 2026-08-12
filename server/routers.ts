@@ -29,7 +29,10 @@ import {
   fetchIndiaVix,
 } from "./riskManager";
 import { fetchOptionsAnalytics, getCachedAnalytics, selectSmartStrike, checkOiConfluence } from "./optionsAnalytics";
-import { computeLayerStats, isLayerDisabled, setLayerOverride, resetAllLayerOverrides, getAutoDisabledLayers } from "./layerTracker";
+import {
+  computeLayerStats, isLayerDisabled, setLayerOverride, resetAllLayerOverrides,
+  getAutoDisabledLayers, getDemoLayerOverrides, getLayerDisableState, setDemoLayerOverride,
+} from "./layerTracker";
 import { STRATEGY_PRESETS, getPreset } from "./presets";
 import { computePrecisionMetrics, computeLayerAccuracy, computeDailyReports, updateJournalOnTradeClose } from "./precisionMetrics";
 
@@ -4720,13 +4723,59 @@ const tokenRow = await db.select({ accessToken: uc2.accessToken })
         return computeLayerStats(trades, input.sessionToken);
       }),
 
-    /** Manually enable/disable a layer */
+    /**
+     * Retained for explicit user disablement only. Re-enabling removes a manual
+     * block but deliberately cannot clear D3's automatic expectancy disable.
+     */
     setOverride: publicProcedure
-      .input(z.object({ layer: z.string(), disabled: z.boolean(), sessionToken: sessionTokenSchema.optional() }))
-      .mutation(({ input }) => { setLayerOverride(input.layer, input.disabled, input.sessionToken ?? "default"); return { success: true }; }),
+      .input(z.object({ layer: z.string().min(1).max(80), disabled: z.boolean(), sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
+        setLayerOverride(input.layer, input.disabled, input.sessionToken);
+        return { success: true };
+      }),
 
-    /** Reset all layer overrides */
-    resetAll: publicProcedure.input(z.object({ sessionToken: sessionTokenSchema.optional() }).optional()).mutation(({ input }) => { resetAllLayerOverrides(input?.sessionToken ?? "default"); return { success: true }; }),
+    /** Read the tenant's transient Demo-only D3 exceptions. */
+    demoOverrides: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input, ctx }) => {
+        if (!await verifyAdminAccess(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        return getDemoLayerOverrides(input.sessionToken);
+      }),
+
+    /**
+     * Allows exactly one narrowly scoped exception: an automatically disabled
+     * layer may be observed in an actively running Demo bot. It can never be
+     * activated for Live mode and does not alter the D3 scorecard state.
+     */
+    setDemoOverride: publicProcedure
+      .input(z.object({ layer: z.string().min(1).max(80), enabled: z.boolean(), sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input, ctx }) => {
+        if (!await verifyAdminAccess(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        await verifySessionOwnership(ctx, input.sessionToken);
+        const runningBots = getAllRunningBotsForSession(input.sessionToken);
+        if (!runningBots.some(bot => bot.status === "running" && bot.mode === "demo")) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Demo-only override requires a running Demo bot; it is unavailable in Live mode." });
+        }
+        if (input.enabled) {
+          const gate = getLayerDisableState(input.layer, input.sessionToken);
+          if (gate.source !== "auto") {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only a currently auto-disabled D3 layer can be force-enabled for Demo." });
+          }
+        }
+        setDemoLayerOverride(input.layer, input.enabled, input.sessionToken);
+        return { success: true, activeOverrides: getDemoLayerOverrides(input.sessionToken) };
+      }),
+
+    /** Clears Demo-only D3 exceptions without changing automatic disable state. */
+    clearDemoOverrides: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .mutation(async ({ input, ctx }) => {
+        if (!await verifyAdminAccess(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        await verifySessionOwnership(ctx, input.sessionToken);
+        for (const layer of getDemoLayerOverrides(input.sessionToken)) setDemoLayerOverride(layer, false, input.sessionToken);
+        return { success: true };
+      }),
   }),
 
   // ── Strategy Presets ─────────────────────────────────────────────────────────

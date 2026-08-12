@@ -22,7 +22,7 @@ import {
 import { lockDirection, recordDirectionExit, isDirectionFlipBlocked, resetDirectionFlipLock } from "./riskManager";
 import { fetchIndiaVix } from "./riskManager";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
-import { computeLayerStats, getLayerTrackerTenantKey, isLayerDisabled } from "./layerTracker";
+import { clearDemoLayerOverrides, computeLayerStats, getLayerGateForMode, getLayerTrackerTenantKey } from "./layerTracker";
 
 // Production log suppression — hide strategy details in production logs
 const IS_DEV = process.env.NODE_ENV !== "production";
@@ -5754,7 +5754,8 @@ async function tick(
     resetDailyState(state.sessionToken); // Clear StoplossGuard, portfolio halt, cooldowns
     resetDirectionStreak(state.sessionToken); // Clear same-direction loss streak
     resetDirectionFlipLock(state.sessionToken); // Clear direction flip-flop lock for new day
-    emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset`);
+    clearDemoLayerOverrides(state.sessionToken); // Demo-only D3 exceptions never persist into a new session
+    emitActivity(state.sessionToken, "bot_start", `🌅 New trading day (${todayStr}) — daily counters reset; demo layer overrides cleared`);
     }
   state.lastTradingDay = todayStr;
 
@@ -7217,10 +7218,13 @@ const isExpiryDay = isOptionInstrument && (
     // D3: enforce the tenant-scoped disabled set BEFORE confidence ranking.
     // Confidence only ranks layers that are currently eligible to trade.
     const eligibleCandidates = candidateSignals.filter(candidate => {
-      const gate = isLayerDisabled(candidate.layer, state.sessionToken);
+      const gate = getLayerGateForMode(candidate.layer, state.sessionToken, state.mode);
       if (gate.disabled) {
         emitActivity(state.sessionToken, "signal", `⊘ ${candidate.layer} skipped — ${gate.reason ?? "layer disabled"}`);
         return false;
+      }
+      if (gate.demoOverrideActive) {
+        emitActivity(state.sessionToken, "signal", `⚠ DEMO OVERRIDE — ${candidate.layer} allowed despite ${gate.overriddenReason ?? "D3 auto-disable"}`);
       }
       return true;
     });
@@ -7254,10 +7258,12 @@ const isExpiryDay = isOptionInstrument && (
   // Single-signal paths do not pass through candidateSignals, so apply the
   // same D3 gate here before any downstream entry handling.
   if (signal.direction !== "HOLD") {
-    const layerGate = isLayerDisabled(signal.layer, state.sessionToken);
+    const layerGate = getLayerGateForMode(signal.layer, state.sessionToken, state.mode);
     if (layerGate.disabled) {
       emitActivity(state.sessionToken, "signal", `⊘ ${signal.layer} signal skipped — ${layerGate.reason ?? "layer disabled"}`);
       signal = { ...signal, direction: "HOLD", reason: `${signal.reason} | D3 skipped: ${layerGate.reason ?? "layer disabled"}` };
+    } else if (layerGate.demoOverrideActive) {
+      emitActivity(state.sessionToken, "signal", `⚠ DEMO OVERRIDE — ${signal.layer} allowed despite ${layerGate.overriddenReason ?? "D3 auto-disable"}`);
     }
   }
 

@@ -36,6 +36,10 @@ export const REENABLE_AFTER_MS = 24 * 60 * 60 * 1000;
 // State is keyed by the owning tenant, never by a bot's slot suffix.
 const manualOverridesByTenant = new Map<string, Map<string, boolean>>();
 const autoDisabledByTenant = new Map<string, Map<string, { at: number; reason: string }>>();
+// Deliberately separate from manual overrides: this bounded, in-memory state exists
+// only to collect Demo evidence when D3 has auto-disabled a layer. It must never
+// alter the scorecard's disabled status or become a Live-trading permission.
+const demoForceEnabledByTenant = new Map<string, Set<string>>();
 
 export function getLayerTrackerTenantKey(sessionToken: string = "default"): string {
   return sessionToken.replace(/-slot[1-5]$/, "");
@@ -51,6 +55,12 @@ function getAutoDisabled(sessionToken: string): Map<string, { at: number; reason
   const tenant = getLayerTrackerTenantKey(sessionToken);
   if (!autoDisabledByTenant.has(tenant)) autoDisabledByTenant.set(tenant, new Map());
   return autoDisabledByTenant.get(tenant)!;
+}
+
+function getDemoForceEnabled(sessionToken: string): Set<string> {
+  const tenant = getLayerTrackerTenantKey(sessionToken);
+  if (!demoForceEnabledByTenant.has(tenant)) demoForceEnabledByTenant.set(tenant, new Set());
+  return demoForceEnabledByTenant.get(tenant)!;
 }
 
 /** Prefer a journal layer; retain legacy parsing for historic trade rows. */
@@ -155,20 +165,60 @@ export function computeLayerStats(closedTrades: LayerPerformanceTrade[], session
   return stats.sort((a, b) => b.totalTrades - a.totalTrades || a.layer.localeCompare(b.layer));
 }
 
-/** Checks the current manual/automatic disabled set before candidate selection. */
-export function isLayerDisabled(layer: string, sessionToken: string = "default"): { disabled: boolean; reason: string | null } {
+export type LayerDisableSource = "none" | "manual" | "auto";
+
+export interface LayerGateResult {
+  disabled: boolean;
+  reason: string | null;
+  source: LayerDisableSource;
+  demoOverrideActive: boolean;
+  overriddenReason: string | null;
+}
+
+/** Returns the D3 gate and its source without applying any Demo exception. */
+export function getLayerDisableState(layer: string, sessionToken: string = "default"): Omit<LayerGateResult, "demoOverrideActive" | "overriddenReason"> {
   const manualOverrides = getManualOverrides(sessionToken);
   const autoDisabled = getAutoDisabled(sessionToken);
-  if (manualOverrides.get(layer)) return { disabled: true, reason: "Manually disabled" };
+  if (manualOverrides.get(layer)) return { disabled: true, reason: "Manually disabled", source: "manual" };
   const auto = autoDisabled.get(layer);
   if (auto) {
     if (Date.now() - auto.at > REENABLE_AFTER_MS) {
       autoDisabled.delete(layer);
-      return { disabled: false, reason: null };
+      return { disabled: false, reason: null, source: "none" };
     }
-    return { disabled: true, reason: auto.reason };
+    return { disabled: true, reason: auto.reason, source: "auto" };
   }
-  return { disabled: false, reason: null };
+  return { disabled: false, reason: null, source: "none" };
+}
+
+/**
+ * Applies the only permitted exception to D3: a tenant's explicit, transient
+ * Demo override may bypass an automatic expectancy disable. Manual disables
+ * and all non-D3 safety gates remain authoritative.
+ */
+export function getLayerGateForMode(
+  layer: string,
+  sessionToken: string = "default",
+  mode: "demo" | "live",
+): LayerGateResult {
+  const gate = getLayerDisableState(layer, sessionToken);
+  const demoOverrideActive = mode === "demo" && gate.source === "auto" && getDemoForceEnabled(sessionToken).has(layer);
+  if (demoOverrideActive) {
+    return {
+      disabled: false,
+      reason: null,
+      source: "auto",
+      demoOverrideActive: true,
+      overriddenReason: gate.reason,
+    };
+  }
+  return { ...gate, demoOverrideActive: false, overriddenReason: null };
+}
+
+/** Checks the current manual/automatic disabled set before candidate selection. */
+export function isLayerDisabled(layer: string, sessionToken: string = "default"): { disabled: boolean; reason: string | null } {
+  const gate = getLayerDisableState(layer, sessionToken);
+  return { disabled: gate.disabled, reason: gate.reason };
 }
 
 export function setLayerOverride(layer: string, disabled: boolean, sessionToken: string = "default"): void {
@@ -181,9 +231,24 @@ export function setLayerOverride(layer: string, disabled: boolean, sessionToken:
   }
 }
 
+export function setDemoLayerOverride(layer: string, enabled: boolean, sessionToken: string = "default"): void {
+  const overrides = getDemoForceEnabled(sessionToken);
+  if (enabled) overrides.add(layer);
+  else overrides.delete(layer);
+}
+
+export function getDemoLayerOverrides(sessionToken: string = "default"): string[] {
+  return Array.from(getDemoForceEnabled(sessionToken)).sort();
+}
+
+export function clearDemoLayerOverrides(sessionToken: string = "default"): void {
+  getDemoForceEnabled(sessionToken).clear();
+}
+
 export function resetAllLayerOverrides(sessionToken: string = "default"): void {
   getManualOverrides(sessionToken).clear();
   getAutoDisabled(sessionToken).clear();
+  clearDemoLayerOverrides(sessionToken);
 }
 
 /**
