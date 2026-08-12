@@ -228,7 +228,10 @@ export interface BotState {
   optionQuoteUpdatedAt?: number;
   isOpeningTrade?: boolean; // mutex: prevents duplicate trade opens from concurrent ticks
   tickInProgress?: boolean; // lock: prevents overlapping ticks from running concurrently
-  // Layer selection: user can enable/disable specific strategy layers
+  // Layer selection: user can enable/disable specific strategy layers.
+  // configuredLayers is the user-owned selection; enabledLayers is the current,
+  // regime-eligible runtime subset used only for new-entry selection.
+  configuredLayers?: string[];
   enabledLayers?: string[];
   // HourlyClose: track if first-hour signal already fired today
   // Partial profit booking config (% profit levels)
@@ -292,7 +295,8 @@ export interface BotState {
   currentADX?: number;
   regimeV2?: RegimeV2; // D6 authoritative per-tick regime from detectRegimeV2
   lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
-  regimeManualOverride?: boolean; // true if user manually toggled a layer since last regime check
+  lastAffinityRegime?: RegimeV2; // most recently applied D5 entry-affinity regime
+  regimeManualOverride?: boolean; // legacy field; D5 derives from configuredLayers instead
   userDisabledLayers?: string[]; // layers the user explicitly disabled — regime won't re-enable these
   strategyLocked?: boolean; // true = regime switcher won't modify layers (strategy testing mode)
   // VRP Regime Filter state (updated every 5 min)
@@ -1594,6 +1598,79 @@ export function generateSignal(
 }
 // ── V2 Regime Detection ─────────────────────────────────────────────────────
 export type RegimeV2 = "TRENDING" | "RANGING" | "VOLATILE" | "DEAD";
+
+/**
+ * D5 entry-affinity policy.  The V2 detector is the only market classifier;
+ * this map merely declares which strategy may be considered for a new entry in
+ * each detector outcome.  `None` is a sentinel and is intentionally ineligible.
+ */
+export type LayerRegimeAffinity = Exclude<RegimeV2, "DEAD"> | "ANY" | "NONE";
+
+export const LAYER_REGIME_AFFINITY = {
+  Breakout: "TRENDING",
+  Pattern: "RANGING",
+  Trend: "TRENDING",
+  Momentum: "TRENDING",
+  TrendMomentum: "TRENDING",
+  MACD_BB: "RANGING",
+  PowerHour: "VOLATILE",
+  MCXEvening: "VOLATILE",
+  MCXLateSession: "VOLATILE",
+  HeroZero: "VOLATILE",
+  ORB: "VOLATILE",
+  VWAPReversion: "RANGING",
+  VWAPPullback: "RANGING",
+  InstFootprint: "TRENDING",
+  HourlyClose: "TRENDING",
+  BoomingBulls: "TRENDING",
+  FailedBreakout: "RANGING",
+  OpeningBurst: "VOLATILE",
+  CPR: "TRENDING",
+  RedBarTheory: "TRENDING",
+  TrikalStrategy: "TRENDING",
+  Adeeb: "TRENDING",
+  OIFlow: "VOLATILE",
+  MaxPainGravity: "RANGING",
+  PremiumRenko: "TRENDING",
+  BoxingStrategy: "RANGING",
+  MeanReversionV13: "RANGING",
+  None: "NONE",
+} as const satisfies Record<Signal["layer"], LayerRegimeAffinity>;
+
+/** Returns false for unknown/sentinel layers and for every layer in DEAD. */
+export function isLayerEligibleForRegime(layer: string, regime: RegimeV2 | undefined): boolean {
+  if (!regime || regime === "DEAD") return false;
+  const affinity = (LAYER_REGIME_AFFINITY as Record<string, LayerRegimeAffinity>)[layer];
+  return affinity === "ANY" || affinity === regime;
+}
+
+/**
+ * Derive the runtime entry set from immutable user configuration.  This is pure
+ * so router updates and engine ticks can apply exactly the same safety rule.
+ */
+export function deriveRegimeEligibleLayers(
+  configuredLayers: readonly string[] | undefined,
+  userDisabledLayers: readonly string[] | undefined,
+  regime: RegimeV2 | undefined,
+): { enabledLayers: string[]; regimeExcludedLayers: string[]; userDisabledSkippedLayers: string[] } {
+  const configured = Array.from(new Set(configuredLayers ?? []));
+  const userBlocked = new Set(userDisabledLayers ?? []);
+  const enabledLayers: string[] = [];
+  const regimeExcludedLayers: string[] = [];
+  const userDisabledSkippedLayers: string[] = [];
+
+  for (const layer of configured) {
+    if (userBlocked.has(layer)) {
+      userDisabledSkippedLayers.push(layer);
+    } else if (isLayerEligibleForRegime(layer, regime)) {
+      enabledLayers.push(layer);
+    } else {
+      regimeExcludedLayers.push(layer);
+    }
+  }
+
+  return { enabledLayers, regimeExcludedLayers, userDisabledSkippedLayers };
+}
 
 export interface RegimeV2Snapshot {
   regime: RegimeV2;
@@ -5441,6 +5518,10 @@ async function tick(
   const tickRegimeSnapshot = detectRegimeV2(state.candles);
   const previousRegimeV2 = state.regimeV2;
   state.regimeV2 = tickRegimeSnapshot.regime;
+  // Legacy ADX fields are diagnostics derived from the authoritative V2
+  // snapshot; they no longer classify the market independently.
+  state.currentADX = tickRegimeSnapshot.adx;
+  state.currentRegime = state.regimeV2 === "TRENDING" ? "trending" : "choppy";
   if (previousRegimeV2 !== state.regimeV2) {
     emitActivity(state.sessionToken, "signal", `📊 Regime V2 → ${state.regimeV2} | ${tickRegimeSnapshot.label}`);
   }
@@ -6691,89 +6772,52 @@ const isExpiryDay = isOptionInstrument && (
     const strikeDistance = Math.abs(underlyingApprox - price);
     signal = generateHeroZeroSignal(optionPremium, state.candles, optionType, strikeDistance, slMult);
     } else {
-    // ── Adaptive Regime Switching: BEFORE signal generation ────────────────────
-    // Every 5 min, check ADX with hysteresis. ADX > 28 → trending, ADX < 22 → choppy.
-    // Trending: enable Supertrend (layer "Trend") + TrikalStrategy; disable reversion layers.
-    // Choppy:   disable Supertrend + TrikalStrategy; enable VWAPReversion + MeanReversionV13.
-    // Guard: don't switch while a trade is open (avoids exit-logic confusion).
-    // MANUAL DISABLE PROTECTION: a layer the user explicitly disabled is NEVER re-enabled
-    // by the regime switcher; regime actions only move layers that are NOT user-blocked.
-        if (
+    // ── Adaptive Regime Switching: D5 authoritative affinity selection ───────
+    // The D6 V2 snapshot is the sole classifier.  Re-evaluation intentionally
+    // continues while an order is open because this only changes future-entry
+    // eligibility; it never modifies the open-trade object or its exit path.
+    if (
       state.adaptiveRegimeEnabled !== false &&
       state.candles.length >= 20 &&
-      !state.regimeManualOverride &&
-      !state.strategyLocked &&
-      !state.openTrade
+      !state.strategyLocked
     ) {
       const regimeNow = Date.now();
       const REGIME_INTERVAL_MS = 5 * 60 * 1000;
       if (!state.lastRegimeCheckAt || (regimeNow - state.lastRegimeCheckAt) >= REGIME_INTERVAL_MS) {
-        const adxNow = calcADX(state.candles, 14);
-        state.currentADX = adxNow;
         state.lastRegimeCheckAt = regimeNow;
-        const prevRegimeState = state.currentRegime;
+        // Migration-safe initialization: existing sessions preserve their current
+        // user selection before any runtime affinity filtering occurs.
+        state.configuredLayers ??= [...(state.enabledLayers ?? [])];
+        const previousEnabled = [...(state.enabledLayers ?? [])];
+        // D4 invariant: capture manual exclusions immutably. This switcher may
+        // inspect them but never writes to the user-owned setting.
+        const userBlocked = new Set(state.userDisabledLayers || []);
+        const skippedUserLayers: string[] = [];
+        const {
+          enabledLayers,
+          regimeExcludedLayers,
+          userDisabledSkippedLayers,
+        } = deriveRegimeEligibleLayers(state.configuredLayers, Array.from(userBlocked), state.regimeV2);
+        skippedUserLayers.push(...userDisabledSkippedLayers);
+        const addedLayers = enabledLayers.filter(layer => !previousEnabled.includes(layer));
+        const removedLayers = previousEnabled.filter(layer => !enabledLayers.includes(layer));
+        const regimeChanged = state.lastAffinityRegime !== state.regimeV2;
 
-        const ADX_TRENDING_THRESH = 28;
-        const ADX_CHOPPY_THRESH = 22;
+        state.enabledLayers = enabledLayers;
+        state.lastAffinityRegime = state.regimeV2;
 
-        let newRegime = state.currentRegime;
-        if (adxNow > ADX_TRENDING_THRESH) {
-          newRegime = "trending";
-        } else if (adxNow < ADX_CHOPPY_THRESH) {
-          newRegime = "choppy";
-        } else if (!state.currentRegime) {
-          newRegime = adxNow > 25 ? "trending" : "choppy";
-        }
-
-        if (newRegime && newRegime !== state.currentRegime) {
-          state.currentRegime = newRegime;
-          // Work on a new enabled-layer list.  Never mutate either the source list
-          // or userDisabledLayers: the latter is an explicit user-owned setting.
-          const layers = [...(state.enabledLayers || [])];
-          const userBlocked = new Set(state.userDisabledLayers || []);
-          const trendingEnable = ["Trend", "TrikalStrategy"];
-          const trendingDisable = ["VWAPReversion", "MeanReversionV13"];
-          const choppyEnable = ["VWAPReversion", "MeanReversionV13"];
-          const choppyDisable = ["Trend", "TrikalStrategy"];
-          const enableList = newRegime === "trending" ? trendingEnable : choppyEnable;
-          const disableList = newRegime === "trending" ? trendingDisable : choppyDisable;
-          const addedLayers: string[] = [];
-          const removedLayers: string[] = [];
-          const skippedUserLayers: string[] = [];
-
-          for (const lyr of enableList) {
-            if (userBlocked.has(lyr)) {
-              skippedUserLayers.push(lyr);
-              continue; // MANUAL DISABLE PROTECTION: never re-enable
-            }
-            if (!layers.includes(lyr)) {
-              layers.push(lyr);
-              addedLayers.push(lyr);
-            }
-          }
-          for (const lyr of disableList) {
-            if (userBlocked.has(lyr)) {
-              skippedUserLayers.push(lyr);
-              continue; // user explicitly disabled — leave disabled
-            }
-            const idx = layers.indexOf(lyr);
-            if (idx !== -1) {
-              layers.splice(idx, 1);
-              removedLayers.push(lyr);
-            }
-          }
-          state.enabledLayers = layers;
+        if (regimeChanged || addedLayers.length || removedLayers.length || userDisabledSkippedLayers.length) {
+          const regimeLabel = state.regimeV2 ?? "DEAD";
           emitActivity(state.sessionToken, "signal",
-            `📊 Regime → ${newRegime.toUpperCase()} (ADX ${adxNow.toFixed(0)})` +
-            (addedLayers.length ? ` +${addedLayers.join("+")}` : "") +
-            (removedLayers.length ? ` −${removedLayers.join(",")}` : "") +
-            (skippedUserLayers.length ? ` · user-disabled skipped: ${Array.from(new Set(skippedUserLayers)).join(",")}` : "")
+            `📊 Regime affinity → ${regimeLabel} (ADX ${state.currentADX?.toFixed(0) ?? "n/a"})` +
+            ` | added: ${addedLayers.length ? addedLayers.join(",") : "none"}` +
+            ` | removed: ${removedLayers.length ? removedLayers.join(",") : "none"}` +
+            ` | regime-excluded: ${regimeExcludedLayers.length ? regimeExcludedLayers.join(",") : "none"}` +
+            ` | user-disabled skipped: ${skippedUserLayers.length ? skippedUserLayers.join(",") : "none"}`
           );
-          devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — switched ${prevRegimeState ?? "init"} → ${newRegime} (ADX=${adxNow.toFixed(1)})` +
-            (skippedUserLayers.length ? `; preserved user-disabled=${Array.from(new Set(skippedUserLayers)).join(",")}` : ""));
-        } else if (!state.currentRegime) {
-          state.currentRegime = newRegime || (adxNow > 25 ? "trending" : "choppy");
-          devLog(`[AdaptiveRegime] ${state.sessionToken.slice(0,8)} — initial regime: ${state.currentRegime} (ADX=${adxNow.toFixed(1)})`);
+          devLog(`[RegimeAffinity] ${state.sessionToken.slice(0, 8)} — ${regimeLabel}; ` +
+            `added=${addedLayers.join(",") || "none"}; removed=${removedLayers.join(",") || "none"}; ` +
+            `preserved user-disabled=${skippedUserLayers.join(",") || "none"}`);
         }
       }
     }
@@ -6981,6 +7025,15 @@ const isExpiryDay = isOptionInstrument && (
     } else if (candidateSignals.length > 0) {
       emitActivity(state.sessionToken, "signal", "⊘ All strategy candidates skipped — every candidate layer is disabled");
     }
+  }
+
+  // Special/direct paths do not pass through the runtime enabled-layer list.
+  // Apply D5's same authoritative affinity policy before any downstream entry
+  // handling so session-window strategies cannot bypass the regime contract.
+  if (signal.direction !== "HOLD" && !isLayerEligibleForRegime(signal.layer, state.regimeV2)) {
+    const regimeLabel = state.regimeV2 ?? "DEAD";
+    emitActivity(state.sessionToken, "signal", `⊘ ${signal.layer} signal skipped — D5 ${regimeLabel} affinity gate`);
+    signal = { ...signal, direction: "HOLD", reason: `${signal.reason} | D5 skipped: ${regimeLabel} affinity` };
   }
 
   // Single-signal paths do not pass through candidateSignals, so apply the
@@ -8419,6 +8472,7 @@ export function startBot(
     isMCXEveningMode: false, isMCXLateSessionMode: false, heroZeroMode: false,
     openingBurstMode: false, openingBurstTradeTaken: false,
     alertsSent: new Set<string>(),
+    configuredLayers: config.configuredLayers ?? [...(config.enabledLayers ?? [])],
     layerTradesCount: config.layerTradesCount ?? {},
   };
 

@@ -8,7 +8,8 @@ import { upstoxCredentials, botSessions, tradeLog, signalJournal, type TradeLog,
 import { eq, desc, and, gte, count, or, like, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { ENV } from "./_core/env";
-import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, generateMeanReversionV13Signal, generateRenkoSignal, generateBoxingSignal, generateORBV8Signal, generateSmartRenkoSignal, generateAdeebSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, fetchUpcomingOptionExpiryKeys, getOptionExpiryDateKey, isOptionExpiryTradable, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, type Candle, type Signal, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";import { getUpstoxEgressStatus, upstoxFetch, verifyUpstoxManagedEgress } from "./upstoxHttp";
+import { startBot, stopBot, getBotState, getBotStateByPrefix, getAllRunningBotsForSession, placeUpstoxOrder, generateSignal, generateSignalV2, generateMeanReversionV13Signal, generateRenkoSignal, generateBoxingSignal, generateORBV8Signal, generateSmartRenkoSignal, generateAdeebSignal, fetchUpstoxCandles, fetchUpstox5mCandles, fetchFullQuote, fetchUpcomingOptionExpiryKeys, getOptionExpiryDateKey, isOptionExpiryTradable, resolveAtmOptionToken, resolveAtmMcxOptionToken, resolveSpecificOptionToken, forceAverageDown, toggleShadowMode, getShadowSummary, clearShadowLog, deriveRegimeEligibleLayers, type Candle, type Signal, type ShadowLogEntry, type ShadowSummary, getCrudeOilBias, hotReloadAccessToken, getTotalRunningBots, getTotalBotsInMemory, pauseBot, resumeBot } from "./botEngine";
+import { getUpstoxEgressStatus, upstoxFetch, verifyUpstoxManagedEgress } from "./upstoxHttp";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 import { assertBotAutomationEnabled } from "./botAutomation";
 import { getBaseSessionToken, KILL_SWITCH_LAST_ERROR } from "./botSessionLifecycle";
@@ -1542,20 +1543,38 @@ export const appRouter = router({
           // FIX J: Track which layers the user explicitly disabled
           // so adaptive regime won't re-enable them
           // so adaptive regime won't re-enable them
-          if (bot.enabledLayers) {
-            const removedLayers = bot.enabledLayers.filter(l => !input.enabledLayers.includes(l));
-            if (removedLayers.length > 0) {
-              bot.userDisabledLayers = Array.from(
-                new Set([...(bot.userDisabledLayers || []), ...removedLayers])
-              );
-            }
-            // If user re-enables a layer, remove it from userDisabledLayers
-            const reenabledLayers = input.enabledLayers.filter(l => bot.userDisabledLayers?.includes(l));
-            if (reenabledLayers.length > 0) {
-              bot.userDisabledLayers = (bot.userDisabledLayers || []).filter(l => !reenabledLayers.includes(l));
-            }
+          // D5: compare against the user-owned configuration, not the current
+          // regime-filtered runtime subset. A temporary affinity exclusion must
+          // never be recorded as a manual disable.
+          const previousConfiguredLayers = bot.configuredLayers ?? bot.enabledLayers ?? [];
+          const removedLayers = previousConfiguredLayers.filter(l => !input.enabledLayers.includes(l));
+          if (removedLayers.length > 0) {
+            bot.userDisabledLayers = Array.from(
+              new Set([...(bot.userDisabledLayers || []), ...removedLayers])
+            );
           }
-          bot.enabledLayers = input.enabledLayers;
+          // If the user re-enables a layer, remove only that explicit block.
+          const reenabledLayers = input.enabledLayers.filter(l => bot.userDisabledLayers?.includes(l));
+          if (reenabledLayers.length > 0) {
+            bot.userDisabledLayers = (bot.userDisabledLayers || []).filter(l => !reenabledLayers.includes(l));
+          }
+          bot.configuredLayers = [...input.enabledLayers];
+          if (bot.adaptiveRegimeEnabled !== false && !bot.strategyLocked) {
+            const effectiveLayers = deriveRegimeEligibleLayers(
+              bot.configuredLayers,
+              bot.userDisabledLayers,
+              bot.regimeV2,
+            );
+            bot.enabledLayers = effectiveLayers.enabledLayers;
+            bot.lastAffinityRegime = bot.regimeV2;
+            bot.lastRegimeCheckAt = Date.now();
+          } else {
+            // The user explicitly disabled regime automation (or locked a
+            // strategy test), so retain the selected runtime set unchanged.
+            bot.enabledLayers = [...bot.configuredLayers];
+            bot.lastAffinityRegime = undefined;
+            bot.lastRegimeCheckAt = undefined;
+          }
           updated++;
         }
         // Also persist to DB so restart picks up the new layers
