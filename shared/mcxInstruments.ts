@@ -3,9 +3,9 @@
 // on 2026-07-10. These are NUMERIC instrument keys (e.g. MCX_FO|560977) — NOT text-based symbols.
 //
 // ⚠️  MCX futures are monthly contracts. Tokens change every month when contracts roll over.
-// The resolveMcxFrontMonthToken() function in botEngine.ts auto-resolves the current front-month
-// token at runtime using the Upstox instrument master, so the bot always uses the correct contract.
-// The tokens below are used as fallbacks when the API is unavailable.
+// ALL hardcoded tokens below are auto-refreshed to the current front-month contract
+// at bot start via resolveMcxFuturesToken() in botEngine.ts. They serve as best-effort
+// fallbacks only — the bot never trusts a hardcoded numeric token blindly.
 
 export interface MCXInstrument {
   label: string;
@@ -63,7 +63,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Natural Gas",
     symbol: "NATURALGAS",
-    instrumentToken: "MCX_FO|538685",   // NATURALGAS front-month Jul 2026
+    instrumentToken: "MCX_FO|561496",   // NATURALGAS front-month Aug 2026 (auto-refreshed at start regardless)
     upstoxName: "NATURALGAS",
     lotSize: 1250,     // 1250 mmBtu
     tickSize: 0.10,
