@@ -15,7 +15,7 @@ import { isBotAutomationEnabled } from "./botAutomation";
 import { canAutoRestartSession, partitionCanonicalSessionRows } from "./botSessionLifecycle";
 import { botSessions } from "../drizzle/schema";
 import { eq, inArray } from "drizzle-orm";
-import { getBotState } from "./botEngine";
+import { getBotState, stopBot } from "./botEngine";
 import { restartSingleSession } from "./botRestart";
 import { emitActivity } from "./activityLog";
 
@@ -64,6 +64,19 @@ export async function runWatchdogCycle(): Promise<{ checked: number; restarted: 
     .select()
     .from(botSessions)
     .where(eq(botSessions.status, "running"));
+
+  // D17c — If a slot-keyed running row has no in-memory state but the stale shared
+  // base-token bot is still alive in memory, stop the stale bot first. Otherwise the
+  // restart below would spin up a second scan loop against the same instruments.
+  for (const session of runningSessions) {
+    if (!/-slot\d+$/.test(session.sessionToken)) continue;
+    if (getBotState(session.sessionToken)) continue;
+    const baseKey = session.sessionToken.replace(/-slot\d+$/, "");
+    if (getBotState(baseKey)) {
+      stopBot(baseKey);
+      console.log(`[BotWatchdog] D17c stopped stale shared base-token bot ${baseKey.slice(0, 8)}… — ${session.instrumentLabel ?? session.sessionToken.slice(-6)} will restart under its own slot key`);
+    }
+  }
 
   const { canonicalRows, duplicateRows } = partitionCanonicalSessionRows<typeof runningSessions[number]>(runningSessions);
   if (duplicateRows.length > 0) {
