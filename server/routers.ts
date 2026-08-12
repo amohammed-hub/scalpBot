@@ -4330,7 +4330,7 @@ export const appRouter = router({
           { token: "MCX_FO|560977",               symbol: "MCX_CRUDE", label: "Crude Oil → ATM Options",   lotSize: 100 },
           { token: "MCX_FO|555922",               symbol: "MCX_GOLD",  label: "Gold → ATM Options",        lotSize: 100 },
           { token: "MCX_FO|471725",               symbol: "MCX_SILVER",label: "Silver → ATM Options",      lotSize: 30 },
-          { token: "MCX_FO|538685",               symbol: "MCX_NATGAS",label: "Natural Gas → ATM Options", lotSize: 1250 },
+          { token: "MCX_FO|561496",               symbol: "MCX_NATGAS",label: "Natural Gas → ATM Options", lotSize: 1250 },
         ];
 
         const db = await getDb();

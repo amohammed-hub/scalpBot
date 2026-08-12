@@ -8752,9 +8752,46 @@ export function startBot(
         state._pendingOptionResolve = mcxResolvePromise;
       }
     } else if (!isPlaceholder) {
-      // Numeric token — mark as resolved so tick doesn't re-resolve unnecessarily
-      (state as any)._mcxTokenResolved = true;
-      console.log(`[BotEngine] MCX token already numeric at start: ${mcxSignalToken} (${mcxSymbol})`);
+      // Numeric token (e.g. "MCX_FO|538685") — this is a HARDCODED fallback that may be
+      // stale after a monthly rollover. Always re-resolve to the current front-month
+      // contract instead of trusting the hardcoded value blindly. The hardcoded tokens
+      // in mcxInstruments.ts and routers.ts are best-effort fallbacks only.
+      (state as any)._mcxTokenResolved = false; // Will resolve on first tick
+      console.log(`[BotEngine] MCX numeric token at start — will verify freshness: ${mcxSignalToken} (${mcxSymbol})`);
+      // Trigger immediate resolution so the bot doesn't sit on a stale contract
+      if (mcxSymbol) {
+        const mcxResolvePromise = (async () => {
+          try {
+            const resolved = await resolveMcxFuturesToken(mcxSymbol, state.accessToken);
+            if (resolved && resolved !== mcxSignalToken) {
+              console.log(`[BotEngine] MCX token refreshed (stale fallback → live): ${mcxSignalToken} → ${resolved}`);
+              if (state.isIndexOptions && state.underlyingToken) {
+                state.underlyingToken = resolved;
+              } else {
+                state.instrumentToken = resolved;
+              }
+              emitActivity(state.sessionToken, "bot_start", `🔄 MCX token refreshed: ${mcxSymbol} → ${resolved.split("|")[1]}`);
+            } else if (resolved === mcxSignalToken) {
+              console.log(`[BotEngine] MCX numeric token still valid: ${mcxSignalToken}`);
+            } else {
+              console.warn(`[BotEngine] MCX token resolution returned null for ${mcxSymbol} — keeping fallback ${mcxSignalToken}`);
+              emitActivity(state.sessionToken, "error", `⚠ Could not refresh MCX token for ${mcxSymbol} — using fallback`);
+            }
+            (state as any)._mcxTokenResolved = true;
+          } catch (err) {
+            console.error(`[BotEngine] MCX token refresh error for ${mcxSymbol}:`, err instanceof Error ? err.message : String(err));
+            (state as any)._mcxTokenResolved = true; // Don't block — keep fallback
+          }
+        })();
+        if (state._pendingOptionResolve) {
+          state._pendingOptionResolve = state._pendingOptionResolve.then(() => mcxResolvePromise);
+        } else {
+          state._pendingOptionResolve = mcxResolvePromise;
+        }
+      } else {
+        // No symbol to resolve against — trust the numeric token
+        (state as any)._mcxTokenResolved = true;
+      }
     }
   }
 
