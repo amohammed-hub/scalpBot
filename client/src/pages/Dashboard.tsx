@@ -686,7 +686,7 @@ export default function Dashboard() {
   // Multi-bot: all slots
   const { data: allBots } = trpc.multiBots.allStatus.useQuery(
     { sessionToken, isAdmin: meQuery.data?.role === "admin" || accessQuery.data?.isAdmin === true },
-    { enabled: authReady && activeTab === "command", refetchInterval: 3000, staleTime: 1000 }
+    { enabled: authReady && (activeTab === "command" || activeTab === "trades"), refetchInterval: 3000, staleTime: 1000 }
   );
   // Lightweight live price polling — updates every 5 seconds independently of scan interval
   const { data: livePricesData } = trpc.multiBots.livePrices.useQuery(
@@ -724,8 +724,14 @@ export default function Dashboard() {
   // ── Layer Tracker ────────────────────────────────────────────────────────────
   const { data: layerStats = [] } = trpc.layerTracker.stats.useQuery(
     { sessionToken },
-    { enabled: authReady && activeTab === "command", refetchInterval: 10000, staleTime: 5000 }
+    { enabled: authReady && (activeTab === "command" || activeTab === "trades"), refetchInterval: 10000, staleTime: 5000 }
   );
+  const hasRunningDemoBot = isAdmin && config.mode === "demo" && (allBots ?? []).some((bot: any) => bot.status === "running" && bot.mode === "demo");
+  const demoOverridesQuery = trpc.layerTracker.demoOverrides.useQuery(
+    { sessionToken },
+    { enabled: authReady && activeTab === "trades" && hasRunningDemoBot, refetchInterval: 5000, staleTime: 2000 }
+  );
+  const demoLayerOverrides = demoOverridesQuery.data ?? [];
 
   // ── Presets ──────────────────────────────────────────────────────────────────
   const { data: presetsList = [] } = trpc.presets.list.useQuery(undefined, { enabled: authReady, staleTime: 60000 });
@@ -743,6 +749,20 @@ export default function Dashboard() {
   useEffect(() => { if (demoCosts) { setLocalBrokerage(demoCosts.brokeragePer); setLocalSlippage(demoCosts.slippagePct); } }, [demoCosts]);
 
   // ── Mutations ────────────────────────────────────────────────────────────────
+  const setDemoLayerOverrideMutation = trpc.layerTracker.setDemoOverride.useMutation({
+    onSuccess: (data: any) => {
+      toast.success(`Demo-only override updated. Active: ${(data.activeOverrides ?? []).join(", ") || "none"}.`);
+      demoOverridesQuery.refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const clearDemoLayerOverridesMutation = trpc.layerTracker.clearDemoOverrides.useMutation({
+    onSuccess: () => {
+      toast.info("Demo-only layer overrides cleared; D3 auto-disables remain active.");
+      demoOverridesQuery.refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const startMutation = trpc.bot.start.useMutation({
     onSuccess: (result) => {
       if (result.readiness === "degraded") {
@@ -3617,8 +3637,44 @@ export default function Dashboard() {
             <div className="flex items-center gap-2 mb-4">
               <Layers className="w-5 h-5 text-cyan-400" />
               <span className="font-semibold text-white">Strategy Layer Scorecard</span>
-              <span className="text-xs text-white/40">Auto-disables layers below 30% win rate (last 20 trades)</span>
+              <span className="text-xs text-white/40">D3 auto-disables negative-expectancy layers after the minimum sample</span>
             </div>
+            {hasRunningDemoBot && (
+              <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-amber-200">Demo-only expectancy override</p>
+                    <p className="mt-1 text-xs leading-5 text-amber-100/70">This temporarily permits a D3 auto-disabled layer to collect Demo evidence. It does not change its scorecard status and cannot be used in Live mode. User-disabled layers and all other safety gates remain blocked.</p>
+                  </div>
+                  {demoLayerOverrides.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => clearDemoLayerOverridesMutation.mutate({ sessionToken })}
+                      disabled={clearDemoLayerOverridesMutation.isPending}
+                      className="shrink-0 rounded-lg border border-amber-400/40 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Clear demo overrides
+                    </button>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {layerStats.filter((layer) => layer.disabled && layer.disabledReason?.startsWith("Auto-disabled:")).map((layer) => {
+                    const forcedForDemo = demoLayerOverrides.includes(layer.layer);
+                    return (
+                      <button
+                        type="button"
+                        key={`demo-override-${layer.layer}`}
+                        onClick={() => setDemoLayerOverrideMutation.mutate({ sessionToken, layer: layer.layer, enabled: !forcedForDemo })}
+                        disabled={setDemoLayerOverrideMutation.isPending}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${forcedForDemo ? "border-cyan-400/50 bg-cyan-500/20 text-cyan-100" : "border-amber-400/40 bg-black/10 text-amber-100 hover:bg-amber-500/20"}`}
+                      >
+                        {forcedForDemo ? `FORCED FOR DEMO · ${layer.layer}` : `Force enable for Demo · ${layer.layer}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -3645,7 +3701,7 @@ export default function Dashboard() {
                       </td>
                       <td className="py-2 px-2 text-center">
                         {l.disabled ? (
-                          <span className="text-red-400 bg-red-500/10 px-2 py-0.5 rounded-full text-[10px] font-bold">DISABLED</span>
+                          <span className="inline-flex flex-wrap items-center justify-center gap-1 text-red-400 bg-red-500/10 px-2 py-0.5 rounded-full text-[10px] font-bold">DISABLED {demoLayerOverrides.includes(l.layer) && <span className="text-cyan-300">· FORCED FOR DEMO</span>}</span>
                         ) : (
                           <span className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full text-[10px] font-bold">ACTIVE</span>
                         )}
