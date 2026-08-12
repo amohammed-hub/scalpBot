@@ -7792,6 +7792,15 @@ const isExpiryDay = isOptionInstrument && (
     // Formula: qty = riskAmount / (premium × 0.30) rounded down to lot size
         const slDistPct = (state.optionSlPct ?? 5) / 100;
     const slDist = optionPremiumForSizing * slDistPct;
+    const oneLotRisk = slDist * lotSize;
+    // D7: a minimum lot must never silently override the configured risk budget.
+    // This guard is deliberately before manual/automatic sizing and before any order path.
+    if (oneLotRisk > riskAmount) {
+      emitActivity(state.sessionToken, "signal",
+        `⊘ Entry skipped — one lot risk ₹${oneLotRisk.toFixed(2)} exceeds risk budget ₹${riskAmount.toFixed(2)} (SL ${(slDistPct * 100).toFixed(2)}%)`);
+      state.isOpeningTrade = false;
+      return;
+    }
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
     const maxQtyByCapital = Math.floor(Math.min(state.capital, MAX_CAPITAL_PER_TRADE) / optionPremiumForSizing / lotSize) * lotSize;
@@ -7806,9 +7815,10 @@ const isExpiryDay = isOptionInstrument && (
         `📐 Manual qty: ${quantity} (${quantity/lotSize} lots) | User override`);
     } else    
     if (riskBasedQty < lotSize) {
-      // Even 1 lot exceeds risk budget — still allow 1 lot if capital permits
+      // D7 already proved that one lot is within risk. This remaining path is
+      // capital-only; it must not become an implicit risk-budget override.
       if (maxQtyByCapital >= lotSize) {
-        quantity = lotSize; // Allow minimum 1 lot, SL tightening below will handle risk
+        quantity = lotSize;
       } else {
         // ── CAPITAL-AWARE OTM FALLBACK ──────────────────────────────────────────
         // ATM/1-OTM option is too expensive for allocated capital.
