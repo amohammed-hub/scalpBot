@@ -20,20 +20,20 @@ export interface InstrumentDefault {
 
 // Morning session: NSE Index Options
 const MORNING_DEFAULTS: InstrumentDefault[] = [
-  { token: "NSE_INDEX|Nifty 50",            symbol: "NIFTY",      label: "Nifty 50 → OTM Options (Auto)", lotSize: 25, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
-  { token: "NSE_INDEX|Nifty Bank",          symbol: "BANKNIFTY",  label: "BankNifty → OTM Options (Auto)", lotSize: 15, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
-  { token: "NSE_INDEX|Nifty Fin Service",   symbol: "FINNIFTY",   label: "FinNifty → OTM Options (Auto)", lotSize: 25, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
-  { token: "BSE_INDEX|SENSEX",              symbol: "SENSEX",     label: "Sensex → OTM Options (Auto)", lotSize: 20, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" }
+  { token: "NSE_INDEX|Nifty 50",            symbol: "NIFTY",      label: "Nifty 50 → ITM Options (Auto)", lotSize: 25, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
+  { token: "NSE_INDEX|Nifty Bank",          symbol: "BANKNIFTY",  label: "BankNifty → ITM Options (Auto)", lotSize: 15, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
+  { token: "NSE_INDEX|Nifty Fin Service",   symbol: "FINNIFTY",   label: "FinNifty → ITM Options (Auto)", lotSize: 25, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
+  { token: "BSE_INDEX|SENSEX",              symbol: "SENSEX",     label: "Sensex → ITM Options (Auto)", lotSize: 20, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" }
 ];
 
 // Evening session: MCX Commodity Options
 const EVENING_DEFAULTS: InstrumentDefault[] = [
-  { token: "MCX_FO|563946",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|563946" },
-  { token: "MCX_FO|560977",  symbol: "MCX_CRUDE",  label: "Crude Oil → OTM Options (Auto)",    lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|560977" },
-  { token: "MCX_FO|471725",  symbol: "MCX_SILVER", label: "Silver → OTM Options (Auto)",       lotSize: 30,  isIndexOptions: true, underlyingToken: "MCX_FO|471725" },
-  { token: "MCX_FO|561496",  symbol: "MCX_NATGAS", label: "Natural Gas → OTM Options (Auto)",  lotSize: 1250, isIndexOptions: true, underlyingToken: "MCX_FO|561496" },
-  { token: "MCX_FO|568831",  symbol: "MCX_COPPER", label: "Copper → OTM Options (Auto)",       lotSize: 2500, isIndexOptions: true, underlyingToken: "MCX_FO|568831" },
-  { token: "MCX_FO|568836",  symbol: "MCX_ZINC",   label: "Zinc → OTM Options (Auto)",         lotSize: 5000, isIndexOptions: true, underlyingToken: "MCX_FO|568836" },
+  { token: "MCX_FO|563946",  symbol: "MCX_GOLD",   label: "Gold → ITM Options (Auto)",         lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|563946" },
+  { token: "MCX_FO|560977",  symbol: "MCX_CRUDE",  label: "Crude Oil → ITM Options (Auto)",    lotSize: 100, isIndexOptions: true, underlyingToken: "MCX_FO|560977" },
+  { token: "MCX_FO|471725",  symbol: "MCX_SILVER", label: "Silver → ITM Options (Auto)",       lotSize: 30,  isIndexOptions: true, underlyingToken: "MCX_FO|471725" },
+  { token: "MCX_FO|561496",  symbol: "MCX_NATGAS", label: "Natural Gas → ITM Options (Auto)",  lotSize: 1250, isIndexOptions: true, underlyingToken: "MCX_FO|561496" },
+  { token: "MCX_FO|568831",  symbol: "MCX_COPPER", label: "Copper → ITM Options (Auto)",       lotSize: 2500, isIndexOptions: true, underlyingToken: "MCX_FO|568831" },
+  { token: "MCX_FO|568836",  symbol: "MCX_ZINC",   label: "Zinc → ITM Options (Auto)",         lotSize: 5000, isIndexOptions: true, underlyingToken: "MCX_FO|568836" },
 ];
 
 export type TradingSession = "morning" | "evening" | "closed";

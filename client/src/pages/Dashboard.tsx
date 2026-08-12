@@ -76,26 +76,26 @@ interface PricePoint { time: string; price: number; }
 // spotOnly: true means the index cannot be directly traded — shown for reference/signal only.
 // isIndexOptions: when true, bot reads underlying (underlyingToken) for signals and auto-resolves ATM CE/PE at runtime.
 // underlyingToken: the index token used to fetch candles and generate signals (only for isIndexOptions instruments).
-// Bot reads the underlying index/futures for signals and auto-resolves 1-OTM CE/PE option at trade time.
+// Bot reads the underlying index/futures for signals and auto-resolves the closest available 1-strike ITM CE/PE option at trade time (falls back to ATM when premium < ₹5, or when the ITM strike is illiquid).
 // 1-OTM = one strike away from ATM for lower premiums, better lot sizing, and higher profit potential.
 // Quantity is sized using the option PREMIUM price (~₹100–500), NOT the underlying futures price.
 const INSTRUMENTS = [
   // ── NSE Index Options — Auto OTM ─────────────────────────────────────────────
   // NSE lot sizes revised Jan 2026 (circular FAOP70616): NIFTY 65, BANKNIFTY 30, FINNIFTY 60
-  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → OTM Options (Auto)",  segment: "NSE Index Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
-  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 65,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
-  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → OTM Options (Auto)",   segment: "NSE Index Options", lotSize: 60,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
-  { token: "BSE_INDEX|SENSEX",             symbol: "SENSEX",    label: "Sensex → OTM Options (Auto)",     segment: "BSE Index Options", lotSize: 10,   spotOnly: false, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" },
-  { token: "BSE_INDEX|BANKEX",             symbol: "BANKEX",    label: "Bankex → OTM Options (Auto)",     segment: "BSE Index Options", lotSize: 15,   spotOnly: false, isIndexOptions: true, underlyingToken: "BSE_INDEX|BANKEX" },
-  { token: "NSE_INDEX|NIFTY MID SELECT",   symbol: "MIDCPNIFTY", label: "MidcpNifty → OTM Options (Auto)", segment: "NSE Index Options", lotSize: 75,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|NIFTY MID SELECT" },
+  { token: "NSE_INDEX|Nifty Bank",        symbol: "BANKNIFTY", label: "BankNifty → ITM Options (Auto)",  segment: "NSE Index Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
+  { token: "NSE_INDEX|Nifty 50",          symbol: "NIFTY",     label: "Nifty 50 → ITM Options (Auto)",   segment: "NSE Index Options", lotSize: 65,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
+  { token: "NSE_INDEX|Nifty Fin Service", symbol: "FINNIFTY",  label: "FinNifty → ITM Options (Auto)",   segment: "NSE Index Options", lotSize: 60,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
+  { token: "BSE_INDEX|SENSEX",             symbol: "SENSEX",    label: "Sensex → ITM Options (Auto)",     segment: "BSE Index Options", lotSize: 10,   spotOnly: false, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" },
+  { token: "BSE_INDEX|BANKEX",             symbol: "BANKEX",    label: "Bankex → ITM Options (Auto)",     segment: "BSE Index Options", lotSize: 15,   spotOnly: false, isIndexOptions: true, underlyingToken: "BSE_INDEX|BANKEX" },
+  { token: "NSE_INDEX|NIFTY MID SELECT",   symbol: "MIDCPNIFTY", label: "MidcpNifty → ITM Options (Auto)", segment: "NSE Index Options", lotSize: 75,   spotOnly: false, isIndexOptions: true, underlyingToken: "NSE_INDEX|NIFTY MID SELECT" },
   // ── MCX Commodity Options — Auto OTM ─────────────────────────────────────────
   // Tokens are numeric front-month IDs verified from Upstox instrument master (Jul 2026).
   // These auto-resolve to the correct front-month contract via resolveMcxFuturesToken() at runtime.
-  { token: "MCX_FO|560977",  symbol: "MCX_CRUDE",  label: "Crude Oil → OTM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|560977" },
-  { token: "MCX_FO|563946",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|563946" },
-  { token: "MCX_FO|471725",  symbol: "MCX_SILVER", label: "Silver → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|471725" },
-  { token: "MCX_FO|561496",  symbol: "MCX_NATGAS", label: "Natural Gas → OTM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|561496" },
-  { token: "MCX_FO|568831",  symbol: "MCX_COPPER", label: "Copper → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 2500, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|568831" },
+  { token: "MCX_FO|560977",  symbol: "MCX_CRUDE",  label: "Crude Oil → ITM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|560977" },
+  { token: "MCX_FO|563946",  symbol: "MCX_GOLD",   label: "Gold → ITM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|563946" },
+  { token: "MCX_FO|471725",  symbol: "MCX_SILVER", label: "Silver → ITM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|471725" },
+  { token: "MCX_FO|561496",  symbol: "MCX_NATGAS", label: "Natural Gas → ITM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|561496" },
+  { token: "MCX_FO|568831",  symbol: "MCX_COPPER", label: "Copper → ITM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 2500, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|568831" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -506,12 +506,12 @@ export default function Dashboard() {
   const resolveInstrument = (symbol: string) => {
     const NSE_INDEX_MAP: Record<string, { token: string; label: string; lotSize: number }> = {
       // NSE lot sizes revised Jan 2026: NIFTY 65, BANKNIFTY 30, FINNIFTY 60
-      NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → OTM Options (Auto)",   lotSize: 65 },
-      BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → OTM Options (Auto)",  lotSize: 30 },
-      FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → OTM Options (Auto)",   lotSize: 60 },
-      SENSEX:    { token: "BSE_INDEX|SENSEX",            label: "Sensex → OTM Options (Auto)",     lotSize: 10 },
-      BANKEX:    { token: "BSE_INDEX|BANKEX",            label: "Bankex → OTM Options (Auto)",     lotSize: 15 },
-      MIDCPNIFTY: { token: "NSE_INDEX|NIFTY MID SELECT", label: "MidcpNifty → OTM Options (Auto)", lotSize: 75 },
+      NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → ITM Options (Auto)",   lotSize: 65 },
+      BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → ITM Options (Auto)",  lotSize: 30 },
+      FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → ITM Options (Auto)",   lotSize: 60 },
+      SENSEX:    { token: "BSE_INDEX|SENSEX",            label: "Sensex → ITM Options (Auto)",     lotSize: 10 },
+      BANKEX:    { token: "BSE_INDEX|BANKEX",            label: "Bankex → ITM Options (Auto)",     lotSize: 15 },
+      MIDCPNIFTY: { token: "NSE_INDEX|NIFTY MID SELECT", label: "MidcpNifty → ITM Options (Auto)", lotSize: 75 },
     };
     const MCX_SYMBOL_MAP: Record<string, string> = {
       MCX_CRUDE: "CRUDEOIL",
