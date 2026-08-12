@@ -119,6 +119,12 @@ export const botSessions = mysqlTable("bot_sessions", {
   // Restart-critical strategy and safety state. Defaults are fail-safe for existing rows.
   adaptiveRegimeEnabled: boolean("adaptiveRegimeEnabled").default(false),
   renkoExitEnabled: boolean("renkoExitEnabled").default(false),
+  // Session-Special Layer Governance (post-loss-day 2026-08-12):
+  // time-gated session layers (Opening Burst / Power Hour / MCX Evening /
+  // MCX Late Session / Hero Zero) now honor this master toggle and the
+  // user's layer selection instead of firing on clock position alone.
+  sessionSpecialLayersEnabled: boolean("sessionSpecialLayersEnabled").default(true),
+  sessionLayersRequireWhitelist: boolean("sessionLayersRequireWhitelist").default(true),
   layerTradesCount: text("layerTradesCount"),
   consecutiveUnderlyingSLs: int("consecutiveUnderlyingSLs").default(0),
   lastUnderlyingSLAt: bigint("lastUnderlyingSLAt", { mode: "number" }),
