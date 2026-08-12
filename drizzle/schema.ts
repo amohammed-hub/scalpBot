@@ -142,12 +142,20 @@ export const tradeLog = mysqlTable("trade_log", {
   entryPrice: float("entryPrice").notNull(),
   exitPrice: float("exitPrice"),
   quantity: int("quantity").notNull(),
+  // Legacy operational levels. For option trades these remain premium-relative for compatibility.
   slPrice: float("slPrice"),
   targetPrice: float("targetPrice"),
+  // D2: preserve the strategy thesis independently from the option-premium safety net.
+  structuralSlPrice: float("structuralSlPrice"),
+  structuralTargetPrice: float("structuralTargetPrice"),
+  premiumSafetySlPrice: float("premiumSafetySlPrice"),
+  premiumSafetyTargetPrice: float("premiumSafetyTargetPrice"),
   atr: float("atr"),
   confidence: float("confidence"),
   status: mysqlEnum("status", ["open", "closed", "cancelled"]).default("open").notNull(),
   exitReason: varchar("exitReason", { length: 255 }),
+  // D2: identifies whether a structural strategy level, premium safety net, or another path closed the trade.
+  exitTrigger: varchar("exitTrigger", { length: 64 }),
   pnl: float("pnl"),
   pnlPct: float("pnlPct"),
   upstoxOrderId: varchar("upstoxOrderId", { length: 64 }),

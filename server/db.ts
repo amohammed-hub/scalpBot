@@ -144,6 +144,21 @@ async function initDb() {
           console.log("[Database] Migration complete: entryUnderlyingPrice column added");
         }
       }
+      // D2: retain both strategy-underlying and premium-safety levels for option trades.
+      // Nullable columns keep historical rows and rolling deployments backwards compatible.
+      try {
+        await pool.execute("SELECT `structuralSlPrice` FROM `trade_log` LIMIT 1");
+      } catch (e: any) {
+        if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+          console.log("[Database] Auto-migrating: adding D2 structural and premium safety fields to trade_log");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `structuralSlPrice` float DEFAULT NULL");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `structuralTargetPrice` float DEFAULT NULL");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `premiumSafetySlPrice` float DEFAULT NULL");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `premiumSafetyTargetPrice` float DEFAULT NULL");
+          await pool.execute("ALTER TABLE `trade_log` ADD COLUMN `exitTrigger` varchar(64) DEFAULT NULL");
+          console.log("[Database] Migration complete: D2 trade_log fields added");
+        }
+      }
       // Also widen exitReason in signal_journal if it exists
       try {
         const [cols2] = await pool.execute(
