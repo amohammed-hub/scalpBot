@@ -1569,8 +1569,24 @@ export default function Dashboard() {
               lastError={(botStatus as any)?.lastError ?? null}
               onRestart={() => restartMutation.mutate({ sessionToken })}
             />
-            {isRunning ? "Bot Running" : "Bot Stopped"}
+            {isRunning ? (isStale ? "Bot Stalled — last tick >2× interval" : (secondsSinceLastTick > 0 ? `Bot Running — last tick ${secondsSinceLastTick}s ago` : "Bot Running")) : "Bot Stopped"}
           </div>
+          {isRunning && isStale && (
+            <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 animate-pulse">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              Engine stalled — last tick {secondsSinceLastTick}s ago (interval {scanIntervalSec}s). Use restart if it persists.
+            </div>
+          )}
+          {isRunning && optionQuoteStatus === "unavailable" && optionPremiumPrice === null && (
+            <div className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/50">
+              Option quote unavailable — P&amp;L and exit prices will show last known value or “—”.
+            </div>
+          )}
+          {isRunning && optionQuoteStatus === "stale" && (
+            <div className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+              Option quote stale — showing last known premium. Prices and P&amp;L are not current.
+            </div>
+          )}
           {isRunning && countdown > 0 && (
             <div className="text-xs text-white/30 px-3">Next scan in {countdown}s</div>
           )}
@@ -1708,14 +1724,24 @@ export default function Dashboard() {
         <div className="flex flex-wrap items-center gap-2 sm:gap-4 mb-4 px-3 sm:px-4 py-3 bg-white/[0.03] border border-white/10 rounded-xl text-xs min-w-0">
           {/* Bot Running Status */}
           <div className="flex items-center gap-2">
-            <span className={`w-2.5 h-2.5 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-white/20"}`} />
-            <span className={`font-semibold ${isRunning ? "text-emerald-400" : "text-white/40"}`}>Bot {isRunning ? "Running" : "Stopped"}</span>
+            <span className={`w-2.5 h-2.5 rounded-full ${isRunning ? (isStale ? "bg-red-400 animate-pulse" : "bg-emerald-400 animate-pulse") : "bg-white/20"}`} />
+            <span className={`font-semibold ${isRunning ? (isStale ? "text-red-400" : "text-emerald-400") : "text-white/40"}`}>
+              Bot {isRunning ? (isStale ? `Stalled (${secondsSinceLastTick}s since tick)` : (secondsSinceLastTick > 0 ? `Running · tick ${secondsSinceLastTick}s ago` : "Running")) : "Stopped"}
+            </span>
           </div>
           <div className="w-px h-4 bg-white/10" />
           {/* Mode indicator */}
           <span className={`font-bold min-w-0 break-words ${config.mode === "demo" ? "text-blue-400" : "text-emerald-400"}`}>
             {config.mode === "demo" ? "🔵 DEMO — Real API, fake money" : "⚡ LIVE — Real trades"}
           </span>
+          {isRunning && optionQuoteStatus !== "live" && (
+            <>
+              <div className="w-px h-4 bg-white/10" />
+              <span className={`font-medium whitespace-nowrap ${optionQuoteStatus === "stale" ? "text-amber-400" : "text-white/50"}`}>
+                {optionQuoteStatus === "stale" ? "Quote stale — last known value" : "Quote unavailable"}
+              </span>
+            </>
+          )}
           <div className="flex-1" />
           {/* KILL SWITCH — always visible, big red button */}
           <button
