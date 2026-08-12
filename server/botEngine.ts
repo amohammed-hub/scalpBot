@@ -7745,10 +7745,25 @@ const isExpiryDay = isOptionInstrument && (
       const todayISO = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
       const isExpiryDayForGate = analytics?.expiry === todayISO;
 
+      // D20b: OI is only published while the F&O market is open (NSE ends
+      // ~15:30 IST; MCX evening has no NSE OI updates at night). Analytics
+      // read after close are stale — stale OI blocked 58 signals during the
+      // loss window. Skip OI-dependent gating outside live market hours.
+      const nseMarketCloseMin = 15 * 60 + 30; // 15:30 IST
+      const mcxNightOpenMin = 21 * 60;        // 21:00 IST (MCX evening session)
+      const oiDataStale =
+        istMin2 >= nseMarketCloseMin && // NSE F&O closed — no fresh OI
+        (!isMCX || istMin2 >= mcxNightOpenMin); // MCX night hours: stale NSE OI has no edge value
+      const analyticsForGate = oiDataStale ? null : analytics;
+      if (oiDataStale && analytics) {
+        emitActivity(state.sessionToken, "signal",
+          `📊 VRP/OI Gate: OI data stale (market closed, ${Math.floor(istMin2 / 60)}:${(istMin2 % 60).toString().padStart(2, "0")} IST) — skipping OI-dependent gating (fail-open per gate design)`);
+      }
+
       // Run the combined strategy gate
       const gateResult = evaluateStrategyGate(
         state.candlesDay,           // daily candles for VRP
-        analytics,                  // option chain analytics
+        analyticsForGate,           // option chain analytics (null when OI is stale)
         signal.direction as "BUY" | "SELL",
         price,                      // current underlying price
         isExpiryDayForGate,
@@ -8832,6 +8847,18 @@ export function startBot(
     layerTradesCount: config.layerTradesCount ?? {},
   };
 
+  // D20: MCX capital guard — illiquid MCX contracts concentrated risk at 100-200k
+  // (Copper lost -18k alone with ~3x the capital of index slots). Clamp to
+  // MAX_MCX_CAPITAL_INR at session start and emit one warning; the clamped
+  // value drives all downstream risk sizing.
+  const MAX_MCX_CAPITAL_INR = 50000;
+  const isMcxInstrument = config.instrumentToken.startsWith("MCX");
+  if (isMcxInstrument && state.capital > MAX_MCX_CAPITAL_INR) {
+    const originalCapital = state.capital;
+    state.capital = MAX_MCX_CAPITAL_INR;
+    emitActivity(config.sessionToken, "bot_start",
+      `🛡️ MCX capital guard: configured ₹${originalCapital.toLocaleString("en-IN")} → capped at ₹${MAX_MCX_CAPITAL_INR.toLocaleString("en-IN")} (illiquid MCX contract risk control). Adjust in Settings → Capital to restore.`);
+  }
   // Mark that user explicitly chose this instrument — prevent session auto-switch from overriding
   (state as any)._userManualInstrument = true;
   // CRITICAL: Log whether accessToken was passed to startBot
