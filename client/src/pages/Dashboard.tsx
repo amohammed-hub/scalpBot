@@ -1105,6 +1105,21 @@ export default function Dashboard() {
     tokenStatus === "valid",
     tokenHealthStatus,
   );
+
+  // ── Token expiry countdown (Upstox tokens die every 24h — users must re-verify before they expire) ──
+  const tokenExpiryText = useMemo(() => {
+    const expiresAt = tokenHealthQuery.data?.expiresAt ?? serverCreds?.tokenExpiresAt;
+    if (!expiresAt) return null;
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (ms <= 0) return null; // expired is handled by tokenDisplayState
+    const hrs = Math.floor(ms / 3_600_000);
+    const mins = Math.floor((ms % 3_600_000) / 60_000);
+    return hrs >= 6
+      ? `expires in ${hrs}h`
+      : hrs > 0
+        ? `expires in ${hrs}h ${mins}m — re-verify soon!`
+        : `expires in ${mins}m — verify NOW!`;
+  }, [tokenHealthQuery.data, serverCreds]);
   const accountProfileQuery = trpc.account.profile.useQuery(
     { sessionToken },
     { enabled: authReady && activeTab === "command" && tokenDisplayState === "valid", refetchInterval: 300_000, staleTime: 60_000 },
@@ -1650,13 +1665,15 @@ export default function Dashboard() {
           </div>
          <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
          <button onClick={() => navigate("/settings")}
-             title={tokenHealthMessage ?? (tokenDisplayState === "valid" ? "Access Token: OK" : tokenDisplayState === "checking" ? "Checking access token with Upstox" : tokenDisplayState === "expired" ? "Access token expired — reconnect Upstox" : tokenDisplayState === "error" ? "Could not validate access token" : "No Access Token")}
+             title={(tokenExpiryText ? tokenExpiryText + " — " : "") + (tokenHealthMessage ?? (tokenDisplayState === "valid" ? "Access Token: OK" : tokenDisplayState === "checking" ? "Checking access token with Upstox" : tokenDisplayState === "expired" ? "Access token expired — reconnect Upstox" : tokenDisplayState === "error" ? "Could not validate access token" : "No Access Token"))}
              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-               tokenDisplayState === "valid" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+               tokenDisplayState === "valid" ? (tokenExpiryText?.includes("verify NOW!") ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 animate-pulse"
+               : tokenExpiryText?.includes("re-verify soon!") ? "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
+               : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20")
                : tokenDisplayState === "missing" || tokenDisplayState === "expired" ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 animate-pulse"
                : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
              }`}>
-             {tokenDisplayState === "valid" ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK ✓</span></>
+             {tokenDisplayState === "valid" ? <><ShieldCheck className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token OK ✓</span><span className={`text-[10px] ${tokenExpiryText?.includes("verify NOW!") ? "text-red-400" : tokenExpiryText?.includes("re-verify soon!") ? "text-amber-400" : "text-white/40"}`}>{tokenExpiryText}</span></>
               : tokenDisplayState === "expired" ? <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token Expired!</span></>
               : tokenDisplayState === "error" ? <><ShieldAlert className="w-3.5 h-3.5" /><span className="hidden sm:inline">Token Error</span></>
               : tokenDisplayState === "checking" ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /><span className="hidden sm:inline">Checking Token</span></>
@@ -2462,16 +2479,16 @@ export default function Dashboard() {
         ═══════════════════════════════════════════════════════════════════════════ */}
         <div className="text-[10px] text-white/30 mb-1.5 ml-1">Each bot slot runs independently on a different instrument — start/stop individually</div>
         <div data-tour="bot-slots" className={`grid gap-2 sm:gap-3 mb-6 grid-cols-1 sm:grid-cols-2 ${(() => {
-          const entitledSlots = isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3);
+          const entitledSlots = isAdmin ? 10 : (3 + ((accessQuery.data as any)?.extraBotSlots ?? 0));
           const highestServerSlot = (allBots ?? []).reduce((max: number, bot: any) => Math.max(max, Number(bot.slot) || 0), -1) + 1;
           const totalSlots = Math.max(entitledSlots, highestServerSlot);
           return totalSlots >= 7 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 5 ? "lg:grid-cols-3 xl:grid-cols-5" : totalSlots >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3";
         })()}`}>
           {((allBots && allBots.length > 0) ? allBots.slice(0, Math.max(
-            isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3),
+            isAdmin ? 10 : (3 + ((accessQuery.data as any)?.extraBotSlots ?? 0)),
             allBots.reduce((max: number, bot: any) => Math.max(max, Number(bot.slot) || 0), -1) + 1,
           )) : (() => {
-            const totalSlots = isAdmin ? 10 : ((accessQuery.data as any)?.extraBotSlots || 3);
+            const totalSlots = isAdmin ? 10 : (3 + ((accessQuery.data as any)?.extraBotSlots ?? 0));
             const slots = [];
             for (let i = 0; i < totalSlots; i++) {
               const tok = i === 0 ? sessionToken : `${sessionToken}-slot${i}`;

@@ -5306,6 +5306,14 @@ export async function placeUpstoxOrder(
       await new Promise(r => setTimeout(r, 1000));
       continue;
     }
+    // D15: After all retries, a persistent 401 means the user's Upstox token is dead —
+    // surface an unmistakable message (Upstox tokens expire every 24h and must be re-verified).
+    if (axios.isAxiosError(err) && err.response?.status === 401) {
+      const expiryMsg = "Upstox token expired (401) — live orders blocked. Verify token in Settings → Upstox Auth (tokens die every 24h).";
+      lastOrderRejectionReason = expiryMsg;
+      console.error(`[BotEngine] ${expiryMsg} (${instrumentToken} ${direction})`);
+      return null;
+    }
     // A static-IP rejection means the managed-egress invariant is broken.
     // Fail closed immediately; retries cannot repair a misrouted request and may duplicate intent.
     if (reason.includes("UDAPI1154")) {
@@ -8278,6 +8286,12 @@ const isExpiryDay = isOptionInstrument && (
       // Log the failure and skip this tick entirely.
       state.lastError = `Order rejected by Upstox — ${tradeInstrumentToken} ${orderDirection} ${quantity} qty`;
       const rejReason = getLastOrderRejectionReason();
+      const isTokenExpiry = rejReason?.includes("(401)");
+      // D15: Token-expiry rejections must NOT count toward the rejection-pause threshold
+      // (the user can fix them by re-verifying in Settings, not by adding margin).
+      if (isTokenExpiry) {
+        state.consecutiveRejections = Math.max(0, (state.consecutiveRejections ?? 0) - 1);
+      }
       emitActivity(state.sessionToken, "error", `⚠ Live order REJECTED — ${tradeLabel} ${orderDirection} ${quantity} qty${rejReason ? ` | Upstox: ${rejReason}` : ". Check Upstox logs."}`);
       console.error(`[BotEngine] ${state.sessionToken} — Live order rejected, trade NOT recorded.`);
       // CRITICAL: Set cooldown to prevent infinite retry loop.
