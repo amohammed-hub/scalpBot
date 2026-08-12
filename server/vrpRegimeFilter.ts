@@ -25,7 +25,6 @@
 
 import type { Candle } from "./botEngine";
 import type { OptionsAnalytics } from "./optionsAnalytics";
-import { seasonalityGate, type SeasonalityGateResult, type IntradayClockCandle } from "../shared/seasonality";
 
 // ── VRP Computation ─────────────────────────────────────────────────────────
 
@@ -328,25 +327,11 @@ export function computeMaxPainGravity(
 
 // ── Combined Strategy Gate ──────────────────────────────────────────────────
 
-export interface SeasonalityGateContext {
-  /** Layer name of the signal being gated, e.g. "MeanReversionV13", "ORB", "FailedBreakout" */
-  layer: string;
-  /** Current IST minutes since midnight (e.g. 10:15 IST = 615) */
-  istMinutes: number;
-  /** Intraday cumulative drift since day open: (price - dayOpen) / dayOpen (0.0025 = 0.25%) */
-  intradayDriftPct: number;
-  /** Today's intraday candles (newest last) for prior-hour / first-bar detection */
-  todayCandles: IntradayClockCandle[];
-  /** Underlying symbol, uppercased (NIFTY, BANKNIFTY, FINNIFTY, ...) */
-  symbol: string;
-}
-
 export interface StrategyGateResult {
   allowed: boolean;
   vrp: VRPResult | null;
   oiBias: OIFlowBias | null;
   maxPainSignal: MaxPainGravitySignal | null;
-  seasonality: SeasonalityGateResult | null;
   confidenceBoost: number;  // -0.15 to +0.15 adjustment to signal confidence
   reason: string;
 }
@@ -370,7 +355,6 @@ export function evaluateStrategyGate(
   isExpiryDay: boolean,
   istMinutes: number,
   isMCX: boolean = false,
-  seasonalityCtx?: SeasonalityGateContext | null,
 ): StrategyGateResult {
   let allowed = true;
   let confidenceBoost = 0;
@@ -413,42 +397,6 @@ export function evaluateStrategyGate(
 
   // 3. Max Pain Gravity (expiry day only)
   let maxPainSignal: MaxPainGravitySignal | null = null;
-
-  // 4. Seasonality regime gate (D11 — validated on 486 sessions, Aug 2024 - Aug 2026):
-  //    F-B. HARD BLOCK for reversion layers (MeanReversionV13 / FailedBreakout /
-  //       VWAPReversion) when intraday drift |drift| > 0.25% (TRENDING) or in the
-  //       10:00-11:15 IST trending window. Validated improvement: NIFTY wr
-  //       39.6→44.4%, BANKNIFTY expectancy -0.011→+0.011bp, FINNIFTY 49.2→53.1%.
-  //    F-L. Small index-aware last-hour fade nudge (±3% confidence), never a block.
-  //    F-A. ORB small-open sniper flag — DEMO-ONLY, OFF by default (not yet robust
-  //       under engine freshness rules; validated positive only with relaxed window).
-  //    Fail-open: a seasonality compute error never blocks a trade.
-  let seasonality: SeasonalityGateResult | null = null;
-  if (seasonalityCtx) {
-    try {
-      seasonality = seasonalityGate(
-        {
-          istMinutes: seasonalityCtx.istMinutes,
-          intradayDriftPct: seasonalityCtx.intradayDriftPct,
-          symbol: seasonalityCtx.symbol,
-          todayCandles: seasonalityCtx.todayCandles,
-        },
-        seasonalityCtx.layer,
-        signalDirection,
-        currentPrice,
-      );
-      if (!seasonality.allowed) {
-        allowed = false;
-        reasons.push(...seasonality.reasons);
-      } else if (seasonality.confidenceNudge !== 0) {
-        confidenceBoost += seasonality.confidenceNudge;
-        reasons.push(...seasonality.reasons);
-      }
-    } catch (seasonErr) {
-      console.warn(`[VRPFilter] Seasonality gate error (fail-open):`, seasonErr instanceof Error ? seasonErr.message : String(seasonErr));
-    }
-  }
-
   if (isExpiryDay && analytics) {
     maxPainSignal = computeMaxPainGravity(analytics, currentPrice, istMinutes);
     if (maxPainSignal.direction !== "HOLD") {
@@ -498,7 +446,6 @@ export function evaluateStrategyGate(
     vrp,
     oiBias,
     maxPainSignal,
-    seasonality,
     confidenceBoost,
     reason: reasons.join(" | ") || "All gates passed — no adjustment",
   };
