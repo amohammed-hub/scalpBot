@@ -6,6 +6,9 @@
 export type PlanTier = "trial" | "monthly" | "quarterly" | "half_yearly" | "yearly" | "admin";
 
 export interface TierLimits {
+  // NOTE (Aug 2026): daily trade caps REMOVED across all paid tiers per founder
+  // directive — the platform sells subscriptions, so no tier may block trades.
+  // 0 = unlimited. The daily LOSS cap (maxDailyLoss) remains the safety net.
   maxTradesPerDay: number; // 0 = unlimited
   mcxAccess: boolean;
   maxBots: number; // 0 = unlimited
@@ -21,7 +24,7 @@ export interface TierLimits {
 
 export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
   trial: {
-    maxTradesPerDay: 5,
+    maxTradesPerDay: 0, // unlimited — trade caps removed; loss cap is the safety net
     mcxAccess: false,
     maxBots: 3,
     liveTrading: false,
@@ -34,7 +37,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     pnlAnalytics: true,
   },
   monthly: {
-    maxTradesPerDay: 10,
+    maxTradesPerDay: 0, // unlimited
     mcxAccess: false,
     maxBots: 3,
     liveTrading: true,
@@ -47,7 +50,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     pnlAnalytics: true,
   },
   quarterly: {
-    maxTradesPerDay: 15,
+    maxTradesPerDay: 0, // unlimited
     mcxAccess: true,
     maxBots: 3,
     liveTrading: true,
@@ -60,7 +63,7 @@ export const TIER_LIMITS: Record<PlanTier, TierLimits> = {
     pnlAnalytics: true,
   },
   half_yearly: {
-    maxTradesPerDay: 20,
+    maxTradesPerDay: 0, // unlimited
     mcxAccess: true,
     maxBots: 3,
     liveTrading: true,

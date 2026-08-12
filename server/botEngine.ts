@@ -6839,27 +6839,20 @@ async function tick(
     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Daily loss limit reached (₹${state.dailyPnl.toFixed(0)})`, layer: "None" };
     return;
   }
-  if (state.tradesCount >= state.maxTradesPerDay && !state.openTrade) {
-    // Don't pause — just block new trade entries. Bot continues monitoring open trades & prices.
+  // TRADE CAP: removed across all tiers (Aug 2026, subscription model — users must
+  // never be stopped from trading). 0 = unlimited; keep this guard only if a cap > 0
+  // is ever configured again. The daily LOSS cap above remains the safety net.
+  if (state.maxTradesPerDay > 0 && state.tradesCount >= state.maxTradesPerDay && !state.openTrade) {
     if ((state.tickCount ?? 0) % 20 === 1) {
       console.warn(`[tick] ⚠ Max trades reached — ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${state.maxTradesPerDay} — blocking new entries only`);
     }
     state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Max trades reached (${state.tradesCount}/${state.maxTradesPerDay})`, layer: "None" };
     return;
   }
-  // HARD ABSOLUTE CAP per slot per day — NO BYPASS, even for admin/unlimitedTrades.
-  // MCX gets higher cap (12) because it trades across morning+evening sessions (longer hours).
-  // NSE/indices get 8 to prevent overtrading.
-  const isMcxBot = state.instrumentToken?.startsWith("MCX_FO") || state.instrumentSymbol?.startsWith("MCX_");
-  const ABSOLUTE_MAX_TRADES_PER_SLOT = isMcxBot ? 12 : 8;
-  if (state.tradesCount >= ABSOLUTE_MAX_TRADES_PER_SLOT && !state.openTrade) {
-    if ((state.tickCount ?? 0) % 20 === 1) {
-      console.warn(`[tick] ⚠ HARD CAP: ${state.sessionToken.slice(0,8)} | trades=${state.tradesCount}/${ABSOLUTE_MAX_TRADES_PER_SLOT} — absolute daily limit`);
-    }
-    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `HARD CAP: Max ${ABSOLUTE_MAX_TRADES_PER_SLOT} trades/day reached (${state.tradesCount})`, layer: "None" };
-    return;
-  }
-
+  // TRADE CAP REMOVED (Aug 2026): the per-slot absolute hard cap (12 MCX / 8 NSE)
+  // was removed per founder directive — the platform sells subscriptions, so no bot
+  // may be stopped by a trade count. Overtrading is controlled by the daily loss cap,
+  // the 2-minute entry cooldown, and the StoplossGuard consecutive-SL pause above.
   // ── v3 Risk Gates: StoplossGuard, Portfolio Drawdown Halt, Cooldown ─────────
   // 1. StoplossGuard: pause after 3 consecutive SLs in last 20 trades (checked globally)
   const slGuard = getStoplossGuardState(state.sessionToken);
@@ -7062,11 +7055,11 @@ const isExpiryDay = isOptionInstrument && (
     "ORB": 1, // ORB V8: max 1 trade per day (by design)
     "MeanReversionV13": 2, // max 2 mean reversion trades per day
   };
-  // HARD CAP: max 6 trades per day per bot slot across ALL strategies.
-  // This is a HARD limit — even unlimitedTrades cannot bypass it.
-  // MCX gets higher limit (10) due to longer trading hours (morning + evening sessions).
-  const isMcxInstrument = state.instrumentToken?.startsWith("MCX_FO") || state.instrumentSymbol?.startsWith("MCX_");
-  const TOTAL_LAYER_LIMIT = isMcxInstrument ? 10 : 6;
+  // TRADE CAP REMOVED (Aug 2026): the per-bot total daily layer-trade limit
+  // (10 MCX / 6 NSE) was removed per founder directive — subscriptions must never be
+  // blocked by trade counts. Per-LAYER daily throttle (LAYER_TRADE_LIMITS) is kept as
+  // individual strategy design, not a hard total cap.
+  const TOTAL_LAYER_LIMIT = Number.MAX_SAFE_INTEGER;
 
   if (signal.direction === "HOLD" && state.enabledLayers && state.candles.length >= 28) {
     // D8 applies the once-per-session ATR reference only to potential new Renko entries.
