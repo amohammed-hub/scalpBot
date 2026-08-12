@@ -310,6 +310,10 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       entryUnderlyingPrice: session.isIndexOptions
         ? ((t as any).entryUnderlyingPrice ?? undefined)
         : undefined,
+      structuralSlPrice: t.structuralSlPrice ?? undefined,
+      structuralTargetPrice: t.structuralTargetPrice ?? undefined,
+      premiumSafetySlPrice: t.premiumSafetySlPrice ?? undefined,
+      premiumSafetyTargetPrice: t.premiumSafetyTargetPrice ?? undefined,
       optionMockKey: (() => {
         if (!session.isIndexOptions) return undefined;
         const sym = (session.instrumentSymbol ?? "").toUpperCase();
@@ -359,6 +363,8 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     upstoxOrderId?: string; signalReason: string; enteredAt: Date;
     partial1RPrice: number; partial2RPrice: number;
     entryUnderlyingPrice?: number;
+    structuralSlPrice?: number; structuralTargetPrice?: number;
+    premiumSafetySlPrice?: number; premiumSafetyTargetPrice?: number;
   }): Promise<number> => {
     const dbInner = await getDb();
     if (!dbInner) return 0;
@@ -383,12 +389,23 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       partial1RPrice: trade.partial1RPrice,
       partial2RPrice: trade.partial2RPrice,
       entryUnderlyingPrice: trade.entryUnderlyingPrice,
+      structuralSlPrice: trade.structuralSlPrice,
+      structuralTargetPrice: trade.structuralTargetPrice,
+      premiumSafetySlPrice: trade.premiumSafetySlPrice,
+      premiumSafetyTargetPrice: trade.premiumSafetyTargetPrice,
     });
     return Number((result as unknown as [{ insertId: number }])[0].insertId);
   };
 
   // Build onTradeClose callback
-  const onTradeClose = async (dbId: number, exitPrice: number, pnl: number, exitReason: string): Promise<void> => {
+  const onTradeClose = async (
+    dbId: number,
+    exitPrice: number,
+    pnl: number,
+    exitReason: string,
+    _excursions?: { maxFavorablePnl: number; maxAdversePnl: number },
+    exitTrigger?: string,
+  ): Promise<void> => {
     const dbInner = await getDb();
     if (!dbInner) return;
     const capital = session.capital ?? 100000;
@@ -398,6 +415,7 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       pnl,
       pnlPct: (pnl / capital) * 100,
       exitReason,
+      exitTrigger,
       exitedAt: new Date(),
     }).where(eq(tradeLog.id, dbId));
     // Use live bot state for accurate counters (session snapshot is stale after restart)

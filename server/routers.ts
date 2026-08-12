@@ -1398,6 +1398,10 @@ export const appRouter = router({
             return ceOrPe0 === "CE" ? "NIFTY_CE" : "NIFTY_PE";
           })(),
           carryForward: !!(openTradeRows[0].carryForward),
+          structuralSlPrice: openTradeRows[0].structuralSlPrice ?? undefined,
+          structuralTargetPrice: openTradeRows[0].structuralTargetPrice ?? undefined,
+          premiumSafetySlPrice: openTradeRows[0].premiumSafetySlPrice ?? undefined,
+          premiumSafetyTargetPrice: openTradeRows[0].premiumSafetyTargetPrice ?? undefined,
         } : null;
         // Reuse same onTradeOpen / onTradeClose callbacks as bot.start
         const onTradeOpen = async (trade: Parameters<typeof startBot>[1] extends (t: infer T) => unknown ? T : never): Promise<number> => {
@@ -1412,11 +1416,12 @@ export const appRouter = router({
           pnl: number,
           exitReason: string,
           excursions?: { maxFavorablePnl: number; maxAdversePnl: number },
+          exitTrigger?: string,
         ): Promise<void> => {
           const dbInner = await getDb();
           if (!dbInner) return;
           const capital = row.capital ?? 100000;
-          await dbInner.update(tradeLog).set({ status: "closed", exitPrice, pnl, pnlPct: (pnl / capital) * 100, exitReason, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
+          await dbInner.update(tradeLog).set({ status: "closed", exitPrice, pnl, pnlPct: (pnl / capital) * 100, exitReason, exitTrigger, exitedAt: new Date() }).where(eq(tradeLog.id, dbId));
           const [entryRow] = await dbInner
             .select({ enteredAt: tradeLog.enteredAt })
             .from(tradeLog)
@@ -2486,9 +2491,14 @@ export const appRouter = router({
             quantity: t.quantity ?? 0,
             stopLoss: t.slPrice ?? 0,
             target: t.targetPrice ?? 0,
+            structuralStopLoss: t.structuralSlPrice ?? null,
+            structuralTarget: t.structuralTargetPrice ?? null,
+            premiumSafetyStopLoss: t.premiumSafetySlPrice ?? null,
+            premiumSafetyTarget: t.premiumSafetyTargetPrice ?? null,
             pnl: t.pnl ?? 0,
             status: t.status ?? "",
             exitReason: t.exitReason ?? "",
+            exitTrigger: t.exitTrigger ?? "",
             confidence: t.confidence ?? 0,
             botSlot: t.botSlot ?? 0,
             strategy: t.signalReason ?? "",
@@ -3032,6 +3042,10 @@ export const appRouter = router({
             bookedQty: t.bookedQty ?? 0, bookedPnl: t.bookedPnl ?? 0, isIndexOptions: input.isIndexOptions,
             optionMockKey: restoredOptionMockKey,
             entryUnderlyingPrice: (t as any).entryUnderlyingPrice ?? undefined,
+            structuralSlPrice: t.structuralSlPrice ?? undefined,
+            structuralTargetPrice: t.structuralTargetPrice ?? undefined,
+            premiumSafetySlPrice: t.premiumSafetySlPrice ?? undefined,
+            premiumSafetyTargetPrice: t.premiumSafetyTargetPrice ?? undefined,
           };
         }
 
@@ -3165,13 +3179,14 @@ export const appRouter = router({
           pnl: number,
           exitReason: string,
           excursions?: { maxFavorablePnl: number; maxAdversePnl: number },
+          exitTrigger?: string,
         ): Promise<void> => {
           const dbInner = await getDb();
           if (!dbInner) return;
           await dbInner.update(tradeLog).set({
             status: "closed", exitPrice, pnl,
             pnlPct: (pnl / input.capital) * 100,
-            exitReason, exitedAt: new Date(),
+            exitReason, exitTrigger, exitedAt: new Date(),
           }).where(eq(tradeLog.id, dbId));
           const [entryRow] = await dbInner
             .select({ enteredAt: tradeLog.enteredAt })

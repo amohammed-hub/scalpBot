@@ -24,9 +24,14 @@ interface TradeRow {
   quantity: number;
   stopLoss: number;
   target: number;
+  structuralStopLoss: number | null;
+  structuralTarget: number | null;
+  premiumSafetyStopLoss: number | null;
+  premiumSafetyTarget: number | null;
   pnl: number;
   status: string;
   exitReason: string;
+  exitTrigger: string;
   confidence: number;
   botSlot: number;
   strategy: string;
@@ -189,6 +194,8 @@ export default function PnLAnalytics() {
     const allHeaders = [
       "Date", "Entry Time", "Exit Time", "Bot", "Symbol", "Direction",
       "Entry Price (₹)", "Exit Price (₹)", "Quantity", "Stop-Loss", "Target",
+      "Structural SL (Underlying)", "Structural Target (Underlying)",
+      "Premium Safety SL", "Premium Safety Target", "Exit Trigger",
       "P&L (₹)", "Partial Profit (₹)", "MFE (₹)", "MAE (₹)", "Exit Reason", "Strategy Layer",
       "Confidence %", "Duration", "Mode",
     ];
@@ -197,6 +204,8 @@ export default function PnLAnalytics() {
       return [
         r.date, r.time, r.exitTime || "—", botLabel, r.symbol, r.direction,
         r.entryPrice, r.exitPrice || "—", r.quantity, r.stopLoss || "—", r.target || "—",
+        r.structuralStopLoss ?? "—", r.structuralTarget ?? "—",
+        r.premiumSafetyStopLoss ?? "—", r.premiumSafetyTarget ?? "—", r.exitTrigger || "—",
         r.pnl, r.partialProfit || "—", r.mfe ?? "—", r.mae ?? "—", r.exitReason || "—", r.strategy || "—",
         r.confidence ? `${Math.round(r.confidence * 100)}%` : "—", r.duration || "—", r.mode,
       ];
@@ -221,6 +230,8 @@ export default function PnLAnalytics() {
     const headers = [
       "Date", "Entry Time", "Exit Time", "Bot", "Symbol", "Direction",
       "Entry Price", "Exit Price", "Quantity", "Stop-Loss", "Target",
+      "Structural SL (Underlying)", "Structural Target (Underlying)",
+      "Premium Safety SL", "Premium Safety Target", "Exit Trigger",
       "P&L", "Partial Profit", "MFE", "MAE", "Exit Reason", "Strategy Layer",
       "Confidence %", "Duration", "Mode",
     ];
@@ -229,6 +240,8 @@ export default function PnLAnalytics() {
       return [
         r.date, r.time, r.exitTime || "", botLabel, r.symbol, r.direction,
         r.entryPrice, r.exitPrice || "", r.quantity, r.stopLoss || "", r.target || "",
+        r.structuralStopLoss ?? "", r.structuralTarget ?? "",
+        r.premiumSafetyStopLoss ?? "", r.premiumSafetyTarget ?? "", r.exitTrigger || "",
         r.pnl, r.partialProfit || "", r.mfe ?? "", r.mae ?? "", r.exitReason || "", r.strategy || "",
         r.confidence ? `${Math.round(r.confidence * 100)}%` : "", r.duration || "", r.mode,
       ];

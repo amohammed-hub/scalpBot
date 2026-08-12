@@ -141,6 +141,11 @@ export interface OpenTrade {
   isIndexOptions?: boolean;
   optionMockKey?: string; // e.g. "BNF_CE" or "BNF_PE" for demo mode premium lookup
   entryUnderlyingPrice?: number; // underlying index price at trade entry (for demo mode delta P&L drift)
+  // D2: underlying strategy levels stay distinct from the option-premium safety net.
+  structuralSlPrice?: number;
+  structuralTargetPrice?: number;
+  premiumSafetySlPrice?: number;
+  premiumSafetyTargetPrice?: number;
   signalReason?: string; // full signal reason string
   signalLayer?: string; // extracted layer name e.g. "Breakout", "MCXEvening"
   carryForward?: boolean; // user chose to hold overnight
@@ -3872,6 +3877,51 @@ export function getStrategyExitDirection(trade: Pick<OpenTrade, "direction" | "i
   return null;
 }
 
+export type D2ExitTrigger = "STRUCTURAL_STOP" | "STRUCTURAL_TARGET" | "PREMIUM_SAFETY_STOP" | "PREMIUM_SAFETY_TARGET";
+export type D2ExitDecision = { reason: string; trigger: D2ExitTrigger };
+
+function hasFinitePositiveLevel(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * D2: Options are always bought at the broker, but their strategy thesis is
+ * directional on the underlying: CE follows BUY, PE follows SELL. Evaluate
+ * persisted strategy levels against a healthy underlying mark only.
+ */
+export function getStructuralOptionExitDecision(
+  trade: Pick<OpenTrade, "direction" | "isIndexOptions" | "optionMockKey" | "symbol" | "symbolLabel" | "signalReason" | "structuralSlPrice" | "structuralTargetPrice">,
+  underlyingPrice: number,
+): D2ExitDecision | null {
+  if (!trade.isIndexOptions || !hasFinitePositiveLevel(underlyingPrice)) return null;
+  if (!hasFinitePositiveLevel(trade.structuralSlPrice) || !hasFinitePositiveLevel(trade.structuralTargetPrice)) return null;
+  const strategyDirection = getStrategyExitDirection(trade);
+  if (!strategyDirection) return null;
+
+  if (strategyDirection === "BUY") {
+    if (underlyingPrice <= trade.structuralSlPrice) return { reason: "Structural Stop Loss", trigger: "STRUCTURAL_STOP" };
+    if (underlyingPrice >= trade.structuralTargetPrice) return { reason: "Structural Target Hit", trigger: "STRUCTURAL_TARGET" };
+  } else {
+    if (underlyingPrice >= trade.structuralSlPrice) return { reason: "Structural Stop Loss", trigger: "STRUCTURAL_STOP" };
+    if (underlyingPrice <= trade.structuralTargetPrice) return { reason: "Structural Target Hit", trigger: "STRUCTURAL_TARGET" };
+  }
+  return null;
+}
+
+/** Preserve the configured premium 5% / 8% levels as a labelled outer safety net. */
+export function getPremiumSafetyExitDecision(
+  trade: Pick<OpenTrade, "direction" | "isIndexOptions" | "currentSl" | "targetPrice" | "premiumSafetySlPrice" | "premiumSafetyTargetPrice">,
+  premiumPrice: number,
+): D2ExitDecision | null {
+  if (!trade.isIndexOptions || !hasFinitePositiveLevel(premiumPrice)) return null;
+  const safetySl = trade.premiumSafetySlPrice ?? trade.currentSl;
+  const safetyTarget = trade.premiumSafetyTargetPrice ?? trade.targetPrice;
+  if (!hasFinitePositiveLevel(safetySl) || !hasFinitePositiveLevel(safetyTarget)) return null;
+  if (premiumPrice <= safetySl) return { reason: "Premium Safety Stop Loss", trigger: "PREMIUM_SAFETY_STOP" };
+  if (premiumPrice >= safetyTarget) return { reason: "Premium Safety Target Hit", trigger: "PREMIUM_SAFETY_TARGET" };
+  return null;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════════
 // ── V13 Mean Reversion Strategy (CORRECTED) ─────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════════
@@ -5297,6 +5347,7 @@ type TradeCloseHandler = (
   pnl: number,
   exitReason: string,
   excursions?: TradeExcursions,
+  exitTrigger?: D2ExitTrigger,
 ) => Promise<void>;
 
 async function persistTradeClose(
@@ -5305,9 +5356,10 @@ async function persistTradeClose(
   exitPrice: number,
   totalPnl: number,
   exitReason: string,
+  exitTrigger?: D2ExitTrigger,
 ): Promise<void> {
   const excursions = finalizeTradeExcursions(trade, totalPnl);
-  await onTradeClose(trade.dbId, exitPrice, totalPnl, exitReason, excursions);
+  await onTradeClose(trade.dbId, exitPrice, totalPnl, exitReason, excursions, exitTrigger);
 }
 
 async function tick(
@@ -6508,8 +6560,9 @@ async function tick(
       }
     }
 
-    // ── Full exit: SL or Target ───────────────────────────────────────────────
-   let exitReason: string | null = null;
+    // ── Full exit: structural thesis or premium safety net ─────────────────────
+    let exitReason: string | null = null;
+    let exitTrigger: D2ExitTrigger | undefined;
     const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
     // ── TIME-BASED EXIT: VARIANT C ──────────────────────────────────────────
     // Option positions never exit because of elapsed time, regardless of layer.
@@ -6528,15 +6581,32 @@ async function tick(
       && Math.abs(effectivePrice - trade.entryPrice) / trade.entryPrice < 0.01
       && tradeAgeMs < 5 * 60 * 1000; // Only skip for first 5 minutes
     if (isOptionsWithBrokenDelta) {
-      // Grace period: skip SL/Target for first 5 minutes while token resolves / quote fetching stabilizes
+      // Premium-safety checks wait for a genuine option quote. A valid underlying mark
+      // can still honour the stored structural strategy thesis below.
       if (!state.alertsSent.has("broken_delta_guard")) {
         state.alertsSent.add("broken_delta_guard");
-        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — SAFETY: skipping SL/Target for 5min grace period (no real quote, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
-        emitActivity(state.sessionToken, "error", `⚠ No real option quote yet — grace period (5min) for token resolution. SL/Target will activate after.`);
+        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — SAFETY: skipping premium safety for 5min grace period (no real quote, effectivePrice ₹${effectivePrice.toFixed(2)} ≈ entry ₹${trade.entryPrice.toFixed(2)})`);
+        emitActivity(state.sessionToken, "error", `⚠ No real option quote yet — premium-safety grace period (5min) for token resolution. Structural exits remain active.`);
       }
-    } else {
-      // For options: direction in trade is always "BUY" (we buy CE or PE).
-      // SL triggers when premium drops below SL price. Target triggers when premium rises above target.
+    }
+
+    if (trade.isIndexOptions) {
+      // D2: preserve strategy-generated stop/target levels on the underlying. This
+      // is evaluated before the premium safety net, with CE/PE direction derived
+      // from the durable option identity rather than broker BUY order direction.
+      const structuralDecision = getStructuralOptionExitDecision(trade, price);
+      if (!exitReason && structuralDecision) {
+        exitReason = structuralDecision.reason;
+        exitTrigger = structuralDecision.trigger;
+      }
+      if (!exitReason && !isOptionsWithBrokenDelta) {
+        const premiumDecision = getPremiumSafetyExitDecision(trade, effectivePrice);
+        if (premiumDecision) {
+          exitReason = premiumDecision.reason;
+          exitTrigger = premiumDecision.trigger;
+        }
+      }
+    } else if (!isOptionsWithBrokenDelta) {
       if (trade.direction === "BUY") { if (effectivePrice <= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice >= trade.targetPrice) exitReason = "Target Hit"; }
       else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
     }
@@ -6620,8 +6690,10 @@ async function tick(
           console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — EXIT verified: actual fill ₹${effectivePrice} (overrides estimate)`);
         }
       }
-      // Track SL hit for re-entry (only on full SL, not BE)
-      if (exitReason === "Stop Loss" && trade.partialBooked === 0) {
+      // Track every full stop-loss exit for re-entry and cooldown logic, including
+      // D2 structural stops and premium safety stops.
+      const isStopLossExit = exitReason === "Stop Loss" || exitTrigger === "STRUCTURAL_STOP" || exitTrigger === "PREMIUM_SAFETY_STOP";
+      if (isStopLossExit && trade.partialBooked === 0) {
         state.lastSlHitAt = Date.now();
         state.lastSlDirection = trade.direction;
         state.reEntryCandles = 0;
@@ -6649,13 +6721,13 @@ async function tick(
       recordTradeClose(state.sessionToken, state.scanIntervalSec);
       if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
       // BUG #4: Record direction exit for flip-flop lock (SL confirms reversal)
-      recordDirectionExit(state.sessionToken, trade.direction, exitReason === "Stop Loss");
+      recordDirectionExit(state.sessionToken, trade.direction, isStopLossExit);
       // P2: Reset underlying cooldown on a winning trade
       if (totalPnl >= 0) {
         state.consecutiveUnderlyingSLs = 0;
         state.lastUnderlyingSLAt = null;
       }
-      await persistTradeClose(onTradeClose, trade, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""));
+      await persistTradeClose(onTradeClose, trade, effectivePrice, totalPnl, exitReason + (trade.bookedPnl > 0 ? ` (+₹${trade.bookedPnl.toFixed(0)} partial)` : ""), exitTrigger);
       console.log(`[BotEngine] ${state.sessionToken} — ${exitReason} | Total P&L: ₹${totalPnl.toFixed(0)} (partial: ₹${trade.bookedPnl.toFixed(0)})`);
       emitActivity(state.sessionToken, "trade_close", `${exitReason} ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)} | Day: ₹${state.dailyPnl.toFixed(0)}`, { price: effectivePrice, pnl: totalPnl });
       // Telegram exit alert
@@ -7479,12 +7551,7 @@ const isExpiryDay = isOptionInstrument && (
       const todayISO = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
       const isExpiryDayForGate = analytics?.expiry === todayISO;
 
-      // D11 seasonality context: intraday drift since today's first 1m candle (state.candles is
-      // reset daily at market open, line ~5236) and today's 1m candles for prior-hour detection.
-      const seasonDayOpen = state.candles && state.candles.length > 0 ? state.candles[0].open : 0;
-      const seasonDriftPct = seasonDayOpen > 0 ? (price - seasonDayOpen) / seasonDayOpen : 0;
-
-      // Run the combined strategy gate (4th component: seasonality regime gate — D11)
+      // Run the combined strategy gate
       const gateResult = evaluateStrategyGate(
         state.candlesDay,           // daily candles for VRP
         analytics,                  // option chain analytics
@@ -7493,13 +7560,6 @@ const isExpiryDay = isOptionInstrument && (
         isExpiryDayForGate,
         istMin2,
         isMCX,
-        {                           // D11 seasonality context (fail-open — never blocks on compute errors)
-          layer: signal.layer,
-          istMinutes: istMin2,
-          intradayDriftPct: seasonDriftPct,
-          todayCandles: state.candles ?? [],
-          symbol: (state.instrumentSymbol ?? "").toUpperCase(),
-        },
       );
 
       // Update state for dashboard display
@@ -7531,14 +7591,13 @@ const isExpiryDay = isOptionInstrument && (
 
       // Hard block if gate says not allowed
       if (!gateResult.allowed) {
-        const blockTag = gateResult.seasonality && !gateResult.seasonality.allowed ? "SEASONALITY GATE" : "VRP/OI GATE";
-        emitActivity(state.sessionToken, "signal", `⊘ ${blockTag} BLOCKED: ${gateResult.reason}`);
+        emitActivity(state.sessionToken, "signal", `⊘ VRP/OI GATE BLOCKED: ${gateResult.reason}`);
         pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `VRP/OI Gate: ${gateResult.reason}`);
         logSignalToJournal({
           sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
           direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
           entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-          atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `${gateResult.seasonality && !gateResult.seasonality.allowed ? "Seasonality" : "VRP/OI"} Gate blocked`,
+          atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `VRP/OI Gate blocked`,
         });
         return;
       }
@@ -8277,6 +8336,12 @@ const isExpiryDay = isOptionInstrument && (
   const tradeTarget = isOptionsMode && optionPremiumForSizing
     ? optionPremiumForSizing * (1 + optTpPct)  // e.g., ₹800 × 1.08 = ₹864 target
     : signal.targetPrice;
+  // D2: record the strategy thesis on the underlying, separate from the unchanged
+  // premium 5% / 8% safety net used for option execution risk.
+  const structuralSlPrice = isOptionsMode ? signal.slPrice : undefined;
+  const structuralTargetPrice = isOptionsMode ? signal.targetPrice : undefined;
+  const premiumSafetySlPrice = isOptionsMode && optionPremiumForSizing ? tradeSl : undefined;
+  const premiumSafetyTargetPrice = isOptionsMode && optionPremiumForSizing ? tradeTarget : undefined;
 
   // Set mutex before async DB write to prevent concurrent duplicate opens
       // ── GLOBAL CROSS-BOT LOCK: Instant synchronous check ───────────────────────
@@ -8385,6 +8450,8 @@ const isExpiryDay = isOptionInstrument && (
       upstoxOrderId: orderId, signalReason: signalLabel + (isOptionsMode ? ` [${tradeSymbol}]` : ""), enteredAt: new Date(),
       partial1RPrice, partial2RPrice,
       entryUnderlyingPrice: isOptionsMode ? price : undefined,
+      structuralSlPrice, structuralTargetPrice,
+      premiumSafetySlPrice, premiumSafetyTargetPrice,
     });
   } catch (tradeOpenErr) {
     state.isOpeningTrade = false;
@@ -8433,6 +8500,8 @@ const isExpiryDay = isOptionInstrument && (
     isHeroZero: signal.isHeroZero, heroZeroPremiumEntry: signal.isHeroZero ? signal.entryPrice : undefined,
     isIndexOptions: isOptionsMode, optionMockKey,
     entryUnderlyingPrice: isOptionsMode ? price : undefined, // underlying price at entry for demo mode delta drift
+    structuralSlPrice, structuralTargetPrice,
+    premiumSafetySlPrice, premiumSafetyTargetPrice,
     signalReason: signalLabel, signalLayer: signal.layer,
   };
 
@@ -8515,6 +8584,11 @@ export type TradeInsert = {
   partial2RPrice: number;
   // Options mode: underlying price at entry (stored for reference; delta approximation removed)
   entryUnderlyingPrice?: number;
+  // D2 option-only audit fields; non-option trades leave them null.
+  structuralSlPrice?: number;
+  structuralTargetPrice?: number;
+  premiumSafetySlPrice?: number;
+  premiumSafetyTargetPrice?: number;
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
