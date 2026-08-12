@@ -4,7 +4,7 @@
  */
 
 import axios from "axios";
-import { ensureUpstoxLiveOrderEgress, upstoxAxios, upstoxFetch } from "./upstoxHttp";
+import { ensureUpstoxLiveOrderEgress, upstoxAxios, upstoxFetch, fetchUpstoxAssetBuffer } from "./upstoxHttp";
 import { assertBotAutomationEnabled } from "./botAutomation";
 import { emitActivity } from "./activityLog";
 import { getNseIndexLotSize } from "../shared/lotSizes";
@@ -4731,15 +4731,17 @@ export async function resolveMcxFuturesToken(
   symbol: string,
   accessToken?: string | null,
 ): Promise<string | null> {
-  // Method 1: Try Upstox instruments search API (requires auth)
-  if (accessToken) {
+  // Method 1: Try Upstox instruments search API (requires auth).
+  // Skip when accessToken is the demo placeholder — "Bearer DEMO_NO_TOKEN" always 401s.
+  const realToken = accessToken && accessToken !== "DEMO_NO_TOKEN" ? accessToken : null;
+  if (realToken) {
     try {
       const url = `https://api.upstox.com/v2/instruments/search` +
         `?query=${encodeURIComponent(symbol)}` +
-        `&exchanges=MCX&segments=COMM&instrument_types=FUTCOM` +
+        `&exchanges=MCX&segments=MCX&instrument_types=FUT` +
         `&expiry=current_month&records=10`;
       const resp = await upstoxAxios.get(url, {
-        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        headers: { Authorization: `Bearer ${realToken}`, Accept: "application/json" },
         timeout: 8000,
       });
       const items: Array<{ instrument_key: string; trading_symbol: string }> =
@@ -4758,27 +4760,45 @@ export async function resolveMcxFuturesToken(
   // Method 2: Download public Upstox instruments JSON (no auth needed)
   // NOTE: MCX instruments JSON has empty trading_symbol but populated 'name' field.
   // Match by name (e.g. symbol="CRUDEOIL" matches name="CRUDE OIL", symbol="GOLD" matches name="GOLD").
-  try {
-    const instruments = await getMcxInstruments();
-    const now = Date.now();
-    // Map bot symbol → the asset_symbol(s) of futures contracts that HAVE options chains.
-    // CRITICAL: Many MCX commodities have multiple futures variants (GOLD, GOLDM, GOLDGUINEA,
-    // GOLDPETAL, GOLDTEN) but only some have options. We MUST pick one that has options.
-    // Priority: prefer the "mini" variant (GOLDM, CRUDEOILM, SILVERM) for weekly options (more liquid).
-    const SYMBOL_TO_ASSET: Record<string, string[]> = {
-      'GOLD': ['GOLDM', 'GOLD'],           // GOLDM has weekly options (most liquid), GOLD has monthly
-      'SILVER': ['SILVERM', 'SILVER'],      // SILVERM has weekly, SILVER has monthly
-      'CRUDEOIL': ['CRUDEOIL', 'CRUDEOILM'], // Both have options
-      'CRUDE': ['CRUDEOIL', 'CRUDEOILM'],
-      'NATURALGAS': ['NATURALGAS', 'NATGASMINI'],
-      'COPPER': ['COPPER'],
-      'ZINC': ['ZINC'],                     // ZINCMINI has NO options
-      'ALUMINIUM': ['ALUMINIUM'],           // NO options available
-    };
+  // Retry with a plain axios client on failure — the managed egress proxy can
+  // transiently drop large gzip asset downloads, which previously left MCX tokens
+  // unresolved and bots stuck on "No real candle data".
+  let instruments: McxInstrumentRow[] | null = null;
+  let method2Err: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      instruments = await getMcxInstruments();
+      break;
+    } catch (err) {
+      method2Err = err;
+      if (attempt === 0) console.warn(`[BotEngine] resolveMcxFuturesToken instruments attempt 1 failed for ${symbol}:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+  // Map bot symbol → the asset_symbol(s) of futures contracts that HAVE options chains.
+  // CRITICAL: Many MCX commodities have multiple futures variants (GOLD, GOLDM, GOLDGUINEA,
+  // GOLDPETAL, GOLDTEN) but only some have options. We MUST pick one that has options.
+  // Priority: prefer the "mini" variant (GOLDM, CRUDEOILM, SILVERM) for weekly options (more liquid).
+  // Declared at function scope so both the primary path and the safety-net path can reuse it.
+  const SYMBOL_TO_ASSET: Record<string, string[]> = {
+    'GOLD': ['GOLDM', 'GOLD'],           // GOLDM has weekly options (most liquid), GOLD has monthly
+    'SILVER': ['SILVERM', 'SILVER'],      // SILVERM has weekly, SILVER has monthly
+    'CRUDEOIL': ['CRUDEOIL', 'CRUDEOILM'], // Both have options
+    'CRUDE': ['CRUDEOIL', 'CRUDEOILM'],
+    'NATURALGAS': ['NATURALGAS', 'NATGASMINI'],
+    'NATGAS': ['NATURALGAS', 'NATGASMINI'],     // dashboard sends MCX_NATGAS → stripped = NATGAS
+    'COPPER': ['COPPER'],
+    'ZINC': ['ZINC'],                     // ZINCMINI has NO options
+    'ALUMINIUM': ['ALUMINIUM'],           // NO options available
+  };
+  const now = Date.now();
 // Fix: Strip spaces so "Natural Gas" matches "NATURALGAS" in our mapping
-    const strippedSymbol = symbol.toUpperCase().replace(/^MCX_/, '').replace(/\s+/g, '');
-    const preferredAssets = SYMBOL_TO_ASSET[strippedSymbol] ?? [strippedSymbol];
-    
+  const strippedSymbol = symbol.toUpperCase().replace(/^MCX_/, '').replace(/\s+/g, '');
+  const preferredAssets = SYMBOL_TO_ASSET[strippedSymbol] ?? [strippedSymbol];
+  try {
+    if (!instruments) {
+      throw method2Err ?? new Error("MCX instruments unavailable");
+    }
+
     // Try each preferred asset_symbol in priority order (first = most liquid options)
     for (const assetSym of preferredAssets) {
       const futures = instruments.filter(x =>
@@ -4792,7 +4812,7 @@ export async function resolveMcxFuturesToken(
         return futures[0].instrument_key;
       }
     }
-    
+
     // Final fallback: match by name (less reliable — may pick GOLDGUINEA etc.)
     const NAME_MAP: Record<string, string> = {
       'CRUDE': 'CRUDE OIL', 'CRUDEOIL': 'CRUDE OIL',
@@ -4819,6 +4839,39 @@ export async function resolveMcxFuturesToken(
   } catch (err) {
     console.error(`[BotEngine] resolveMcxFuturesToken instruments JSON failed for ${symbol}:`, err instanceof Error ? err.message : String(err));
   }
+  // Final safety net: direct plain-axios fetch of the public JSON (bypasses any
+  // managed-proxy interference on assets.upstox.com).
+  try {
+    const buf = await fetchUpstoxAssetBuffer(
+      "https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz",
+      20000,
+    );
+    const { gunzipSync } = await import("zlib");
+    let json: Buffer;
+    try {
+      json = gunzipSync(buf);
+    } catch {
+      json = buf;
+    }
+    const rows = JSON.parse(json.toString()) as McxInstrumentRow[];
+    console.log(`[BotEngine] resolveMcxFuturesToken safety-net fetch OK for ${symbol}: ${rows.length} rows`);
+    const strippedSymbol = symbol.toUpperCase().replace(/^MCX_/, "").replace(/\s+/g, "");
+    const preferredAssets = SYMBOL_TO_ASSET[strippedSymbol] ?? [strippedSymbol];
+    for (const assetSym of preferredAssets) {
+      const futures = rows.filter(x =>
+        x.instrument_type === "FUT" &&
+        (x.expiry ?? 0) > now &&
+        (x.asset_symbol ?? "").toUpperCase() === assetSym.toUpperCase()
+      );
+      futures.sort((a, b) => (a.expiry ?? 0) - (b.expiry ?? 0));
+      if (futures.length > 0) {
+        console.log(`[BotEngine] Resolved MCX futures token (safety-net): ${symbol} → ${futures[0].instrument_key} (${futures[0].trading_symbol})`);
+        return futures[0].instrument_key;
+      }
+    }
+  } catch (err) {
+    console.error(`[BotEngine] resolveMcxFuturesToken safety-net failed for ${symbol}:`, err instanceof Error ? err.message : String(err));
+  }
   return null;
 }
 
@@ -4844,13 +4897,37 @@ async function getMcxInstruments(): Promise<McxInstrumentRow[]> {
   if (mcxInstrumentsCache && Date.now() - mcxInstrumentsCacheAt < MCX_INSTRUMENTS_CACHE_MS) {
     return mcxInstrumentsCache;
   }
-  const resp = await upstoxAxios.get("https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz", {
-    responseType: "arraybuffer",
-    timeout: 20000,
-  });
-  const { gunzipSync } = await import("zlib");
-  const json = gunzipSync(Buffer.from(resp.data));
-  mcxInstrumentsCache = JSON.parse(json.toString()) as McxInstrumentRow[];
+  let rowsParsed: any[] | null = null;
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      // Retry with a plain axios client on the second attempt — the managed egress
+      // proxy can transiently drop or double-decompress large gzip assets, and a
+      // plain direct fetch is the most reliable fallback for assets.upstox.com.
+      const buf = await fetchUpstoxAssetBuffer(
+        "https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz",
+        20000,
+      );
+      const { gunzipSync } = await import("zlib");
+      let json: Buffer;
+      try {
+        json = gunzipSync(buf); // gzipped payload
+      } catch {
+        // Some proxies/clients transparently decompress — treat as plain JSON
+        json = buf;
+      }
+      rowsParsed = JSON.parse(json.toString()) as any[];
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 0) console.warn(`[BotEngine] MCX instruments JSON fetch attempt 1 failed:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+  if (!rowsParsed) {
+    console.error(`[BotEngine] MCX instruments JSON fetch failed after retries:`, lastErr instanceof Error ? lastErr.message : String(lastErr));
+    throw lastErr ?? new Error("MCX instruments JSON fetch failed");
+  }
+  mcxInstrumentsCache = rowsParsed as McxInstrumentRow[];
   mcxInstrumentsCacheAt = Date.now();
   console.log(`[BotEngine] MCX instruments JSON cached: ${mcxInstrumentsCache.length} rows`);
   return mcxInstrumentsCache;

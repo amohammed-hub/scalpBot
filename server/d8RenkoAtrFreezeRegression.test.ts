@@ -26,11 +26,11 @@ describe("D8 — frozen Renko ATR entry lattice", () => {
 
   it("enforces a ten-tick entry floor only for recognised MCX instruments", () => {
     // Copper tick size is ₹0.05; its noise floor must be ₹0.50.
-    expect(getMcxRenkoEntryMinimumBrickSize("MCX_FO|562048", "MCX_COPPER")).toBeCloseTo(0.5);
+    expect(getMcxRenkoEntryMinimumBrickSize("MCX_FO|568831", "MCX_COPPER")).toBeCloseTo(0.5);
     expect(resolveEntryRenkoBrickSize(1, 0.3, 0.5, 0.5)).toBe(0.5);
 
     // Natural Gas tick size is ₹0.10; its noise floor must be ₹1.00.
-    expect(getMcxRenkoEntryMinimumBrickSize("MCX_FO|538685", "MCX_NATGAS")).toBeCloseTo(1);
+    expect(getMcxRenkoEntryMinimumBrickSize("MCX_FO|561496", "MCX_NATGAS")).toBeCloseTo(1);
     expect(resolveEntryRenkoBrickSize(2, 0.3, 0.5, 1)).toBe(1);
 
     // No unverified floor is inferred for non-MCX instruments.

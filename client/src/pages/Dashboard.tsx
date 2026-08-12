@@ -92,10 +92,10 @@ const INSTRUMENTS = [
   // Tokens are numeric front-month IDs verified from Upstox instrument master (Jul 2026).
   // These auto-resolve to the correct front-month contract via resolveMcxFuturesToken() at runtime.
   { token: "MCX_FO|560977",  symbol: "MCX_CRUDE",  label: "Crude Oil → OTM Options (Auto)",    segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|560977" },
-  { token: "MCX_FO|555922",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|555922" },
+  { token: "MCX_FO|563946",  symbol: "MCX_GOLD",   label: "Gold → OTM Options (Auto)",         segment: "MCX Commodity Options", lotSize: 100,  spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|563946" },
   { token: "MCX_FO|471725",  symbol: "MCX_SILVER", label: "Silver → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 30,   spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|471725" },
-  { token: "MCX_FO|538685",  symbol: "MCX_NATGAS", label: "Natural Gas → OTM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|538685" },
-  { token: "MCX_FO|562048",  symbol: "MCX_COPPER", label: "Copper → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 2500, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|562048" },
+  { token: "MCX_FO|561496",  symbol: "MCX_NATGAS", label: "Natural Gas → OTM Options (Auto)",  segment: "MCX Commodity Options", lotSize: 1250, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|561496" },
+  { token: "MCX_FO|568831",  symbol: "MCX_COPPER", label: "Copper → OTM Options (Auto)",       segment: "MCX Commodity Options", lotSize: 2500, spotOnly: false, isIndexOptions: true, underlyingToken: "MCX_FO|568831" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
