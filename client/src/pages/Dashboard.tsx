@@ -1885,6 +1885,29 @@ export default function Dashboard() {
                 { id: "ORB", label: "ORB V8 (30m)", desc: "30-min Opening Range Breakout — VWAP+EMA21 filters, 30pt SL, 50% target, trail@60%. Fires 9:45-11:30 AM only.", icon: "🚀" },
               ].map(s => {
                 const enabled = config.enabledLayers.includes(s.id);
+                // D12: Check if auto-disabled by D3/D5
+                const autoDisabled = botStatus?.autoDisabledLayers?.some((l: any) => l.layer === s.id);
+                const isManualOff = !enabled && !autoDisabled;
+                
+                let statusBadge = null;
+                let tooltipText = s.desc;
+                
+                if (autoDisabled) {
+                  const reason = botStatus?.autoDisabledLayers?.find((l: any) => l.layer === s.id)?.reason;
+                  statusBadge = (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 ml-1.5">Auto-Paused</span>
+                  );
+                  tooltipText = `${s.desc}\n\n${reason ?? "Paused by system"}`;
+                } else if (!enabled) {
+                  statusBadge = (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-white/10 text-white/40 border border-white/20 ml-1.5">Manual (Off)</span>
+                  );
+                } else {
+                  statusBadge = (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 ml-1.5">Active</span>
+                  );
+                }
+                
                 return (
                   <div key={s.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 cursor-pointer ${
                     enabled ? "bg-emerald-500/5 border-emerald-500/20" : "bg-white/[0.02] border-white/10 opacity-60"
@@ -1892,11 +1915,12 @@ export default function Dashboard() {
                     <span className="text-sm">{s.icon}</span>
                     <div className="flex-1 min-w-0">
                       <span className={`text-xs font-medium ${enabled ? "text-white" : "text-white/50"}`}>{s.label}</span>
+                      {statusBadge}
                     </div>
                     <div className="group relative">
                       <Info className="w-3 h-3 text-white/20 hover:text-white/50 cursor-help" />
-                      <div className="absolute bottom-full right-0 mb-1 w-48 p-2 bg-gray-900 border border-white/20 rounded-lg text-[10px] text-white/70 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                        {s.desc}
+                      <div className="absolute bottom-full right-0 mb-1 w-48 p-2 bg-gray-900 border border-white/20 rounded-lg text-[10px] text-white/70 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 whitespace-pre-line">
+                        {tooltipText}
                       </div>
                     </div>
                     <button

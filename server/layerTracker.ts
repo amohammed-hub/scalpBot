@@ -185,3 +185,20 @@ export function resetAllLayerOverrides(sessionToken: string = "default"): void {
   getManualOverrides(sessionToken).clear();
   getAutoDisabled(sessionToken).clear();
 }
+
+/**
+ * D12: Expose the current auto-disabled layers for a tenant.
+ * Returns an array of { layer, reason } for all layers that are currently
+ * auto-disabled (not manually disabled).
+ */
+export function getAutoDisabledLayers(sessionToken: string = "default"): Array<{ layer: string; reason: string }> {
+  const autoDisabled = getAutoDisabled(sessionToken);
+  const result: Array<{ layer: string; reason: string }> = [];
+  autoDisabled.forEach((value, layer) => {
+    // Only include if it hasn't expired (REENABLE_AFTER_MS)
+    if (Date.now() - value.at < REENABLE_AFTER_MS) {
+      result.push({ layer, reason: value.reason });
+    }
+  });
+  return result;
+}

@@ -29,7 +29,7 @@ import {
   fetchIndiaVix,
 } from "./riskManager";
 import { fetchOptionsAnalytics, getCachedAnalytics, selectSmartStrike, checkOiConfluence } from "./optionsAnalytics";
-import { computeLayerStats, isLayerDisabled, setLayerOverride, resetAllLayerOverrides } from "./layerTracker";
+import { computeLayerStats, isLayerDisabled, setLayerOverride, resetAllLayerOverrides, getAutoDisabledLayers } from "./layerTracker";
 import { STRATEGY_PRESETS, getPreset } from "./presets";
 import { computePrecisionMetrics, computeLayerAccuracy, computeDailyReports, updateJournalOnTradeClose } from "./precisionMetrics";
 
@@ -394,6 +394,12 @@ export const appRouter = router({
         if (!isAdmin) {
           statusResult.lastSignal = stripSignalForUser(statusResult.lastSignal);
           if (statusResult.openTrade) statusResult.openTrade = stripOpenTradeForUser(statusResult.openTrade);
+        }
+        // D12: Expose auto-disabled layers so the UI can show Auto-Paused status
+        try {
+          statusResult.autoDisabledLayers = getAutoDisabledLayers(input.sessionToken);
+        } catch {
+          statusResult.autoDisabledLayers = [];
         }
         return statusResult;
       }),
