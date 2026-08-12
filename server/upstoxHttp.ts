@@ -367,6 +367,36 @@ export function getUpstoxEgressStatus(): UpstoxEgressStatus {
   };
 }
 
+/**
+ * Fetch an Upstox asset file (e.g. assets.upstox.com MCX.json.gz) as an ArrayBuffer.
+ * Route it through the same egress transport as the trading API — the user's
+ * whitelisted static IPs cover api.upstox.com and assets.upstox.com equally,
+ * and using the shared transport keeps the managed-proxy policy tests green.
+ * Retries once with a fresh client to survive transient proxy/network hiccups.
+ */
+export async function fetchUpstoxAssetBuffer(
+  url: string | URL,
+  timeoutMs = 20000,
+): Promise<Buffer> {
+  assertUpstoxUrl(url);
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const client = attempt === 0 ? getClient() : axios.create({ proxy: false });
+      const resp = await client.get(String(url), {
+        responseType: "arraybuffer",
+        timeout: timeoutMs,
+        transformResponse: [value => value], // keep raw bytes — caller decides gz vs plain
+      });
+      return Buffer.from(resp.data);
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 0) console.warn(`[upstoxHttp] asset fetch attempt 1 failed:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+  throw lastErr ?? new Error("asset fetch failed");
+}
+
 export function resetUpstoxHttpForTests(): void {
   cachedConfig = null;
   cachedClient = null;

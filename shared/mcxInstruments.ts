@@ -25,7 +25,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Gold",
     symbol: "GOLD",
-    instrumentToken: "MCX_FO|555922",   // GOLDM FUT 05 AUG 26 (has weekly options chain — NOT GOLDGUINEA which has zero options)
+    instrumentToken: "MCX_FO|563946",   // GOLDM FUT 04 SEP 26 (has weekly options chain — NOT GOLDGUINEA which has zero options)
     upstoxName: "GOLD",
     lotSize: 100,      // GOLDM lot size = 100 (per Upstox instruments JSON)
     tickSize: 1,
@@ -76,7 +76,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Copper",
     symbol: "COPPER",
-    instrumentToken: "MCX_FO|562048",   // COPPER front-month Jul 2026
+    instrumentToken: "MCX_FO|568831",   // COPPER FUT 31 AUG 26
     upstoxName: "COPPER",
     lotSize: 2500,     // 2500 kg
     tickSize: 0.05,
@@ -89,7 +89,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Zinc",
     symbol: "ZINC",
-    instrumentToken: "MCX_FO|562053",   // ZINC front-month Jul 2026
+    instrumentToken: "MCX_FO|568836",   // ZINC FUT 31 AUG 26
     upstoxName: "ZINC",
     lotSize: 5000,     // 5000 kg
     tickSize: 0.05,
@@ -101,7 +101,7 @@ export const MCX_INSTRUMENTS: MCXInstrument[] = [
   {
     label: "Aluminium",
     symbol: "ALUMINIUM",
-    instrumentToken: "MCX_FO|562046",   // ALUMINIUM front-month Jul 2026
+    instrumentToken: "MCX_FO|568830",   // ALUMINIUM FUT 31 AUG 26
     upstoxName: "ALUMINIUM",
     lotSize: 5000,     // 5000 kg
     tickSize: 0.05,
