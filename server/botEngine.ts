@@ -8,6 +8,7 @@ import { ensureUpstoxLiveOrderEgress, upstoxAxios, upstoxFetch } from "./upstoxH
 import { assertBotAutomationEnabled } from "./botAutomation";
 import { emitActivity } from "./activityLog";
 import { getNseIndexLotSize } from "../shared/lotSizes";
+import { MCX_INSTRUMENTS } from "../shared/mcxInstruments";
 import { evaluateStrategyGate, computeVRP, computeOIFlowBias, computeMaxPainGravity } from "./vrpRegimeFilter";
 import { fetchOptionsAnalytics, getCachedAnalytics } from "./optionsAnalytics";
 import { getCurrentSession, getSessionDefault, type TradingSession } from "../shared/sessionDefaults";
@@ -2723,6 +2724,58 @@ interface RenkoBrick {
   color: "green" | "red";
 }
 
+/** D8 entry-only lattice configuration. Live ATR still drives strategy stops/targets. */
+export interface RenkoEntrySizing {
+  frozenAtr?: number;
+  minimumBrickSize?: number;
+}
+
+const MCX_RENKO_MINIMUM_TICKS = 10;
+
+/**
+ * Resolve the fixed brick size for a prospective new entry. A valid daily ATR
+ * reference wins over live ATR so a rolling candle window cannot rescale the
+ * lattice mid-session. The trailing floor is only supplied for instruments
+ * with verified tick metadata; callers without it retain legacy sizing.
+ */
+export function resolveEntryRenkoBrickSize(
+  liveAtr: number,
+  frozenAtr: number | undefined,
+  multiplier: number,
+  minimumBrickSize = 0,
+): number {
+  const atrReference = Number.isFinite(frozenAtr) && (frozenAtr ?? 0) > 0
+    ? frozenAtr!
+    : liveAtr;
+  const rawBrickSize = atrReference * multiplier;
+  const verifiedFloor = Number.isFinite(minimumBrickSize) && minimumBrickSize > 0
+    ? minimumBrickSize
+    : 0;
+  return Math.max(rawBrickSize, verifiedFloor);
+}
+
+/**
+ * Return a conservative entry-only floor for a recognised MCX contract.
+ * Ten exchange ticks removes sub-tick/noise lattices while preserving the
+ * strategy-specific 1.0x or 0.5x ATR multiplier whenever it is already larger.
+ */
+export function getMcxRenkoEntryMinimumBrickSize(
+  instrumentToken?: string,
+  instrumentSymbol?: string,
+): number {
+  const normalizedSymbol = (instrumentSymbol ?? "")
+    .replace(/^MCX_/, "")
+    .replace(/_/g, "")
+    .toUpperCase();
+  const instrument = MCX_INSTRUMENTS.find(candidate =>
+    candidate.instrumentToken === instrumentToken ||
+    normalizedSymbol.includes(candidate.symbol) ||
+    (candidate.symbol === "CRUDEOIL" && normalizedSymbol.includes("CRUDE")) ||
+    (candidate.symbol === "NATURALGAS" && normalizedSymbol.includes("NATGAS")),
+  );
+  return instrument ? instrument.tickSize * MCX_RENKO_MINIMUM_TICKS : 0;
+}
+
 /**
  * Build Renko bricks from candle close prices.
  * Uses ATR(14) as the brick size (adaptive to volatility).
@@ -2776,6 +2829,7 @@ export function generateRenkoSignal(
   candles: Candle[],
   slMultiplier = 1.5,
   tpMultiplier = 3.0,
+  renkoSizing?: RenkoEntrySizing,
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Red Bar Theory: insufficient data", layer: "RedBarTheory" };
   if (!candles || candles.length < 20) return hold;
@@ -2783,7 +2837,8 @@ export function generateRenkoSignal(
   const atr = calcATR(candles, 14);
   if (atr <= 0) return { ...hold, reason: "Red Bar Theory: ATR is 0" };
 
-  const bricks = buildRenkoBricks(candles, atr);
+  const entryBrickSize = resolveEntryRenkoBrickSize(atr, renkoSizing?.frozenAtr, 1.0, renkoSizing?.minimumBrickSize);
+  const bricks = buildRenkoBricks(candles, entryBrickSize);
   if (bricks.length < 2) return { ...hold, atr, reason: `Red Bar Theory: only ${bricks.length} bricks (need 2)` }; // DEFAULT: 3
 
   // Check last N bricks for consecutive same color
@@ -2818,7 +2873,7 @@ export function generateRenkoSignal(
       slPrice: slPrice_buy,
       targetPrice: tpPrice_buy,
       atr,
-      reason: `[Red Bar Theory] ${consecutiveGreen} consecutive green bricks (brick size: ₹${atr.toFixed(1)}) | Strong uptrend`,
+      reason: `[Red Bar Theory] ${consecutiveGreen} consecutive green bricks (brick size: ₹${entryBrickSize.toFixed(1)}) | Strong uptrend`,
       layer: "RedBarTheory",
     };
   }
@@ -2833,12 +2888,12 @@ export function generateRenkoSignal(
       slPrice: slPrice_sell,
       targetPrice: tpPrice_sell,
       atr,
-      reason: `[Red Bar Theory] ${consecutiveRed} consecutive red bricks (brick size: ₹${atr.toFixed(1)}) | Strong downtrend`,
+      reason: `[Red Bar Theory] ${consecutiveRed} consecutive red bricks (brick size: ₹${entryBrickSize.toFixed(1)}) | Strong downtrend`,
       layer: "RedBarTheory",
     };
   }
 
-  return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${atr.toFixed(1)}` };
+  return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${entryBrickSize.toFixed(1)}` };
 }
 
 /**
@@ -2875,6 +2930,7 @@ export function generatePremiumRenkoSignal(
   candles: Candle[],
   slMultiplier = 1.2,
   tpMultiplier = 2.0,
+  renkoSizing?: RenkoEntrySizing,
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "PremiumRenko: insufficient data", layer: "PremiumRenko" };
   if (!candles || candles.length < 20) return hold;
@@ -2882,8 +2938,8 @@ export function generatePremiumRenkoSignal(
   const atr = calcATR(candles, 14);
   if (atr <= 0) return { ...hold, reason: "PremiumRenko: ATR is 0" };
 
-  // Use smaller brick size (50% of ATR) for premium-like sensitivity
-  const brickSize = atr * 0.5;
+  // D8: retain the premium strategy's 0.5x multiplier on the session-frozen entry ATR.
+  const brickSize = resolveEntryRenkoBrickSize(atr, renkoSizing?.frozenAtr, 0.5, renkoSizing?.minimumBrickSize);
   const bricks = buildRenkoBricks(candles, brickSize);
   if (bricks.length < 4) return { ...hold, atr, reason: `PremiumRenko: only ${bricks.length} bricks (need 4)` };
 
@@ -3285,6 +3341,7 @@ export function generateSmartRenkoSignal(
   candles: Candle[],
   slMultiplier = 1.5,
   tpMultiplier = 2.5,
+  renkoSizing?: RenkoEntrySizing,
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Trikal Strategy: insufficient data", layer: "TrikalStrategy" };
   if (!candles || candles.length < 30) return hold;
@@ -3308,8 +3365,9 @@ export function generateSmartRenkoSignal(
   const cloudBottom = Math.min(ema9, ema21);
   const cloudWidth = cloudTop - cloudBottom;
 
-  // ── Virtual Renko Bricks ──
-  const bricks = buildRenkoBricks(candles, atr);
+  // ── Virtual Renko Bricks (D8: 1.0x frozen entry ATR; live ATR stays structural) ──
+  const entryBrickSize = resolveEntryRenkoBrickSize(atr, renkoSizing?.frozenAtr, 1.0, renkoSizing?.minimumBrickSize);
+  const bricks = buildRenkoBricks(candles, entryBrickSize);
   if (bricks.length < 2) return { ...hold, atr, reason: `Trikal Strategy: only ${bricks.length} bricks (need 2)` }; // DEFAULT: 3
 
   // Count consecutive bricks from the end (trend determination / master filter)
@@ -3464,6 +3522,7 @@ export function generateAdeebSignal(
   prevDayLow: number,
   prevDayClose: number,
   crudeBiasChangePct = 0, // crude oil % change for optional boost
+  renkoSizing?: RenkoEntrySizing,
 ): Signal {
   const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Adeeb: insufficient data", layer: "Adeeb" };
   if (!candles || candles.length < 28) return hold;
@@ -3473,8 +3532,8 @@ export function generateAdeebSignal(
   const atr = calcATR(candles, 14);
   if (atr <= 0) return { ...hold, reason: "Adeeb: ATR is 0" };
 
-  // Optimized brick size: 0.5×ATR for better signal generation on 15-min
-  const brickSize = atr * 0.5;
+  // D8: retain Adeeb's 0.5x multiplier on the session-frozen entry ATR.
+  const brickSize = resolveEntryRenkoBrickSize(atr, renkoSizing?.frozenAtr, 0.5, renkoSizing?.minimumBrickSize);
 
   // ── STEP 1: ADX Regime Check ──
   const adx = calcADX(candles, 14);
@@ -6817,13 +6876,19 @@ const isExpiryDay = isOptionInstrument && (
   const TOTAL_LAYER_LIMIT = isMcxInstrument ? 10 : 6;
 
   if (signal.direction === "HOLD" && state.enabledLayers && state.candles.length >= 28) {
+    // D8 applies the once-per-session ATR reference only to potential new Renko entries.
+    // Exit handlers continue to consume the ATR captured on their own open trade.
+    const entryRenkoSizing: RenkoEntrySizing = {
+      frozenAtr: state.renkoAtrRef,
+      minimumBrickSize: getMcxRenkoEntryMinimumBrickSize(state.instrumentToken, state.instrumentSymbol),
+    };
     // Collect ALL layer signals in parallel (not sequential cascade)
     const candidateSignals: Signal[] = [];
 
     // Layer 1: RedBarTheory V2 (5 consecutive same-color bricks → reversal entry)
     if (state.enabledLayers.includes("RedBarTheory")) {
       try {
-        const rbtSignal = generateRenkoSignal(state.candles);
+        const rbtSignal = generateRenkoSignal(state.candles, undefined, undefined, entryRenkoSizing);
         if (rbtSignal.direction !== "HOLD") candidateSignals.push(rbtSignal);
       } catch (e) { console.warn(`[MultiStrategy] RedBarTheory error:`, (e as Error).message); }
     }
@@ -6831,7 +6896,7 @@ const isExpiryDay = isOptionInstrument && (
     // Layer 1b: PremiumRenko (option premium Renko bricks — smaller brick, RSI filter)
     if (state.enabledLayers.includes("PremiumRenko")) {
       try {
-        const prSignal = generatePremiumRenkoSignal(state.candles);
+        const prSignal = generatePremiumRenkoSignal(state.candles, undefined, undefined, entryRenkoSizing);
         if (prSignal.direction !== "HOLD") candidateSignals.push(prSignal);
       } catch (e) { console.warn(`[MultiStrategy] PremiumRenko error:`, (e as Error).message); }
     }
@@ -6868,7 +6933,7 @@ const isExpiryDay = isOptionInstrument && (
     // Layer 4: TrikalStrategy (smart Renko with multiple confirmations)
     if (state.enabledLayers.includes("TrikalStrategy")) {
       try {
-        const trikalSignal = generateSmartRenkoSignal(state.candles);
+        const trikalSignal = generateSmartRenkoSignal(state.candles, undefined, undefined, entryRenkoSizing);
         if (trikalSignal.direction !== "HOLD") candidateSignals.push(trikalSignal);
       } catch (e) { console.warn(`[MultiStrategy] TrikalStrategy error:`, (e as Error).message); }
     }
@@ -6876,7 +6941,7 @@ const isExpiryDay = isOptionInstrument && (
     // Layer 5: Adeeb Strategy
     if (state.enabledLayers.includes("Adeeb")) {
       try {
-        const adeebSignal = generateAdeebSignal(state.candles, prevDayHigh, prevDayLow, prevDayClose, 0);
+        const adeebSignal = generateAdeebSignal(state.candles, prevDayHigh, prevDayLow, prevDayClose, 0, entryRenkoSizing);
         if (adeebSignal.direction !== "HOLD") candidateSignals.push(adeebSignal);
       } catch (e) { console.warn(`[MultiStrategy] Adeeb error:`, (e as Error).message); }
     }
