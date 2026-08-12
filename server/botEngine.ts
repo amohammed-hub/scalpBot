@@ -21,10 +21,57 @@ import {
 import { lockDirection, recordDirectionExit, isDirectionFlipBlocked, resetDirectionFlipLock } from "./riskManager";
 import { fetchIndiaVix } from "./riskManager";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
+import { computeLayerStats, getLayerTrackerTenantKey, isLayerDisabled } from "./layerTracker";
 
 // Production log suppression — hide strategy details in production logs
 const IS_DEV = process.env.NODE_ENV !== "production";
 const devLog = (...args: any[]) => { if (IS_DEV) console.log(...args); };
+
+// D3: one bounded performance refresh per tenant per minute. A refresh failure
+// blocks new entries until a valid snapshot exists, but never interferes with
+// management or exits of an already-open trade.
+const LAYER_PERFORMANCE_REFRESH_MS = 60_000;
+const layerPerformanceSnapshots = new Map<string, { lastRefreshAt: number; ready: boolean; refreshing: boolean }>();
+
+async function refreshLayerPerformanceForTenant(sessionToken: string): Promise<boolean> {
+  const tenantToken = getLayerTrackerTenantKey(sessionToken);
+  const now = Date.now();
+  const prior = layerPerformanceSnapshots.get(tenantToken);
+  if (prior?.ready && now - prior.lastRefreshAt < LAYER_PERFORMANCE_REFRESH_MS) return true;
+  if (prior?.refreshing) return prior.ready;
+
+  const snapshot = prior ?? { lastRefreshAt: 0, ready: false, refreshing: false };
+  snapshot.refreshing = true;
+  layerPerformanceSnapshots.set(tenantToken, snapshot);
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) throw new Error("database unavailable for layer performance refresh");
+    const { tradeLog, signalJournal } = await import("../drizzle/schema");
+    const { and, desc, eq } = await import("drizzle-orm");
+    const closedTrades = await db
+      .select({
+        layer: signalJournal.layer,
+        signalReason: tradeLog.signalReason,
+        pnl: tradeLog.pnl,
+        exitedAt: tradeLog.exitedAt,
+      })
+      .from(tradeLog)
+      .leftJoin(signalJournal, and(eq(signalJournal.tradeId, tradeLog.id), eq(signalJournal.sessionToken, tradeLog.sessionToken)))
+      .where(and(eq(tradeLog.sessionToken, tenantToken), eq(tradeLog.status, "closed")))
+      .orderBy(desc(tradeLog.exitedAt))
+      .limit(500);
+    computeLayerStats(closedTrades, tenantToken);
+    snapshot.lastRefreshAt = now;
+    snapshot.ready = true;
+    return true;
+  } catch (error) {
+    console.error(`[D3] ${tenantToken.slice(0, 8)} — layer performance refresh failed; new entries remain blocked until a valid snapshot exists:`, error);
+    return snapshot.ready;
+  } finally {
+    snapshot.refreshing = false;
+  }
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface Candle {
@@ -6540,6 +6587,13 @@ async function tick(
     state.reEntryCandles = 0;
   }
 
+  // D3 fail-closed entry gate: exits have already been processed above, so a
+  // scorecard-refresh failure can only prevent a new entry, never strand a trade.
+  if (!(await refreshLayerPerformanceForTenant(state.sessionToken))) {
+    emitActivity(state.sessionToken, "signal", "⊘ Signal skipped — layer performance snapshot unavailable; retrying safely on next scan");
+    return;
+  }
+
   // Generate signal — extract prev-day OHLC from daily candles for S/R pivot filter
   const slMult = isReEntry ? state.stopLossMultiplier * 0.8 : state.stopLossMultiplier;
   // V4 SL Strategy override: B = 1:2 R:R, D = 1:1.5 R:R
@@ -6862,23 +6916,41 @@ const isExpiryDay = isOptionInstrument && (
       }
     }
 
-    // ── PARALLEL SELECTION: Pick the BEST signal that hasn't exceeded per-layer limit ──
-    if (candidateSignals.length > 0) {
-      // Sort by confidence (highest first) — first valid signal wins
-      candidateSignals.sort((a, b) => b.confidence - a.confidence);
+    // D3: enforce the tenant-scoped disabled set BEFORE confidence ranking.
+    // Confidence only ranks layers that are currently eligible to trade.
+    const eligibleCandidates = candidateSignals.filter(candidate => {
+      const gate = isLayerDisabled(candidate.layer, state.sessionToken);
+      if (gate.disabled) {
+        emitActivity(state.sessionToken, "signal", `⊘ ${candidate.layer} skipped — ${gate.reason ?? "layer disabled"}`);
+        return false;
+      }
+      return true;
+    });
 
-      // Only check TOTAL daily limit (no per-layer limits — let each layer contribute)
+    // ── PARALLEL SELECTION: Pick the best eligible signal ───────────────────
+    if (eligibleCandidates.length > 0) {
+      eligibleCandidates.sort((a, b) => b.confidence - a.confidence);
       const totalLayerTrades = Object.values(state.layerTradesCount).reduce((s, v) => s + v, 0);
 
       if (totalLayerTrades >= TOTAL_LAYER_LIMIT) {
-        // HARD CAP: 6 trades/day/slot — even admin unlimitedTrades cannot bypass this
-        devLog(`[MultiStrategy] All candidates skipped — total daily limit reached (${totalLayerTrades}/${TOTAL_LAYER_LIMIT})`);
+        devLog(`[MultiStrategy] All eligible candidates skipped — total daily limit reached (${totalLayerTrades}/${TOTAL_LAYER_LIMIT})`);
       } else {
-        // First valid signal wins — quality filters already prevent bad entries
-        signal = candidateSignals[0];
-        devLog(`[MultiStrategy] ✓ Selected: ${signal.layer} ${signal.direction} conf=${signal.confidence.toFixed(2)} (${candidateSignals.length} candidates evaluated)`);
-        emitActivity(state.sessionToken, "signal", `🔀 MultiStrategy: ${signal.layer} selected (${candidateSignals.length} layers evaluated, conf=${(signal.confidence*100).toFixed(0)}%)`);
+        signal = eligibleCandidates[0];
+        devLog(`[MultiStrategy] ✓ Selected: ${signal.layer} ${signal.direction} conf=${signal.confidence.toFixed(2)} (${eligibleCandidates.length} eligible/${candidateSignals.length} candidates)`);
+        emitActivity(state.sessionToken, "signal", `🔀 MultiStrategy: ${signal.layer} selected (${eligibleCandidates.length}/${candidateSignals.length} eligible layers, conf=${(signal.confidence*100).toFixed(0)}%)`);
       }
+    } else if (candidateSignals.length > 0) {
+      emitActivity(state.sessionToken, "signal", "⊘ All strategy candidates skipped — every candidate layer is disabled");
+    }
+  }
+
+  // Single-signal paths do not pass through candidateSignals, so apply the
+  // same D3 gate here before any downstream entry handling.
+  if (signal.direction !== "HOLD") {
+    const layerGate = isLayerDisabled(signal.layer, state.sessionToken);
+    if (layerGate.disabled) {
+      emitActivity(state.sessionToken, "signal", `⊘ ${signal.layer} signal skipped — ${layerGate.reason ?? "layer disabled"}`);
+      signal = { ...signal, direction: "HOLD", reason: `${signal.reason} | D3 skipped: ${layerGate.reason ?? "layer disabled"}` };
     }
   }
 
