@@ -3613,6 +3613,65 @@ export function checkAdeebExit(candles: Candle[], tradeDirection: "BUY" | "SELL"
   return { shouldExit: false, reason: "" };
 }
 
+export interface StrategyExitDecision {
+  reason: string;
+}
+
+/**
+ * D1: Dispatch only an open trade's own existing strategy exit checker.
+ *
+ * The entry ATR remains frozen for the life of the trade. This function has no
+ * order, state, or persistence side effects so every mapping is independently
+ * testable before it reaches the verified close-order path.
+ */
+export function getStrategyExitDecision(
+  signalLayer: string | undefined,
+  tradeDirection: "BUY" | "SELL",
+  candles: Candle[],
+  entryAtr: number,
+): StrategyExitDecision | null {
+  let result: { shouldExit: boolean; reason: string };
+  let prefix: string;
+
+  switch (signalLayer) {
+    case "RedBarTheory":
+      result = checkRenkoExit(candles, tradeDirection, entryAtr);
+      prefix = "Strategy Exit — Red Bar Theory —";
+      break;
+    case "TrikalStrategy":
+      result = checkSmartRenkoExit(candles, tradeDirection, entryAtr);
+      prefix = "Strategy Exit — Trikal Strategy —";
+      break;
+    case "Adeeb":
+      result = checkAdeebExit(candles, tradeDirection, entryAtr);
+      prefix = "Strategy Exit — Adeeb —";
+      break;
+    default:
+      return null;
+  }
+
+  return result.shouldExit ? { reason: `${prefix} ${result.reason}` } : null;
+}
+
+/**
+ * Option positions are always bought at the broker, while their underlying
+ * strategy direction is CE=BUY and PE=SELL. If a legacy/restarted option trade
+ * does not retain a reliable CE/PE marker, D1 deliberately declines to run a
+ * directional strategy exit rather than risking an inverted exit decision.
+ */
+export function getStrategyExitDirection(trade: Pick<OpenTrade, "direction" | "isIndexOptions" | "optionMockKey" | "symbol" | "symbolLabel" | "signalReason">): "BUY" | "SELL" | null {
+  if (!trade.isIndexOptions) return trade.direction;
+
+  const optionIdentity = [trade.optionMockKey, trade.symbol, trade.symbolLabel, trade.signalReason]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toUpperCase();
+
+  if (/\bPE\b|_PE\b/.test(optionIdentity)) return "SELL";
+  if (/\bCE\b|_CE\b/.test(optionIdentity)) return "BUY";
+  return null;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════════
 // ── V13 Mean Reversion Strategy (CORRECTED) ─────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════════
@@ -6267,6 +6326,18 @@ async function tick(
       // SL triggers when premium drops below SL price. Target triggers when premium rises above target.
       if (trade.direction === "BUY") { if (effectivePrice <= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice >= trade.targetPrice) exitReason = "Target Hit"; }
       else { if (effectivePrice >= trade.currentSl) exitReason = "Stop Loss"; else if (effectivePrice <= trade.targetPrice) exitReason = "Target Hit"; }
+    }
+
+    // D1: Call the active layer's existing exit checker on every eligible open-trade
+    // tick. The result is applied only after generic safety exits have been evaluated,
+    // so Stop Loss and Target Hit keep their authoritative persisted reason. A frozen
+    // option mark deliberately cannot drive a strategy exit decision.
+    const strategyExitDirection = getStrategyExitDirection(trade);
+    const strategyExitDecision = !isOptionsWithBrokenDelta && strategyExitDirection
+      ? getStrategyExitDecision(trade.signalLayer, strategyExitDirection, state.candles, trade.atr)
+      : null;
+    if (!exitReason && strategyExitDecision) {
+      exitReason = strategyExitDecision.reason;
     }
 
     if (exitReason) {
