@@ -773,6 +773,33 @@ export async function restartRunningBots(): Promise<void> {
     console.error("[BotRestart] D17 slot-token migration error (non-fatal):", migrErr);
   }
 
+  // D17b — Stale in-memory cleanup: after a deploy, bots started under the old shared
+  // base-token key can still be alive in this process's memory while the DB now holds
+  // separate slot-keyed rows. Leaving them would create duplicate scan loops (two bots
+  // managing the same instruments). Stop any in-memory bot whose key is a base token
+  // that has slot-keyed running rows — the restart loop below will bring each slot up
+  // under its correct key.
+  try {
+    const { stopBot, getBotState } = await import("./botEngine");
+    const slotRowTokens = await db
+      .select({ sessionToken: botSessions.sessionToken })
+      .from(botSessions)
+      .where(eq(botSessions.status, "running"));
+    const staleBaseKeys = new Set<string>();
+    for (const row of slotRowTokens) {
+      if (/-slot\d+$/.test(row.sessionToken)) {
+        const base = row.sessionToken.replace(/-slot\d+$/, "");
+        if (getBotState(base)) staleBaseKeys.add(base);
+      }
+    }
+    for (const base of Array.from(staleBaseKeys)) {
+      stopBot(base);
+      console.log(`[BotRestart] D17b stopped stale shared in-memory bot under base token ${base.slice(0, 8)}… — slots will restart separately`);
+    }
+  } catch (cleanupErr) {
+    console.error("[BotRestart] D17b stale in-memory cleanup error (non-fatal):", cleanupErr);
+  }
+
   // Find all sessions that were "running" when the server went down
   const runningSessions = await db
     .select()
