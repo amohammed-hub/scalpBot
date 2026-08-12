@@ -452,6 +452,23 @@ export const appRouter = router({
         await verifySessionOwnership(ctx, input.sessionToken);
         assertBotAutomationEnabled("Primary bot start");
 
+        // D17 — Slot-token collision guard: botSlot > 0 MUST start via the slot-aware start flow
+        // (multiBots.startSecondary) which keys the session under base-slotN. Allowing botSlot > 0
+        // here collides in-memory state between bots — the exact bug that made Bot 4 share its scan
+        // loop with Crude Oil and report wrong trade counts (in-memory base-token counter vs
+        // slot-keyed trade log).
+        if (input.botSlot > 0 && !/-slot\d+$/.test(input.sessionToken)) {
+          throw new Error(`Slot ${input.botSlot} bots must be started via the slot start flow (token ending -slot${input.botSlot}).`);
+        }
+
+        // D17 — Self-healing migration: legacy slot sessions stored under the base token are
+        // re-keyed to base-slotN and their colliding in-memory state is stopped.
+        const { migrateLegacySlotTokens } = await import("./slotTokenMigration");
+        const migrationActions = await migrateLegacySlotTokens(input.sessionToken);
+        if (migrationActions.length > 0) {
+          console.log(`[bot.start] D17 migration: ${migrationActions.join(" | ")}`);
+        }
+
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
 

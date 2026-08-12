@@ -750,6 +750,29 @@ export async function restartRunningBots(): Promise<void> {
   } catch (cleanupErr) {
     console.error("[BotRestart] Stale trade cleanup error:", cleanupErr);
   }
+  // D17 — Slot-token migration: re-key legacy slot sessions stored under the base token
+  // to base-slotN BEFORE restoring them, so in-memory state is registered under the correct
+  // per-slot key (fixes the Bot 4 counter/log mismatch and the shared scan-loop bug).
+  try {
+    const { migrateLegacySlotTokens } = await import("./slotTokenMigration");
+    const allBaseRows = await db
+      .select({ sessionToken: botSessions.sessionToken })
+      .from(botSessions)
+      .where(eq(botSessions.status, "running"));
+    const baseTokens = new Set<string>();
+    for (const row of allBaseRows) {
+      if (!/-slot\d+$/.test(row.sessionToken)) baseTokens.add(row.sessionToken);
+    }
+    for (const base of Array.from(baseTokens)) {
+      const actions = await migrateLegacySlotTokens(base);
+      if (actions.length > 0) {
+        console.log(`[BotRestart] D17 migration (${base.slice(0, 8)}…): ${actions.join(" | ")}`);
+      }
+    }
+  } catch (migrErr) {
+    console.error("[BotRestart] D17 slot-token migration error (non-fatal):", migrErr);
+  }
+
   // Find all sessions that were "running" when the server went down
   const runningSessions = await db
     .select()
