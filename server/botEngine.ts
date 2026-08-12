@@ -287,6 +287,16 @@ export interface BotState {
   openingBurstMode?: boolean;
   openingBurstTradeTaken?: boolean; // true after burst trade taken today (reset daily)
   openingBurstEnabled?: boolean; // user toggle (default true for NSE)
+  // ── Session-Special Layer Governance (post-loss-day fix) ─────────────────
+  // Time-gated session layers (Opening Burst / Power Hour / MCX Evening /
+  // MCX Late Session / Hero Zero / V13) historically bypassed BOTH the
+  // user's enabledLayers whitelist AND the regime-affinity filter. These
+  // fields restore governance: the session-special path may only fire when
+  // explicitly enabled AND the layer is regime-eligible.
+  sessionSpecialLayersEnabled?: boolean; // user toggle (default ON to preserve behavior; user can disable)
+  sessionLayersRequireWhitelist?: boolean; // when true, MCX Evening/Late Session only fire if in enabledLayers
+  isMCXSessionLayerBlockedByWhitelist?: boolean; // audit flag for the journal
+  isMCXSessionLayerBlockedByRegime?: boolean; // audit flag for the journal
   // Cross-Market Correlation: Crude Oil → NIFTY soft bias filter
   crudeOilCorrelation?: boolean; // user toggle (default OFF)
   // Adaptive Regime Switching: auto-toggle Supertrend vs Trikal Strategy based on ADX
@@ -5892,10 +5902,44 @@ async function tick(
   // ── Opening Burst Window: 9:15-9:25 AM IST (NSE only) ──────────────────────
   const openingBurstStart = 9 * 60 + 15; // 555 min
   const openingBurstEnd   = 9 * 60 + 25; // 565 min
-  const inOpeningBurst = !isMCX && istMin2 >= openingBurstStart && istMin2 < openingBurstEnd
+  const openingBurstTimeWindow = !isMCX && istMin2 >= openingBurstStart && istMin2 < openingBurstEnd;
+  const inOpeningBurst = openingBurstTimeWindow
     && (state.openingBurstEnabled !== false) // default enabled
     && !state.openingBurstTradeTaken; // only 1 trade per day in this window
   state.openingBurstMode = inOpeningBurst;
+  // ── Session-Special Layer Governance (post-loss-day 2026-08-12) ───────────
+  // Global session-special toggle: time-gated session layers (Opening Burst /
+  // Power Hour / MCX Evening / MCX Late Session / Hero Zero) previously fired
+  // purely on clock position, bypassing BOTH the user's enabledLayers
+  // whitelist and the D5 regime-affinity filter. They now require:
+  //   1. state.sessionSpecialLayersEnabled !== false (user toggle, default ON)
+  //   2. MCX session layers must be present in resolved enabledLayers (the
+  //      layers the user actually selected), per sessionLayersRequireWhitelist
+  //   3. The layer must be regime-eligible for the D6 V2 snapshot
+  const sessionSpecialEnabled = state.sessionSpecialLayersEnabled !== false;
+  const mcxSessionLayerEnabled =
+    sessionSpecialEnabled &&
+    (!state.sessionLayersRequireWhitelist ||
+      (state.enabledLayers ?? []).includes("MCXEvening") ||
+      (state.enabledLayers ?? []).includes("MCXLateSession"));
+  state.isMCXSessionLayerBlockedByWhitelist =
+    openingBurstTimeWindow && sessionSpecialEnabled && !mcxSessionLayerEnabled && isMCX
+      ? true
+      : state.isMCXSessionLayerBlockedByWhitelist ?? false;
+  state.isMCXSessionLayerBlockedByRegime = false;
+  const sessionLayerRegimeBlocked = (layer: string): boolean => {
+    if (!isLayerEligibleForRegime(layer, state.regimeV2)) {
+      state.isMCXSessionLayerBlockedByRegime = true;
+      emitActivity(
+        state.sessionToken,
+        "signal",
+        `⏸️ ${layer} gated off by regime ${state.regimeV2 ?? "none"} (affinity: ${(LAYER_REGIME_AFFINITY as Record<string, string>)[layer] ?? "NONE"}) — no session-layer entries against the current market regime.`,
+      );
+      devLog(`[SessionLayerGovernance] ${state.sessionToken.slice(0, 8)} ${layer} blocked: regime=${state.regimeV2 ?? "none"}`);
+      return true;
+    }
+    return false;
+  };
 
   // Send Telegram alert when Opening Burst window opens (once per session)
   if (inOpeningBurst && !state.alertsSent.has("openingBurst")) {
@@ -6915,7 +6959,7 @@ async function tick(
   const slMult = isReEntry ? state.stopLossMultiplier * 0.8 : state.stopLossMultiplier;
   // V4 SL Strategy override: B = 1:2 R:R, D = 1:1.5 R:R
   const effectiveTargetMult = state.slStrategy === "D" ? 1.5 : state.slStrategy === "B" ? 2.0 : state.targetMultiplier;
-  let signal: Signal;
+  let signal: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No session-layer path applicable", layer: "None" };
 
   // Previous trading day candle (index -2 from today = yesterday's candle)
   const prevDayCandle = state.candlesDay.length >= 2 ? state.candlesDay[state.candlesDay.length - 2] : null;
@@ -6954,10 +6998,23 @@ const isExpiryDay = isOptionInstrument && (
   state.heroZeroMode = inHeroZeroWindow;
 
   devLog(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | openingBurst=${inOpeningBurst} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
-  if (inOpeningBurst && state.candles.length >= 2) {
+  if (inOpeningBurst && state.candles.length >= 2 && sessionSpecialEnabled) {
     // Fetch VIX for Opening Burst filter (cached 60s, fail-open returns 0)
     const vixNow = await fetchIndiaVix(state.accessToken ?? undefined);
     signal = generateOpeningBurstSignal(state.candles, prevDayClose, slMult, vixNow);
+    // Regime gate: Opening Burst fires only when regime is (or will be) eligible.
+    // If the D6 snapshot already classifies a different regime, hold until it
+    // settles — the layer's affinity is VOLATILE; a trending/ranging market
+    // should not be entered at the open on clock position alone.
+    if (signal.direction !== "HOLD" && sessionLayerRegimeBlocked("OpeningBurst")) {
+      signal = {
+        ...signal,
+        direction: "HOLD",
+        confidence: 0,
+        layer: "None",
+        reason: `[OpeningBurst] Regime ${state.regimeV2 ?? "none"} not eligible — session-layer entry gated until regime confirms. Gap signal preserved.`,
+      };
+    }
     // If Opening Burst fires a BUY/SELL, mark as taken so we don't re-enter
     if (signal.direction !== "HOLD") {
       emitActivity(state.sessionToken, "signal", `🚀 Opening Burst: ${signal.direction} | gap-aligned | conf=${(signal.confidence * 100).toFixed(0)}% | VIX=${vixNow.toFixed(1)}`);
@@ -6965,13 +7022,66 @@ const isExpiryDay = isOptionInstrument && (
     // Scan every candle during Opening Burst: override nextScanAt to 15s (minimum interval)
     // Normal scan might be 30-60s, but burst moves happen in 1-2 candles
     state.nextScanAt = Date.now() + 15_000;
-  } else if (inPowerHour) {
-    signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, effectiveTargetMult);
-  } else if (inMCXEvening) {
-    signal = generateMCXEveningSignal(state.candles, state.candles5m, isWednesdayCrude, slMult, effectiveTargetMult);
-  } else if (inMCXLateSession) {
-    signal = generateMCXLateSessionSignal(state.candles, state.candles5m, slMult, effectiveTargetMult);
-  } else if (inHeroZeroWindow && state.candles.length > 0) {
+  } else if (inPowerHour && sessionSpecialEnabled) {
+    if (sessionLayerRegimeBlocked("PowerHour")) {
+      emitActivity(state.sessionToken, "signal", `🛑 Power Hour skipped: regime gate (see above). User-selected layers only.`);
+    } else {
+      signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, effectiveTargetMult);
+    }
+  } else if (inMCXEvening && mcxSessionLayerEnabled) {
+    if (sessionLayerRegimeBlocked("MCXEvening")) {
+      emitActivity(state.sessionToken, "signal", `🛑 MCX Evening skipped: regime gate (see above). User-selected layers only.`);
+    } else {
+      signal = generateMCXEveningSignal(state.candles, state.candles5m, isWednesdayCrude, slMult, effectiveTargetMult);
+      if (signal.direction !== "HOLD") {
+        // RSI squeeze-trap guard: never buy a PUT into an oversold market
+        const rsiNow = calcRSI(state.candles.slice(-20).map((c) => c.close));
+        if (signal.direction === "SELL" && rsiNow < 40) {
+          signal = {
+            ...signal,
+            direction: "HOLD",
+            confidence: 0,
+            layer: "None",
+            reason: `[MCXEvening] RSI(${rsiNow.toFixed(0)}) oversold — PE entry skipped (squeeze trap). Score preserved in prior log.`,
+          };
+        } else if (signal.direction === "BUY" && rsiNow > 65) {
+          signal = {
+            ...signal,
+            direction: "HOLD",
+            confidence: 0,
+            layer: "None",
+            reason: `[MCXEvening] RSI(${rsiNow.toFixed(0)}) overbought — CE entry skipped (exhaustion trap).`,
+          };
+        }
+      }
+    }
+  } else if (inMCXLateSession && mcxSessionLayerEnabled) {
+    if (sessionLayerRegimeBlocked("MCXLateSession")) {
+      emitActivity(state.sessionToken, "signal", `🛑 MCX Late Session skipped: regime gate (see above). User-selected layers only.`);
+    } else {
+      signal = generateMCXLateSessionSignal(state.candles, state.candles5m, slMult, effectiveTargetMult);
+      if (signal.direction !== "HOLD") {
+        const rsiNow = calcRSI(state.candles.slice(-20).map((c) => c.close));
+        if (signal.direction === "SELL" && rsiNow < 40) {
+          signal = {
+            ...signal,
+            direction: "HOLD",
+            confidence: 0,
+            layer: "None",
+            reason: `[MCXLate] RSI(${rsiNow.toFixed(0)}) oversold — PE entry skipped (squeeze trap). Score preserved in prior log.`,
+          };
+        } else if (signal.direction === "BUY" && rsiNow > 65) {
+          signal = {
+            ...signal,
+            direction: "HOLD",
+            confidence: 0,
+            layer: "None",
+            reason: `[MCXLate] RSI(${rsiNow.toFixed(0)}) overbought — CE entry skipped (exhaustion trap).`,
+          };
+        }
+      }
+    }
+  } else if (inHeroZeroWindow && state.candles.length > 0 && sessionSpecialEnabled) {
     // Hero Zero: current price IS the option premium (bot is tracking the option instrument)
     const optionPremium = price;
     // Strike distance: approximate from instrument token (e.g. NIFTY_25000CE → |25000 - spot|)
@@ -8713,6 +8823,10 @@ export function startBot(
     isPowerHourMode: false,
     isMCXEveningMode: false, isMCXLateSessionMode: false, heroZeroMode: false,
     openingBurstMode: false, openingBurstTradeTaken: false,
+    sessionSpecialLayersEnabled: true, // default ON preserves current behavior; UI can toggle
+    sessionLayersRequireWhitelist: true, // MCX session layers must appear in the user's layer selection
+    isMCXSessionLayerBlockedByWhitelist: false,
+    isMCXSessionLayerBlockedByRegime: false,
     alertsSent: new Set<string>(),
     configuredLayers: config.configuredLayers ?? [...(config.enabledLayers ?? [])],
     layerTradesCount: config.layerTradesCount ?? {},

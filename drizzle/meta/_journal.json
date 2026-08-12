@@ -183,6 +183,13 @@
       "when": 1785076325339,
       "tag": "0025_chunky_talisman",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
+      "when": 1786561786008,
+      "tag": "0026_shocking_bug",
+      "breakpoints": true
     }
   ]
 }
