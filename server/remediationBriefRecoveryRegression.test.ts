@@ -6,6 +6,11 @@ import { describe, expect, it } from "vitest";
 const here = dirname(fileURLToPath(import.meta.url));
 const engineSource = readFileSync(join(here, "botEngine.ts"), "utf8");
 
+function percentageFallbackValues(setting: "optionSlPct" | "optionTpPct"): number[] {
+  return [...engineSource.matchAll(new RegExp(`\\b${setting}\\s*\\?\\?\\s*(\\d+(?:\\.\\d+)?)`, "g"))]
+    .map((match) => Number(match[1]));
+}
+
 describe("Remediation Brief recovery contracts", () => {
   it("keeps the globally approved Upstox product D selection", () => {
     expect(engineSource).toContain(
@@ -14,13 +19,13 @@ describe("Remediation Brief recovery contracts", () => {
     expect(engineSource).not.toContain('const product = isMcx ? "D" : "I"');
   });
 
-  it("keeps the vetoed premium fallback settings at 5 percent SL and 8 percent target", () => {
-    expect(engineSource).toContain("const slDistPct = (state.optionSlPct ?? 5) / 100;");
-    expect(engineSource).toContain("const optSlPct = (state.optionSlPct ?? 5) / 100;");
-    expect(engineSource).toContain("const optTpPct = (state.optionTpPct ?? 8) / 100;");
-    expect(engineSource).toContain("(state.optionSlPct ?? 5) / 100");
-    expect(engineSource).toContain("(state.optionTpPct ?? 8) / 100");
-    expect(engineSource).not.toContain("state.optionSlPct ?? 12");
-    expect(engineSource).not.toContain("state.optionTpPct ?? 15");
+  it("permits percentage fallbacks only at 5 percent SL and 8 percent target", () => {
+    const slFallbacks = percentageFallbackValues("optionSlPct");
+    const targetFallbacks = percentageFallbackValues("optionTpPct");
+
+    expect(slFallbacks).not.toHaveLength(0);
+    expect(targetFallbacks).not.toHaveLength(0);
+    expect(slFallbacks.every((value) => value === 5)).toBe(true);
+    expect(targetFallbacks.every((value) => value === 8)).toBe(true);
   });
 });
