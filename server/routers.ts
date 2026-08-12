@@ -507,6 +507,10 @@ export const appRouter = router({
         if (limits.maxTradesPerDay > 0 && input.maxTradesPerDay > limits.maxTradesPerDay) {
           input.maxTradesPerDay = limits.maxTradesPerDay;
         }
+        // TRADE CAPS REMOVED (Aug 2026): when the tier allows unlimited trades,
+        // force 0 regardless of the requested value — subscriptions must never be
+        // blocked by trade counts; the daily loss cap is the safety net.
+        if (limits.maxTradesPerDay === 0) input.maxTradesPerDay = 0;
         // Block unlimitedTrades for non-admin users below annual plan
         if (input.unlimitedTrades && limits.maxTradesPerDay > 0) {
           input.unlimitedTrades = false;
@@ -2925,6 +2929,8 @@ export const appRouter = router({
           if (slotLimits.maxTradesPerDay > 0 && input.maxTradesPerDay > slotLimits.maxTradesPerDay) {
             input.maxTradesPerDay = slotLimits.maxTradesPerDay;
           }
+          // TRADE CAPS REMOVED (Aug 2026): unlimited tier → force 0.
+          if (slotLimits.maxTradesPerDay === 0) input.maxTradesPerDay = 0;
           // Block unlimitedTrades for non-admin users below annual plan
           if (input.unlimitedTrades && slotLimits.maxTradesPerDay > 0) {
             input.unlimitedTrades = false;
