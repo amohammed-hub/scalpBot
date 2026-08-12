@@ -75,7 +75,13 @@ describe("30 July Upstox token and no-trade incident regressions", () => {
       expect(getUpstoxTokenDisplayLabel("error")).toBe("Token Error");
       expect(getUpstoxTokenDisplayLabel("missing")).toBe("No Token");
       expect(dashboardSource).toContain("const tokenDisplayState = getUpstoxTokenDisplayState(");
-      expect(dashboardSource).toContain('tokenDisplayState === "valid" ? "bg-emerald-500/10');
+      // D15: the badge is now expiry-aware — red when the token dies within the hour,
+      // amber when within 6 hours, green otherwise; the fail-closed states remain red.
+      expect(dashboardSource).toContain('tokenExpiryText?.includes("verify NOW!")');
+      expect(dashboardSource).toContain('tokenExpiryText?.includes("re-verify soon!")');
+      expect(dashboardSource).toContain("bg-emerald-500/10");
+      expect(dashboardSource).toContain("bg-red-500/10");
+      expect(dashboardSource).toContain("bg-amber-500/10");
       expect(dashboardSource).not.toContain('tokenStatus === "valid" && tokenHealthStatus !== "expired"');
     });
   });
