@@ -28,20 +28,13 @@ import {
 
 const secretSchema = z.object({ secret: z.string().min(1) });
 
-// SMOKE_TEST_TOKEN (Railway env) is the authoritative secret. The public
-// default is accepted ONLY when no env secret is configured, so that CI can
-// run against smoke-only environments without any GitHub secret, while
-// production (env set) accepts exactly one secret.
-// The probes are strictly non-destructive (throwaway test tokens only — they
-// never touch user sessions, start bots, or place orders).
-// CI commit-authorized secret — accepted only when no SMOKE_TEST_TOKEN env
-// is configured (Railway production sets the env, so this default never
-// applies there once deployed together with it).
-export const SMOKE_SECRET_DEFAULT = "85bee6e7c72c1b16cdc1373861f67491";
-function validSecret(secret: string): boolean {
-  const envSecret = process.env.SMOKE_TEST_TOKEN;
-  if (envSecret) return secret === envSecret;
-  return secret === SMOKE_SECRET_DEFAULT;
+// SMOKE_TEST_TOKEN (Railway env) takes precedence; otherwise the public
+// default applies. The probes are strictly non-destructive (throwaway test
+// tokens only — they never touch user sessions, start bots, or place orders),
+// so CI can run without any GitHub secret while production uses the env value.
+export const SMOKE_SECRET_DEFAULT = "demo-safety-smoke-probe-public";
+function getSecret(): string {
+  return process.env.SMOKE_TEST_TOKEN || SMOKE_SECRET_DEFAULT;
 }
 
 // A throwaway test session used only by the round-trip probe.
@@ -120,25 +113,25 @@ export function smokeProcedureBuilder(trpc: { publicProcedure: any }) {
     flagState: trpc.publicProcedure
       .input(secretSchema)
       .query(({ input }: { input: z.infer<typeof secretSchema> }) => {
-        if (!validSecret(input.secret)) throw new Error("Smoke test secret invalid");
+        if (input.secret !== getSecret()) throw new Error("Smoke test secret invalid");
         return smokeFlagState();
       }),
     roundTrip: trpc.publicProcedure
       .input(secretSchema)
       .query(({ input }: { input: z.infer<typeof secretSchema> }) => {
-        if (!validSecret(input.secret)) throw new Error("Smoke test secret invalid");
+        if (input.secret !== getSecret()) throw new Error("Smoke test secret invalid");
         return smokeRoundTrip();
       }),
     egress: trpc.publicProcedure
       .input(secretSchema)
       .query(({ input }: { input: z.infer<typeof secretSchema> }) => {
-        if (!validSecret(input.secret)) throw new Error("Smoke test secret invalid");
+        if (input.secret !== getSecret()) throw new Error("Smoke test secret invalid");
         return smokeEgress();
       }),
     startGuard: trpc.publicProcedure
       .input(secretSchema)
       .query(({ input }: { input: z.infer<typeof secretSchema> }) => {
-        if (!validSecret(input.secret)) throw new Error("Smoke test secret invalid");
+        if (input.secret !== getSecret()) throw new Error("Smoke test secret invalid");
         return smokeStartGuard();
       }),
   };
