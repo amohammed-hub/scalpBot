@@ -338,6 +338,42 @@ export default function Dashboard() {
     // bots started in live mode BEFORE this session's page load).
     demoSafetySetMutation.mutate({ sessionToken, active: true });
   };
+  // Switch to Live mode: stop all running bots first (they'd be dead in
+  // the water under the Demo Safety lock anyway), then clear the
+  // server-side lock so Live starts and real orders are permitted.
+  // Stop the primary bot and every configured secondary slot, then clear
+  // the server Demo Safety lock so Live trading is permitted again.
+  const handleModeToggleLive = async () => {
+    if (isRunning) {
+      toast.info("Stopping all running bots before switching to Live mode…");
+      const stopSecondarySlots = async () => {
+        const slots = (allBots ?? []).filter((b: any) => b.status === "running").map((b: any) => b.slot);
+        for (const slot of slots) {
+          try {
+            await stopSecondaryMutation.mutateAsync({ sessionToken, slot });
+          } catch { /* best-effort: a missing/stopped slot is harmless */ }
+        }
+      };
+      await stopSecondarySlots();
+      if (botStatus?.status === "running") {
+        try { await stopMutation.mutateAsync({ sessionToken }); } catch { /* best-effort */ }
+      }
+      toast.success("All bots stopped. Demo Safety lock cleared — you are now in Live mode.");
+    }
+    clearDemoSafetyLock();
+  };
+  const clearDemoSafetyLock = () => {
+    demoSafetySetMutation.mutate(
+      { sessionToken, active: false },
+      {
+        onSuccess: () => {
+          setConfig(c => ({ ...c, mode: "live" }));
+          toast.success("Demo Safety lock cleared. Bots can now start and trade in Live mode.");
+        },
+        onError: (e) => toast.error(`Could not clear Demo Safety lock: ${e.message}`),
+      },
+    );
+  };
   // Boot sync: if the server says Demo Safety is already ON for this session,
   // align the local UI so the badge and start buttons reflect the safe state.
   const demoSafetyQuery = trpc.demoSafety.get.useQuery({ sessionToken }, {
@@ -1829,7 +1865,7 @@ export default function Dashboard() {
          <div className="flex rounded-lg overflow-hidden border border-white/20 h-[36px]">
             <button onClick={handleModeToggleDemo}
               className={`px-5 text-sm font-medium transition-colors ${config.mode === "demo" ? "bg-blue-500/30 text-blue-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Demo</button>
-            <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning}
+            <button onClick={handleModeToggleLive}
               className={`px-5 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>
           </div>
           <span className="basis-full sm:basis-auto text-xs text-white/30 sm:ml-auto break-words">{config.mode === "demo" ? "Demo fills — real Upstox market data, fake money" : "⚠ Real orders via Upstox"}</span>
