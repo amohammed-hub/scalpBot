@@ -158,6 +158,8 @@ export interface OpenTrade {
   // D10: maximum observed total marked-to-market P&L, including realised partial P&L.
   maxFavorablePnl?: number;
   maxAdversePnl?: number;
+  // D29: scalper time stop — market-exit everything after 5 min (avoids the 19-min loser drift)
+  scalperTimeStopUntil?: number; // unix ms; undefined = no time stop active
 }
 
 export interface BotState {
@@ -244,6 +246,15 @@ export interface BotState {
   // by D25 deadlock protection); "manual" = ONLY user-selected layers may
   // trade — auto-disable can never block them.
   strategyMode?: "auto" | "manual";
+  // D29: scalper mode — high-frequency premium-target scalping profile.
+  // When true the bot swaps in tight cooldowns, premium-based exits
+  // (book 50% at +4% / rest at +8% of entry premium, SL -2%, 5-min time stop),
+  // direction lock after consecutive wins, a 11:00-13:00 IST kill zone, and a
+  // Rs 200-450 preferred option-premium band. Hard safety gates are unchanged.
+  scalperMode?: boolean;
+  // D29: scalper direction lock — after `scalperWinStreak` consecutive same-direction wins,
+  // lock to that direction until `scalperLockedUntil` (30 min).
+  scalperDirectionLock?: { direction: "BUY" | "SELL"; lockedUntil: number; winStreak: number };
   // HourlyClose: track if first-hour signal already fired today
   // Partial profit booking config (% profit levels)
   partial1Pct: number;  // Book 50% at this % profit (e.g., 30 = +30%)
@@ -5465,6 +5476,31 @@ type TradeCloseHandler = (
   exitTrigger?: D2ExitTrigger,
 ) => Promise<void>;
 
+// ── D29: scalper direction lock (module-level helper so all close sites can call it) ──
+// After 2 consecutive same-direction wins, lock the bot to that direction for
+// 30 minutes (user's edge: one persistent bias won the whole session;
+// flip-flopping CE/PE drained capital). A loss or direction change resets it.
+function applyScalperDirectionLock(
+  state: BotState,
+  direction: "BUY" | "SELL",
+  totalPnl: number,
+  sessionToken: string,
+  tickCount: number,
+) {
+  const lock = state.scalperDirectionLock ?? { direction, lockedUntil: 0, winStreak: 0 };
+  if (totalPnl >= 0 && direction === lock.direction) {
+    lock.winStreak += 1;
+    if (lock.winStreak >= 2 && lock.lockedUntil <= Date.now()) {
+      lock.lockedUntil = Date.now() + 30 * 60 * 1000;
+      emitActivity(sessionToken, "signal", `🔒 Scalper direction LOCKED to ${direction} for 30 min after 2 consecutive wins`);
+    }
+  } else {
+    lock.winStreak = 0;
+    lock.direction = direction;
+  }
+  state.scalperDirectionLock = lock;
+}
+
 async function persistTradeClose(
   onTradeClose: TradeCloseHandler,
   trade: OpenTrade,
@@ -5728,6 +5764,7 @@ async function tick(
         state.openTrade = null;
         if (pnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX3); recordDirectionExit(state.sessionToken, trade.direction, false); }
         else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
+        if (state.scalperMode) { applyScalperDirectionLock(state, trade.direction, pnl, state.sessionToken, state.tickCount ?? 0); }
         await persistTradeClose(onTradeClose, trade, exitPx, pnl, "Market Close — Auto Square-Off (no live data)");
         emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P\&L: ₹${pnl.toFixed(0)}`, { price: exitPx, pnl });
         console.log(`[BotEngine] ${state.sessionToken} — forced square-off (no candle data, market closed)`);
@@ -6198,6 +6235,7 @@ async function tick(
     const sqTotalPnl = pnl + trade.bookedPnl;
     if (sqTotalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
     else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
+    if (state.scalperMode) { applyScalperDirectionLock(state, trade.direction, sqTotalPnl, state.sessionToken, state.tickCount ?? 0); }
     await persistTradeClose(onTradeClose, trade, effectivePrice, sqTotalPnl, "Market Close — Auto Square-Off");
     console.log(`[BotEngine] ${state.sessionToken} — auto square-off | P&L: ₹${sqTotalPnl.toFixed(0)} (remaining: ₹${pnl.toFixed(0)} + booked: ₹${trade.bookedPnl.toFixed(0)})`);
     emitActivity(state.sessionToken, "trade_close", `Auto Square-Off ${trade.symbolLabel} @ ₹${effectivePrice.toFixed(2)} | P&L: ${sqTotalPnl >= 0 ? "+" : ""}₹${sqTotalPnl.toFixed(0)}`, { price: effectivePrice, pnl: sqTotalPnl });
@@ -6255,6 +6293,7 @@ async function tick(
     state.capitalUsed = 0; // BUG 26: Release capital on close
     if (totalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
     else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
+    if (state.scalperMode) { applyScalperDirectionLock(state, trade.direction, totalPnl, state.sessionToken, state.tickCount ?? 0); }
     await persistTradeClose(onTradeClose, trade, exitPx, totalPnl, "Market Closed — Auto Square-Off (midnight wraparound fix)");
     emitActivity(state.sessionToken, "trade_close", `⏰ Auto Square-Off (market closed) ${trade.symbolLabel} @ ₹${exitPx.toFixed(2)} | P&L: ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}`, { price: exitPx, pnl: totalPnl });
     sendTelegramAlert(state,
@@ -6266,9 +6305,53 @@ async function tick(
     return;
   }
 
+
   // Monitor open trade SL/Target
   if (state.openTrade) {
     const trade = state.openTrade;
+
+
+    // ── D29: scalper time stop — market-exit everything after 5 minutes ──────
+    // Evidence: user's manual losers held ~19 min (Rs −3,816 on CE); winners ~8 min.
+    if (trade.scalperTimeStopUntil && Date.now() >= trade.scalperTimeStopUntil) {
+      const timeExitPx = state.optionPremiumPrice && state.optionPremiumPrice > 0
+        ? state.optionPremiumPrice
+        : (effectivePrice > 0 ? effectivePrice : trade.entryPrice);
+      const timeRemQty = trade.quantity - (trade.bookedQty ?? 0);
+      let timePnl = trade.direction === "BUY"
+        ? (timeExitPx - trade.entryPrice) * timeRemQty
+        : (trade.entryPrice - timeExitPx) * timeRemQty;
+      if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
+        const timeOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", timeRemQty, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
+        if (!timeOrderId) {
+          state.lastError = `Scalper time-stop exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
+          emitActivity(state.sessionToken, "error", `⚠ SCALPER TIME-STOP EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
+          sendTelegramAlert(state, `🚨 <b>SCALPER TIME-STOP EXIT FAILED</b>\n📊 <b>${trade.symbolLabel}</b>\n❌ Exit order rejected. CLOSE MANUALLY ON UPSTOX.`, "criticalAlerts");
+          return; // do NOT close trade in DB — position still open
+        }
+      }
+      if (trade.mode === "demo") {
+        const pc = getDemoCostConfig(state.sessionToken);
+        timePnl = applyDemoCosts(timePnl, trade.entryPrice, timeExitPx, timeRemQty, pc.brokeragePer, pc.slippagePct);
+      }
+      if (trade.bookedPnlAddedToDaily) {
+        state.dailyPnl += timePnl;
+      } else {
+        state.dailyPnl += timePnl + trade.bookedPnl;
+      }
+      state.openTrade = null;
+      state.capitalUsed = 0;
+      recordTradeClose(state.sessionToken, state.scanIntervalSec);
+      const timeTotalPnl = timePnl + trade.bookedPnl;
+      if (timeTotalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
+      else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
+      if (state.scalperMode) { applyScalperDirectionLock(state, trade.direction, timeTotalPnl, state.sessionToken, state.tickCount ?? 0); }
+      await persistTradeClose(onTradeClose, trade, timeExitPx, timeTotalPnl, "Scalper Time Stop — 5 min max hold");
+      console.log(`[BotEngine] ${state.sessionToken} — scalper time stop | P&L: ₹${timeTotalPnl.toFixed(0)}`);
+      emitActivity(state.sessionToken, "trade_close", `⏱ Scalper Time Stop — ${trade.symbolLabel} @ ₹${timeExitPx.toFixed(2)} | P&L: ${timeTotalPnl >= 0 ? "+" : ""}₹${timeTotalPnl.toFixed(0)} (5 min max hold)`, { price: timeExitPx, pnl: timeTotalPnl });
+      sendTelegramAlert(state, `⏱ <b>SCALPER TIME STOP</b>\n📊 <b>${trade.symbolLabel}</b> | Exit: ₹${timeExitPx.toFixed(2)}\n💰 P&L: ${timeTotalPnl >= 0 ? "+" : ""}₹${timeTotalPnl.toFixed(0)}` + (trade.bookedPnl > 0 ? ` (locked: ₹${trade.bookedPnl.toFixed(0)})` : ""), "tradeExit");
+      return;
+    }
 
     // ── Hero Zero exit: 5× premium = take profit; 50% loss = cut ─────────────
     if (trade.isHeroZero && trade.heroZeroPremiumEntry) {
@@ -6304,6 +6387,7 @@ async function tick(
         recordTradeClose(state.sessionToken, state.scanIntervalSec);
         if (pnl + trade.bookedPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
         else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
+        if (state.scalperMode) { applyScalperDirectionLock(state, trade.direction, pnl + trade.bookedPnl, state.sessionToken, state.tickCount ?? 0); }
         await persistTradeClose(onTradeClose, trade, effectivePrice, pnl + trade.bookedPnl, heroExit);
         console.log(`[BotEngine] ${state.sessionToken} — ${heroExit} | P&L: ₹${(pnl + trade.bookedPnl).toFixed(0)}`);
         return;
@@ -6882,6 +6966,7 @@ async function tick(
       state.capitalUsed = 0; // BUG 26: Release capital on close
       recordTradeClose(state.sessionToken, state.scanIntervalSec);
       if (totalPnl < 0) recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); else recordDirectionalWin(state.sessionToken, trade.direction);
+      if (state.scalperMode) { applyScalperDirectionLock(state, trade.direction, totalPnl, state.sessionToken, state.tickCount ?? 0); }
       // BUG #4: Record direction exit for flip-flop lock (SL confirms reversal)
       recordDirectionExit(state.sessionToken, trade.direction, isStopLossExit);
       // P2: Reset underlying cooldown on a winning trade
@@ -6910,6 +6995,19 @@ async function tick(
   if (nearClose) return;
   // Mutex guard: prevent duplicate trade opens from concurrent ticks
   if (state.isOpeningTrade) return;
+  // ── D29 SCALPER MODE: 11:00-13:00 IST kill zone (no new entries) ───────────
+  // Backtest evidence (user's Aug-13 order history): mid-day 11:00-13:00 trades
+  // had 25% win rate vs the evening session's 92% — pure dead money.
+  if (state.scalperMode && !state.openTrade) {
+    const istDate = new Date(Date.now() + 5.5 * 3600_000);
+    const istMin = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
+    if (istMin >= 660 && istMin < 780) { // 11:00-13:00 IST
+      if ((state.tickCount ?? 0) % 20 === 1) {
+        emitActivity(state.sessionToken, "signal", `🛑 Scalper kill zone — 11:00-13:00 IST is a proven dead zone (25% WR in backtest). Resuming at 13:00.`);
+      }
+      return;
+    }
+  }
   // ── PAUSED CHECK: Skip signal generation when bot is paused ─────────────────
   // Paused bots still monitor open trades (SL/target/trailing above), but do NOT open new trades.
   if (state.status === "paused") {
@@ -6917,7 +7015,9 @@ async function tick(
     return;
   }
   // Cooldown guard: minimum 2 minutes between trade entries to prevent rapid-fire
-  if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < 120_000) {
+  // D29: scalper mode tightens this to 20 s — scalping frequency needs fast re-entries
+  const entryCooldownMs = state.scalperMode ? 20_000 : 120_000;
+  if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < entryCooldownMs) {
     return;
   }
   if (state.dailyPnl <= maxDailyLoss && !state.openTrade) {
@@ -6965,12 +7065,14 @@ async function tick(
     return;
   }
 
-  // Re-entry cooldown logic — time-based (120s = 2 candles worth regardless of scan interval)
+  // Re-entry cooldown logic — time-based (120s default = 2 candles worth regardless of scan interval;
+  // D29 scalper mode: 20 s)
+  const reEntryCooldownMs = state.scalperMode ? 20_000 : 120_000;
   let isReEntry = false;
   if (state.lastSlHitAt && state.lastSlDirection) {
     const elapsedSinceSlMs = Date.now() - state.lastSlHitAt;
-    if (elapsedSinceSlMs < 120_000) {
-      const remainingSec = Math.ceil((120_000 - elapsedSinceSlMs) / 1000);
+    if (elapsedSinceSlMs < reEntryCooldownMs) {
+      const remainingSec = Math.ceil((reEntryCooldownMs - elapsedSinceSlMs) / 1000);
       state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: `Re-entry cooldown (${remainingSec}s remaining after SL)`, layer: "None" };
       return;
     }
@@ -7433,6 +7535,23 @@ const isExpiryDay = isOptionInstrument && (
     }
   }
 
+  // ── D29: scalper direction lock — final enforcement ────────────────────────
+  // After 2 consecutive same-direction wins, the bot is locked to that direction
+  // for 30 min. Evidence: user's persistent PE bias won the session (+Rs 7,973
+  // PE vs −Rs 3,816 CE); flip-flopping drains capital.
+  if (state.scalperMode && signal.direction !== "HOLD" && state.scalperDirectionLock) {
+    const lock = state.scalperDirectionLock;
+    if (Date.now() >= lock.lockedUntil) {
+      state.scalperDirectionLock = undefined;
+    } else if (signal.direction !== lock.direction) {
+      const untilStr = new Date(lock.lockedUntil + 5.5 * 3600_000).toISOString().slice(11, 16);
+      if ((state.tickCount ?? 0) % 20 === 1) {
+        emitActivity(state.sessionToken, "signal", `🔒 Scalper direction LOCKED to ${lock.direction} until ${untilStr} IST — ${signal.direction} signal skipped`);
+      }
+      signal = { ...signal, direction: "HOLD", reason: `${signal.reason} | D29 scalper direction lock (${lock.direction} only)` };
+    }
+  }
+
   devLog(`[tick] SIGNAL OK — ${state.sessionToken.slice(0,8)} | dir=${signal.direction} | conf=${signal.confidence.toFixed(2)} | layer=${signal.layer}`);
 
   // ── Shadow Mode: compare old logic vs new logic ───────────────────────────
@@ -7679,7 +7798,8 @@ const isExpiryDay = isOptionInstrument && (
     // This protection cannot be cleared by restart or legacy unlimited mode.
     const elapsedSinceUnderlyingSL = Date.now() - state.lastUnderlyingSLAt;
     // MCX trends strongly — reduce cooldown from 15min to 8min for MCX to avoid missing trend continuations
-    const P2_COOLDOWN_MS = isMCX ? 480_000 : 900_000; // MCX: 8 min, NSE: 15 min
+    // D29: scalper mode shortens the underlying-SL cooldown to 2 min so fast scalps are not suppressed
+    const P2_COOLDOWN_MS = state.scalperMode ? 120_000 : (isMCX ? 480_000 : 900_000); // MCX: 8 min, NSE: 15 min
     if (elapsedSinceUnderlyingSL < P2_COOLDOWN_MS) {
       const remainMin = Math.ceil((P2_COOLDOWN_MS - elapsedSinceUnderlyingSL) / 60000);
       emitActivity(state.sessionToken, "signal", `⊘ Underlying cooldown — ${state.consecutiveUnderlyingSLs} consecutive SLs on ${state.instrumentLabel} (${remainMin}min remaining)`);
@@ -7925,7 +8045,9 @@ const isExpiryDay = isOptionInstrument && (
   }
 
   // ── PER-INSTRUMENT COOLDOWN (30 min between trades on same instrument) ────────────────────
-  const INSTRUMENT_COOLDOWN_MS = 30 * 60 * 1000;
+  // D29: scalper mode allows re-entry on the same instrument after 3 min (user's manual scalps
+  // reused the same crude contract 12 times in 90 min — 30 min cooldown would allow only 3)
+  const INSTRUMENT_COOLDOWN_MS = state.scalperMode ? 3 * 60 * 1000 : 30 * 60 * 1000;
   const cooldownSymbol = (state.instrumentSymbol ?? "").toUpperCase();
   const lastEntryOnInstrument = instrumentCooldowns.get(getTenantInstrumentKey(state.sessionToken, cooldownSymbol));
   if (lastEntryOnInstrument) {
@@ -8602,25 +8724,31 @@ const isExpiryDay = isOptionInstrument && (
     ? optionPremiumForSizing * p1Pct  // Use configurable partial1Pct for options (e.g., 30% of ₹252 = ₹76)
     : Math.abs(signal.entryPrice - signal.slPrice);
   const optionEntry = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  // For options: book 50% at +20% profit, book 25% at +40% profit (= target)
-  // e.g., entry ₹556 → partial1R = ₹667 (+20%), partial2R = ₹778 (+40% = target)
+  // D29: scalper mode premium-exit ladder — evidence from the user's Aug-13 manual scalps:
+  // winners exited at Rs 3-10 premium targets with 0.8 min median hold. Scalper mode books
+  // 50% at +4% premium, the rest at +8%, with a 2% premium SL and a 5-min time stop.
+  // (Swing mode: 7%/15% ladder as before.)
   const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode
-    ? optionEntry * 1.07  // 7% gain — book 50% here (breakeven trail)
+    ? (state.scalperMode ? optionEntry * 1.04 : optionEntry * 1.07)
     : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
   const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode
-    ? optionEntry * 1.15  // 15% gain — book 25% here (= target)
+    ? (state.scalperMode ? optionEntry * 1.08 : optionEntry * 1.15)
     : (signal.direction === "BUY" ? optionEntry + slDist * (p2Pct / p1Pct) : optionEntry - slDist * (p2Pct / p1Pct)));
 
   // For options: entry/SL/target are based on option premium, not underlying price
   const tradeEntryPrice = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
     // ── Configurable Premium SL & Target (user-settable via dashboard) ──
+    // D29: scalper mode tightens to 2% SL / 4% TP (scalper target = partial2 = +8% full book)
     const optSlPct = (state.optionSlPct ?? 5) / 100;
-  const optTpPct = (state.optionTpPct ?? 8) / 100;  // default 8% TP (was 15%)
+    const optTpPct = (state.optionTpPct ?? 8) / 100;  // default 8% TP (was 15%)
+    // D29: scalper mode tightens the option SL/TP for fast 2-5 min scalps
+    const effectiveOptSlPct = state.scalperMode ? 0.02 : optSlPct;
+    const effectiveOptTpPct = state.scalperMode ? 0.04 : optTpPct;
   const tradeSl = isOptionsMode && optionPremiumForSizing 
-    ? optionPremiumForSizing * (1 - optSlPct)  // e.g., ₹800 × 0.95 = ₹760 SL
+    ? optionPremiumForSizing * (1 - effectiveOptSlPct)  // e.g., ₹800 × 0.95 = ₹760 SL (2% in scalper mode)
     : signal.slPrice;
   const tradeTarget = isOptionsMode && optionPremiumForSizing
-    ? optionPremiumForSizing * (1 + optTpPct)  // e.g., ₹800 × 1.08 = ₹864 target
+    ? optionPremiumForSizing * (1 + effectiveOptTpPct)  // e.g., ₹800 × 1.08 = ₹864 target (4% in scalper mode)
     : signal.targetPrice;
   // D2: record the strategy thesis on the underlying, separate from the unchanged
   // premium 5% / 8% safety net used for option execution risk.
@@ -8789,6 +8917,8 @@ const isExpiryDay = isOptionInstrument && (
     structuralSlPrice, structuralTargetPrice,
     premiumSafetySlPrice, premiumSafetyTargetPrice,
     signalReason: signalLabel, signalLayer: signal.layer,
+    // D29: scalper time stop — exit at market price after 5 minutes
+    scalperTimeStopUntil: state.scalperMode ? Date.now() + 5 * 60 * 1000 : undefined,
   };
 
   state.isOpeningTrade = false; // Release mutex after openTrade is set

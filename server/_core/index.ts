@@ -200,20 +200,31 @@ async function startServer() {
       // Use the redirectUri saved in DB — this is the exact URI the frontend sent to Upstox
       // during the authorization request. It MUST match byte-for-byte for the token exchange.
       // Fallback: build from request headers if DB value is missing or is the default placeholder.
+      // D29 SELF-HEAL: also repair STALE production URIs (old domain/host) so token
+      // refresh keeps working even if the row still holds a superseded redirect URI.
+      const currentProto = (req.headers['x-forwarded-proto'] as string || req.protocol).split(',')[0].trim();
+      const currentHost = (req.headers['x-forwarded-host'] as string || req.get('host') || '');
+      const correctRedirectUri = `${currentProto}://${currentHost}/api/upstox-callback`;
+
       let redirectUri: string;
       const isPlaceholder = !savedRedirectUri ||
         savedRedirectUri === 'http://localhost:8000/callback' ||
         savedRedirectUri.startsWith('http://localhost');
+      const isStale = !isPlaceholder && savedRedirectUri !== correctRedirectUri;
 
-      if (!isPlaceholder) {
+      if (!isPlaceholder && !isStale) {
         redirectUri = savedRedirectUri;
       } else {
-        const proto = (req.headers['x-forwarded-proto'] as string || req.protocol).split(',')[0].trim();
-        const host = (req.headers['x-forwarded-host'] as string || req.get('host') || '');
-        redirectUri = `${proto}://${host}/api/upstox-callback`;
+        redirectUri = correctRedirectUri;
+        try {
+          await db.update(upstoxCredentials)
+            .set({ redirectUri: correctRedirectUri })
+            .where(eq(upstoxCredentials.sessionToken, sessionToken));
+          console.log(`[upstox-callback] SELF-HEAL: replaced ${isPlaceholder ? 'placeholder' : 'stale'} redirectUri (${savedRedirectUri}) with ${correctRedirectUri} for session ${sessionToken.slice(0, 8)}`);
+        } catch (e) { console.error('[upstox-callback] SELF-HEAL redirectUri update failed:', e); }
       }
 
-      console.log('[upstox-callback] using redirect_uri:', redirectUri, '| from DB:', !isPlaceholder);
+      console.log('[upstox-callback] using redirect_uri:', redirectUri, '| from DB:', !isPlaceholder && !isStale, '| was stale:', isStale);
 
       const params = new URLSearchParams({
         code,
@@ -232,8 +243,16 @@ async function startServer() {
       const tokenData = await tokenResp.json() as { access_token?: string; error?: string; error_description?: string };
 
       if (!tokenResp.ok || !tokenData.access_token) {
-        const errMsg = tokenData.error_description || tokenData.error || `HTTP ${tokenResp.status}`;
-        res.redirect(302, `/upstox-callback?status=error&msg=${encodeURIComponent('Token exchange failed: ' + errMsg)}`);
+        const upstoxErr = tokenData.error || 'unknown';
+        // D29: translate Upstox error codes into actionable user-facing guidance
+        const actionable: Record<string, string> = {
+          invalid_client: 'Your Upstox API Key/Secret no longer match (the app on Upstox was deleted or recreated). Re-enter the new key & secret in Settings, then refresh the token again.',
+          redirect_uri_mismatch: `redirect_uri did not match — the saved value was auto-corrected. Please start the refresh again (this retry will now succeed).`,
+          invalid_grant: 'The authorization code expired (codes are valid for a few seconds). Please click "Get Token" again and complete the PIN entry quickly.',
+          unauthorized_client: 'This API app is not authorized — check the app on the Upstox Developer console is active.',
+        };
+        const hint = actionable[upstoxErr] || (tokenData.error_description || `HTTP ${tokenResp.status}`);
+        res.redirect(302, `/upstox-callback?status=error&msg=${encodeURIComponent('Token exchange failed (' + upstoxErr + '): ' + hint)}`);
         return;
       }
 

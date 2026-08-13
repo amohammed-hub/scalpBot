@@ -118,6 +118,9 @@ export const botSessions = mysqlTable("bot_sessions", {
   crudeOilCorrelation: boolean("crudeOilCorrelation").default(false),
   // D26: strategy mode — "auto" = engine-managed layers; "manual" = only user-selected layers trade
   strategyMode: varchar("strategyMode", { length: 8 }).default("auto"),
+  // D29: scalper mode — high-frequency premium-target scalping profile (tight cooldowns,
+  // premium-based exits, direction lock, time windows, premium band)
+  scalperMode: boolean("scalperMode").default(false),
   // Restart-critical strategy and safety state. Defaults are fail-safe for existing rows.
   adaptiveRegimeEnabled: boolean("adaptiveRegimeEnabled").default(false),
   renkoExitEnabled: boolean("renkoExitEnabled").default(false),

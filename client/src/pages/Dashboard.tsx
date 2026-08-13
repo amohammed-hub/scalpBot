@@ -53,6 +53,7 @@ interface BotConfig {
   instrumentLabel: string;
   mode: "demo" | "live";
   strategyMode: "auto" | "manual";
+  scalperMode: boolean;
   capital: number;
   riskPerTradePct: number;
   maxTradesPerDay: number;
@@ -311,6 +312,7 @@ export default function Dashboard() {
       scanIntervalSec: 60,
       enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko", "BoxingStrategy", "ORB", "MeanReversionV13"],
       strategyMode: ((lsSm: string | null) => (lsSm === "manual" || lsSm === "auto") ? lsSm : "auto")(localStorage.getItem("scalpbot_strategy_mode")),
+      scalperMode: localStorage.getItem("scalpbot_scalper_mode") === "true",
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -322,6 +324,7 @@ export default function Dashboard() {
   useEffect(() => {
     localStorage.setItem(LS_CONFIG, JSON.stringify(config));
     localStorage.setItem("scalpbot_strategy_mode", config.strategyMode);
+    localStorage.setItem("scalpbot_scalper_mode", config.scalperMode ? "true" : "false");
   }, [config]);
 
   // D21: Demo Safety server persistence — the mode toggle is now a server-owned
@@ -551,6 +554,7 @@ export default function Dashboard() {
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
       slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
       strategyMode: config.strategyMode,
+      scalperMode: config.scalperMode,
       });
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
@@ -574,6 +578,7 @@ export default function Dashboard() {
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
       slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
       strategyMode: config.strategyMode,
+      scalperMode: config.scalperMode,
       });
     }
   };
@@ -2045,6 +2050,44 @@ Setting is saved and applies to ALL bot slots you start after this.
             )}
             {config.strategyMode === "manual" && config.enabledLayers.length === 0 && (
               <span className="text-[10px] text-amber-400/80">⚠ No strategies selected — bot will have nothing to trade</span>
+            )}
+          </div>
+
+          {/* ── D29: Scalper Mode ─────────────────────────────────────────────── */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 bg-white/[0.02] border border-white/10 rounded-xl mb-3">
+            <div className="flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-xs font-semibold text-white">Scalper Mode</span>
+              <div className="group relative">
+                <Info className="w-3 h-3 text-white/20 hover:text-white/50 cursor-help" />
+                <div className="absolute bottom-full left-0 mb-1 w-72 p-2 bg-gray-900 border border-white/20 rounded-lg text-[10px] text-white/70 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 whitespace-pre-line">
+                  OFF — normal bot (2-min cooldowns, 5% SL / 8% TP, R:R minimums).
+
+ON — high-lot scalping profile built from your real winning trades: 20s cooldowns, 3-min instrument cooldown, 2% SL / 4% TP on premium, full exit or 5-min time-stop, 11:00–13:00 IST dead-zone blocked, direction lock after 2 consecutive same-direction wins.
+
+Setting is saved and applies to ALL bot slots you start after this. Best with Manual strategy mode.
+                </div>
+              </div>
+            </div>
+            <div className="flex rounded-lg border border-white/10 overflow-hidden text-xs font-bold shrink-0">
+              {([false, true] as const).map((on) => (
+                <button
+                  key={String(on)}
+                  onClick={() => setConfig(c => ({ ...c, scalperMode: on }))}
+                  className={`px-4 py-1.5 transition-colors ${
+                    config.scalperMode === on
+                      ? on
+                        ? "bg-amber-500/30 text-amber-300 border border-amber-500/40"
+                        : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                      : "bg-transparent text-white/40 hover:text-white/70"
+                  }`}
+                >
+                  {on ? "⚡ SCALPER — High-Lot Profile" : "🔄 NORMAL — Default Bot"}
+                </button>
+              ))}
+            </div>
+            {config.scalperMode && (
+              <span className="text-[10px] text-amber-400/80">⚡ Fast re-entries • tight SL/TP • 5-min time-stop • direction lock after 2 wins • no 11–13 dead zone</span>
             )}
           </div>
 

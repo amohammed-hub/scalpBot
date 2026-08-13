@@ -923,7 +923,7 @@ export default function Settings() {
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-start gap-2 mb-4">
                 <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <p className="text-amber-300/90 text-xs">
-                  <strong>Important:</strong> The Access Token expires every day at midnight. You must repeat these steps each morning before starting Live trading. Demo trading works without a token.
+                  <strong>Important:</strong> The Access Token expires every day at midnight. You must repeat these steps each morning before starting ANY bot — Live AND Demo mode both need this real-time market data token (without it the bot sees no prices and cannot trade).
                 </p>
               </div>
 

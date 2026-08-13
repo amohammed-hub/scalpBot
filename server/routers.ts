@@ -495,6 +495,11 @@ export const appRouter = router({
         // D26: strategy mode. "auto" = engine-managed layers with D25 deadlock protection;
         // "manual" = ONLY user-selected layers may trade — auto-disable can never block them.
         strategyMode: z.enum(["auto", "manual"]).default("auto"),
+        // D29: scalper mode — high-frequency premium-target scalping profile:
+        // tight cooldowns, premium-based exits (target +8% / SL -2% of entry premium,
+        // 5-min time stop), direction lock after consecutive wins, kill zone 11:00-13:00,
+        // preferred premium band Rs 200-450. Hard safety gates remain unchanged.
+        scalperMode: z.boolean().default(false),
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
@@ -844,6 +849,7 @@ export const appRouter = router({
              partial2Pct: input.partial2Pct,
              strategyMode: input.strategyMode ?? "auto",
              strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
+             scalperMode: input.scalperMode ?? false,
              averagingEnabled: input.averagingEnabled,
              averagingLossThreshold: input.averagingLossThreshold,
              useV2Engine: input.useV2Engine,
@@ -899,6 +905,7 @@ export const appRouter = router({
 
               sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
               strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
+              scalperMode: input.scalperMode ?? false,
               consecutiveUnderlyingSLs: 0,
               lastUnderlyingSLAt: null,
               layerTradesCount: JSON.stringify({}),
@@ -1069,6 +1076,7 @@ export const appRouter = router({
            slStrategy: input.slStrategy ?? "B",
            strategyMode: input.strategyMode ?? "auto",
            strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
+           scalperMode: input.scalperMode ?? false,
            consecutiveTickErrors: 0,
             capitalUsed: 0,
            partial1Pct: input.partial1Pct,
@@ -1625,6 +1633,8 @@ export const appRouter = router({
            sessionLayersRequireWhitelist: row.sessionLayersRequireWhitelist ?? true,
            // D26: restore the user's strategy mode across server restarts
            strategyMode: (row.strategyMode === "manual" || row.strategyMode === "auto") ? row.strategyMode : "auto",
+           // D29: restore scalper mode across server restarts
+           scalperMode: row.scalperMode ?? false,
            consecutiveUnderlyingSLs: resumeConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: resumeLastUnderlyingSLAt,
            layerTradesCount: resumeLayerTradesCount,
@@ -2975,6 +2985,9 @@ export const appRouter = router({
         strategyLocked: z.boolean().default(false),
         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R
         strategyMode: z.enum(["auto", "manual"]).default("auto"), // D26: auto = engine manages strategy switching; manual = only user-selected layers trade (immune to auto-disable)
+        // D29: scalper mode — high-frequency premium-target scalping profile (tight cooldowns,
+        // premium-based exits, direction lock, kill zone 11:00-13:00, premium band Rs 200-450)
+        scalperMode: z.boolean().default(false),
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
@@ -3261,6 +3274,7 @@ export const appRouter = router({
 
            sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
            strategyLocked: input.strategyLocked ?? false,
+          scalperMode: input.scalperMode ?? false,
            consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
            layerTradesCount: JSON.stringify(slotRestoredLayerTradesCount),
@@ -3296,6 +3310,7 @@ export const appRouter = router({
                         sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
             sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
             strategyLocked: input.strategyLocked ?? (input.strategyMode === "manual" ? true : false),
+            scalperMode: input.scalperMode ?? false,
             strategyMode: input.strategyMode ?? "auto",
             consecutiveUnderlyingSLs: 0,
             lastUnderlyingSLAt: null,
@@ -3402,6 +3417,7 @@ export const appRouter = router({
 
           sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
           strategyLocked: input.strategyLocked ?? false,
+          scalperMode: input.scalperMode ?? false,
           consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
           lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
           layerTradesCount: slotRestoredLayerTradesCount,

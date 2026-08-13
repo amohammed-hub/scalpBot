@@ -282,6 +282,8 @@ async function initDb() {
         ["lastUnderlyingSLAt", "bigint"],
         // D26: strategy mode — "auto" = engine-managed layers; "manual" = only user-selected layers trade
         ["strategyMode", "varchar(8) DEFAULT 'auto'"],
+        // D29: scalper mode — high-frequency premium-target scalping profile
+        ["scalperMode", "boolean DEFAULT false"],
       ] as const;
       for (const [columnName, sqlType] of restartSafetyColumns) {
         try {
