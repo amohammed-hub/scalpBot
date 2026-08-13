@@ -319,6 +319,39 @@ export default function Dashboard() {
   });
   useEffect(() => { localStorage.setItem(LS_CONFIG, JSON.stringify(config)); }, [config]);
 
+  // D21: Demo Safety server persistence — the mode toggle is now a server-owned
+  // safety lock: flipping to Demo blocks ALL real Upstox orders for this session
+  // and auto-stops any running live bot. The flag survives refresh/restart.
+  const demoSafetySetMutation = trpc.demoSafety.set.useMutation({
+    onSuccess: (res) => {
+      if (res.stoppedLiveBots > 0) {
+        toast.info(`Demo Safety ON — ${res.stoppedLiveBots} running live bot(s) stopped to prevent any live orders.`);
+      } else {
+        toast.success("Demo Safety ON — all live orders for this session are blocked.");
+      }
+    },
+    onError: (e) => toast.error(`Could not activate Demo Safety: ${e.message}`),
+  });
+  const handleModeToggleDemo = () => {
+    setConfig(c => ({ ...c, mode: "demo" }));
+    // Persist the server-side lock even if no bots are running (covers
+    // bots started in live mode BEFORE this session's page load).
+    demoSafetySetMutation.mutate({ sessionToken, active: true });
+  };
+  // Boot sync: if the server says Demo Safety is already ON for this session,
+  // align the local UI so the badge and start buttons reflect the safe state.
+  const demoSafetyQuery = trpc.demoSafety.get.useQuery({ sessionToken }, {
+    enabled: !!sessionToken,
+    retry: 1,
+    staleTime: 30_000,
+  });
+  useEffect(() => {
+    if (demoSafetyQuery.data?.active && config.mode !== "demo") {
+      setConfig(c => ({ ...c, mode: "demo" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoSafetyQuery.data?.active]);
+
   // Unlimited trades toggle (admin-only, persisted in localStorage)
   const [unlimitedTrades, setUnlimitedTrades] = useState(() => localStorage.getItem("scalpbot_unlimited_trades") === "true");
   useEffect(() => { localStorage.setItem("scalpbot_unlimited_trades", unlimitedTrades ? "true" : "false"); }, [unlimitedTrades]);
@@ -1794,7 +1827,7 @@ export default function Dashboard() {
         <div data-tour="mode-toggle" className="flex flex-wrap items-center gap-2 sm:gap-4 mb-4 bg-white/5 border border-white/10 rounded-xl px-3 sm:px-4 py-3 min-w-0">
           <span className="text-xs text-white/50 font-medium">Trading Mode</span>
          <div className="flex rounded-lg overflow-hidden border border-white/20 h-[36px]">
-            <button onClick={() => setConfig(c => ({ ...c, mode: "demo" }))} disabled={isRunning}
+            <button onClick={handleModeToggleDemo}
               className={`px-5 text-sm font-medium transition-colors ${config.mode === "demo" ? "bg-blue-500/30 text-blue-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Demo</button>
             <button onClick={() => setConfig(c => ({ ...c, mode: "live" }))} disabled={isRunning}
               className={`px-5 text-sm font-medium transition-colors ${config.mode === "live" ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50 hover:bg-white/10"}`}>Live</button>

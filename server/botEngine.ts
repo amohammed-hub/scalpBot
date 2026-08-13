@@ -23,6 +23,7 @@ import { lockDirection, recordDirectionExit, isDirectionFlipBlocked, resetDirect
 import { fetchIndiaVix } from "./riskManager";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 import { clearDemoLayerOverrides, computeLayerStats, getLayerGateForMode, getLayerTrackerTenantKey } from "./layerTracker";
+import { demoSafetyActiveFor } from "./demoSafety";
 
 // Production log suppression — hide strategy details in production logs
 const IS_DEV = process.env.NODE_ENV !== "production";
@@ -5235,8 +5236,14 @@ async function checkUpstoxMargin(accessToken: string, isMcx: boolean): Promise<n
   }
 }
 
+export interface PlaceUpstoxOrderOptions {
+  /** Bot sessionToken — used by the Demo Safety egress gate (slots inherit the owner's flag). */
+  sessionToken?: string;
+}
+
 export async function placeUpstoxOrder(
     accessToken: string, instrumentToken: string, direction: "BUY" | "SELL", quantity: number, mcxLotSize: number | undefined, useSandbox: boolean,
+    options?: PlaceUpstoxOrderOptions,
 ): Promise<string | null> {
   // ── DEMO MODE: Simulate order locally — do NOT call Upstox sandbox API ──
   // The sandbox API is unreliable, requires a separate sandbox token, and often rejects orders.
@@ -5245,6 +5252,15 @@ export async function placeUpstoxOrder(
     const fakeOrderId = `DEMO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     console.log(`[BotEngine] 🎮 DEMO ORDER: ${instrumentToken} ${direction} qty=${quantity} → fakeId=${fakeOrderId}`);
     return fakeOrderId;
+  }
+  // D21: ULTIMATE LIVE-ORDER EGRESS GATE — no path reaches the real Upstox order
+  // API while Demo Safety is ON for this session, even if useSandbox=false was
+  // passed (e.g. from a stale/misconfigured mode=live bot session). Caller should
+  // pass sessionToken so slot bots inherit the owner's flag.
+  if (options?.sessionToken && demoSafetyActiveFor(options.sessionToken)) {
+    console.error(`[BotEngine] ⛔ LIVE ORDER EGRESS BLOCKED BY DEMO SAFETY inside placeUpstoxOrder: ${instrumentToken} ${direction} qty=${quantity} (session ${options.sessionToken.slice(0, 8)}...)`);
+    lastOrderRejectionReason = `Demo Safety is ON for this session — live Upstox orders are blocked.`;
+    return null;
   }
 
   let liveOrderHeaders: Awaited<ReturnType<typeof ensureUpstoxLiveOrderEgress>>;
@@ -6140,7 +6156,7 @@ async function tick(
     }
    const trade = state.openTrade;
    if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
-     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", (trade.quantity - (trade.bookedQty ?? 0)), state.lotSize, state.mode === "demo");
+     const sqOffId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", (trade.quantity - (trade.bookedQty ?? 0)), state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
       if (!sqOffId) {
         state.lastError = `Auto square-off REJECTED — close ${trade.symbolLabel} manually on Upstox`;
         emitActivity(state.sessionToken, "error", `⚠ AUTO SQUARE-OFF FAILED — ${trade.symbolLabel}. CLOSE MANUALLY on Upstox NOW.`);
@@ -6249,7 +6265,7 @@ async function tick(
         const heroRemQty = trade.quantity - (trade.bookedQty ?? 0);
         let pnl = (effectivePrice - trade.entryPrice) * heroRemQty;
         if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
-          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", heroRemQty, state.lotSize, state.mode === "demo");
+          const heroOrderId2 = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, "SELL", heroRemQty, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
           if (!heroOrderId2) {
             state.lastError = `Hero Zero exit order REJECTED — close ${trade.symbolLabel} manually on Upstox`;
             emitActivity(state.sessionToken, "error", `⚠ HERO ZERO EXIT FAILED — ${trade.symbolLabel}. Order rejected by Upstox. CLOSE MANUALLY.`);
@@ -6305,7 +6321,7 @@ async function tick(
          ? (trade.partial1RPrice - trade.entryPrice) * bookQty
          : (trade.entryPrice - trade.partial1RPrice) * bookQty;
        if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
-          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "demo");
+          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
           if (!partialOrderId) {
             state.lastError = `Partial 1R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 1R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
@@ -6373,7 +6389,7 @@ async function tick(
         ? (trade.partial2RPrice - trade.entryPrice) * bookQty
         : (trade.entryPrice - trade.partial2RPrice) * bookQty;
        if ((trade.mode === "live" || trade.mode === "demo") && state.accessToken) {
-          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "demo");
+          const partialOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction === "BUY" ? "SELL" : "BUY", bookQty, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
           if (!partialOrderId) {
             state.lastError = `Partial 2R booking REJECTED — ${trade.symbolLabel}. Position unchanged.`;
             emitActivity(state.sessionToken, "error", `⚠ PARTIAL 2R BOOKING FAILED — ${trade.symbolLabel}. Order rejected by Upstox. Will retry next tick.`);
@@ -6596,7 +6612,7 @@ async function tick(
               trade.averageCount = 1; // Prevent retry spam
               return;
             }
-            const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty, state.lotSize, state.mode === "demo");
+            const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, avgOrderDir, avgQty, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
             if (!avgOrderId) {
               // Order failed — don't average, just log
               console.warn(`[BotEngine] ${state.sessionToken} — AVERAGING order REJECTED by Upstox`);
@@ -6787,11 +6803,11 @@ async function tick(
         } catch (posErr) {
           console.warn(`[BotEngine] Position sync failed, using bot's qty (${remainingQty}):`, posErr instanceof Error ? posErr.message : String(posErr));
         }
-        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "demo");
+        let exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
         if (!exitOrderId) {
           // Retry once after 2 seconds — network blip or brief Upstox outage
           await new Promise(r => setTimeout(r, 2000));
-          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "demo");
+          exitOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, exitDir, actualExitQty, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
         }
         if (!exitOrderId) {
           // Both attempts failed — keep trade open, alert user to close manually
@@ -8369,6 +8385,21 @@ const isExpiryDay = isOptionInstrument && (
   // The actual order placed is always a BUY of the option contract.
   let orderId: string | undefined;
   if ((state.mode === "live" || state.mode === "demo") && state.accessToken) {
+    // D21: DEMO SAFETY EGRESS GATE — server-owned authority on Demo/Live intent.
+    // Even if this bot session is mode=live (started earlier, or set by a
+    // misbehaving/compromised client), Demo Safety ON for this session blocks
+    // EVERY real Upstox order at the function boundary — the exact class of leak
+    // that caused a live order while the dashboard was in Demo mode.
+    if (state.mode === "live" && demoSafetyActiveFor(state.sessionToken)) {
+      state.isOpeningTrade = false;
+      state.lastTradeOpenedAt = Date.now();
+      const dsLabel = `${state.instrumentLabel} (${tradeLabel ?? state.instrumentSymbol})`;
+      emitActivity(state.sessionToken, "error", `🛑 LIVE ORDER BLOCKED BY DEMO SAFETY — ${dsLabel} (bot mode=live but Demo Safety ON for this session). Bot stopped.`);
+      sendTelegramAlert(state, `🛑 <b>DEMO SAFETY INTERCEPTED A LIVE ORDER</b>\n📊 ${dsLabel}\n⚠️ Bot mode was LIVE but Demo Safety is ON — the real order was BLOCKED and this bot was STOPPED.\n✅ No capital was risked. Turn Demo Safety OFF to resume live trading.`, "criticalAlerts").catch(() => {});
+      console.error(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ⛔ LIVE ORDER BLOCKED BY DEMO SAFETY (mode=live, Demo Safety ON). Bot stopped.`);
+      try { stopBot(state.sessionToken); } catch { /* best-effort stop */ }
+      return;
+    }
     // Revalidate immediately before any order request. A token can be replaced by
     // the 0DTE re-resolution path after the earlier sizing gate, so this second check
     // is intentionally redundant and authoritative.
@@ -8411,7 +8442,7 @@ const isExpiryDay = isOptionInstrument && (
       return;
     }
     console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — PLACING LIVE ORDER: ${tradeInstrumentToken} ${orderDirection} qty=${quantity}`);
-    const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity, state.lotSize, state.mode === "demo");
+    const oid = await placeUpstoxOrder(state.accessToken, tradeInstrumentToken, orderDirection, quantity, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
     if (!oid) {
       // CRITICAL: if the order was rejected by Upstox, do NOT record a phantom trade.
       // Log the failure and skip this tick entirely.
@@ -9278,7 +9309,7 @@ export async function forceAverageDown(sessionToken: string): Promise<{ success:
       sendTelegramAlert(state, `🚫 <b>MARGIN BLOCK (Manual AVG)</b>\n${trade.symbolLabel}\nNeed: ₹${manualAvgOrderValue.toFixed(0)} | Available: ₹${manualAvgMargin.toFixed(0)}`, "criticalAlerts");
       return { success: false, error: `Insufficient margin: need ₹${manualAvgOrderValue.toFixed(0)}, have ₹${manualAvgMargin.toFixed(0)}` };
     }
-    const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction, avgQty, state.lotSize, state.mode === "demo");
+    const avgOrderId = await placeUpstoxOrder(state.accessToken, trade.instrumentToken, trade.direction, avgQty, state.lotSize, state.mode === "demo", { sessionToken: state.sessionToken });
     if (!avgOrderId) {
       trade.averageCount = 1; // Prevent retry spam
       return { success: false, error: "Upstox order rejected" };
