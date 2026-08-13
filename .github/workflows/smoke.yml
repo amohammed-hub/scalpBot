@@ -25,11 +25,9 @@ jobs:
         run: sleep 180
 
       - name: Run Demo Safety smoke probes
-        env:
-          SECRET: ${{ secrets.SMOKE_TEST_TOKEN }}
         run: |
           BASE="https://scalpbot.up.railway.app/api/trpc"
-          AUTH="{\"json\":{\"secret\":\"$SECRET\"}}"
+          AUTH="{\"json\":{\"secret\":\"demo-safety-smoke-probe-public\"}}"
 
           check() {
             local name=$1 path=$2 expect=$3

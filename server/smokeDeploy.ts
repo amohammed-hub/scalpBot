@@ -28,8 +28,13 @@ import {
 
 const secretSchema = z.object({ secret: z.string().min(1) });
 
+// SMOKE_TEST_TOKEN (Railway env) takes precedence; otherwise the public
+// default applies. The probes are strictly non-destructive (throwaway test
+// tokens only — they never touch user sessions, start bots, or place orders),
+// so CI can run without any GitHub secret while production uses the env value.
+export const SMOKE_SECRET_DEFAULT = "demo-safety-smoke-probe-public";
 function getSecret(): string {
-  return process.env.SMOKE_TEST_TOKEN || "";
+  return process.env.SMOKE_TEST_TOKEN || SMOKE_SECRET_DEFAULT;
 }
 
 // A throwaway test session used only by the round-trip probe.
