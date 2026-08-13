@@ -28,6 +28,12 @@ export const PUBLIC_TRPC_PROCEDURES = new Set([
   "referral.myReferral",
   // System health
   "system.health",
+  // D23: Post-deploy smoke probes — secret-gated and non-destructive
+  // (throwaway test tokens; never touch users, bots, or orders)
+  "smoke.flagState",
+  "smoke.roundTrip",
+  "smoke.egress",
+  "smoke.startGuard",
 ]);
 
 type AuthenticatedRequestParts = Pick<Request, "cookies" | "headers">;
