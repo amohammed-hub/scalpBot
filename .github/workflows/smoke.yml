@@ -59,9 +59,9 @@ jobs:
             local out
             out=$(curl -sf -m 20 -G "$BASE/$path" --data-urlencode "input={\"json\":{\"secret\":\"$SECRET\"}}")
             echo "[$name] $out"
-            # expect is a jq expression that must be truthy
+            # expect is a dict key name; tRPC shape: .result.data.json.<field>
             local val
-            val=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{'data':None}).get('data',{}).get($expect))" 2>/dev/null)
+            val=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{'data':{}}).get('data',{}).get('json',{}).get($expect))" 2>/dev/null)
             if [ "$val" = "True" ]; then echo "[$name] PASS"; else echo "[$name] FAIL (expected $expect)"; exit 1; fi
           }
 
