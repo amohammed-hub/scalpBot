@@ -79,4 +79,24 @@ describe("D21 Demo Safety Lock", () => {
       expect(true).toBe(true);
     }
   });
+
+  // D22: clearing the lock (Live toggle) must fully release the egress, the
+  // slot inheritance, and any cached boot state — restoring normal trading.
+  it("clearing the flag releases the live-order egress for the session and its slots", () => {
+    setDemoSafety(ownerToken, true);
+    expect(demoSafetyActiveFor(ownerToken)).toBe(true);
+    expect(demoSafetyActiveFor(slotToken)).toBe(true);
+    setDemoSafety(ownerToken, false);
+    expect(demoSafetyActiveFor(ownerToken)).toBe(false);
+    expect(demoSafetyActiveFor(slotToken)).toBe(false);
+  });
+
+  it("clearing then re-setting round-trips consistently", () => {
+    setDemoSafety(ownerToken, false);
+    expect(demoSafetyActiveFor(ownerToken)).toBe(false);
+    setDemoSafety(ownerToken, true);
+    expect(demoSafetyActiveFor(ownerToken)).toBe(true);
+    setDemoSafety(ownerToken, false);
+    expect(demoSafetyActiveFor(ownerToken)).toBe(false);
+  });
 });
