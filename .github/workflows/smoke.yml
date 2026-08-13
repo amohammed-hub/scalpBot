@@ -1,0 +1,60 @@
+# D23 — Post-deploy smoke test
+# Runs against the LIVE production server (scalpbot.up.railway.app) after
+# every push/merge to main, verifying the Demo Safety mechanics end-to-end:
+#   1. flagState — demo-safety loader is healthy, test sessions start clean
+#   2. roundTrip — flip ON (must lock) → flip OFF (must fully clear, slots too)
+#   3. egress    — unknown/empty sessions must never appear demo-locked
+#   4. startGuard — refusal while ON, allowance while OFF
+#
+# These probes exercise the EXACT demo-safety paths without starting bots,
+# placing orders, or touching any user session.
+#
+# Secrets required: SMOKE_TEST_TOKEN (repo secret, same value as Railway env)
+name: Post-Deploy Smoke Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Railway deploy to roll out
+        run: sleep 180
+
+      - name: Run Demo Safety smoke probes
+        env:
+          SECRET: ${{ secrets.SMOKE_TEST_TOKEN }}
+        run: |
+          BASE="https://scalpbot.up.railway.app/api/trpc"
+          AUTH="{\"json\":{\"secret\":\"$SECRET\"}}"
+
+          check() {
+            local name=$1 path=$2 expect=$3
+            local out
+            out=$(curl -sf -m 20 -X POST "$BASE/$path" -H "Content-Type: application/json" -d "$AUTH")
+            echo "[$name] $out"
+            # expect is a jq expression that must be truthy
+            local val
+            val=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{'data':None}).get('data',{}).get($expect))" 2>/dev/null)
+            if [ "$val" = "True" ]; then echo "[$name] PASS"; else echo "[$name] FAIL (expected $expect)"; exit 1; fi
+          }
+
+          check "flagState"   "smoke.flagState"   "'loadedFromDb'"
+          check "roundTrip.on"   "smoke.roundTrip" "'flippedOn'"
+          check "roundTrip.off"  "smoke.roundTrip" "'flippedOff'"
+          check "roundTrip.slots" "smoke.roundTrip" "'clearAfterOff'"
+          check "egress.empty"   "smoke.egress"    "'emptyTokenAllowed'"
+          check "egress.random"  "smoke.egress"    "'randomTokenAllowed'"
+          check "startGuard.on"  "smoke.startGuard" "'refusesLiveStartWhileOn'"
+          check "startGuard.off" "smoke.startGuard" "'permitsLiveStartWhileOff'"
+
+          echo "ALL SMOKE PROBES PASSED"
+
+      - name: Reject invalid secrets (security check)
+        run: |
+          rc=$(curl -s -o /dev/null -w "%{http_code}" -m 20 -X POST "https://scalpbot.up.railway.app/api/trpc/smoke.flagState" -H "Content-Type: application/json" -d '{"json":{"secret":"wrong"}}')
+          # tRPC returns 200 with error payload for thrown errors
+          curl -s -m 20 -X POST "https://scalpbot.up.railway.app/api/trpc/smoke.flagState" -H "Content-Type: application/json" -d '{"json":{"secret":"wrong"}}' | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'result' not in d or 'error' in d.get('result',{}), d; print('bad-secret probe correctly rejected')"

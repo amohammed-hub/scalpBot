@@ -17,6 +17,7 @@ import { isOptionTrade } from "../shared/optionTradeIdentity";
 import { selectMarketDataAccessToken } from "../shared/upstoxTokenState";
 import { getStoppedTradeQuoteState } from "./stoppedTradeQuoteState";
 import { setDemoSafety, demoSafetyActiveFor, getAllDemoSafetyStates } from "./demoSafety";
+import { smokeProcedureBuilder } from "./smokeDeploy";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -351,6 +352,10 @@ export const appRouter = router({
   // D21: Demo Safety — server-owned authority that blocks ALL real Upstox orders
   // for a session while ON, regardless of any bot's per-session mode=live state.
   // See server/demoSafety.ts for the full design and post-mortem evidence.
+  // D23: Post-deploy smoke test — secret-gated probes exercising the exact
+  // demo-safety mechanics (round-trip, egress, start guard) without touching
+  // user sessions, starting bots, or placing orders. See smokeDeploy.ts.
+  smoke: smokeProcedureBuilder({ publicProcedure }),
   demoSafety: router({
     /** Whether Demo Safety is active for this session (base token incl. slots). */
     get: publicProcedure
