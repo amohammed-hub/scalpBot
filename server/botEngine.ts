@@ -5652,6 +5652,18 @@ async function tick(
       reason: "No real candle data — market closed or outside trading hours",
       layer: "None",
     };
+    // D27: When candles are empty DURING market hours, the bot can never trade —
+    // tell the user exactly why and how to fix it, instead of staying silent.
+    if (marketOpen && (state.tickCount ?? 0) % 20 === 1 && !state.alertsSent.has("d27_empty_candles")) {
+      const tokenMissing = !state.accessToken || state.accessToken === "DEMO_NO_TOKEN";
+      emitActivity(state.sessionToken, "error",
+        `⚠ ZERO TRADES EXPECTED until fixed: no market data feed (${signalToken}).` +
+        ` Bot is running, but the candle feed is empty during market hours.` +
+        (tokenMissing
+          ? " Cause: no Upstox access token. A valid token is required even in DEMO mode (for live price data). Go to Settings → Upstox → link/refresh your account, then restart the bot."
+          : " Cause: the Upstox access token was rejected (401/403) — it may have expired (~24h lifetime) or been revoked. Go to Settings → Upstox → refresh the login, then restart the bot."));
+      state.alertsSent.add("d27_empty_candles");
+    }
     state.nextScanAt = Date.now() + state.scanIntervalSec * 1000;
     state.lastTickAt = Date.now();
     // Log to activity so the user can see the bot is alive and waiting for market data
