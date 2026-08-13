@@ -269,10 +269,16 @@ export function computeViableCandidates(
   candidateLayers: string[],
   sessionToken: string = "default",
   mode: "demo" | "live",
+  options?: { selectedLayers?: string[] },
 ): ViableCandidateResult {
   const result: ViableCandidateResult = { eligible: [], manuallyDisabled: [], deadlocked: null };
   if (candidateLayers.length === 0) return result;
   const gated: Array<{ layer: string; reason: string; expectancy: number }> = [];
+  // D26: in manual mode, the user's selected layers are never gated.
+  const isManual = getStrategyMode(sessionToken) === "manual";
+  const selectedKeys = isManual
+    ? new Set((options?.selectedLayers ?? []).map(l => canonicalLayerKey(l)))
+    : new Set<string>();
   for (const layer of candidateLayers) {
     const gate = getLayerGateForMode(layer, sessionToken, mode);
     if (gate.demoOverrideActive) {
@@ -282,6 +288,11 @@ export function computeViableCandidates(
     if (gate.disabled) {
       if (gate.source === "manual") {
         result.manuallyDisabled.push(layer);
+        continue;
+      }
+      // D26: manual mode — a user-selected layer can never be auto-gated.
+      if (isManual && selectedKeys.has(canonicalLayerKey(layer))) {
+        result.eligible.push(layer);
         continue;
       }
       gated.push({ layer, reason: gate.reason ?? "layer disabled", expectancy: extractExpectancy(gate.reason) });
@@ -310,6 +321,24 @@ function extractExpectancy(reason: string | null): number {
   const raw = m?.[1]?.replace(/,/g, "");
   const v = raw ? parseFloat(raw) : NaN;
   return Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY;
+}
+
+// ── D26: strategy mode (auto vs manual) ──────────────────────────────────────
+// "auto"  — engine manages layers; auto-disable may gate candidates but the D25
+//           deadlock bypass always keeps at least one candidate alive.
+// "manual"— ONLY the layers the user selected may trade. Auto-disable is
+//           completely powerless against user-selected layers; manual disables
+//           (user explicit toggle) remain authoritative.
+export type StrategyMode = "auto" | "manual";
+const strategyModes = new Map<string, StrategyMode>();
+export function setStrategyMode(sessionToken: string, mode: StrategyMode): void {
+  strategyModes.set(getLayerTrackerTenantKey(sessionToken), mode);
+}
+export function getStrategyMode(sessionToken: string = "default"): StrategyMode {
+  return strategyModes.get(getLayerTrackerTenantKey(sessionToken)) ?? "auto";
+}
+export function clearStrategyModes(): void {
+  strategyModes.clear();
 }
 
 /** D25: one-time admin recovery — clears every auto-disable entry for a tenant. */

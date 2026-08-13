@@ -280,6 +280,8 @@ async function initDb() {
         ["layerTradesCount", "text"],
         ["consecutiveUnderlyingSLs", "int DEFAULT 0"],
         ["lastUnderlyingSLAt", "bigint"],
+        // D26: strategy mode — "auto" = engine-managed layers; "manual" = only user-selected layers trade
+        ["strategyMode", "varchar(8) DEFAULT 'auto'"],
       ] as const;
       for (const [columnName, sqlType] of restartSafetyColumns) {
         try {

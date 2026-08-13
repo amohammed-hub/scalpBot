@@ -34,6 +34,7 @@ import { fetchOptionsAnalytics, getCachedAnalytics, selectSmartStrike, checkOiCo
 import {
   computeLayerStats, isLayerDisabled, setLayerOverride, resetAllLayerOverrides,
   getAutoDisabledLayers, getDemoLayerOverrides, getLayerDisableState, setDemoLayerOverride,
+  setStrategyMode, clearStrategyModes,
 } from "./layerTracker";
 import { STRATEGY_PRESETS, getPreset } from "./presets";
 import { computePrecisionMetrics, computeLayerAccuracy, computeDailyReports, updateJournalOnTradeClose } from "./precisionMetrics";
@@ -491,6 +492,9 @@ export const appRouter = router({
         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R (best P&L), D = wider SL + 1:1.5 R:R (highest win rate)
         partial1Pct: z.number().default(30), // Book 50% at this % profit (e.g., 30 = +30%)
         partial2Pct: z.number().default(60), // Book 25% at this % profit (e.g., 60 = +60%)
+        // D26: strategy mode. "auto" = engine-managed layers with D25 deadlock protection;
+        // "manual" = ONLY user-selected layers may trade — auto-disable can never block them.
+        strategyMode: z.enum(["auto", "manual"]).default("auto"),
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
@@ -838,6 +842,8 @@ export const appRouter = router({
              slStrategy: input.slStrategy ?? "B",
              partial1Pct: input.partial1Pct,
              partial2Pct: input.partial2Pct,
+             strategyMode: input.strategyMode ?? "auto",
+             strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
              averagingEnabled: input.averagingEnabled,
              averagingLossThreshold: input.averagingLossThreshold,
              useV2Engine: input.useV2Engine,
@@ -847,10 +853,8 @@ export const appRouter = router({
              adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
              renkoExitEnabled: input.renkoExitEnabled ?? false,
 
-             sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
-
+                          sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
              sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
-             strategyLocked: (input as any).strategyLocked ?? false,
            })
            .where(eq(botSessions.id, sessionId));
        } else {
@@ -894,7 +898,7 @@ export const appRouter = router({
               sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
 
               sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
-              strategyLocked: (input as any).strategyLocked ?? false,
+              strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
               consecutiveUnderlyingSLs: 0,
               lastUnderlyingSLAt: null,
               layerTradesCount: JSON.stringify({}),
@@ -1063,6 +1067,8 @@ export const appRouter = router({
             optionType: input.optionType,
            enabledLayers: (input.enabledLayers ?? []).length ? input.enabledLayers : getRecommendedLayers(input.instrumentLabel),
            slStrategy: input.slStrategy ?? "B",
+           strategyMode: input.strategyMode ?? "auto",
+           strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
            consecutiveTickErrors: 0,
             capitalUsed: 0,
            partial1Pct: input.partial1Pct,
@@ -1080,7 +1086,6 @@ export const appRouter = router({
             sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
 
             sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
-            strategyLocked: (input as any).strategyLocked ?? false,
             consecutiveUnderlyingSLs: restoredConsecutiveUnderlyingSLs,
             lastUnderlyingSLAt: restoredLastUnderlyingSLAt,
             layerTradesCount: restoredLayerTradesCount,
@@ -1111,6 +1116,8 @@ export const appRouter = router({
           },
         );
 
+        // D26: register the user's strategy mode so the runtime layer gate honors it.
+        setStrategyMode(input.sessionToken, input.strategyMode ?? "auto");
         const readiness = await startResult.initialTick;
         const confirmedState = getBotState(input.sessionToken);
         if (!readiness.ready || !confirmedState || (confirmedState.status !== "running" && confirmedState.status !== "paused")) {
@@ -1616,6 +1623,8 @@ export const appRouter = router({
            sessionSpecialLayersEnabled: row.sessionSpecialLayersEnabled ?? true,
 
            sessionLayersRequireWhitelist: row.sessionLayersRequireWhitelist ?? true,
+           // D26: restore the user's strategy mode across server restarts
+           strategyMode: (row.strategyMode === "manual" || row.strategyMode === "auto") ? row.strategyMode : "auto",
            consecutiveUnderlyingSLs: resumeConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: resumeLastUnderlyingSLAt,
            layerTradesCount: resumeLayerTradesCount,
@@ -3414,6 +3423,8 @@ export const appRouter = router({
           }).where(eq(botSessions.id, sessionId));
         });
 
+        // D26: register the user's strategy mode so the runtime layer gate honors it.
+        setStrategyMode(slotToken, (input as any).strategyMode ?? "auto");
         const readiness = await startResult.initialTick;
         const confirmedState = getBotState(slotToken);
         if (!readiness.ready || !confirmedState || (confirmedState.status !== "running" && confirmedState.status !== "paused")) {

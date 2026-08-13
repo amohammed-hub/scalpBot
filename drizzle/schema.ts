@@ -116,6 +116,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   unlimitedTrades: boolean("unlimitedTrades").default(false),
   openingBurstEnabled: boolean("openingBurstEnabled").default(false),
   crudeOilCorrelation: boolean("crudeOilCorrelation").default(false),
+  // D26: strategy mode — "auto" = engine-managed layers; "manual" = only user-selected layers trade
+  strategyMode: varchar("strategyMode", { length: 8 }).default("auto"),
   // Restart-critical strategy and safety state. Defaults are fail-safe for existing rows.
   adaptiveRegimeEnabled: boolean("adaptiveRegimeEnabled").default(false),
   renkoExitEnabled: boolean("renkoExitEnabled").default(false),

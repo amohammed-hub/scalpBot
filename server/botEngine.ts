@@ -240,6 +240,10 @@ export interface BotState {
   // regime-eligible runtime subset used only for new-entry selection.
   configuredLayers?: string[];
   enabledLayers?: string[];
+  // D26: strategy mode. "auto" = engine may manage layers (auto-disable gated
+  // by D25 deadlock protection); "manual" = ONLY user-selected layers may
+  // trade — auto-disable can never block them.
+  strategyMode?: "auto" | "manual";
   // HourlyClose: track if first-hour signal already fired today
   // Partial profit booking config (% profit levels)
   partial1Pct: number;  // Book 50% at this % profit (e.g., 30 = +30%)
@@ -7348,7 +7352,11 @@ const isExpiryDay = isOptionInstrument && (
     // once (its auto-disable entry is deleted inside computeViableCandidates)
     // so the bot can never scan forever without entering any trade.
     const candidateLayerNames = Array.from(new Set(candidateSignals.map(c => c.layer)));
-    const viable = computeViableCandidates(candidateLayerNames, state.sessionToken, state.mode);
+    // D26: in manual mode only the user's selected layers may trade.
+    const viable = computeViableCandidates(
+      candidateLayerNames, state.sessionToken, state.mode,
+      { selectedLayers: state.configuredLayers ?? state.enabledLayers },
+    );
     if (viable.deadlocked) {
       emitActivity(state.sessionToken, "signal", `⚠ DEADLOCK BYPASS — every strategy layer was auto-disabled; releasing ${viable.deadlocked.layer} (least-negative expectancy). ${viable.deadlocked.reason}`);
     }
@@ -7395,7 +7403,10 @@ const isExpiryDay = isOptionInstrument && (
   // deadlock-protected evaluation so a direct-layer path can't be silently
   // deadlocked (the set here is the single signaling layer).
   if (signal.direction !== "HOLD") {
-    const viable = computeViableCandidates([signal.layer], state.sessionToken, state.mode);
+    const viable = computeViableCandidates(
+      [signal.layer], state.sessionToken, state.mode,
+      { selectedLayers: state.configuredLayers ?? state.enabledLayers },
+    );
     const layerGate = viable.deadlocked
       ? { disabled: false, reason: null, source: "auto", demoOverrideActive: false, overriddenReason: viable.deadlocked.reason }
       : getLayerGateForMode(signal.layer, state.sessionToken, state.mode);
