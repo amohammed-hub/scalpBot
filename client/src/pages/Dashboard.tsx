@@ -13,7 +13,7 @@ import { Shield, Skull, Layers, Target, Gauge, Power, Award, ChevronDown, Moon }
 import { Info } from "lucide-react";
 import { Gift, Copy, Users as UsersIcon } from "lucide-react";
 import { Pencil } from "lucide-react";
-import { Clock, Timer, Trophy, Ban, ArrowDownUp } from "lucide-react";
+import { Clock, Timer, Trophy, Ban, ArrowDownUp, GitBranch } from "lucide-react";
 import { Infinity as InfinityIcon } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { toast } from "sonner";
@@ -52,6 +52,7 @@ interface BotConfig {
   instrumentSymbol: string;
   instrumentLabel: string;
   mode: "demo" | "live";
+  strategyMode: "auto" | "manual";
   capital: number;
   riskPerTradePct: number;
   maxTradesPerDay: number;
@@ -309,6 +310,7 @@ export default function Dashboard() {
       minConfidence: 60,
       scanIntervalSec: 60,
       enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko", "BoxingStrategy", "ORB", "MeanReversionV13"],
+      strategyMode: ((lsSm: string | null) => (lsSm === "manual" || lsSm === "auto") ? lsSm : "auto")(localStorage.getItem("scalpbot_strategy_mode")),
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -317,7 +319,10 @@ export default function Dashboard() {
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(LS_CONFIG) ?? "null") }; }
     catch { return defaults; }
   });
-  useEffect(() => { localStorage.setItem(LS_CONFIG, JSON.stringify(config)); }, [config]);
+  useEffect(() => {
+    localStorage.setItem(LS_CONFIG, JSON.stringify(config));
+    localStorage.setItem("scalpbot_strategy_mode", config.strategyMode);
+  }, [config]);
 
   // D21: Demo Safety server persistence — the mode toggle is now a server-owned
   // safety lock: flipping to Demo blocks ALL real Upstox orders for this session
@@ -545,6 +550,7 @@ export default function Dashboard() {
         openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
       slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
+      strategyMode: config.strategyMode,
       });
     } else {
       console.log(`[QuickStart] Calling startSecondary for slot ${slot}, token=${resolved.token}, mode=${config.mode}`);
@@ -567,6 +573,7 @@ export default function Dashboard() {
         openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
       slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
+      strategyMode: config.strategyMode,
       });
     }
   };
@@ -1998,6 +2005,47 @@ export default function Dashboard() {
             <span className="text-[10px] text-white/30">
               Active: {config.enabledLayers.length} strategies
             </span>
+          </div>
+
+          {/* D26: Strategy Mode — Auto (engine may switch strategies) vs Manual (only user-selected strategies trade) */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 bg-white/[0.02] border border-white/10 rounded-xl mb-3">
+            <div className="flex items-center gap-1.5">
+              <GitBranch className="w-3.5 h-3.5 text-purple-400" />
+              <span className="text-xs font-semibold text-white">Strategy Mode</span>
+              <div className="group relative">
+                <Info className="w-3 h-3 text-white/20 hover:text-white/50 cursor-help" />
+                <div className="absolute bottom-full left-0 mb-1 w-64 p-2 bg-gray-900 border border-white/20 rounded-lg text-[10px] text-white/70 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 whitespace-pre-line">
+                  AUTO — the engine may enable/disable strategies based on performance and market regime (auto-disable / deadlock bypass apply).
+
+MANUAL — only YOUR selected strategies trade, even if their historical expectancy is negative. The auto-disable safety net is bypassed for user-picked layers.
+
+Setting is saved and applies to ALL bot slots you start after this.
+                </div>
+              </div>
+            </div>
+            <div className="flex rounded-lg border border-white/10 overflow-hidden text-xs font-bold shrink-0">
+              {(["auto", "manual"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setConfig(c => ({ ...c, strategyMode: m }))}
+                  className={`px-4 py-1.5 transition-colors ${
+                    config.strategyMode === m
+                      ? m === "manual"
+                        ? "bg-purple-500/30 text-purple-300 border border-purple-500/40"
+                        : "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                      : "bg-transparent text-white/40 hover:text-white/70"
+                  }`}
+                >
+                  {m === "auto" ? "⚙️ AUTO — Engine Managed" : "🧭 MANUAL — My Selection Only"}
+                </button>
+              ))}
+            </div>
+            {config.strategyMode === "manual" && config.enabledLayers.length > 0 && (
+              <span className="text-[10px] text-purple-400/80">✓ {config.enabledLayers.length} selected layer(s) protected — engine will never disable them</span>
+            )}
+            {config.strategyMode === "manual" && config.enabledLayers.length === 0 && (
+              <span className="text-[10px] text-amber-400/80">⚠ No strategies selected — bot will have nothing to trade</span>
+            )}
           </div>
 
           {/* Category A: Proven */}

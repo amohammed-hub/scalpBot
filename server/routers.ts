@@ -2974,6 +2974,7 @@ export const appRouter = router({
         sessionLayersRequireWhitelist: z.boolean().default(true),
         strategyLocked: z.boolean().default(false),
         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R
+        strategyMode: z.enum(["auto", "manual"]).default("auto"), // D26: auto = engine manages strategy switching; manual = only user-selected layers trade (immune to auto-disable)
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
@@ -3292,10 +3293,10 @@ export const appRouter = router({
             adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
             renkoExitEnabled: input.renkoExitEnabled ?? false,
 
-            sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
-
+                        sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
             sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
-            strategyLocked: input.strategyLocked ?? false,
+            strategyLocked: input.strategyLocked ?? (input.strategyMode === "manual" ? true : false),
+            strategyMode: input.strategyMode ?? "auto",
             consecutiveUnderlyingSLs: 0,
             lastUnderlyingSLAt: null,
             layerTradesCount: JSON.stringify({}),
