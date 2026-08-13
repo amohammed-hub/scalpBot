@@ -29,6 +29,27 @@ export interface LayerStats {
   disabledReason: string | null;
 }
 
+/**
+ * D25: canonical layer key — display names ("Red Bar Theory", "Trikal
+ * Strategy", "MCX Evening") and camelCase IDs ("RedBarTheory", "TrikalStrategy")
+ * must resolve to the SAME map key so auto-disable, stats, and the UI never
+ * split one layer into duplicate entries.
+ */
+export function canonicalLayerKey(layer: string): string {
+  const t = (layer ?? "").trim();
+  if (!t) return "Other";
+  // Identity pass-through for known camelCase layer IDs.
+  if (/^[A-Z][A-Za-z0-9]+(_[A-Z0-9]+)?$/.test(t)) return t;
+  const words = t
+    .replace(/&/g, " And ")
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean);
+  const joined = words
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join("");
+  return joined || "Other";
+}
+
 export const MIN_TRADES_FOR_DISABLE = 5;
 export const LAYER_WINDOW_SIZE = 20;
 export const REENABLE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -91,7 +112,7 @@ export function inferLayerFromTrade(trade: Pick<LayerPerformanceTrade, "layer" |
     { layer: "TrendMomentum", test: text => /momentum/i.test(text) },
     { layer: "Breakout", test: text => /breakout/i.test(text) },
     { layer: "VWAP", test: text => /vwap/i.test(text) },
-    { layer: "EMA Cross", test: text => /ema/i.test(text) },
+    { layer: "EmaCross", test: text => /ema/i.test(text) },
   ];
 
   return legacyPatterns.find(pattern => pattern.test(reason))?.layer ?? "Other";
@@ -117,7 +138,8 @@ export function computeLayerStats(closedTrades: LayerPerformanceTrade[], session
   const byLayer = new Map<string, Array<{ pnl: number }>>();
   for (const trade of sorted) {
     if (trade.pnl === null || trade.pnl === undefined || !Number.isFinite(trade.pnl)) continue;
-    const layer = inferLayerFromTrade(trade);
+    // D25: canonical keying — display names and camelCase IDs merge into one entry.
+    const layer = canonicalLayerKey(inferLayerFromTrade(trade));
     if (!byLayer.has(layer)) byLayer.set(layer, []);
     byLayer.get(layer)!.push({ pnl: trade.pnl });
   }
@@ -177,13 +199,14 @@ export interface LayerGateResult {
 
 /** Returns the D3 gate and its source without applying any Demo exception. */
 export function getLayerDisableState(layer: string, sessionToken: string = "default"): Omit<LayerGateResult, "demoOverrideActive" | "overriddenReason"> {
+  const key = canonicalLayerKey(layer);
   const manualOverrides = getManualOverrides(sessionToken);
   const autoDisabled = getAutoDisabled(sessionToken);
-  if (manualOverrides.get(layer)) return { disabled: true, reason: "Manually disabled", source: "manual" };
-  const auto = autoDisabled.get(layer);
+  if (manualOverrides.get(key)) return { disabled: true, reason: "Manually disabled", source: "manual" };
+  const auto = autoDisabled.get(key);
   if (auto) {
     if (Date.now() - auto.at > REENABLE_AFTER_MS) {
-      autoDisabled.delete(layer);
+      autoDisabled.delete(key);
       return { disabled: false, reason: null, source: "none" };
     }
     return { disabled: true, reason: auto.reason, source: "auto" };
@@ -201,8 +224,9 @@ export function getLayerGateForMode(
   sessionToken: string = "default",
   mode: "demo" | "live",
 ): LayerGateResult {
-  const gate = getLayerDisableState(layer, sessionToken);
-  const demoOverrideActive = mode === "demo" && gate.source === "auto" && getDemoForceEnabled(sessionToken).has(layer);
+  const key = canonicalLayerKey(layer);
+  const gate = getLayerDisableState(key, sessionToken);
+  const demoOverrideActive = mode === "demo" && gate.source === "auto" && getDemoForceEnabled(sessionToken).has(key);
   if (demoOverrideActive) {
     return {
       disabled: false,
@@ -221,20 +245,97 @@ export function isLayerDisabled(layer: string, sessionToken: string = "default")
   return { disabled: gate.disabled, reason: gate.reason };
 }
 
+export interface ViableCandidateResult {
+  /** Layers allowed to trade this scan. */
+  eligible: string[];
+  /** Manually-disabled layers that remain blocked (manual is always authoritative). */
+  manuallyDisabled: string[];
+  /**
+   * D25 deadlock bypass: when EVERY non-manually-disabled candidate layer is
+   * auto-gated, the auto-gated candidate with the LEAST negative expectancy is
+   * released once so the bot keeps trading instead of scanning forever without
+   * entries. The caller removes that entry from the auto-disabled set, so the
+   * bypass applies exactly once per negative-sample era.
+   */
+  deadlocked: { layer: string; reason: string } | null;
+}
+
+/**
+ * D25: evaluates a candidate layer set against the D3 gate WITH deadlock
+ * protection. Use this from the runtime candidate loop instead of gating
+ * layers one-by-one with getLayerGateForMode.
+ */
+export function computeViableCandidates(
+  candidateLayers: string[],
+  sessionToken: string = "default",
+  mode: "demo" | "live",
+): ViableCandidateResult {
+  const result: ViableCandidateResult = { eligible: [], manuallyDisabled: [], deadlocked: null };
+  if (candidateLayers.length === 0) return result;
+  const gated: Array<{ layer: string; reason: string; expectancy: number }> = [];
+  for (const layer of candidateLayers) {
+    const gate = getLayerGateForMode(layer, sessionToken, mode);
+    if (gate.demoOverrideActive) {
+      result.eligible.push(layer);
+      continue;
+    }
+    if (gate.disabled) {
+      if (gate.source === "manual") {
+        result.manuallyDisabled.push(layer);
+        continue;
+      }
+      gated.push({ layer, reason: gate.reason ?? "layer disabled", expectancy: extractExpectancy(gate.reason) });
+    } else {
+      result.eligible.push(layer);
+    }
+  }
+  if (result.eligible.length === 0 && gated.length > 0) {
+    // D25 deadlock: every candidate is auto-gated — release the least-negative.
+    gated.sort((a, b) => b.expectancy - a.expectancy);
+    const release = gated[0];
+    result.deadlocked = { layer: release.layer, reason: release.reason };
+    result.eligible.push(release.layer);
+    const autoDisabled = getAutoDisabled(sessionToken);
+    autoDisabled.delete(canonicalLayerKey(release.layer));
+    result.manuallyDisabled.push(...gated.slice(1).map(g => g.layer));
+  } else {
+    result.manuallyDisabled.push(...gated.map(g => g.layer));
+  }
+  return result;
+}
+
+function extractExpectancy(reason: string | null): number {
+  if (!reason) return Number.NEGATIVE_INFINITY;
+  const m = reason.match(/expectancy\s*[\u20B9]?\s*([\d.,\-]+)\s*per trade/i);
+  const raw = m?.[1]?.replace(/,/g, "");
+  const v = raw ? parseFloat(raw) : NaN;
+  return Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY;
+}
+
+/** D25: one-time admin recovery — clears every auto-disable entry for a tenant. */
+export function clearAllAutoDisables(sessionToken: string = "default"): number {
+  const autoDisabled = getAutoDisabled(sessionToken);
+  const count = autoDisabled.size;
+  autoDisabled.clear();
+  return count;
+}
+
 export function setLayerOverride(layer: string, disabled: boolean, sessionToken: string = "default"): void {
+  const key = canonicalLayerKey(layer);
   const manualOverrides = getManualOverrides(sessionToken);
   const autoDisabled = getAutoDisabled(sessionToken);
-  if (disabled) manualOverrides.set(layer, true);
+  if (disabled) manualOverrides.set(key, true);
   else {
-    manualOverrides.delete(layer);
-    autoDisabled.delete(layer);
+    manualOverrides.delete(key);
+    autoDisabled.delete(key);
   }
 }
 
 export function setDemoLayerOverride(layer: string, enabled: boolean, sessionToken: string = "default"): void {
+  const key = canonicalLayerKey(layer);
   const overrides = getDemoForceEnabled(sessionToken);
-  if (enabled) overrides.add(layer);
-  else overrides.delete(layer);
+  if (enabled) overrides.add(key);
+  else overrides.delete(key);
 }
 
 export function getDemoLayerOverrides(sessionToken: string = "default"): string[] {
@@ -262,7 +363,7 @@ export function getAutoDisabledLayers(sessionToken: string = "default"): Array<{
   autoDisabled.forEach((value, layer) => {
     // Only include if it hasn't expired (REENABLE_AFTER_MS)
     if (Date.now() - value.at < REENABLE_AFTER_MS) {
-      result.push({ layer, reason: value.reason });
+      result.push({ layer: canonicalLayerKey(layer), reason: value.reason });
     }
   });
   return result;

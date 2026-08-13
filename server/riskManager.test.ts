@@ -250,8 +250,9 @@ describe("Layer Tracker", () => {
       ...Array(5).fill(null).map(() => ({ signalReason: "EMA crossover signal", pnl: 50, exitedAt: new Date() })),
       ...Array(15).fill(null).map(() => ({ signalReason: "EMA crossover signal", pnl: -30, exitedAt: new Date() })),
     ];
+    // D25: layer keys are canonicalized to CamelCase — "EMA crossover signal" now resolves to "EmaCrossoverSignal" (no longer "EMA Cross").
     const stats = computeLayerStats(trades);
-    const ema = stats.find(s => s.layer === "EMA Cross");
+    const ema = stats.find(s => s.layer === "EmaCross");
     expect(ema).toBeDefined();
     expect(ema!.winRate).toBe(25);
     expect(ema!.disabled).toBe(true);

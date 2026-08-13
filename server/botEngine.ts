@@ -22,7 +22,7 @@ import {
 import { lockDirection, recordDirectionExit, isDirectionFlipBlocked, resetDirectionFlipLock } from "./riskManager";
 import { fetchIndiaVix } from "./riskManager";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
-import { clearDemoLayerOverrides, computeLayerStats, getLayerGateForMode, getLayerTrackerTenantKey } from "./layerTracker";
+import { clearDemoLayerOverrides, computeLayerStats, computeViableCandidates, getLayerGateForMode, getLayerTrackerTenantKey } from "./layerTracker";
 import { demoSafetyActiveFor } from "./demoSafety";
 
 // Production log suppression — hide strategy details in production logs
@@ -7343,16 +7343,25 @@ const isExpiryDay = isOptionInstrument && (
 
     // D3: enforce the tenant-scoped disabled set BEFORE confidence ranking.
     // Confidence only ranks layers that are currently eligible to trade.
+    // D25: evaluate the whole candidate SET with deadlock protection — when
+    // every layer is auto-gated, the least-negative one is released exactly
+    // once (its auto-disable entry is deleted inside computeViableCandidates)
+    // so the bot can never scan forever without entering any trade.
+    const candidateLayerNames = Array.from(new Set(candidateSignals.map(c => c.layer)));
+    const viable = computeViableCandidates(candidateLayerNames, state.sessionToken, state.mode);
+    if (viable.deadlocked) {
+      emitActivity(state.sessionToken, "signal", `⚠ DEADLOCK BYPASS — every strategy layer was auto-disabled; releasing ${viable.deadlocked.layer} (least-negative expectancy). ${viable.deadlocked.reason}`);
+    }
+    const manuallyDisabledSet = new Set(viable.manuallyDisabled);
+    const eligibleSet = new Set(viable.eligible);
     const eligibleCandidates = candidateSignals.filter(candidate => {
-      const gate = getLayerGateForMode(candidate.layer, state.sessionToken, state.mode);
-      if (gate.disabled) {
-        emitActivity(state.sessionToken, "signal", `⊘ ${candidate.layer} skipped — ${gate.reason ?? "layer disabled"}`);
-        return false;
-      }
-      if (gate.demoOverrideActive) {
-        emitActivity(state.sessionToken, "signal", `⚠ DEMO OVERRIDE — ${candidate.layer} allowed despite ${gate.overriddenReason ?? "D3 auto-disable"}`);
-      }
-      return true;
+      // The deadlocked release layer always gets through (it was moved into eligible).
+      if (eligibleSet.has(candidate.layer)) return true;
+      const reason = manuallyDisabledSet.has(candidate.layer)
+        ? "Manually disabled"
+        : "Auto-disabled layer";
+      emitActivity(state.sessionToken, "signal", `⊘ ${candidate.layer} skipped — ${reason}`);
+      return false;
     });
 
     // ── PARALLEL SELECTION: Pick the best eligible signal ───────────────────
@@ -7382,9 +7391,17 @@ const isExpiryDay = isOptionInstrument && (
   }
 
   // Single-signal paths do not pass through candidateSignals, so apply the
-  // same D3 gate here before any downstream entry handling.
+  // same D3 gate here before any downstream entry handling. D25: use the same
+  // deadlock-protected evaluation so a direct-layer path can't be silently
+  // deadlocked (the set here is the single signaling layer).
   if (signal.direction !== "HOLD") {
-    const layerGate = getLayerGateForMode(signal.layer, state.sessionToken, state.mode);
+    const viable = computeViableCandidates([signal.layer], state.sessionToken, state.mode);
+    const layerGate = viable.deadlocked
+      ? { disabled: false, reason: null, source: "auto", demoOverrideActive: false, overriddenReason: viable.deadlocked.reason }
+      : getLayerGateForMode(signal.layer, state.sessionToken, state.mode);
+    if (viable.deadlocked) {
+      emitActivity(state.sessionToken, "signal", `⚠ DEADLOCK BYPASS — ${signal.layer} was the last auto-disabled layer; released (least-negative expectancy). ${viable.deadlocked.reason}`);
+    }
     if (layerGate.disabled) {
       emitActivity(state.sessionToken, "signal", `⊘ ${signal.layer} signal skipped — ${layerGate.reason ?? "layer disabled"}`);
       signal = { ...signal, direction: "HOLD", reason: `${signal.reason} | D3 skipped: ${layerGate.reason ?? "layer disabled"}` };
