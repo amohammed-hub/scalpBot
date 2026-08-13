@@ -16,6 +16,7 @@ import { getBaseSessionToken, KILL_SWITCH_LAST_ERROR } from "./botSessionLifecyc
 import { isOptionTrade } from "../shared/optionTradeIdentity";
 import { selectMarketDataAccessToken } from "../shared/upstoxTokenState";
 import { getStoppedTradeQuoteState } from "./stoppedTradeQuoteState";
+import { setDemoSafety, demoSafetyActiveFor, getAllDemoSafetyStates } from "./demoSafety";
 import { COOKIE_NAME } from "../shared/const";
 import { NSE_INDEX_LOT_SIZES, getNseIndexLotSize } from "../shared/lotSizes";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
@@ -347,6 +348,54 @@ export const appRouter = router({
       }),
   }),
 
+  // D21: Demo Safety — server-owned authority that blocks ALL real Upstox orders
+  // for a session while ON, regardless of any bot's per-session mode=live state.
+  // See server/demoSafety.ts for the full design and post-mortem evidence.
+  demoSafety: router({
+    /** Whether Demo Safety is active for this session (base token incl. slots). */
+    get: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema }))
+      .query(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
+        return { active: demoSafetyActiveFor(input.sessionToken) };
+      }),
+    /** Set Demo Safety for this session. Auto-stops any running live-mode bots. */
+    set: publicProcedure
+      .input(z.object({ sessionToken: sessionTokenSchema, active: z.boolean() }))
+      .mutation(async ({ input, ctx }) => {
+        await verifySessionOwnership(ctx, input.sessionToken);
+        setDemoSafety(input.sessionToken, input.active);
+        if (input.active) {
+          // Any bot that is currently running in live mode must stop NOW:
+          // the egress gate would block its orders anyway, and a running bot
+          // with an unmanaged open trade would strand capital at the broker.
+          const allRunning = getAllRunningBotsForSession(input.sessionToken);
+          let stopped = 0;
+          for (const b of allRunning) {
+            if (b.mode === "live") {
+              try {
+                stopBot(b.sessionToken);
+                stopped++;
+                console.log(`[DemoSafety] 🛑 Stopped running live bot ${b.sessionToken.slice(0, 8)}... as Demo Safety was turned ON`);
+              } catch (e) {
+                console.error(`[DemoSafety] Failed to stop ${b.sessionToken}: ${(e as Error).message}`);
+              }
+            }
+          }
+          return { success: true, stoppedLiveBots: stopped };
+        }
+        return { success: true, stoppedLiveBots: 0 };
+      }),
+    /** Admin view of all sessions with Demo Safety active. */
+    listActive: publicProcedure
+      .query(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx))) throw new Error("Unauthorized");
+        return Object.entries(getAllDemoSafetyStates())
+          .filter(([, v]) => v)
+          .map(([k]) => k);
+      }),
+  }),
+
   // Bot
   bot: router({
     status: publicProcedure
@@ -603,6 +652,13 @@ export const appRouter = router({
         // But demo mode should work WITHOUT access token — simulate trades locally.
         if (!accessToken && input.mode === "live") {
           throw new Error("No Upstox access token found. Go to Settings → paste your Access Token or use 'Get Token Automatically'. Token expires daily — refresh it each morning before 9:15 AM.");
+        }
+        // D21: REFUSE to start a bot in live mode while Demo Safety is ON.
+        // Demo Safety is the server-owned truth for the user's Demo/Live intent;
+        // without this guard, a bot started here in mode=live would place real
+        // orders while the user's dashboard says Demo (post-mortem root cause).
+        if (input.mode === "live" && demoSafetyActiveFor(input.sessionToken)) {
+          throw new Error("Live trading is blocked: Demo Safety is ON for this session. Turn Demo Safety OFF in the dashboard (Trading Mode → Demo) to resume live trading.");
         }
         // Demo mode: if no token, use a placeholder so candle fetching still works (Upstox historical API is public)
         if (!accessToken && input.mode === "demo") {
@@ -3032,6 +3088,12 @@ export const appRouter = router({
           if (!accessToken) {
             throw new Error("No Upstox access token found. Go to Settings → paste your Access Token or use 'Get Token Automatically'. Token expires daily — refresh it each morning before 9:15 AM.");
           }
+        }
+
+        // D21: REFUSE to start a slot bot in live mode while Demo Safety is ON
+        // for the owning session (slot bots inherit the owner's flag).
+        if (input.mode === "live" && demoSafetyActiveFor(input.sessionToken)) {
+          throw new Error("Live trading is blocked: Demo Safety is ON for this session. Turn Demo Safety OFF in the dashboard (Trading Mode → Demo) to resume live trading.");
         }
 
         // ── MCX Token Resolution for slot bots ──────────────────────────────────

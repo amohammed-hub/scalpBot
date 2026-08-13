@@ -584,6 +584,8 @@ async function startServer() {
     console.log(`Server running on http://0.0.0.0:${port}/`);
     // Load persisted paper cost config from DB
     loadDemoCostsFromDb().catch(err => console.warn('[DemoCost] Startup load error:', err));
+    // D21: Load persisted Demo Safety flags from DB (survives Railway restarts/redeploys)
+    loadDemoSafetyFromDb().catch(err => console.warn('[DemoSafety] Startup load error:', err));
     // Auto-restart any bots that were running before the server went down.
     // This ensures live price feed and SL/Target monitoring resume after deploys.
     restartRunningBots().catch(err => console.error('[BotRestart] Startup error:', err));
@@ -594,3 +596,4 @@ async function startServer() {
 
 startServer().catch(console.error);
 import { loadDemoCostsFromDb } from "../riskManager";
+import { loadDemoSafetyFromDb } from "../demoSafety";
