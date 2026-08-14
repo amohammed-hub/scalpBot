@@ -249,9 +249,22 @@ export interface BotState {
   // D29: scalper mode — high-frequency premium-target scalping profile.
   // When true the bot swaps in tight cooldowns, premium-based exits
   // (book 50% at +4% / rest at +8% of entry premium, SL -2%, 5-min time stop),
-  // direction lock after consecutive wins, a 11:00-13:00 IST kill zone, and a
-  // Rs 200-450 preferred option-premium band. Hard safety gates are unchanged.
+  // direction lock after consecutive wins, and a Rs 200-450 preferred
+  // option-premium band. Hard safety gates are unchanged.
+  // D31: the old 11:00-13:00 kill zone was REMOVED — backtest on 60 days of
+  // 5m NSE data showed the window is one of the BETTER hours (BankNifty 11:00
+  // +302 pts, the best hour of the day) and the kill zone made results worse
+  // in every segment. It was replaced by the D31 traffic-light gate below.
   scalperMode?: boolean;
+  // D31: traffic-light regime state (Scalper Mode entry gate, all segments).
+  // GREEN: spread >= 0.3*ATR14 AND spread >= 0.15*medianATR AND ATR14 >= 50% of
+  //   20-candle median ATR — entries allowed. The median-based floor prevents
+  //   GREEN from flickering on in dead chop where ATR collapses but EMAs still
+  //   lag from the last trend.
+  // RED: ATR14 < 35% of median ATR (dead chop) — no entries.
+  // YELLOW: trending but weak / ignition pending — no entries.
+  // Flips are immediate; exits are NEVER gated by the light.
+  trafficLight?: "GREEN" | "YELLOW" | "RED";
   // D29: scalper direction lock — after `scalperWinStreak` consecutive same-direction wins,
   // lock to that direction until `scalperLockedUntil` (30 min).
   scalperDirectionLock?: { direction: "BUY" | "SELL"; lockedUntil: number; winStreak: number };
@@ -4392,6 +4405,24 @@ export async function getHigherTimeframeTrend(instrumentToken: string, accessTok
   return trend;
 }
 
+// ── D31: pure traffic-light calculator (unit-testable; mirrored in tick loop) ──
+export function calcTrafficLight(candles: Candle[]): "GREEN" | "YELLOW" | "RED" | null {
+  if (candles.length < 34) return null;
+  const atrNow = calcATR(candles, 14);
+  const atrTrail: number[] = [];
+  for (let j = 20; j >= 0; j--) { // ATR14 over last-20 candle windows
+    if (candles.length - j >= 14) atrTrail.push(calcATR(candles.slice(0, candles.length - j), 14));
+  }
+  if (atrTrail.length === 0 || atrNow <= 0) return "YELLOW";
+  const medAtr = atrTrail.slice().sort((a, b) => a - b)[Math.floor(atrTrail.length / 2)];
+  const e9 = calcEMA(candles.map(c => c.close), 9);
+  const e21 = calcEMA(candles.map(c => c.close), 21);
+  const spread = Math.abs(e9 - e21);
+  if (atrNow < 0.35 * medAtr) return "RED";
+  if (spread >= 0.3 * atrNow && spread >= 0.15 * medAtr && atrNow >= 0.5 * medAtr) return "GREEN";
+  return "YELLOW";
+}
+
 function calcEMA(data: number[], period: number): number {
   if (data.length < period) return data[data.length - 1] ?? 0;
   const k = 2 / (period + 1);
@@ -7082,18 +7113,28 @@ async function tick(
   if (nearClose) return;
   // Mutex guard: prevent duplicate trade opens from concurrent ticks
   if (state.isOpeningTrade) return;
-  // ── D29 SCALPER MODE: 11:00-13:00 IST kill zone (no new entries) ───────────
-  // Backtest evidence (user's Aug-13 order history): mid-day 11:00-13:00 trades
-  // had 25% win rate vs the evening session's 92% — pure dead money.
+  // ── D31 SCALPER MODE: traffic-light entry gate (all segments) ──────────────
+  // Replaced the D29 11:00-13:00 kill zone. 60-day 5m backtest (NSE + MCX
+  // proxies) showed the kill zone made results WORSE in every segment
+  // (BankNifty -822 vs -597 pts; Nifty -208 vs -180 pts) while mid-day was
+  // actually one of the better hours (BankNifty 11:00: +302 pts, best hour).
+  // The light gates NEW ENTRIES only — SL/target/trailing exits always fire.
   if (state.scalperMode && !state.openTrade) {
-    const istDate = new Date(Date.now() + 5.5 * 3600_000);
-    const istMin = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
-    if (istMin >= 660 && istMin < 780) { // 11:00-13:00 IST
-      if ((state.tickCount ?? 0) % 20 === 1) {
-        emitActivity(state.sessionToken, "signal", `🛑 Scalper kill zone — 11:00-13:00 IST is a proven dead zone (25% WR in backtest). Resuming at 13:00.`);
+    const light = calcTrafficLight(state.candles);
+    if (light && light !== "GREEN") {
+      const atrNow = calcATR(state.candles, 14);
+      const prev = state.trafficLight;
+      state.trafficLight = light;
+      if ((state.tickCount ?? 0) % 20 === 1 && light !== prev) {
+        const emoji = light === "RED" ? "🔴" : "🟡";
+        emitActivity(state.sessionToken, "signal",
+          `${emoji} Scalper traffic light → ${light} — ${light === "RED" ? "dead chop (ATR below 35% of recent median — market asleep)" : "weak trend (spread below 0.3×ATR or volatility below 50% of median — ignition pending)"} — entries blocked`);
       }
+      const why = light === "RED" ? "dead chop (ATR below 35% of recent median — market asleep)" : "weak trend (spread below 0.3×ATR or volatility below 50% of median — ignition pending)";
+      state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: atrNow, reason: `Scalper traffic light ${light} — ${why}`, layer: "None" };
       return;
     }
+    if (light) state.trafficLight = "GREEN";
   }
   // ── PAUSED CHECK: Skip signal generation when bot is paused ─────────────────
   // Paused bots still monitor open trades (SL/target/trailing above), but do NOT open new trades.

@@ -497,7 +497,7 @@ export const appRouter = router({
         strategyMode: z.enum(["auto", "manual"]).default("auto"),
         // D29: scalper mode — high-frequency premium-target scalping profile:
         // tight cooldowns, premium-based exits (target +8% / SL -2% of entry premium,
-        // 5-min time stop), direction lock after consecutive wins, kill zone 11:00-13:00,
+        // 5-min time stop), direction lock after consecutive wins, and a traffic-light entry gate (D31),
         // preferred premium band Rs 200-450. Hard safety gates remain unchanged.
         scalperMode: z.boolean().default(false),
         averagingEnabled: z.boolean().default(true),
@@ -2986,7 +2986,7 @@ export const appRouter = router({
         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R
         strategyMode: z.enum(["auto", "manual"]).default("auto"), // D26: auto = engine manages strategy switching; manual = only user-selected layers trade (immune to auto-disable)
         // D29: scalper mode — high-frequency premium-target scalping profile (tight cooldowns,
-        // premium-based exits, direction lock, kill zone 11:00-13:00, premium band Rs 200-450)
+        // premium-based exits, direction lock, traffic-light entry gate (D31), premium band Rs 200-450)
         scalperMode: z.boolean().default(false),
       }))
      .mutation(async ({ input, ctx }) => {
