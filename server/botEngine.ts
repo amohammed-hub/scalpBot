@@ -4259,57 +4259,116 @@ export function applyCrudeCorrelationBias(
   };
 }
 
-export async function fetchUpstoxCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
+export async function fetchUpstoxCandles(instrumentToken: string, accessToken?: string, sessionToken?: string): Promise<Candle[]> {
+  const encoded1m = encodeURIComponent(instrumentToken);
   try {
-    const encoded = encodeURIComponent(instrumentToken);
-    const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/1minute`;
+    const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded1m}/1minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
         if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization = `Bearer ${accessToken}`;
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending order — reverse to ascending
-  } catch { return []; }
+  } catch (err) {
+    // D30: On 401 (token rejected/expired), pull a fresh token from the DB and retry once.
+    if (axios.isAxiosError(err) && err.response?.status === 401 && sessionToken) {
+      const fresh = await refreshTokenFromDB(sessionToken);
+      if (fresh && fresh !== accessToken) {
+        try {
+          const headers2: Record<string, string> = { Accept: "application/json", Authorization: `Bearer ${fresh}` };
+          const resp2 = await upstoxAxios.get(`https://api.upstox.com/v2/historical-candle/intraday/${encoded1m}/1minute`, { headers: headers2, timeout: 8000 });
+          const candles = resp2.data?.data?.candles ?? [];
+          if (candles.length > 0) {
+            console.log(`[BotEngine] Candle fetch 401-retried OK with refreshed DB token (${sessionToken.slice(0,8)})`);
+            return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse();
+          }
+        } catch { /* fall through to empty */ }
+      }
+    }
+    return [];
+  }
 }
 
 // ── Fetch daily candles from Upstox (last 7 days) ───────────────────────────
-async function fetchUpstoxDayCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
+async function fetchUpstoxDayCandles(instrumentToken: string, accessToken?: string, sessionToken?: string): Promise<Candle[]> {
+  const encodedDay = encodeURIComponent(instrumentToken);
+  const toDateDay = new Date().toISOString().split("T")[0];
+  const fromDateDay = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split("T")[0];
   try {
-    const encoded = encodeURIComponent(instrumentToken);
-    const toDate = new Date().toISOString().split("T")[0];
-    const fromDate = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split("T")[0];
-    const url = `https://api.upstox.com/v2/historical-candle/${encoded}/day/${toDate}/${fromDate}`;
+    const url = `https://api.upstox.com/v2/historical-candle/${encodedDay}/day/${toDateDay}/${fromDateDay}`;
     const headers: Record<string, string> = { Accept: "application/json" };
     if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization = `Bearer ${accessToken}`;
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
-  } catch { return []; }
+  } catch (err) {
+    // D30: On 401 (token rejected/expired), pull a fresh token from the DB and retry once.
+    if (axios.isAxiosError(err) && err.response?.status === 401 && sessionToken) {
+      const fresh = await refreshTokenFromDB(sessionToken);
+      if (fresh && fresh !== accessToken) {
+        try {
+          const headers2: Record<string, string> = { Accept: "application/json", Authorization: `Bearer ${fresh}` };
+          const resp2 = await upstoxAxios.get(`https://api.upstox.com/v2/historical-candle/${encodedDay}/day/${toDateDay}/${fromDateDay}`, { headers: headers2, timeout: 8000 });
+          const candles = resp2.data?.data?.candles ?? [];
+          if (candles.length > 0) return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse();
+        } catch { /* fall through to empty */ }
+      }
+    }
+    return [];
+  }
 }
 
 // ── Fetch 5-min candles from Upstox ──────────────────────────────────────────
-export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
+export async function fetchUpstox5mCandles(instrumentToken: string, accessToken?: string, sessionToken?: string): Promise<Candle[]> {
+  const encoded5m = encodeURIComponent(instrumentToken);
   try {
-    const encoded = encodeURIComponent(instrumentToken);
-    const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/5minute`;
+    const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded5m}/5minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
     if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization = `Bearer ${accessToken}`;
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse(); // Upstox returns descending — reverse to ascending
-  } catch { return []; }
+  } catch (err) {
+    // D30: On 401 (token rejected/expired), pull a fresh token from the DB and retry once.
+    if (axios.isAxiosError(err) && err.response?.status === 401 && sessionToken) {
+      const fresh = await refreshTokenFromDB(sessionToken);
+      if (fresh && fresh !== accessToken) {
+        try {
+          const headers2: Record<string, string> = { Accept: "application/json", Authorization: `Bearer ${fresh}` };
+          const resp2 = await upstoxAxios.get(`https://api.upstox.com/v2/historical-candle/intraday/${encoded5m}/5minute`, { headers: headers2, timeout: 8000 });
+          const candles = resp2.data?.data?.candles ?? [];
+          if (candles.length > 0) return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse();
+        } catch { /* fall through to empty */ }
+      }
+    }
+    return [];
+  }
 }
 
 // ── Fetch 1-hour (60min) candles from Upstox for Higher Timeframe Filter ─────
-export async function fetchUpstox1hCandles(instrumentToken: string, accessToken?: string): Promise<Candle[]> {
+export async function fetchUpstox1hCandles(instrumentToken: string, accessToken?: string, sessionToken?: string): Promise<Candle[]> {
   try {
     const encoded = encodeURIComponent(instrumentToken);
     const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/60minute`;
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization
+    if (accessToken && accessToken !== "DEMO_NO_TOKEN") headers.Authorization = `Bearer ${accessToken}`;
     const resp = await upstoxAxios.get(url, { headers, timeout: 8000 });
     const candles = resp.data?.data?.candles ?? [];
     return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse();
-  } catch { return []; }
+  } catch (err) {
+    // D30: On 401 (token rejected/expired), pull a fresh token from the DB and retry once.
+    if (axios.isAxiosError(err) && err.response?.status === 401 && sessionToken) {
+      const fresh = await refreshTokenFromDB(sessionToken);
+      if (fresh && fresh !== accessToken) {
+        try {
+          const headers2: Record<string, string> = { Accept: "application/json", Authorization: `Bearer ${fresh}` };
+          const resp2 = await upstoxAxios.get(`https://api.upstox.com/v2/historical-candle/intraday/${encodeURIComponent(instrumentToken)}/60minute`, { headers: headers2, timeout: 8000 });
+          const candles = resp2.data?.data?.candles ?? [];
+          if (candles.length > 0) return candles.map((c: number[]) => ({ timestamp: new Date(c[0]).getTime(), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] })).reverse();
+        } catch { /* fall through to empty */ }
+      }
+    }
+    return [];
+  }
 }
 
 // ── Higher Timeframe Filter: EMA10/EMA30 on 1h candles ───────────────────────
@@ -4370,6 +4429,7 @@ type FullQuoteFetchOptions = {
   retry?: boolean;
   timeoutMs?: number;
   cacheMs?: number;
+  sessionToken?: string; // D30: enables DB-token refresh retry on 401
 };
 
 const fullQuoteCache = new Map<string, { quote: FullQuote; fetchedAt: number }>();
@@ -4416,8 +4476,26 @@ export async function fetchFullQuote(
     try {
       return await requestQuote();
     } catch (err) {
-      // A stale/invalid credential cannot become valid by immediately retrying it.
-      if (axios.isAxiosError(err) && err.response?.status === 401) return null;
+      // D30: On 401, pull a fresh token from the DB (refreshed via Settings/OAuth) and retry once.
+      // A stale/invalid credential cannot become valid by immediately retrying the SAME token.
+      if (axios.isAxiosError(err) && err.response?.status === 401 && options.sessionToken) {
+        const fresh = await refreshTokenFromDB(options.sessionToken);
+        if (fresh && fresh !== accessToken) {
+          try {
+            const encoded2 = encodeURIComponent(instrumentToken);
+            const resp2 = await upstoxAxios.get(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encoded2}`, {
+              headers: { Authorization: `Bearer ${fresh}`, Accept: "application/json" },
+              timeout: timeoutMs,
+            });
+            const data2 = selectRequestedUpstoxQuote(resp2.data?.data, instrumentToken);
+            if (data2 && (data2.last_price ?? 0) > 0) {
+              console.log(`[BotEngine] Quote fetch 401-retried OK with refreshed DB token (${options.sessionToken.slice(0,8)})`);
+              return { ltp: data2.last_price ?? 0, bid: data2.depth?.buy?.[0]?.price ?? (data2.last_price ?? 0), ask: data2.depth?.sell?.[0]?.price ?? (data2.last_price ?? 0) };
+            }
+          } catch { /* fall through */ }
+        }
+        return null;
+      }
       if (!retry) return null;
       try {
         await new Promise(resolve => setTimeout(resolve, 250));
@@ -5627,18 +5705,18 @@ async function tick(
   }
 
   // Fetch candles + quote
-  // The Upstox intraday candle API works WITHOUT authentication for NSE_INDEX and MCX_FO tokens.
-  // Demo mode uses real candle data from Upstox — no access token needed.
+    // The Upstox intraday candle API works WITHOUT authentication for NSE_INDEX and MCX_FO tokens.
+  // Demo mode uses real candle data from Upstox — a valid token is still needed (it expires ~24h).
   // Diagnostic: log signalToken on first few ticks to verify MCX resolution worked
   if ((state.tickCount ?? 0) <= 3 && signalToken.startsWith("MCX_FO|")) {
     console.log(`[BotEngine] CANDLE-FETCH tick#${state.tickCount ?? 0} session=${state.sessionToken.slice(0,8)} signalToken=${signalToken} underlying=${state.underlyingToken ?? "none"}`);
   }
   let newCandle: Candle;
   const [candles1m, candles5m, dayCandles, quote] = await Promise.all([
-    fetchUpstoxCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined),
-    fetchUpstox5mCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined),
-    state.candlesDay.length < 2 ? fetchUpstoxDayCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined) : Promise.resolve(state.candlesDay),
-    state.accessToken ? fetchFullQuote(signalToken, state.accessToken) : Promise.resolve(null),
+    fetchUpstoxCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined, state.sessionToken),
+    fetchUpstox5mCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined, state.sessionToken),
+    state.candlesDay.length < 2 ? fetchUpstoxDayCandles(signalToken, state.accessToken === "DEMO_NO_TOKEN" ? undefined : state.accessToken ?? undefined, state.sessionToken) : Promise.resolve(state.candlesDay),
+    state.accessToken ? fetchFullQuote(signalToken, state.accessToken, { sessionToken: state.sessionToken }) : Promise.resolve(null),
 ]);
   if (candles1m.length > 0) {
     state.candles = candles1m.slice(-400); // full day
@@ -5660,13 +5738,23 @@ async function tick(
     const mcxCloseAR = 23 * 60 + 30; // 11:30 PM IST
     const isMCXar = state.instrumentToken.startsWith("MCX");
     const marketOpen = isMCXar ? (istMinAutoRefresh >= mcxOpenAR && istMinAutoRefresh <= mcxCloseAR) : (istMinAutoRefresh >= nseOpen && istMinAutoRefresh <= nseClose);
-    if (marketOpen && state.mode === "live") {
+    const tokenMissing = !state.accessToken || state.accessToken === "DEMO_NO_TOKEN";
+    // D30: DEMO mode also needs a live token for real market data. A rejected token
+    // must be re-loaded from the DB in both modes — otherwise the bot sits in a
+    // silent HOLD loop after any expiry (~24h lifetime) until the user restarts it.
+    if (marketOpen) {
       // Market is open but no data — likely expired token. Try refreshing from DB.
       const freshToken = await refreshTokenFromDB(state.sessionToken);
       if (freshToken && freshToken !== state.accessToken) {
         state.accessToken = freshToken;
         emitActivity(state.sessionToken, "bot_start", `🔑 Token auto-refreshed from DB (was expired) — retrying on next tick`);
         console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — auto-refreshed token from DB during market hours`);
+      } else if (!freshToken && !state.alertsSent.has("d30_refresh_failed")) {
+        // No usable token exists in the DB for this session at all.
+        emitActivity(state.sessionToken, "error",
+          `⚠ ZERO TRADES EXPECTED until fixed: the Upstox data feed for this bot is ${tokenMissing ? "missing" : "rejected"}.` +
+          ` No valid token was found — go to Settings → Upstox → link/refresh your account, then restart the bot.`);
+        state.alertsSent.add("d30_refresh_failed");
       }
     }
     // ── MCX Token Retry: If candles are empty during market hours, the token might be expired ──
@@ -5691,7 +5779,6 @@ async function tick(
     // D27: When candles are empty DURING market hours, the bot can never trade —
     // tell the user exactly why and how to fix it, instead of staying silent.
     if (marketOpen && (state.tickCount ?? 0) % 20 === 1 && !state.alertsSent.has("d27_empty_candles")) {
-      const tokenMissing = !state.accessToken || state.accessToken === "DEMO_NO_TOKEN";
       emitActivity(state.sessionToken, "error",
         `⚠ ZERO TRADES EXPECTED until fixed: no market data feed (${signalToken}).` +
         ` Bot is running, but the candle feed is empty during market hours.` +
