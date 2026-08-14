@@ -1579,10 +1579,12 @@ export const appRouter = router({
           } catch { /* non-fatal */ }
         };
 
-        // Reset stale portfolio halt before restarting
+                // Reset stale portfolio halt before restarting
         resetPortfolioHalt();
-
-        startBot(
+        // D33 (Zero-Tolerance audit A3): restart mirrors startSecondary — the
+        // start result is awaited so the route only reports success once the
+        // engine has confirmed its first market-data scan.
+        const startResult = startBot(
           {
             sessionToken: input.sessionToken,
             sessionId,
@@ -1642,14 +1644,13 @@ export const appRouter = router({
          onTradeOpen,
          onTradeClose,
           existingOpenTrade,
-          async (tickState) => {
+                    async (tickState) => {
             const dbInner = await getDb();
             if (!dbInner) return;
             await dbInner.update(botSessions).set({
               lastPrice: tickState.lastPrice, bidPrice: tickState.bidPrice, askPrice: tickState.askPrice,
               nextScanAt: tickState.nextScanAt, lastSignal: tickState.lastSignal?.direction ?? null,
-              lastSignalAt: tickState.lastSignal ? new Date() : undefined,
-              currentSl: tickState.openTrade?.currentSl ?? null, lastTickAt: Date.now(),
+              lastSignalAt: tickState.lastSignal ? new Date() : undefined, currentSl: tickState.openTrade?.currentSl ?? null, lastTickAt: Date.now(),
               optionTradeToken: (tickState as any).optionTradeToken ?? null,
               layerTradesCount: JSON.stringify(tickState.layerTradesCount ?? {}),
               consecutiveUnderlyingSLs: tickState.consecutiveUnderlyingSLs ?? 0,
@@ -1657,8 +1658,36 @@ export const appRouter = router({
             }).where(eq(botSessions.sessionToken, tickState.sessionToken));
           },
         );
-       console.log(`[bot.start] ✓ SUCCESS — sessionToken=${input.sessionToken.slice(0,8)}, sessionId=${sessionId}, mapHasBot=${!!getBotState(input.sessionToken)}`);
-       return { success: true, sessionId };
+        // D33 (A3): wait for the first market-data scan to confirm the engine
+        // actually registered. Without this, restart reported "started" while
+        // the bot was still warming up — leaving the UI showing the Start
+        // option after a successful start call.
+        const readiness = await startResult.initialTick;
+        const confirmedState = getBotState(input.sessionToken);
+        if (!readiness.ready || !confirmedState || (confirmedState.status !== "running" && confirmedState.status !== "paused")) {
+          stopBot(input.sessionToken);
+          const dbRollback = await getDb();
+          if (dbRollback) {
+            await dbRollback.update(botSessions).set({
+              status: "stopped",
+              stoppedAt: new Date(),
+              lastError: readiness.lastError ?? "Engine registration did not converge after restart",
+            }).where(eq(botSessions.sessionToken, input.sessionToken));
+          }
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: readiness.lastError
+              ? `Bot failed its first market-data scan: ${readiness.lastError}`
+              : "Bot could not be confirmed after restart. No successful start was recorded.",
+          });
+        }
+       console.log(`[bot.restart] ✓ SUCCESS — sessionToken=${input.sessionToken.slice(0,8)}, sessionId=${sessionId}, mapHasBot=${!!getBotState(input.sessionToken)}`);
+       return {
+         success: true,
+         sessionId,
+         readiness: readiness.degraded ? "degraded" : "ready",
+         warning: readiness.degraded ? "The bot is running with a bounded market-data warning and will retry automatically." : null,
+       };
      }),
 
     // ── Hot-update enabledLayers on running bot(s) ───────────────────────────
@@ -2357,8 +2386,10 @@ export const appRouter = router({
         return { success: true };
       }),
     // Wipe ALL trade history, bot sessions, and signal journal — complete fresh start
+    // D33 (Zero-Tolerance audit A1): platform-wide wipe requires admin access.
     clearAllHistory: publicProcedure
-      .mutation(async () => {
+      .mutation(async ({ ctx }) => {
+        if (!(await verifyAdminAccess(ctx as any))) throw new Error("Unauthorized");
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
         await db.delete(tradeLog);
@@ -2366,10 +2397,15 @@ export const appRouter = router({
         try { await (db as any).execute("DELETE FROM signal_journal"); } catch { /* table may not exist */ }
         return { success: true };
       }),
-    // Force-close all open trades at entry price (P&L = 0) — used for cleanup
+    // Force-close open trades at entry price (P&L = 0) — used for cleanup
+    // D33 (Zero-Tolerance audit A2): a platform-wide close-all (no sessionToken)
+    // requires admin access; ordinary users may only close their own session.
     closeAllOpen: publicProcedure
       .input(z.object({ sessionToken: sessionTokenSchema.optional() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        if (!input.sessionToken && !(await verifyAdminAccess(ctx as any))) {
+          throw new Error("Unauthorized");
+        }
         const db = await getDb();
         if (!db) throw new Error("DB unavailable");
         const whereClause = input.sessionToken
