@@ -1196,7 +1196,8 @@ export function generateSignal(
     const emaDiffPct = Math.abs(e9 - e21) / e21;
     const distFromEma9 = Math.abs(price - e9) / e9;
     const distFromVwap = Math.abs(price - vwap) / vwap;
-    const nearPullback = distFromEma9 < 0.004 || distFromVwap < 0.004; // within 0.4% of EMA9 or VWAP (widened from 0.15%)
+    // D32: 0.4% → 0.8% — 60-day backtest: +20 trades/index, Nifty avg +4.93 → +7.02 pts, PF 1.51 → 1.77, WR/DD intact
+    const nearPullback = distFromEma9 < 0.008 || distFromVwap < 0.008;
     if (e9 > e21 && price > vwap && (rsi > 55 || rsi < 40) && allow5mBuy && nearPullback) {
       direction = "BUY";
       confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 20) * 0.005);
@@ -1217,7 +1218,8 @@ export function generateSignal(
     const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
     const distFromEma9_m = Math.abs(price - e9) / e9;
     const distFromVwap_m = Math.abs(price - vwap) / vwap;
-    const nearPullback_m = distFromEma9_m < 0.004 || distFromVwap_m < 0.004;
+    // D32: 0.4% → 0.8% (same pullback widening)
+    const nearPullback_m = distFromEma9_m < 0.008 || distFromVwap_m < 0.008;
     if (rsi > 55 && roc3 > 0.001 && price > vwap && allow5mBuy && nearPullback_m) {
       direction = "BUY";
       confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 55) * 0.005);
@@ -1966,9 +1968,10 @@ export function generateSignalV2(
       const emaDiffPct = Math.abs(e9 - e21) / e21;
       const distFromEma9 = Math.abs(price - e9) / e9;
       const distFromVwap = Math.abs(price - vwap) / vwap;
-      // Widened from 0.15% to 0.4% — 0.15% was too tight for NIFTY (only ₹36 window),
-      // forcing entries at exact inflection points that often reverse immediately.
-      const nearPullback = distFromEma9 < 0.004 || distFromVwap < 0.004;
+      // D32: 0.15% → 0.4% → 0.8%. The 0.4% window left the engine silent for days
+      // (181-200 trades in 60 days). Backtest with 0.8%: +20 trades/index, Nifty
+      // avg +4.93 → +7.02 pts, PF 1.51 → 1.77, WR and DD essentially unchanged.
+      const nearPullback = distFromEma9 < 0.008 || distFromVwap < 0.008;
       if (e9 > e21 && price > vwap && (rsi > 55 || rsi < 40) && nearPullback) {
         direction = "BUY";
         confidence = Math.min(0.88, 0.55 + emaDiffPct * 200 + (adx - 20) * 0.005);
@@ -1988,8 +1991,8 @@ export function generateSignalV2(
       const roc3 = closes.length >= 4 ? (price - closes[closes.length - 4]) / closes[closes.length - 4] : 0;
       const distFromEma9_m = Math.abs(price - e9) / e9;
       const distFromVwap_m = Math.abs(price - vwap) / vwap;
-      // Widened from 0.15% to 0.4% — same fix as Trend layer
-      const nearPullback_m = distFromEma9_m < 0.004 || distFromVwap_m < 0.004;
+      // D32: 0.4% → 0.8% (same pullback widening as the Trend layer)
+      const nearPullback_m = distFromEma9_m < 0.008 || distFromVwap_m < 0.008;
       if (rsi > 55 && roc3 > 0.001 && price > vwap && nearPullback_m) {
         direction = "BUY";
         confidence = Math.min(0.82, 0.60 + roc3 * 100 + (rsi - 55) * 0.005);
@@ -2022,8 +2025,10 @@ export function generateSignalV2(
   } else if (regime.regime === "RANGING") {
     // ── RANGING: ONLY mean-reversion at range extremes ──────────────────────
     // FIX: No FailedBreakout entries (all 6 lost in Stage 1 replay)
-    // FIX: Require price at range extreme (top 30% for SELL, bottom 30% for BUY)
-    // FIX: Anti-chasing: last 5 candles must show price moving TOWARD extreme (retracement)
+    // D32: price-at-extreme widened 30% → 40% and retracement window 5 → 3 candles.
+    // On 60 days of data the old combo let ~600 scans generate a direction but then
+    // rejected ~70% on the stale retracement check; the D32 settings added ~15% more
+    // entries with unchanged WR/DD in backtest.
     // Strategy A: VWAP Deviation Mean Reversion — only at range extremes
     if (_layerOk("VWAPReversion") && direction === "HOLD" && candles.length >= 20) {
       const vwapDev = calcVWAPDeviation(candles);
@@ -2034,15 +2039,14 @@ export function generateSignalV2(
         const rangeLow = Math.min(...lookback20.map(c => c.low));
         const rangeWidth = rangeHigh - rangeLow;
         const posInRange = rangeWidth > 0 ? (price - rangeLow) / rangeWidth : 0.5;
-        // For SELL: price must be in top 30% of range (posInRange > 0.70)
-        // For BUY: price must be in bottom 30% of range (posInRange < 0.30)
-        const atExtreme = (vwapDev.signal === "SELL" && posInRange > 0.70) ||
-                          (vwapDev.signal === "BUY" && posInRange < 0.30);
-        // Anti-chasing: last 5 candles must show price moved TOWARD the extreme (retracement)
-        // For SELL at top: price should have risen (retraced up) in last 5 candles
-        // For BUY at bottom: price should have fallen (retraced down) in last 5 candles
-        const last5Closes = candles.slice(-5).map(c => c.close);
-        const recentMove = last5Closes[last5Closes.length - 1] - last5Closes[0];
+        // For SELL: price must be in top 40% of range (posInRange > 0.60)
+        // For BUY: price must be in bottom 40% of range (posInRange < 0.40)
+        const atExtreme = (vwapDev.signal === "SELL" && posInRange > 0.60) ||
+                          (vwapDev.signal === "BUY" && posInRange < 0.40);
+        // D32: retracement window shortened 5 → 3 candles — the 5-candle check
+        // silently killed the signal while price sat at the extreme.
+        const last3Closes = candles.slice(-3).map(c => c.close);
+        const recentMove = last3Closes[last3Closes.length - 1] - last3Closes[0];
         const notChasing = (vwapDev.signal === "SELL" && recentMove > 0) ||
                            (vwapDev.signal === "BUY" && recentMove < 0);
         if (atExtreme && notChasing) {
@@ -2065,11 +2069,11 @@ export function generateSignalV2(
           const rangeLow = Math.min(...lookback20.map(c => c.low));
           const rangeWidth = rangeHigh - rangeLow;
           const posInRange = rangeWidth > 0 ? (price - rangeLow) / rangeWidth : 0.5;
-          const atExtreme = (pullback.direction === "SELL" && posInRange > 0.65) ||
-                            (pullback.direction === "BUY" && posInRange < 0.35);
-          // Anti-chasing: last 5 candles must show retracement (price moved toward entry)
-          const last5Closes = candles.slice(-5).map(c => c.close);
-          const recentMove = last5Closes[last5Closes.length - 1] - last5Closes[0];
+          const atExtreme = (pullback.direction === "SELL" && posInRange > 0.60) ||
+                            (pullback.direction === "BUY" && posInRange < 0.40);
+          // D32: retracement window shortened 5 → 3 candles (same as VWAPReversion)
+          const last3Closes = candles.slice(-3).map(c => c.close);
+          const recentMove = last3Closes[last3Closes.length - 1] - last3Closes[0];
           const notChasing = (pullback.direction === "SELL" && recentMove > 0) ||
                              (pullback.direction === "BUY" && recentMove < 0);
           if (atExtreme && notChasing) {
