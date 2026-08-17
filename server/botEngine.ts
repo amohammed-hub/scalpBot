@@ -4613,26 +4613,60 @@ export async function fetchUpcomingOptionExpiryKeys(
         .filter((expiry): expiry is string => !!expiry && isOptionExpiryTradable(expiry)),
     )).sort().slice(0, limit);
   } catch (error) {
+    // D34: rethrow 401s so the caller (resolveAtmOptionToken) can retry with a
+    // freshly-refreshed DB token instead of silently returning an empty expiry list.
+    if (axios.isAxiosError(error) && error.response?.status === 401) throw error;
     console.error(`[BotEngine] Unable to load authoritative expiries for ${underlyingToken}:`, error instanceof Error ? error.message : String(error));
     return [];
   }
 }
 
+// D34: optional sessionToken enables automatic 401 self-heal — when the access token
+// is rejected, the freshest token is pulled from the DB (refreshed via Settings/OAuth)
+// and the failing call is retried once, transparent to the caller.
 export async function resolveAtmOptionToken(
   underlyingToken: string,
   optionType: "CE" | "PE",
   accessToken: string,
   excludeStrikes: number[] = [],
+  sessionToken?: string,
 ): Promise<ResolvedOption | null> {
+  const authedGet = async (url: string, timeout: number, token?: string) =>
+    upstoxAxios.get(url, {
+      headers: { Authorization: `Bearer ${token ?? accessToken}`, Accept: "application/json" },
+      timeout,
+    });
+  const withRefresh = async (requestFn: (tok: string) => Promise<any>  ): Promise<{ ok: boolean; value?: any; err?: unknown; refreshed?: boolean }> => {
+    try {
+      return { ok: true, value: await requestFn(accessToken) };
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 401 && sessionToken && accessToken !== "DEMO_NO_TOKEN") {
+        const fresh = await refreshTokenFromDB(sessionToken);
+        if (fresh && fresh !== accessToken) {
+          try {
+            const v = await requestFn(fresh);
+            console.log(`[BotEngine] resolveAtmOptionToken 401-retried OK with refreshed DB token (${sessionToken.slice(0, 8)})`);
+            return { ok: true, value: v, refreshed: true };
+          } catch (err2) {
+            return { ok: false, err: err2, refreshed: true };
+          }
+        }
+      }
+      return { ok: false, err };
+    }
+  };
+
   try {
     // Step 1: get current underlying price
-    const quoteResp = await upstoxAxios.get(
+    const quoteResult = await withRefresh(tok => authedGet(
       `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(underlyingToken)}`,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 6000 },
-    );
-    const underlyingQuote = selectRequestedUpstoxQuote(quoteResp.data?.data, underlyingToken);
+      6000, tok,
+    ));
+    if (!quoteResult.ok) return null;
+    const underlyingQuote = selectRequestedUpstoxQuote(quoteResult.value.data?.data, underlyingToken);
     const underlyingPrice: number = underlyingQuote?.last_price ?? 0;
     if (!underlyingPrice) return null;
+    const usedToken = (quoteResult as { refreshed?: boolean }).refreshed ? undefined : accessToken;
 
     // Step 2: derive exact upcoming expiry dates from the authoritative
     // option-contract list, then request the chain with Upstox's required
@@ -4645,7 +4679,9 @@ export async function resolveAtmOptionToken(
       put_options?: { instrument_key?: string; market_data?: { ltp?: number } };
     }> = [];
 
-    const expiryOrder = await fetchUpcomingOptionExpiryKeys(underlyingToken, accessToken);
+    const expiryResult = await withRefresh(tok => fetchUpcomingOptionExpiryKeys(underlyingToken, tok));
+    if (!expiryResult.ok) return null;
+    const expiryOrder: string[] = expiryResult.value;
 
     if (expiryOrder.length === 0) {
       console.error(`[BotEngine] resolveAtmOptionToken: no expiry on or after ${getIstDateKey()} for ${underlyingToken}`);
@@ -4654,10 +4690,12 @@ export async function resolveAtmOptionToken(
 
     for (const expiry of expiryOrder) {
       try {
-        const resp = await upstoxAxios.get(
+        const chainResult = await withRefresh(tok => upstoxAxios.get(
           `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(underlyingToken)}&expiry_date=${expiry}`,
-          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, timeout: 10000 },
-        );
+          { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" }, timeout: 10000 },
+        ));
+        if (!chainResult.ok) continue;
+        const resp = chainResult.value;
         const returnedRows: typeof chainData = resp.data?.data ?? [];
         const tradableRows = returnedRows.filter(row => getOptionExpiryDateKey(row.expiry) === expiry && isOptionExpiryTradable(row.expiry));
         if (returnedRows.length > 0 && tradableRows.length === 0) {
@@ -8280,7 +8318,7 @@ const isExpiryDay = isOptionInstrument && (
     const isMcxToken = resolvedUnderlying.startsWith("MCX_FO|");
     const resolved = isMcxToken
       ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes, state.lastPrice)
-      : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes);
+      : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes, state.sessionToken);
 
     if (!resolved) {
       // Option resolve failed.
@@ -8448,7 +8486,7 @@ const isExpiryDay = isOptionInstrument && (
           const isMcx0dte = resolvedUnderlying0dte.startsWith("MCX_FO|");
           const atmResolved = isMcx0dte
             ? await resolveAtmMcxOptionToken(resolvedUnderlying0dte, ceOrPe0dte, state.accessToken, [], state.lastPrice)
-            : await resolveAtmOptionToken(resolvedUnderlying0dte, ceOrPe0dte, state.accessToken);
+            : await resolveAtmOptionToken(resolvedUnderlying0dte, ceOrPe0dte, state.accessToken, [], state.sessionToken);
           if (atmResolved) {
             tradeInstrumentToken = atmResolved.token;
             optionPremiumForSizing = atmResolved.premium;
@@ -8578,20 +8616,20 @@ const isExpiryDay = isOptionInstrument && (
           let accumulatedExclude = [...fallbackExclude];
           cheaperResolved = isMcxForFallback
             ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude, state.lastPrice)
-            : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude);
+            : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, fallbackExclude, state.sessionToken);
           // If the resolver returned a strike that's still too expensive, try one more OTM
           if (cheaperResolved && cheaperResolved.premium * lotSize > state.capital) {
             accumulatedExclude = [...accumulatedExclude, cheaperResolved.strike];
             cheaperResolved = isMcxForFallback
               ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude, state.lastPrice)
-              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude);
+              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude, state.sessionToken);
           }
           // Third attempt if still too expensive
           if (cheaperResolved && cheaperResolved.premium * lotSize > state.capital) {
             accumulatedExclude = [...accumulatedExclude, cheaperResolved.strike];
             cheaperResolved = isMcxForFallback
               ? await resolveAtmMcxOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude, state.lastPrice)
-              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude);
+              : await resolveAtmOptionToken(resolvedUnderlying2, ceOrPe2, state.accessToken, accumulatedExclude, state.sessionToken);
           }
         }
         
@@ -9250,7 +9288,7 @@ export function startBot(
           if (!resolvedToken) {
             const resolved = isMcxToken
               ? await resolveAtmMcxOptionToken(underlyingToken, ceOrPe, state.accessToken!, [], state.lastPrice)
-              : await resolveAtmOptionToken(underlyingToken, ceOrPe, state.accessToken!);
+              : await resolveAtmOptionToken(underlyingToken, ceOrPe, state.accessToken!, [], state.sessionToken);
             if (resolved?.token) {
               resolvedToken = resolved.token;
               console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — fell back to ATM resolution: ${resolvedToken}`);
