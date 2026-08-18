@@ -8660,7 +8660,43 @@ const isExpiryDay = isOptionInstrument && (
     } else {
       quantity = riskBasedQty;
     }
-        const MIN_LOTS_FOR_SCALPING = 2;
+        // D36: PER-LEG DAILY-BUDGET HEADROOM — a single leg must never be able to
+    // consume more loss than the remaining daily budget. On Aug 17 one MCX crude
+    // leg (qty 200 × ₹92.65 × ~9.8% SL) lost ₹1,808, exceeding the -₹1,500 daily
+    // cap and hard-blocking every bot for the rest of the day. This guard caps
+    // the leg's worst-case SL loss (risk SL and premium-safety SL, whichever is
+    // deeper) to the remaining daily headroom and shrinks qty to fit; if it
+    // cannot fit one lot, the entry is skipped instead of being silently
+    // oversized.
+    if (state.dailyLossLimitPct > 0) {
+      const maxDailyLoss = -(state.capital * state.dailyLossLimitPct) / 100; // negative, e.g. -1500
+      // Remaining absorbable loss before the daily hard-stop: |-1500| - 500 used = ₹1,000.
+      const headroom = Math.max(0, -maxDailyLoss + state.dailyPnl);
+
+      // Same effective-SL logic as the premium safety net computed later in this
+      // function (risk SL, tightening to scalper mode when configured).
+      const optSlPctLocal = (state.optionSlPct ?? 5) / 100;
+      const safetySlPct = state.scalperMode ? 0.02 : optSlPctLocal;
+      const perUnitWorstLoss = optionPremiumForSizing * safetySlPct;
+      const legWorstCase = quantity * perUnitWorstLoss;
+      if (legWorstCase > headroom) {
+        const headroomQty = Math.floor(headroom / perUnitWorstLoss / lotSize) * lotSize;
+        if (headroomQty >= lotSize) {
+          quantity = headroomQty;
+          emitActivity(state.sessionToken, "signal",
+            `⚖️ D36: leg risk ₹${legWorstCase.toFixed(0)} > remaining daily budget ₹${headroom.toFixed(0)} — size reduced to ${quantity} (${quantity/lotSize} lots)`);
+          console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — D36 leg headroom: qty ${quantity}, per-unit SL ₹${perUnitWorstLoss.toFixed(2)}, headroom ₹${headroom.toFixed(0)}`);
+        } else {
+          emitActivity(state.sessionToken, "signal",
+            `⛔ D36: remaining daily budget ₹${headroom.toFixed(0)} cannot absorb one lot's worst loss ₹${(lotSize * perUnitWorstLoss).toFixed(0)} — entry skipped`);
+          console.log(`[BotEngine] ${state.sessionToken.slice(0,8)} — D36 skipped: leg risk exceeds remaining daily budget`);
+          state.isOpeningTrade = false;
+          return;
+        }
+      }
+    }
+
+    const MIN_LOTS_FOR_SCALPING = 2;
     if (quantity === lotSize && maxQtyByCapital >= lotSize * MIN_LOTS_FOR_SCALPING) {
       quantity = lotSize * MIN_LOTS_FOR_SCALPING;
     }

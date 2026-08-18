@@ -2,7 +2,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAppUserByIdStrict, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess, createAccessGrant, listAccessGrants, revokeAccessGrant, extendAccessGrant } from "./db";
+import { getDb, checkAccess, hasUsedTrial, startTrial, activateSubscription, sendOtp, verifyOtp, getAppUserById, getAppUserByIdStrict, getAllAppUsers, getAllSubscriptions, adminGrantSubscription, adminRevokeAccess, createAccessGrant, listAccessGrants, revokeAccessGrant, extendAccessGrant, digitsOnly } from "./db";
 import { getTierLimits, TIER_LIMITS, type TierLimits } from "../shared/tierLimits";
 import { upstoxCredentials, botSessions, tradeLog, signalJournal, type TradeLog, appUsers, notificationPreferences, adminSettings, broadcastMessages, alertTemplates, subscriptions, referrals } from "../drizzle/schema";
 import { eq, desc, and, gte, count, or, like, inArray } from "drizzle-orm";
@@ -5360,13 +5360,29 @@ me: publicProcedure
         try {
           const user = await getAppUserByIdStrict(decoded.userId);
           if (user) {
-            const effectiveRole = (ENV.adminMobile && (user.mobile === ENV.adminMobile || user.mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""))) ? "admin" : user.role;
+            // D35: digit-normalized comparison so any prefix/spacing style of the
+            // admin's number (e.g. "+91 86867 42267" vs "+918686742267") grants admin.
+            const effectiveRole = (ENV.adminMobile && digitsOnly(user.mobile) === digitsOnly(ENV.adminMobile)) ? "admin" : user.role;
+            // D35: surface slot entitlement so the dashboard shows the true max bot count.
+            const isAdmin = effectiveRole === "admin";
+            let extraBotSlots = 0;
+            try {
+              // checkAccess derives the user from the durable sessionToken if
+              // present, else treats it as a JWT-only bootstrap and returns the
+              // default entitlements — safe to call from mobileAuth.me.
+              const ac = await checkAccess(token);
+              extraBotSlots = (ac as any)?.extraBotSlots ?? 0;
+            } catch {
+              // DB hiccup — entitlement unknown, dashboard falls back to defaults.
+            }
             return {
               id: user.id,
               mobile: user.mobile,
               name: user.name,
               role: effectiveRole,
               sessionToken: user.sessionToken,
+              extraBotSlots,
+              maxSlots: isAdmin ? 10 : 3 + extraBotSlots,
             };
           }
         } catch (e) {

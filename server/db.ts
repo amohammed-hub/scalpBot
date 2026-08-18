@@ -724,13 +724,24 @@ export async function activateSubscription(params: {
 // In-memory IP rate tracker (auto-clears per key after 1 hour)
 const otpIpTracker = new Map<string, number>();
 
+// D35: mobile numbers must be compared as digit-strings so that different
+// prefix/spacing styles ("+91 86867 42267", "918686742267", "+918686742267",
+// "8686742267") all match the configured ADMIN_MOBILE. The Indian country code
+// (91) is stripped from BOTH sides when present, so a bare 10-digit local
+// number matches the fully-padded E.164 form as well.
+export function digitsOnly(value: string): string {
+  let d = (value ?? "").replace(/\D/g, "");
+  if (d.startsWith("91") && d.length > 10) d = d.slice(2);
+  return d;
+}
+
 export async function sendOtp(mobile: string, clientIp?: string): Promise<{ success: boolean; message: string }> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
   // Admin bypass: if this is the admin's mobile, store a fixed OTP and skip Twilio
   const { adminMobile } = ENV;
-  const isAdminBypass = adminMobile && (mobile === adminMobile || mobile === "+91" + adminMobile.replace(/^\+91/, ""));
+  const isAdminBypass = adminMobile && digitsOnly(mobile) === digitsOnly(adminMobile);
 
   // Rate limit: check if OTP was sent in last 60 seconds
   const recentOtp = await db
@@ -853,7 +864,7 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
     // Create new user with a session token
     const sessionToken = clientSessionToken || crypto.randomUUID();
     // Auto-assign admin role if this is the admin's mobile number
-    const isAdmin = ENV.adminMobile && (mobile === ENV.adminMobile || mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""));
+    const isAdmin = ENV.adminMobile && digitsOnly(mobile) === digitsOnly(ENV.adminMobile);
     await db.insert(appUsers).values({
       mobile,
       isVerified: true,
@@ -864,7 +875,7 @@ export async function verifyOtp(mobile: string, code: string, clientSessionToken
   } else {
     // Update last login
     // Also promote to admin if this is the admin's mobile (handles case where user registered before admin role was set up)
-    const isAdmin = ENV.adminMobile && (mobile === ENV.adminMobile || mobile === "+91" + ENV.adminMobile.replace(/^\+91/, ""));
+    const isAdmin = ENV.adminMobile && digitsOnly(mobile) === digitsOnly(ENV.adminMobile);
     // Existing identities are server-owned. A browser-generated token is only a
     // bootstrap hint for a brand-new user; replacing a durable token on every
     // login can split credentials, subscriptions, bot rows, and trades across
