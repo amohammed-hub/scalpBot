@@ -44,6 +44,35 @@ export type TradingSession = "morning" | "evening" | "closed";
  * Evening: 5:00 PM – 11:30 PM IST
  * Closed: Outside trading hours
  */
+// D37: new entries are blocked after 14:00 IST for NSE and after 21:30 IST
+// for MCX. Exits continue to run. Cut-offs are in IST minutes from midnight.
+export const LATE_SESSION_ENTRY_CUT_OFF = {
+  nse: 840, // 14:00 IST
+  mcx: 1290, // 21:30 IST
+} as const;
+
+// D37: testable guard predicate — the same predicate the engine applies.
+export function isLateSessionEntryBlocked(
+  instrumentToken: string,
+  openTrade: boolean,
+  now: Date = new Date(),
+): boolean {
+  if (openTrade) return false; // exits must always keep running
+  const istMin = istMinutesTotal(now);
+  const isNSE = !instrumentToken.startsWith("MCX_");
+  if (isNSE && istMin > LATE_SESSION_ENTRY_CUT_OFF.nse) return true;
+  if (!isNSE && istMin > LATE_SESSION_ENTRY_CUT_OFF.mcx) return true;
+  return false;
+}
+
+// D37: current IST time as total minutes from midnight, reusable for session
+// and cut-off gates (e.g. 14:00 IST = 840 minutes).
+export function istMinutesTotal(now: Date = new Date()): number {
+  const istMs = now.getTime() + (5.5 * 60 * 60 * 1000) + (now.getTimezoneOffset() * 60 * 1000);
+  const ist = new Date(istMs);
+  return ist.getHours() * 60 + ist.getMinutes();
+}
+
 export function getCurrentSession(): TradingSession {
   const now = new Date();
   // Convert to IST (UTC+5:30)

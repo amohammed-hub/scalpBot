@@ -11,7 +11,7 @@ import { getNseIndexLotSize } from "../shared/lotSizes";
 import { MCX_INSTRUMENTS } from "../shared/mcxInstruments";
 import { evaluateStrategyGate, computeVRP, computeOIFlowBias, computeMaxPainGravity } from "./vrpRegimeFilter";
 import { fetchOptionsAnalytics, getCachedAnalytics } from "./optionsAnalytics";
-import { getCurrentSession, getSessionDefault, type TradingSession } from "../shared/sessionDefaults";
+import { getCurrentSession, getSessionDefault, isLateSessionEntryBlocked, type TradingSession } from "../shared/sessionDefaults";
 import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
 import { finalizeTradeExcursions, type TradeExcursions, updateTradeExcursions } from "../shared/tradeExcursions";
 import {
@@ -5703,6 +5703,23 @@ async function tick(
       `Existing positions remain under exit management.`,
       "criticalAlerts",
     );
+  }
+
+  // ── D37: LATE-SESSION ENTRY CUT-OFF ────────────────────────────────────────
+  // Trade-log evidence (Aug 11-19): the 14:00-18:00 IST NSE window and the
+  // 16:30-18:30 IST MCX window produced the largest losses (-₹24K on Aug 12
+  // alone, COPPER -₹18.9K at 16:30, CRUDE double-stops -₹6.5K). After these
+  // hours the bots still monitor and EXIT open positions, but never OPEN new
+  // ones. Morning cut-off 14:00 IST (840 min); evening cut-off 21:30 IST
+  // (1290 min) — the 18:00-21:30 power hour on MCX stays allowed because its
+  // recorded trades were mixed (one +₹1,024 winner), while 21:30+ was dead.
+  const lateSessionBlocked = isLateSessionEntryBlocked(state.instrumentToken, !!state.openTrade);
+  if (lateSessionBlocked) {
+    const isNSE = !state.instrumentToken.startsWith("MCX_");
+    const reason = `Late-session entry cut-off (D37): ${isNSE ? "after 14:00 IST (NSE)" : "after 21:30 IST (MCX)"} — exiting positions are still managed, but no new entries`;
+    state.isOpeningTrade = false;
+    emitActivity(state.sessionToken, "signal", `🕐 ${reason}`);
+    console.log(`[tick] D37 — ${state.sessionToken.slice(0,8)} ${reason}`);
   }
 
   // ── Options mode: determine which token to use for candle/signal vs which to trade ──
