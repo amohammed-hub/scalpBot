@@ -11,7 +11,7 @@ import { getNseIndexLotSize } from "../shared/lotSizes";
 import { MCX_INSTRUMENTS } from "../shared/mcxInstruments";
 import { evaluateStrategyGate, computeVRP, computeOIFlowBias, computeMaxPainGravity } from "./vrpRegimeFilter";
 import { fetchOptionsAnalytics, getCachedAnalytics } from "./optionsAnalytics";
-import { getCurrentSession, getSessionDefault, isLateSessionEntryBlocked, type TradingSession } from "../shared/sessionDefaults";
+import { getCurrentSession, getSessionDefault, istMinutesTotal, isEntryQualityBlocked, type TradingSession } from "../shared/sessionDefaults";
 import { logSignalToJournal, updateJournalOnTradeClose } from "./precisionMetrics";
 import { finalizeTradeExcursions, type TradeExcursions, updateTradeExcursions } from "../shared/tradeExcursions";
 import {
@@ -5705,21 +5705,26 @@ async function tick(
     );
   }
 
-  // ── D37: LATE-SESSION ENTRY CUT-OFF ────────────────────────────────────────
-  // Trade-log evidence (Aug 11-19): the 14:00-18:00 IST NSE window and the
-  // 16:30-18:30 IST MCX window produced the largest losses (-₹24K on Aug 12
-  // alone, COPPER -₹18.9K at 16:30, CRUDE double-stops -₹6.5K). After these
-  // hours the bots still monitor and EXIT open positions, but never OPEN new
-  // ones. Morning cut-off 14:00 IST (840 min); evening cut-off 21:30 IST
-  // (1290 min) — the 18:00-21:30 power hour on MCX stays allowed because its
-  // recorded trades were mixed (one +₹1,024 winner), while 21:30+ was dead.
-  const lateSessionBlocked = isLateSessionEntryBlocked(state.instrumentToken, !!state.openTrade);
-  if (lateSessionBlocked) {
-    const isNSE = !state.instrumentToken.startsWith("MCX_");
-    const reason = `Late-session entry cut-off (D37): ${isNSE ? "after 14:00 IST (NSE)" : "after 21:30 IST (MCX)"} — exiting positions are still managed, but no new entries`;
-    state.isOpeningTrade = false;
-    emitActivity(state.sessionToken, "signal", `🕐 ${reason}`);
-    console.log(`[tick] D37 — ${state.sessionToken.slice(0,8)} ${reason}`);
+  // ── D38 (CAPA): LATE-SESSION ROOT CAUSE + QUALITY FILTER ──────────────────
+  // RCA (Aug 19): the 14:00-18:00 NSE / 16:30-18:30 MCX losses were blamed on
+  // the hour (D37 time gate), but BankNifty 5m data (Aug 4-18) shows momentum
+  // follow-through early 35.5% vs late 35.3% and TP-first rates 58.8% vs
+  // 57.4% — statistically identical. The hour was never the cause; blocking
+  // trades by clock was the wrong fix (user objection upheld via CAPA).
+  // The true root causes from the user's own 50-trade log:
+  //   1. Deep-OTM cheap premium entries (6 trades < ₹10: 1/6 wins, -₹1,984)
+  //   2. SL hunted by bid-ask spread noise (losers exited -3.88% vs -3.52%
+  //      paper SL — the stop sat inside the noise band)
+  //   3. Oversized lots amplify every stop (qty >= 500: WR 25%, -₹558)
+  // Corrective actions: CA-1 premium floor raised in the quality gate below;
+  // CA-3 spread-noise SL validation below. Time-based blocking: removed.
+  // Late-session analytics are still emitted here as a diagnostic label
+  // (entries remain enabled at all hours — quality filters do the gating).
+  const istMin = istMinutesTotal();
+  const isNSE = !state.instrumentToken.startsWith("MCX_");
+  const refMin = isNSE ? 840 : 1290;
+  if (istMin > refMin && istMin <= (isNSE ? 930 : 1410)) {
+    emitActivity(state.sessionToken, "signal", `🕐 Late-session diagnostics: entries enabled (D38 CAPA). Quality filters apply instead of time blocking.`);
   }
 
   // ── Options mode: determine which token to use for candle/signal vs which to trade ──
@@ -8540,6 +8545,33 @@ const isExpiryDay = isOptionInstrument && (
         if (midPrice > 0 && Math.abs(midPrice - optionPremiumForSizing) / optionPremiumForSizing < 0.2) {
           optionPremiumForSizing = midPrice;
           state.optionPremiumPrice = midPrice;
+        }
+
+        // ── D38 CA-3: spread-noise SL validation ────────────────────────────
+        // Root cause evidence: the 30 SL exits in the Aug 11-19 log left at
+        // -3.88% realized vs -3.52% paper SL — the stop sat inside the
+        // bid-ask noise band and was hunted before the move played out.
+        // Block the entry when the paper SL distance is inside 4x the
+        // half-spread; this keeps trades flowing but only when the stop can
+        // actually survive execution noise.
+        const effSlPctLocal = ((state.optionSlPct ?? 5) / 100) * (state.scalperMode ? 0.4 : 1);
+        const slDistPct = (effSlPctLocal * 100);
+        const qCheck = isEntryQualityBlocked(optionPremiumForSizing, spreadPct, {
+          slDistancePct: slDistPct,
+          spreadPct,
+        });
+        if (qCheck.blocked) {
+          const reason = `Entry blocked — SL inside spread-noise band (D38): ${qCheck.reason}`;
+          console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
+          emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+          pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `SL noise: ${qCheck.reason}`);
+          logSignalToJournal({
+            sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+            direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+            entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+            atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: reason,
+          });
+          return;
         }
       }
       if (!optQuote || !Number.isFinite(optQuote.ltp) || optQuote.ltp <= 0) {

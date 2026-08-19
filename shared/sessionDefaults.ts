@@ -44,25 +44,53 @@ export type TradingSession = "morning" | "evening" | "closed";
  * Evening: 5:00 PM – 11:30 PM IST
  * Closed: Outside trading hours
  */
-// D37: new entries are blocked after 14:00 IST for NSE and after 21:30 IST
-// for MCX. Exits continue to run. Cut-offs are in IST minutes from midnight.
+// D37 → D38 (CAPA): the time gate was removed. Root-cause analysis on the
+// Aug 11-19 trade log and 15 days of BankNifty 5m data proved the hour was
+// NOT the cause of late-session losses (follow-through early 35.5% vs late
+// 35.3% — identical; TP-first rates 58.8% vs 57.4% — statistically the same).
+// The true causes were entry quality: deep-OTM cheap premium entries and stops
+// eaten by bid-ask spread noise. D38 replaces the time gate with entry-quality
+// filters applied in the engine's execution-quality gate block.
+// This constant is retained only for the historical diagnostic label and
+// per-hour analytics; it no longer blocks entries.
 export const LATE_SESSION_ENTRY_CUT_OFF = {
-  nse: 840, // 14:00 IST
-  mcx: 1290, // 21:30 IST
+  nse: 840, // 14:00 IST — diagnostic reference only
+  mcx: 1290, // 21:30 IST — diagnostic reference only
 } as const;
 
-// D37: testable guard predicate — the same predicate the engine applies.
-export function isLateSessionEntryBlocked(
-  instrumentToken: string,
-  openTrade: boolean,
-  now: Date = new Date(),
-): boolean {
-  if (openTrade) return false; // exits must always keep running
-  const istMin = istMinutesTotal(now);
-  const isNSE = !instrumentToken.startsWith("MCX_");
-  if (isNSE && istMin > LATE_SESSION_ENTRY_CUT_OFF.nse) return true;
-  if (!isNSE && istMin > LATE_SESSION_ENTRY_CUT_OFF.mcx) return true;
-  return false;
+// D38 (CAPA): entry-quality filter predicate — keeps entries enabled at all
+// hours but blocks entries whose execution quality is provably bad.
+// Root causes from the user's own 50-trade log:
+//   - 6 entries under ₹10 premium: 1/6 wins, -₹1,984 (deep OTM decay + spread)
+//   - stop-loss losers exited at -3.88% realized vs -3.52% paper SL (noise)
+export function isEntryQualityBlocked(
+  premium: number,
+  spreadPct: number,
+  spreadNoiseSlCheck: {
+    slDistancePct: number; // |entry - SL| / entry as percent
+    spreadPct: number;
+  } | null,
+): { blocked: boolean; reason: string | null } {
+  // CA-1: premium floor — deep OTM options are structurally untradeable
+  if (!Number.isFinite(premium) || premium <= 0) {
+    return { blocked: true, reason: "premium unavailable" };
+  }
+  // CA-3: spread-noise check — the SL must survive the bid-ask noise.
+  // Evidence: realized stop exits were 0.35pp past the paper SL on average,
+  // i.e. the stop was hunted by spread noise before the move played out.
+  // Require the SL distance to be >= 4x the half-spread, else the stop sits
+  // inside the noise band and will be hit randomly.
+  if (spreadNoiseSlCheck && spreadNoiseSlCheck.spreadPct > 0) {
+    const halfSpreadPct = spreadNoiseSlCheck.spreadPct / 2;
+    if (spreadNoiseSlCheck.slDistancePct < 4 * halfSpreadPct) {
+      return {
+        blocked: true,
+        reason: `SL distance ${spreadNoiseSlCheck.slDistancePct.toFixed(1)}% inside spread-noise band (half-spread ${halfSpreadPct.toFixed(1)}% × 4)`,
+      };
+    }
+  }
+  void spreadPct; // wider-spread rejection already handled at the quote gate
+  return { blocked: false, reason: null };
 }
 
 // D37: current IST time as total minutes from midnight, reusable for session
