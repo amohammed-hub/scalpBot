@@ -233,6 +233,10 @@ export interface BotState {
   optionType?: "CE" | "PE" | "auto";
   optionTradeToken?: string; // resolved at runtime from option chain
   optionPremiumPrice?: number; // last successfully fetched option premium
+  // D39: flags consumed by the risk-budget fallback path to carry the resolved strike sizing
+  d39ResolvedStrike?: boolean;
+  d39ResolvedPremium?: number;
+  d39ResolvedLotSize?: number;
   optionQuoteStatus?: "live" | "stale" | "unavailable";
   optionQuoteUpdatedAt?: number;
   isOpeningTrade?: boolean; // mutex: prevents duplicate trade opens from concurrent ticks
@@ -8621,11 +8625,64 @@ const isExpiryDay = isOptionInstrument && (
     const oneLotRisk = slDist * lotSize;
     // D7: a minimum lot must never silently override the configured risk budget.
     // This guard is deliberately before manual/automatic sizing and before any order path.
+    // D39: NEVER silently skip. Make the skip visible AND attempt automatic
+    // resolution to a cheaper, affordable strike before giving up. MCX metal
+    // contracts (GOLDM ~₹11,055/lot, SILVER ~₹5,465/lot at 5% SL with the default
+    // ₹100,000/1% config) were being killed here with only a dashboard toast —
+    // invisible in console/journal, which is how the "signal fires but no trade"
+    // mystery was created.
     if (oneLotRisk > riskAmount) {
+      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — one lot risk ₹${oneLotRisk.toFixed(2)} exceeds risk budget ₹${riskAmount.toFixed(2)} on ${tradeSymbol} (SL ${(slDistPct * 100).toFixed(2)}%). Attempting D39 cheaper-strike resolution...`);
+      const maxAffordablePremium = riskAmount / lotSize / slDistPct;
       emitActivity(state.sessionToken, "signal",
-        `⊘ Entry skipped — one lot risk ₹${oneLotRisk.toFixed(2)} exceeds risk budget ₹${riskAmount.toFixed(2)} (SL ${(slDistPct * 100).toFixed(2)}%)`);
-      state.isOpeningTrade = false;
-      return;
+        `⊘ Risk budget: one lot of ${tradeSymbol} needs ₹${oneLotRisk.toFixed(0)} vs ₹${riskAmount.toFixed(0)} available (SL ${(slDistPct * 100).toFixed(1)}%). Searching cheaper strike (max premium ₹${maxAffordablePremium.toFixed(0)})...`);
+      // Re-resolve to a cheaper strike whose worst-case SL risk fits the budget
+      const isMcxForD39 = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
+      const ceOrPeD39 = state.optionType === "CE" ? "CE" as const : state.optionType === "PE" ? "PE" as const : (signal.direction === "BUY" ? "CE" as const : "PE" as const);
+      let resolvedD39: ResolvedOption | null = null;
+      if (state.accessToken) {
+        const currentStrikeNum = parseInt(tradeSymbol?.match(/(\d+)$/)?.[1] ?? "0");
+        const d39Exclude = currentStrikeNum > 0 ? [currentStrikeNum] : [];
+        resolvedD39 = isMcxForD39
+          ? await resolveAtmMcxOptionToken(state.underlyingToken ?? state.instrumentToken, ceOrPeD39, state.accessToken, d39Exclude, state.lastPrice)
+          : await resolveAtmOptionToken(state.underlyingToken ?? state.instrumentToken, ceOrPeD39, state.accessToken, d39Exclude, state.sessionToken);
+        // Second OTM attempt if the first cheaper strike is still over budget
+        if (resolvedD39 && resolvedD39.premium * slDistPct * lotSize > riskAmount) {
+          resolvedD39 = isMcxForD39
+            ? await resolveAtmMcxOptionToken(state.underlyingToken ?? state.instrumentToken, ceOrPeD39, state.accessToken, [...d39Exclude, resolvedD39.strike], state.lastPrice)
+            : await resolveAtmOptionToken(state.underlyingToken ?? state.instrumentToken, ceOrPeD39, state.accessToken, [...d39Exclude, resolvedD39.strike], state.sessionToken);
+        }
+      }
+      if (resolvedD39 && resolvedD39.premium > 0 && resolvedD39.premium * slDistPct * lotSize <= riskAmount && resolvedD39.premium * lotSize <= state.capital) {
+        // Cheaper strike fits the risk budget — swap sizing inputs and let the
+        // normal sizing path (rawQtyByRisk / maxQtyByCapital / qty-mode) run
+        // with the resolved strike. Keep the original inputs logged for audit.
+        optionPremiumForSizing = resolvedD39.premium;
+        tradeInstrumentToken = resolvedD39.token;
+        tradeSymbol = `${state.instrumentSymbol}_${ceOrPeD39}_${resolvedD39.strike}`;
+        resolvedExpiry = resolvedD39.expiry;
+        tradeLabel = formatOptionContractLabel(state.instrumentSymbol, resolvedD39.strike, ceOrPeD39, resolvedD39.expiry);
+        state.optionTradeToken = resolvedD39.token;
+        state.optionPremiumPrice = resolvedD39.premium;
+        state.lotSize = resolvedD39.lotSize ?? lotSize;
+        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — D39 cheaper-strike resolution: switched to ${tradeSymbol} @ ₹${resolvedD39.premium.toFixed(2)} (one-lot risk ₹${(resolvedD39.premium * slDistPct * state.lotSize).toFixed(0)} ≤ ₹${riskAmount.toFixed(0)})`);
+        emitActivity(state.sessionToken, "signal", `✅ D39 risk-budget fallback: switched to cheaper OTM strike ${resolvedD39.strike} ${ceOrPeD39} @ ₹${resolvedD39.premium.toFixed(2)} — now fits the ₹${riskAmount.toFixed(0)} risk budget`);
+      } else {
+        // Nothing fits — reject with a fully visible, actionable diagnostic
+        const reason = `D39 no affordable strike — one lot of ${state.instrumentSymbol} ${ceOrPeD39} needs SL risk ₹${oneLotRisk.toFixed(0)} vs budget ₹${riskAmount.toFixed(0)} (SL ${(slDistPct * 100).toFixed(1)}%). Cheaper strikes tried; none fit (max affordable premium ₹${maxAffordablePremium.toFixed(0)}/lot). Fix: raise capital above ₹${(oneLotRisk * 100 / (state.riskPerTradePct > 0 ? state.riskPerTradePct : 1)).toFixed(0)} or risk% above ${((oneLotRisk / state.capital) * 100).toFixed(1)}%, or pick a lower-strike/lot contract.`;
+        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ${reason}`);
+        emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
+        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, reason);
+        logSignalToJournal({
+          sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
+          direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
+          entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
+          atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: reason,
+        });
+        state.isOpeningTrade = false;
+        state.lastTradeOpenedAt = Date.now();
+        return;
+      }
     }
     const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
