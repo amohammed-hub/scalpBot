@@ -5728,7 +5728,13 @@ async function tick(
   const isNSE = !state.instrumentToken.startsWith("MCX_");
   const refMin = isNSE ? 840 : 1290;
   if (istMin > refMin && istMin <= (isNSE ? 930 : 1410)) {
-    emitActivity(state.sessionToken, "signal", `🕐 Late-session diagnostics: entries enabled (D38 CAPA). Quality filters apply instead of time blocking.`);
+    // D40: throttle this per-tick diagnostic to once per IST-hour per slot —
+    // it was flooding the activity feed with one line every tick per slot.
+    const d40HourKey = `d40late-${Math.floor(istMin / 60)}`;
+    if ((state as any)._d40LastHour !== d40HourKey) {
+      (state as any)._d40LastHour = d40HourKey;
+      emitActivity(state.sessionToken, "signal", `🕐 Late-session diagnostics: entries enabled (D38 CAPA). Quality filters apply instead of time blocking.`);
+    }
   }
 
   // ── Options mode: determine which token to use for candle/signal vs which to trade ──
