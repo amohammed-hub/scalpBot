@@ -2875,6 +2875,10 @@ export const appRouter = router({
               ? (inMem?.optionQuoteStatus ?? "unavailable")
               : null,
             optionQuoteUpdatedAt: inMem?.optionQuoteUpdatedAt ?? null,
+            // D41: the slot's true trading mode so the UI can show a per-slot
+            // Demo/Live pill (previously invisible — root cause of the
+            // "I was in demo but it took a live trade" complaints).
+            mode: (inMem?.mode ?? dbRow?.mode ?? "demo") as "demo" | "live",
             // Bot-level isIndexOptions for frontend fallback when openTrade doesn't have it
             isIndexOptions: inMem?.isIndexOptions ?? dbRow?.isIndexOptions ?? false,
           };

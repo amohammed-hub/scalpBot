@@ -3060,7 +3060,12 @@ Setting is saved and applies to ALL bot slots you start after this. Best with Ma
                         {ready ? "✓" : `${count}/20`}
                       </span>
                       <span className={`text-[10px] px-1 py-0.5 rounded ${hasReal ? "text-emerald-300" : "text-orange-300"}`}>
-                        {hasReal ? "Live" : "Mock"}
+                        {hasReal ? "Data" : "Mock"}
+                      </span>
+                      {/* D41: per-slot true trading mode — visible so users can
+                          confirm each bot is demo or live, never hidden. */}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${(bot as any).mode === "live" ? "bg-red-500/25 text-red-300 border border-red-500/40" : "bg-blue-500/25 text-blue-300 border border-blue-500/40"}`}>
+                        {(bot as any).mode === "live" ? "🔴 LIVE" : "🔵 DEMO"}
                       </span>
                     </div>
                   );
