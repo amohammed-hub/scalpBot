@@ -343,6 +343,10 @@ export interface BotState {
   currentRegime?: "trending" | "choppy";
   currentADX?: number;
   regimeV2?: RegimeV2; // D6 authoritative per-tick regime from detectRegimeV2
+  // Demo-only Trikal-inspired phase state. This never changes live-mode routing.
+  demoTrikalPhase?: DemoTrikalPhase;
+  demoTrikalAdx?: number;
+  demoTrikalPreviousAdx?: number;
   lastRegimeCheckAt?: number; // unix ms — check every 5 minutes
   lastAffinityRegime?: RegimeV2; // most recently applied D5 entry-affinity regime
   regimeManualOverride?: boolean; // legacy field; D5 derives from configuredLayers instead
@@ -1730,6 +1734,52 @@ export interface RegimeV2Snapshot {
   atrRatio: number;
 }
 
+/**
+ * Three-phase Trikal-inspired paper-demo regime model.
+ * Phase 1: ADX at/below 25 (including rising ADX) = accumulation/range, no entry.
+ * Phase 2: ADX above 25 and not falling = breakout/moving fast, entries allowed.
+ * Phase 3: ADX falling after being above 25 = distribution/slowing, exit-only.
+ *
+ * The comparison uses the immediately prior closed-candle ADX and is deliberately
+ * exported so unit tests and dashboard diagnostics can verify the exact rule.
+ */
+export type DemoTrikalPhase = "ACCUMULATION" | "BREAKOUT" | "DISTRIBUTION";
+
+export interface DemoTrikalPhaseSnapshot {
+  phase: DemoTrikalPhase;
+  adx: number;
+  previousAdx: number;
+  adxRising: boolean;
+  label: string;
+}
+
+export function detectDemoTrikalPhase(candles: Candle[], period = 14): DemoTrikalPhaseSnapshot {
+  if (!candles || candles.length < period * 2 + 1) {
+    return { phase: "ACCUMULATION", adx: 0, previousAdx: 0, adxRising: false, label: "Accumulation / Getting Ready — insufficient ADX history" };
+  }
+  const adx = calcADX(candles, period);
+  const previousAdx = calcADX(candles.slice(0, -1), period);
+  const adxRising = adx > previousAdx;
+  if (previousAdx > 25 && adx < previousAdx) {
+    return { phase: "DISTRIBUTION", adx, previousAdx, adxRising, label: `Distribution / Slowing Down — ADX ${previousAdx.toFixed(1)}→${adx.toFixed(1)}` };
+  }
+  if (adx > 25 && adx >= previousAdx) {
+    return { phase: "BREAKOUT", adx, previousAdx, adxRising, label: `Breakout / Moving Fast — ADX ${adx.toFixed(1)}${adxRising ? " rising" : " holding"}` };
+  }
+  return { phase: "ACCUMULATION", adx, previousAdx, adxRising, label: `Accumulation / Getting Ready — ADX ${adx.toFixed(1)}${adxRising ? " rising below 25" : " below 25"}` };
+}
+
+/** Return true only for the three core NSE index profile families. */
+export function isDemoCoreNseProfile(instrumentToken?: string, instrumentSymbol?: string, instrumentLabel?: string): boolean {
+  const text = `${instrumentToken ?? ""} ${instrumentSymbol ?? ""} ${instrumentLabel ?? ""}`.toUpperCase();
+  if (/(MCX|COMMODITY|CRUDE|GOLD|SILVER|NATURAL GAS|NATGAS|COPPER|SENSEX|BANKEX|MIDCP)/.test(text)) return false;
+  return text.includes("BANKNIFTY") || text.includes("FINNIFTY") || text.includes("NIFTY");
+}
+
+export function isWithinDemoCoreNseWindow(istMinute: number): boolean {
+  return istMinute >= 9 * 60 + 45 && istMinute <= 14 * 60 + 30;
+}
+
 export function detectRegimeV2(candles: Candle[]): RegimeV2Snapshot {
   if (candles.length < 30) return { regime: "DEAD", label: "Insufficient data", adx: 0, atrRatio: 0 };
   const closes = candles.map(c => c.close);
@@ -3023,6 +3073,87 @@ export function generateRenkoSignal(
   }
 
   return { ...hold, atr, entryPrice: price, reason: `[Red Bar Theory] No 3-brick streak (G:${consecutiveGreen} R:${consecutiveRed}) | brick: ₹${entryBrickSize.toFixed(1)}` };
+}
+
+/**
+ * Paper-demo Red Bar setups from the supplied playbook screenshot.
+ * Morning Red Bar: the first 30 minutes establish a Renko direction and EMA confirmation,
+ * then price must break the morning range. 12:45 Candle: after 12:45 IST, price must
+ * retest the morning range edge with a fresh momentum candle. Gap-up sessions allow only
+ * BUY/CE direction after an upside breakout; gap-down sessions allow only SELL/PE after
+ * a downside breakdown. This helper is never used for live-mode entries.
+ */
+export function generateDemoRedBarSignal(
+  candles: Candle[],
+  prevDayClose = 0,
+  slMultiplier = 1.5,
+  tpMultiplier = 2.0,
+  renkoSizing?: RenkoEntrySizing,
+): Signal {
+  const hold: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "Demo Red Bar: waiting", layer: "RedBarTheory" };
+  if (!candles || candles.length < 35) return { ...hold, reason: "Demo Red Bar: insufficient data" };
+  const last = candles[candles.length - 1];
+  const ist = (ts: number) => {
+    const d = new Date(ts + 330 * 60000);
+    return { key: d.toISOString().slice(0, 10), minute: d.getUTCHours() * 60 + d.getUTCMinutes() };
+  };
+  const lastIst = ist(last.timestamp);
+  const today = candles.filter(c => ist(c.timestamp).key === lastIst.key);
+  const morning = today.filter(c => {
+    const m = ist(c.timestamp).minute;
+    return m >= 555 && m < 585; // 9:15–9:45 IST, first 30 minutes
+  });
+  if (morning.length < 20) return { ...hold, entryPrice: last.close, reason: `[Demo Red Bar] Building first 30-minute range (${morning.length}/20 candles)` };
+
+  const atr = calcATR(candles, 14);
+  const brickSize = resolveEntryRenkoBrickSize(atr, renkoSizing?.frozenAtr, 1.0, renkoSizing?.minimumBrickSize);
+  const morningBricks = buildRenkoBricks(morning, brickSize);
+  if (morningBricks.length < 2) return { ...hold, atr, entryPrice: last.close, reason: "[Demo Red Bar] Waiting for morning Renko direction" };
+  let green = 0;
+  let red = 0;
+  for (let i = morningBricks.length - 1; i >= 0; i--) {
+    if (morningBricks[i].color === "green") { if (red) break; green++; }
+    else { if (green) break; red++; }
+  }
+  const renkoDirection: "BUY" | "SELL" | "HOLD" = green >= 2 ? "BUY" : red >= 2 ? "SELL" : "HOLD";
+  const rangeHigh = Math.max(...morning.map(c => c.high));
+  const rangeLow = Math.min(...morning.map(c => c.low));
+  const closes = today.map(c => c.close);
+  const e9 = ema(closes, Math.min(9, closes.length)).at(-1) ?? last.close;
+  const e21 = ema(closes, Math.min(21, closes.length)).at(-1) ?? last.close;
+  const emaDirection: "BUY" | "SELL" | "HOLD" = e9 > e21 ? "BUY" : e9 < e21 ? "SELL" : "HOLD";
+  const gapPct = prevDayClose > 0 ? (morning[0].open - prevDayClose) / prevDayClose : 0;
+  const gapDirection: "BUY" | "SELL" | "ANY" = gapPct >= 0.003 ? "BUY" : gapPct <= -0.003 ? "SELL" : "ANY";
+  const directionAllowed = (direction: "BUY" | "SELL") => gapDirection === "ANY" || gapDirection === direction;
+  const candleRange = last.high - last.low;
+  const bodyRatio = candleRange > 0 ? Math.abs(last.close - last.open) / candleRange : 0;
+  const freshBull = last.close > last.open && bodyRatio >= 0.45;
+  const freshBear = last.close < last.open && bodyRatio >= 0.45;
+  const price = last.close;
+  const slDistance = Math.max(atr * slMultiplier, price * 0.001);
+  const makeSignal = (direction: "BUY" | "SELL", setup: string, confidence: number): Signal => ({
+    direction,
+    confidence,
+    entryPrice: price,
+    slPrice: direction === "BUY" ? price - slDistance : price + slDistance,
+    targetPrice: direction === "BUY" ? price + slDistance * tpMultiplier : price - slDistance * tpMultiplier,
+    atr,
+    reason: `[Demo Red Bar] ${setup} | Renko:${renkoDirection} EMA:${emaDirection} | range ₹${rangeLow.toFixed(0)}–₹${rangeHigh.toFixed(0)} | gap ${(gapPct * 100).toFixed(2)}%`,
+    layer: "RedBarTheory",
+  });
+
+  if (lastIst.minute >= 585 && lastIst.minute < 765) {
+    if (renkoDirection === "BUY" && emaDirection === "BUY" && price > rangeHigh && directionAllowed("BUY")) return makeSignal("BUY", "Morning Red Bar upside range breakout", 0.76);
+    if (renkoDirection === "SELL" && emaDirection === "SELL" && price < rangeLow && directionAllowed("SELL")) return makeSignal("SELL", "Morning Red Bar downside range breakdown", 0.76);
+  }
+  if (lastIst.minute >= 765 && lastIst.minute <= 870) {
+    const prev = candles[candles.length - 2];
+    const buyRetest = prev.close <= rangeHigh && last.low <= rangeHigh * 1.001 && price > rangeHigh && freshBull && emaDirection === "BUY" && directionAllowed("BUY");
+    const sellRetest = prev.close >= rangeLow && last.high >= rangeLow * 0.999 && price < rangeLow && freshBear && emaDirection === "SELL" && directionAllowed("SELL");
+    if (buyRetest) return makeSignal("BUY", "12:45 Candle upside retest with fresh momentum", 0.74);
+    if (sellRetest) return makeSignal("SELL", "12:45 Candle downside retest with fresh momentum", 0.74);
+  }
+  return { ...hold, atr, entryPrice: price, reason: `[Demo Red Bar] No eligible setup | Renko:${renkoDirection} EMA:${emaDirection} | gap filter:${gapDirection}` };
 }
 
 /**
@@ -5989,8 +6120,13 @@ async function tick(
   // snapshot; they no longer classify the market independently.
   state.currentADX = tickRegimeSnapshot.adx;
   state.currentRegime = state.regimeV2 === "TRENDING" ? "trending" : "choppy";
-  if (previousRegimeV2 !== state.regimeV2) {
-    emitActivity(state.sessionToken, "signal", `📊 Regime V2 → ${state.regimeV2} | ${tickRegimeSnapshot.label}`);
+  const previousDemoTrikalPhase = state.demoTrikalPhase;
+  const demoTrikalSnapshot = detectDemoTrikalPhase(state.candles);
+  state.demoTrikalPhase = demoTrikalSnapshot.phase;
+  state.demoTrikalAdx = demoTrikalSnapshot.adx;
+  state.demoTrikalPreviousAdx = demoTrikalSnapshot.previousAdx;
+  if (previousRegimeV2 !== state.regimeV2 || previousDemoTrikalPhase !== state.demoTrikalPhase) {
+    emitActivity(state.sessionToken, "signal", `📊 Regime V2 → ${state.regimeV2} | Demo Trikal → ${state.demoTrikalPhase} | ${demoTrikalSnapshot.label}`);
   }
 
   // Persist live price to DB on every tick — fires regardless of open trade state
@@ -6094,6 +6230,8 @@ async function tick(
   }
 
   const isMCX = state.instrumentToken.startsWith("MCX");
+  const demoCoreNseProfile = state.mode === "demo" && isDemoCoreNseProfile(state.instrumentToken, state.instrumentSymbol, state.instrumentLabel);
+  const demoDistributionExit = demoCoreNseProfile && state.demoTrikalPhase === "DISTRIBUTION";
   const squareOffMin = isMCX ? 23 * 60 + 28 : 15 * 60 + 25;
   const stopScanMin  = isMCX ? 23 * 60 + 20 : 15 * 60 + 22; // MCX: stop new trades at 23:20, square-off at 23:28; NSE: stop at 15:22 (3 min buffer before square-off at 15:25)
 
@@ -7001,6 +7139,11 @@ async function tick(
     // ── Full exit: structural thesis or premium safety net ─────────────────────
     let exitReason: string | null = null;
     let exitTrigger: D2ExitTrigger | undefined;
+    // Demo-only Phase 3 behavior: distribution exits existing positions first,
+    // while the normal SL/target and quote-safety paths remain available for all modes.
+    if (demoDistributionExit) {
+      exitReason = `Trikal Phase 3 Distribution — ADX falling from above 25 (${state.demoTrikalPreviousAdx?.toFixed(1) ?? "?"}→${state.demoTrikalAdx?.toFixed(1) ?? "?"}); no new entries`;
+    }
     const tradeAgeMs = trade.enteredAt ? Date.now() - new Date(trade.enteredAt).getTime() : Infinity;
     // ── TIME-BASED EXIT: VARIANT C ──────────────────────────────────────────
     // Option positions never exit because of elapsed time, regardless of layer.
@@ -7209,6 +7352,18 @@ async function tick(
       return;
     }
     if (light) state.trafficLight = "GREEN";
+  }
+  // ── PAPER-DEMO TRIKAL PHASE GATE ───────────────────────────────────────────
+  // Only the three core NSE demo profile families receive the requested 09:45–14:30
+  // window and phase routing. MCX, NSE Commodity, SENSEX, and live sessions retain
+  // their existing entry windows and routing.
+  if (demoCoreNseProfile && state.demoTrikalPhase !== "BREAKOUT") {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: calcATR(state.candles, 14), reason: `[Demo Trikal] ${state.demoTrikalPhase === "DISTRIBUTION" ? "Phase 3 Distribution — existing trades exit, no new entries" : "Phase 1 Accumulation — ADX at/below 25, range mode"}`, layer: "None", regimeV2: state.regimeV2 };
+    return;
+  }
+  if (demoCoreNseProfile && !isWithinDemoCoreNseWindow(istMin2)) {
+    state.lastSignal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: calcATR(state.candles, 14), reason: "Demo NSE window closed — entries allowed only 09:45–14:30 IST", layer: "None", regimeV2: state.regimeV2 };
+    return;
   }
   // ── PAUSED CHECK: Skip signal generation when bot is paused ─────────────────
   // Paused bots still monitor open trades (SL/target/trailing above), but do NOT open new trades.
@@ -7526,10 +7681,14 @@ const isExpiryDay = isOptionInstrument && (
     // Collect ALL layer signals in parallel (not sequential cascade)
     const candidateSignals: Signal[] = [];
 
-    // Layer 1: RedBarTheory V2 (5 consecutive same-color bricks → reversal entry)
+    // Layer 1: RedBarTheory. Core NSE demo profiles use the supplied Morning Red Bar,
+    // 12:45 Candle, EMA/Renko, and gap-direction rules; all other profiles retain
+    // the established generic Renko implementation.
     if (state.enabledLayers.includes("RedBarTheory")) {
       try {
-        const rbtSignal = generateRenkoSignal(state.candles, undefined, undefined, entryRenkoSizing);
+        const rbtSignal = demoCoreNseProfile
+          ? generateDemoRedBarSignal(state.candles, prevDayClose, undefined, undefined, entryRenkoSizing)
+          : generateRenkoSignal(state.candles, undefined, undefined, entryRenkoSizing);
         if (rbtSignal.direction !== "HOLD") candidateSignals.push(rbtSignal);
       } catch (e) { console.warn(`[MultiStrategy] RedBarTheory error:`, (e as Error).message); }
     }
@@ -7902,6 +8061,13 @@ const isExpiryDay = isOptionInstrument && (
     }
   }
 
+  // Demo Phase 2 uses the current ORB path plus the requested Red Bar path only;
+  // other configured layers remain available for MCX/NSE Commodity and live sessions.
+  if (demoCoreNseProfile && signal.direction !== "HOLD" && !["ORB", "RedBarTheory"].includes(signal.layer)) {
+    emitActivity(state.sessionToken, "signal", `⊘ Demo Trikal Phase 2 allows ORB/RedBar only; ${signal.layer} signal skipped`);
+    pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "Demo Phase 2 layer boundary");
+    signal = { ...signal, direction: "HOLD", confidence: 0, layer: "None", reason: `[Demo Trikal] Phase 2 layer boundary blocked ${signal.layer}` };
+  }
   // Emit tick signal to activity log
   if (signal.direction !== "HOLD") {
     const slPct = signal.entryPrice > 0 ? (Math.abs(signal.entryPrice - signal.slPrice) / signal.entryPrice * 100).toFixed(1) : "?";
@@ -7925,21 +8091,23 @@ const isExpiryDay = isOptionInstrument && (
       return;
     }
   }
- // ── ADX MOMENTUM FILTER (BankNifty only) ─────────────────────────────────────
-  // Backtest (Oct 2025 – Jul 2026) showed BankNifty loses ₹-6,148 without filter
-  // but only ₹-918 with ADX > 25 (85% reduction in losses).
-  // Nifty and Crude Oil are profitable WITHOUT this filter — keep them unchanged.
+ // ── ADX 25 PAPER-DEMO GATE ───────────────────────────────────────────────────
+  // The requested ADX 25 threshold applies to every paper-demo profile. Live
+  // sessions retain the existing BankNifty-only gate and therefore are not
+  // changed by this demo-only rollout.
   const isBankNiftyInstrument = (
     state.instrumentSymbol === "BANKNIFTY" ||
     state.instrumentToken.includes("BANKNIFTY") ||
     state.instrumentToken.includes("Nifty Bank") ||
     (state.underlyingToken ?? "").includes("Nifty Bank")
   );
-  if (isBankNiftyInstrument && state.candles.length >= 20) {
+  const enforceAdx25 = state.mode === "demo" || isBankNiftyInstrument;
+  if (enforceAdx25 && state.candles.length >= 20) {
     const adxNow = calcADX(state.candles, 14);
     if (adxNow < 25) {
-      emitActivity(state.sessionToken, "signal", `⊘ ADX FILTER: ${signal.direction} from ${signal.layer} blocked — ADX(${adxNow.toFixed(1)}) < 25 (BankNifty needs momentum to trend). Waiting for stronger move.`);
-      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `ADX filter: ${adxNow.toFixed(1)} < 25 (BankNifty)`);
+      const gateScope = state.mode === "demo" ? "all paper-demo profiles" : "BankNifty live profile";
+      emitActivity(state.sessionToken, "signal", `⊘ ADX FILTER: ${signal.direction} from ${signal.layer} blocked — ADX(${adxNow.toFixed(1)}) < 25 (${gateScope}). Waiting for stronger move.`);
+      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `ADX filter: ${adxNow.toFixed(1)} < 25 (${gateScope})`);
       logSignalToJournal({
         sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
         direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
