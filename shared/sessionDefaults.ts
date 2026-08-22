@@ -20,10 +20,10 @@ export interface InstrumentDefault {
 
 // Morning session: NSE Index Options
 const MORNING_DEFAULTS: InstrumentDefault[] = [
-  { token: "NSE_INDEX|Nifty 50",            symbol: "NIFTY",      label: "Nifty 50 → ITM Options (Auto)", lotSize: 25, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
+  { token: "NSE_INDEX|Nifty 50",            symbol: "NIFTY",      label: "Nifty 50 → ITM Options (Auto)", lotSize: 75, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty 50" },
   { token: "NSE_INDEX|Nifty Bank",          symbol: "BANKNIFTY",  label: "BankNifty → ITM Options (Auto)", lotSize: 15, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Bank" },
   { token: "NSE_INDEX|Nifty Fin Service",   symbol: "FINNIFTY",   label: "FinNifty → ITM Options (Auto)", lotSize: 25, isIndexOptions: true, underlyingToken: "NSE_INDEX|Nifty Fin Service" },
-  { token: "BSE_INDEX|SENSEX",              symbol: "SENSEX",     label: "Sensex → ITM Options (Auto)", lotSize: 20, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" }
+  { token: "BSE_INDEX|SENSEX",              symbol: "SENSEX",     label: "Sensex → ITM Options (Auto)", lotSize: 10, isIndexOptions: true, underlyingToken: "BSE_INDEX|SENSEX" }
 ];
 
 // Evening session: MCX Commodity Options
@@ -82,10 +82,10 @@ export function isEntryQualityBlocked(
   // inside the noise band and will be hit randomly.
   if (spreadNoiseSlCheck && spreadNoiseSlCheck.spreadPct > 0) {
     const halfSpreadPct = spreadNoiseSlCheck.spreadPct / 2;
-    if (spreadNoiseSlCheck.slDistancePct < 4 * halfSpreadPct) {
+    if (spreadNoiseSlCheck.slDistancePct < 2 * halfSpreadPct) {
       return {
         blocked: true,
-        reason: `SL distance ${spreadNoiseSlCheck.slDistancePct.toFixed(1)}% inside spread-noise band (half-spread ${halfSpreadPct.toFixed(1)}% × 4)`,
+        reason: `SL distance ${spreadNoiseSlCheck.slDistancePct.toFixed(1)}% inside spread-noise band (half-spread ${halfSpreadPct.toFixed(1)}% × 2)`,
       };
     }
   }

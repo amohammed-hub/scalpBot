@@ -566,6 +566,8 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       // Restore persisted optionTradeToken from DB — prevents underlying price leak after restart
       optionTradeToken: session.optionTradeToken ?? undefined,
       layerTradesCount: restoredLayerTradesCount,
+      // D46: Restore instrumentLocked flag from DB
+      instrumentLocked: (session as any).instrumentLocked ?? false,
     },
     onTradeOpen,
     onTradeClose,

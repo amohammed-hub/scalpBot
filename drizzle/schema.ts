@@ -135,6 +135,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   lastUnderlyingSLAt: bigint("lastUnderlyingSLAt", { mode: "number" }),
   // Persisted option trade token — survives server restarts (prevents underlying price leak)
   optionTradeToken: varchar("optionTradeToken", { length: 128 }),
+  // D46: instrument lock — if true, session auto-switch (9:15 AM) is bypassed
+  instrumentLocked: boolean("instrumentLocked").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

@@ -352,6 +352,8 @@ export interface BotState {
   regimeManualOverride?: boolean; // legacy field; D5 derives from configuredLayers instead
   userDisabledLayers?: string[]; // layers the user explicitly disabled — regime won't re-enable these
   strategyLocked?: boolean; // true = regime switcher won't modify layers (strategy testing mode)
+  // D46: instrument lock — if true, session auto-switch (9:15 AM) is bypassed
+  instrumentLocked?: boolean;
   // VRP Regime Filter state (updated every 5 min)
   vrpRegime?: "RICH" | "FAIR" | "CHEAP" | "INVERTED";
   vrpValue?: number;
@@ -5876,7 +5878,11 @@ async function tick(
     const currentSession = getCurrentSession();
     const prevSession = (state as any)._lastSession as TradingSession | undefined;
     if (prevSession && prevSession !== currentSession && currentSession !== "closed") {
-      if (!(state as any)._userManualInstrument) {
+      // D46: Only auto-switch if the bot was started with a default instrument.
+      // If the user explicitly picked an instrument in the dropdown, do NOT reset it at 9:15 AM.
+      // D46: The instrumentLocked flag in the database (restored to bot state) indicates 
+      // the user manually picked this instrument. If locked, do not auto-switch.
+      if (!state.instrumentLocked) {
         const defaultInst = getSessionDefault(state.botSlot, currentSession);
         if (defaultInst && state.instrumentToken !== defaultInst.token) {
           console.log(`[SessionSwitch] ${state.sessionToken.slice(0,8)} — Slot ${state.botSlot}: ${prevSession} → ${currentSession} | Switching to ${defaultInst.label}`);
@@ -8698,7 +8704,7 @@ const isExpiryDay = isOptionInstrument && (
     }
 
     // ── FIX 1: Bid-Ask Spread Check (HIGH PRIORITY) ─────────────────────────────
-    // Before entering ANY trade, check the spread. If spread > 12% of premium, SKIP. (Raised from 5% for ITM options)
+    // Before entering ANY trade, check the spread. If spread > 8% of premium, SKIP. (Raised from 5% for ITM options)
     // Wide spread = guaranteed slippage loss on entry AND exit.
     if (state.accessToken && tradeInstrumentToken) {
       const optQuote = await fetchFullQuote(tradeInstrumentToken, state.accessToken);
@@ -8706,7 +8712,7 @@ const isExpiryDay = isOptionInstrument && (
         const spreadAbs = optQuote.ask - optQuote.bid;
         const midPrice = (optQuote.ask + optQuote.bid) / 2;
         const spreadPct = midPrice > 0 ? (spreadAbs / midPrice) * 100 : 0;
-        if (spreadPct > 5) {
+        if (spreadPct > 8) {
           const reason = `Entry blocked — spread too wide (${spreadPct.toFixed(1)}%). Bid: ₹${optQuote.bid.toFixed(1)}, Ask: ₹${optQuote.ask.toFixed(1)}, Spread: ₹${spreadAbs.toFixed(1)}`;
           console.log(`[BotEngine] ${state.sessionToken} — ${reason}`);
           emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
@@ -8715,7 +8721,7 @@ const isExpiryDay = isOptionInstrument && (
             sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
             direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
             entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-            atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `Spread ${spreadPct.toFixed(1)}% > 12%`,
+            atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `Spread ${spreadPct.toFixed(1)}% > 8%`,
           });
           return;
         }
@@ -9532,6 +9538,8 @@ export function startBot(
     alertsSent: new Set<string>(),
     configuredLayers: config.configuredLayers ?? [...(config.enabledLayers ?? [])],
     layerTradesCount: config.layerTradesCount ?? {},
+    // D46: Restore instrumentLocked flag from config (persisted in DB)
+    instrumentLocked: config.instrumentLocked ?? false,
   };
 
   // D20: MCX capital guard — illiquid MCX contracts concentrated risk at 100-200k
@@ -9546,8 +9554,6 @@ export function startBot(
     emitActivity(config.sessionToken, "bot_start",
       `🛡️ MCX capital guard: configured ₹${originalCapital.toLocaleString("en-IN")} → capped at ₹${MAX_MCX_CAPITAL_INR.toLocaleString("en-IN")} (illiquid MCX contract risk control). Adjust in Settings → Capital to restore.`);
   }
-  // Mark that user explicitly chose this instrument — prevent session auto-switch from overriding
-  (state as any)._userManualInstrument = true;
   // CRITICAL: Log whether accessToken was passed to startBot
   console.log(`[BotEngine] startBot: session=${config.sessionToken.slice(0, 8)}... mode=${config.mode} accessToken=${config.accessToken ? `SET (${config.accessToken.slice(0, 8)}...)` : "NULL ⚠"} instrument=${config.instrumentSymbol}`);
   if (config.mode === "live" && !config.accessToken) {

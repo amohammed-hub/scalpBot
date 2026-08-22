@@ -510,6 +510,7 @@ export const appRouter = router({
         renkoExitEnabled: z.boolean().default(false),
         sessionSpecialLayersEnabled: z.boolean().default(true),
         sessionLayersRequireWhitelist: z.boolean().default(true),
+        instrumentLocked: z.boolean().default(false),
       }))
      .mutation(async ({ input, ctx }) => {
       console.log(`[bot.start] ENTRY — sessionToken=${input.sessionToken.slice(0,8)}..., instrument=${input.instrumentSymbol}, mode=${input.mode}`);
@@ -901,10 +902,10 @@ export const appRouter = router({
               adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
               renkoExitEnabled: input.renkoExitEnabled ?? false,
 
-              sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
-
+                            sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
               sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
               strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
+              instrumentLocked: input.instrumentLocked ?? false,
               scalperMode: input.scalperMode ?? false,
               consecutiveUnderlyingSLs: 0,
               lastUnderlyingSLAt: null,
@@ -1076,6 +1077,7 @@ export const appRouter = router({
            slStrategy: input.slStrategy ?? "B",
            strategyMode: input.strategyMode ?? "auto",
            strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
+           instrumentLocked: input.instrumentLocked ?? false,
            scalperMode: input.scalperMode ?? false,
            consecutiveTickErrors: 0,
             capitalUsed: 0,
@@ -3025,6 +3027,7 @@ export const appRouter = router({
         strategyLocked: z.boolean().default(false),
         slStrategy: z.enum(["B", "D"]).default("B"), // B = wider SL + 1:2 R:R, D = wider SL + 1:1.5 R:R
         strategyMode: z.enum(["auto", "manual"]).default("auto"), // D26: auto = engine manages strategy switching; manual = only user-selected layers trade (immune to auto-disable)
+        instrumentLocked: z.boolean().default(false),
         // D29: scalper mode — high-frequency premium-target scalping profile (tight cooldowns,
         // premium-based exits, direction lock, traffic-light entry gate (D31), premium band Rs 200-450)
         scalperMode: z.boolean().default(false),
@@ -3314,6 +3317,9 @@ export const appRouter = router({
 
            sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
            strategyLocked: input.strategyLocked ?? false,
+           // D46: Persist instrumentLocked flag — true if user picked an instrument 
+           // manually (not the session default).
+           instrumentLocked: input.instrumentLocked ?? false,
           scalperMode: input.scalperMode ?? false,
            consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
@@ -3350,6 +3356,8 @@ export const appRouter = router({
                         sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
             sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
             strategyLocked: input.strategyLocked ?? (input.strategyMode === "manual" ? true : false),
+            // D46: Persist instrumentLocked flag
+            instrumentLocked: input.instrumentLocked ?? false,
             scalperMode: input.scalperMode ?? false,
             strategyMode: input.strategyMode ?? "auto",
             consecutiveUnderlyingSLs: 0,
@@ -3450,13 +3458,12 @@ export const appRouter = router({
           unlimitedTrades: input.unlimitedTrades,
           openingBurstEnabled: input.openingBurstEnabled,
           crudeOilCorrelation: input.crudeOilCorrelation,
-          adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
+                    adaptiveRegimeEnabled: input.adaptiveRegimeEnabled ?? true,
           renkoExitEnabled: input.renkoExitEnabled ?? false,
-
           sessionSpecialLayersEnabled: input.sessionSpecialLayersEnabled ?? true,
-
           sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
           strategyLocked: input.strategyLocked ?? false,
+          instrumentLocked: input.instrumentLocked ?? false,
           scalperMode: input.scalperMode ?? false,
           consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
           lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,

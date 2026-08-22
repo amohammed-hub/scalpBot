@@ -590,9 +590,9 @@ export default function Dashboard() {
       NIFTY:     { token: "NSE_INDEX|Nifty 50",          label: "Nifty 50 → ITM Options (Auto)",   lotSize: 65 },
       BANKNIFTY: { token: "NSE_INDEX|Nifty Bank",        label: "BankNifty → ITM Options (Auto)",  lotSize: 30 },
       FINNIFTY:  { token: "NSE_INDEX|Nifty Fin Service", label: "FinNifty → ITM Options (Auto)",   lotSize: 60 },
-      SENSEX:    { token: "BSE_INDEX|SENSEX",            label: "Sensex → ITM Options (Auto)",     lotSize: 10 },
+      SENSEX:    { token: "BSE_INDEX|SENSEX",            label: "Sensex → ITM Options (Auto)",     lotSize: 20 },
       BANKEX:    { token: "BSE_INDEX|BANKEX",            label: "Bankex → ITM Options (Auto)",     lotSize: 15 },
-      MIDCPNIFTY: { token: "NSE_INDEX|NIFTY MID SELECT", label: "MidcpNifty → ITM Options (Auto)", lotSize: 75 },
+      MIDCPNIFTY: { token: "NSE_INDEX|NIFTY MID SELECT", label: "MidcpNifty → ITM Options (Auto)", lotSize: 120 },
     };
     const MCX_SYMBOL_MAP: Record<string, string> = {
       MCX_CRUDE: "CRUDEOIL",
@@ -628,6 +628,8 @@ export default function Dashboard() {
     // Mark as user override so session auto-switch won't override this choice
     setUserOverride(prev => ({ ...prev, [slot]: true }));
     localStorage.setItem("scalpbot_user_override", JSON.stringify({ ...userOverride, [slot]: true }));
+    // D46: Persist instrument lock for the session start payload
+    localStorage.setItem(`bot-instrument-locked-${sessionToken}-${slot}`, "true");
     try {
       // Step 1: Stop the bot
       if (slot === 0) {
@@ -669,8 +671,13 @@ export default function Dashboard() {
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
           unlimitedTrades,
           openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
-      crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
-      slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
+          crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
+          slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
+          // D46: Pass instrument lock to server
+          instrumentLocked: true,
+          // D49: Pass strategy/scalper settings
+          strategyMode: (accessQuery.data as any)?.strategyMode ?? "auto",
+          scalperMode: (accessQuery.data as any)?.scalperMode ?? false,
         });
       } else {
         startSecondaryMutation.mutate({
@@ -690,8 +697,13 @@ export default function Dashboard() {
           useV2Engine: localStorage.getItem("scalpbot_v2_engine") === "true",
           unlimitedTrades,
           openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
-      crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
-      slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
+          crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
+          slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
+          // D46: Pass instrument lock to server
+          instrumentLocked: true,
+          // D49: Pass strategy/scalper settings
+          strategyMode: (accessQuery.data as any)?.strategyMode ?? "auto",
+          scalperMode: (accessQuery.data as any)?.scalperMode ?? false,
         });
       }
       toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
@@ -1353,6 +1365,11 @@ export default function Dashboard() {
       crudeOilCorrelation: localStorage.getItem("scalpbot_crude_correlation") === "true",
       adaptiveRegimeEnabled: localStorage.getItem("scalpbot_adaptive_regime") !== "false", // default ON
       slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
+      // D46: Pass instrument lock to server
+      instrumentLocked: localStorage.getItem(`bot-instrument-locked-${sessionToken}-0`) === "true",
+      // D49: Pass strategy/scalper settings
+      strategyMode: (accessQuery.data as any)?.strategyMode ?? "auto",
+      scalperMode: (accessQuery.data as any)?.scalperMode ?? false,
    });
  };
 

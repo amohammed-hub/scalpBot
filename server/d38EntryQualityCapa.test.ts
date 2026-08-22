@@ -48,28 +48,27 @@ describe("D38 CA-1: premium availability", () => {
 });
 
 describe("D38 CA-3: spread-noise SL validation", () => {
-  it("blocks when SL distance sits inside the noise band (the Aug 11-19 root cause)", () => {
-    // Realized losers: SL -3.52% vs spread noise ~0.9% half-spread.
-    // Simulate a tight SL (2%) against a 1.2% spread: half-spread 0.6%,
-    // noise band 2.4% → 2% < 2.4% → blocked (stop would be hunted).
+  it("D51 Relaxed: noise band 1.2% allows 2% SL (Aug 22 fix)", () => {
+    // Noise buffer = 2 * halfSpread (0.6%) = 1.2%.
+    // noise band 1.2% → 2% > 1.2% → permitted.
     const r = isEntryQualityBlocked(250, 1.2, { slDistancePct: 2, spreadPct: 1.2 });
-    expect(r.blocked).toBe(true);
-    expect(r.reason).toContain("spread-noise band");
+    expect(r.blocked).toBe(false);
   });
 
-  it("allows when SL distance clears 4x the half-spread", () => {
+  it("allows when SL distance clears 2x the half-spread", () => {
     const r = isEntryQualityBlocked(250, 1.2, { slDistancePct: 5, spreadPct: 1.2 });
     expect(r.blocked).toBe(false);
   });
 
-  it("boundary: SL exactly at 4x half-spread is allowed", () => {
-    const r = isEntryQualityBlocked(100, 2, { slDistancePct: 4, spreadPct: 2 });
+  it("boundary: SL exactly at 2x half-spread is allowed", () => {
+    const r = isEntryQualityBlocked(100, 2, { slDistancePct: 2, spreadPct: 2 });
     expect(r.blocked).toBe(false);
   });
 
-  it("boundary: SL just under 4x half-spread is blocked", () => {
-    const r = isEntryQualityBlocked(100, 2, { slDistancePct: 3.9, spreadPct: 2 });
+  it("boundary: SL just under 2x half-spread is blocked", () => {
+    const r = isEntryQualityBlocked(100, 2, { slDistancePct: 1.9, spreadPct: 2 });
     expect(r.blocked).toBe(true);
+    expect(r.reason).toContain("spread-noise band");
   });
 
   it("zero spread never blocks (no noise band exists)", () => {
@@ -77,9 +76,9 @@ describe("D38 CA-3: spread-noise SL validation", () => {
     expect(r.blocked).toBe(false);
   });
 
-  it("scalper-mode tight SL (2%) is blocked when spread noise is wide", () => {
-    // MCX evening options can show 1.5-3% spreads; scalper 2% SL < 4x0.75%
-    const r = isEntryQualityBlocked(60, 1.5, { slDistancePct: 2, spreadPct: 1.5 });
+  it("scalper-mode tight SL (2%) is blocked when spread noise is very wide", () => {
+    // MCX evening options can show 3% spreads; scalper 2% SL < 2x 1.5% = 3%
+    const r = isEntryQualityBlocked(60, 3, { slDistancePct: 2, spreadPct: 3 });
     expect(r.blocked).toBe(true);
   });
 });
