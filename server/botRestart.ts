@@ -17,6 +17,7 @@ import { appUsers, botSessions, tradeLog, upstoxCredentials } from "../drizzle/s
 import { eq, and, desc, gte, inArray } from "drizzle-orm";
 import { startBot, stopBot, getBotState, fetchFullQuote, resolveSpecificOptionToken, resolveAtmMcxOptionToken, resolveMcxFuturesToken, type OpenTrade, type BotState } from "./botEngine";
 import { getNseIndexLotSize } from "../shared/lotSizes";
+import { setStrategyMode } from "./layerTracker";
 import { getRecommendedLayers } from "../shared/backtestLayerMap";
 import { classifyUpstoxAuthorizationHttpStatus, type UpstoxAuthorizationState } from "../shared/upstoxTokenState";
 import { upstoxAxios } from "./upstoxHttp";
@@ -568,6 +569,9 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       layerTradesCount: restoredLayerTradesCount,
       // D46: Restore instrumentLocked flag from DB
       instrumentLocked: (session as any).instrumentLocked ?? false,
+      // D53: Restore the persisted strategy/scalper intent after deploy/watchdog restart.
+      strategyMode: session.strategyMode === "manual" ? "manual" : "auto",
+      scalperMode: session.scalperMode ?? false,
     },
     onTradeOpen,
     onTradeClose,
@@ -575,6 +579,9 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
     onTick,
   );
 
+  // D53: strategy mode is tenant-scoped in memory and must be re-registered
+  // whenever a recovered session is reconstructed.
+  setStrategyMode(session.sessionToken, session.strategyMode === "manual" ? "manual" : "auto");
   const readiness = await startResult.initialTick;
   const confirmedState = getBotState(session.sessionToken);
   if (!readiness.ready || !confirmedState || (confirmedState.status !== "running" && confirmedState.status !== "paused")) {

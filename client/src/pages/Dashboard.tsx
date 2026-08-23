@@ -617,7 +617,12 @@ export default function Dashboard() {
 
   // ── Instrument Switch (stop → change → restart) ──────────────────────────────
   const [switchingSlot, setSwitchingSlot] = useState<number | null>(null);
+  // D54: per-slot generation prevents an older async switch from overwriting a newer one.
+  const switchGenerationRef = useRef<Record<number, number>>({});
   const handleInstrumentSwitch = async (slot: number, newSymbol: string, newCapital: number) => {
+    const generation = (switchGenerationRef.current[slot] ?? 0) + 1;
+    switchGenerationRef.current[slot] = generation;
+    const isCurrentSwitch = () => switchGenerationRef.current[slot] === generation;
     // MCX access gate
     if (newSymbol.startsWith("MCX_") && !hasMcxAccess) {
       toast.error("MCX markets require 3-Month plan or higher. Upgrade → Pricing page.");
@@ -637,14 +642,15 @@ export default function Dashboard() {
       } else {
         await stopSecondaryMutation.mutateAsync({ sessionToken, slot });
       }
-      // Step 2: Wait briefly for cleanup
-      await new Promise(r => setTimeout(r, 1500));
-      // Step 3: Update slotQS and restart with new instrument
+      // D54: the stop mutation resolves after server-side cleanup; avoid a fixed
+      // sleep that adds latency while leaving an overlapping-request race window.
+      if (!isCurrentSwitch()) return;
+      // Step 2: Update slotQS and restart with new instrument
       setSlotQS(s => ({ ...s, [slot]: { symbol: newSymbol, capital: newCapital } }));
       const resolved = resolveInstrument(newSymbol);
       const tg = JSON.parse(localStorage.getItem(LS_TELEGRAM) ?? "{}");
       if (slot === 0) {
-        startMutation.mutate({
+        await startMutation.mutateAsync({
           sessionToken,
           instrumentToken: resolved.token,
           instrumentSymbol: newSymbol,
@@ -675,12 +681,12 @@ export default function Dashboard() {
           slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
           // D46: Pass instrument lock to server
           instrumentLocked: true,
-          // D49: Pass strategy/scalper settings
-          strategyMode: (accessQuery.data as any)?.strategyMode ?? "auto",
-          scalperMode: (accessQuery.data as any)?.scalperMode ?? false,
+          // D49/D53: Preserve the live UI selections across instrument restarts.
+          strategyMode: config.strategyMode,
+          scalperMode: config.scalperMode,
         });
       } else {
-        startSecondaryMutation.mutate({
+        await startSecondaryMutation.mutateAsync({
           sessionToken, slot,
           instrumentToken: resolved.token,
           instrumentSymbol: newSymbol, instrumentLabel: resolved.label,
@@ -701,12 +707,12 @@ export default function Dashboard() {
           slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
           // D46: Pass instrument lock to server
           instrumentLocked: true,
-          // D49: Pass strategy/scalper settings
-          strategyMode: (accessQuery.data as any)?.strategyMode ?? "auto",
-          scalperMode: (accessQuery.data as any)?.scalperMode ?? false,
+          // D49/D53: Preserve the live UI selections across instrument restarts.
+          strategyMode: config.strategyMode,
+          scalperMode: config.scalperMode,
         });
       }
-      toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
+      if (isCurrentSwitch()) toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
     } catch (e: any) {
       toast.error(`Switch failed: ${e.message}`);
     } finally {
@@ -1367,9 +1373,10 @@ export default function Dashboard() {
       slStrategy: (localStorage.getItem("scalpbot_sl_strategy") as "B" | "D") || "B",
       // D46: Pass instrument lock to server
       instrumentLocked: localStorage.getItem(`bot-instrument-locked-${sessionToken}-0`) === "true",
-      // D49: Pass strategy/scalper settings
-      strategyMode: (accessQuery.data as any)?.strategyMode ?? "auto",
-      scalperMode: (accessQuery.data as any)?.scalperMode ?? false,
+      // D49/D53: Pass the live UI selections. Access control data does not own
+      // strategy/scalper settings and must never overwrite the user's current config.
+      strategyMode: config.strategyMode,
+      scalperMode: config.scalperMode,
    });
  };
 
