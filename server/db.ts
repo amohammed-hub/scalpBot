@@ -113,6 +113,22 @@ async function initDb() {
           console.log("[Database] Migration complete: partial1Pct/partial2Pct columns added");
         }
       }
+      // D55: Check strategy-mode columns before any bot start can write them.
+      // Older Railway schemas may not have received the generated migration.
+      for (const [column, definition] of [
+        ["scalperMode", "boolean DEFAULT false"],
+        ["instrumentLocked", "boolean DEFAULT false"],
+      ] as const) {
+        try {
+          await pool.execute(`SELECT \`${column}\` FROM \`bot_sessions\` LIMIT 1`);
+        } catch (e: any) {
+          if (e?.code === "ER_BAD_FIELD_ERROR" || e?.message?.includes("Unknown column")) {
+            console.log(`[Database] Auto-migrating: adding ${column} to bot_sessions`);
+            await pool.execute(`ALTER TABLE \`bot_sessions\` ADD COLUMN \`${column}\` ${definition}`);
+            console.log(`[Database] Migration complete: ${column} column added`);
+          }
+        }
+      }
       // Check carryForward column on trade_log (added in Round 27)
       try {
         await pool.execute("SELECT `carryForward` FROM `trade_log` LIMIT 1");
