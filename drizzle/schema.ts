@@ -212,7 +212,7 @@ export const signalJournal = mysqlTable("signal_journal", {
   oiBias: varchar("oiBias", { length: 16 }), // bullish/bearish/neutral from options flow
   // Outcome tracking
   outcome: mysqlEnum("outcome", ["traded", "rejected", "pending"]).default("pending").notNull(),
-  rejectReason: varchar("rejectReason", { length: 128 }), // why signal was rejected (risk gate, cooldown, etc.)
+  rejectReason: varchar("rejectReason", { length: 1024 }), // why signal was rejected (risk gate, cooldown, etc.)
   tradeId: int("tradeId"), // FK to trade_log.id if traded
   // Post-trade outcome (filled after trade closes)
   exitPrice: float("exitPrice"),

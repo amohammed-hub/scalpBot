@@ -74,7 +74,7 @@ async function initDb() {
             vixLevel float,
             oiBias varchar(16),
             outcome enum('traded','rejected','pending') NOT NULL DEFAULT 'pending',
-            rejectReason varchar(128),
+            rejectReason varchar(1024),
             tradeId int,
             exitPrice float,
             pnl float,
@@ -89,6 +89,19 @@ async function initDb() {
           )`);
           console.log("[Database] Migration complete: signal_journal table created");
         }
+      }
+      // D39 observability: widen long rejection diagnostics even when migration history is incomplete.
+      try {
+        const [rejectCols] = await pool.execute(
+          "SELECT CHARACTER_MAXIMUM_LENGTH AS maxLen FROM information_schema.COLUMNS WHERE TABLE_NAME='signal_journal' AND COLUMN_NAME='rejectReason' AND TABLE_SCHEMA=DATABASE()"
+        ) as any;
+        if (rejectCols?.[0]?.maxLen && Number(rejectCols[0].maxLen) < 1024) {
+          console.log("[Database] Auto-migrating: widening signal_journal.rejectReason to varchar(1024)");
+          await pool.execute("ALTER TABLE `signal_journal` MODIFY COLUMN `rejectReason` varchar(1024) NULL");
+          console.log("[Database] Migration complete: signal_journal.rejectReason widened");
+        }
+      } catch (e: any) {
+        if (e?.code !== "ER_NO_SUCH_TABLE" && !e?.message?.includes("doesn't exist")) throw e;
       }
       // Check partialBooked column on trade_log (added in Round 25)
       try {

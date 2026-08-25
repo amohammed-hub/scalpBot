@@ -25,6 +25,7 @@ import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 import { clearDemoLayerOverrides, computeLayerStats, computeViableCandidates, getLayerGateForMode, getLayerTrackerTenantKey } from "./layerTracker";
 import { demoSafetyActiveFor } from "./demoSafety";
 import { scanPremiumFirstCandidates, selectPremiumChainCandidates, type PremiumCandidateQuote } from "./optionPremiumMomentum";
+import { ensureUpstoxMarketDataFeed, getUpstoxWebSocketQuote } from "./upstoxMarketDataFeed";
 
 // Production log suppression — hide strategy details in production logs
 const IS_DEV = process.env.NODE_ENV !== "production";
@@ -4625,6 +4626,15 @@ export async function fetchFullQuote(
   const timeoutMs = options.timeoutMs ?? 5000;
   const cacheMs = options.cacheMs ?? 2000;
   const cacheKey = `${instrumentToken}\u0000${accessToken}`;
+  // Warm the shared V3 socket without blocking the tick. Once a fresh quote is
+  // available it is authoritative; REST below remains a bounded safety fallback.
+  void ensureUpstoxMarketDataFeed(accessToken, [instrumentToken]);
+  const wsQuote = getUpstoxWebSocketQuote(accessToken, instrumentToken);
+  if (wsQuote && wsQuote.ltp > 0) {
+    const liveQuote = { ltp: wsQuote.ltp, bid: wsQuote.bid > 0 ? wsQuote.bid : wsQuote.ltp, ask: wsQuote.ask > 0 ? wsQuote.ask : wsQuote.ltp };
+    fullQuoteCache.set(cacheKey, { quote: liveQuote, fetchedAt: Date.now() });
+    return liveQuote;
+  }
   const cached = fullQuoteCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt <= cacheMs) return cached.quote;
 
@@ -7677,12 +7687,17 @@ const isExpiryDay = isOptionInstrument && (
       if (analytics) {
         state.premiumHistory ??= new Map();
         const chainCandidates = selectPremiumChainCandidates(analytics.strikes, analytics.underlyingPrice, 3);
+        const candidateKeys = chainCandidates.map(candidate => candidate.token).filter(Boolean);
+        void ensureUpstoxMarketDataFeed(state.accessToken, [underlyingForPremium, ...candidateKeys]);
         const nowPremium = Date.now();
-        const quoteCandidates: PremiumCandidateQuote[] = chainCandidates.map(candidate => ({
-          ...candidate,
-          spreadPercent: null,
-          timestamp: nowPremium,
-        }));
+        const quoteCandidates: PremiumCandidateQuote[] = chainCandidates.flatMap(candidate => {
+          const wsQuote = getUpstoxWebSocketQuote(state.accessToken!, candidate.token);
+          if (!wsQuote || wsQuote.ltp <= 0) return [];
+          const spreadPercent = wsQuote.bid > 0 && wsQuote.ask > 0
+            ? ((wsQuote.ask - wsQuote.bid) / wsQuote.ltp) * 100
+            : null;
+          return [{ ...candidate, premium: wsQuote.ltp, spreadPercent, timestamp: wsQuote.receivedAt }];
+        });
         const scans = scanPremiumFirstCandidates(quoteCandidates, state.premiumHistory, nowPremium, 12);
         const winner = scans.find(result => result.signal && result.signal.confidence >= state.minConfidence / 100);
         if (winner?.signal) {
@@ -8863,6 +8878,15 @@ const isExpiryDay = isOptionInstrument && (
         const slDistPct = (state.optionSlPct ?? 5) / 100;
     const slDist = optionPremiumForSizing * slDistPct;
     const oneLotRisk = slDist * lotSize;
+    // D39: MCX contracts are indivisible. Use an explicit, bounded MCX floor for
+    // affordability only; never silently exceed it and always disclose the
+    // effective budget. The default is 5% of the configured MCX capital, capped
+    // at 5%, so this is a controlled parameter rather than an unlimited override.
+    const mcxRiskBudgetPct = Math.min(5, Math.max(1, Number(process.env.MCX_MIN_RISK_BUDGET_PCT ?? 5)));
+    const effectiveRiskBudget = isMcxForCapital ? Math.max(riskAmount, state.capital * mcxRiskBudgetPct / 100) : riskAmount;
+    if (isMcxForCapital && effectiveRiskBudget > riskAmount) {
+      emitActivity(state.sessionToken, "signal", `⚠️ D39 MCX budget floor active: ₹${effectiveRiskBudget.toFixed(0)} (${mcxRiskBudgetPct.toFixed(1)}% of ₹${state.capital.toFixed(0)} capital) vs configured ₹${riskAmount.toFixed(0)}; one-lot risk remains bounded.`);
+    }
     // D7: a minimum lot must never silently override the configured risk budget.
     // This guard is deliberately before manual/automatic sizing and before any order path.
     // D39: NEVER silently skip. Make the skip visible AND attempt automatic
@@ -8871,9 +8895,9 @@ const isExpiryDay = isOptionInstrument && (
     // ₹100,000/1% config) were being killed here with only a dashboard toast —
     // invisible in console/journal, which is how the "signal fires but no trade"
     // mystery was created.
-    if (oneLotRisk > riskAmount) {
-      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — one lot risk ₹${oneLotRisk.toFixed(2)} exceeds risk budget ₹${riskAmount.toFixed(2)} on ${tradeSymbol} (SL ${(slDistPct * 100).toFixed(2)}%). Attempting D39 cheaper-strike resolution...`);
-      const maxAffordablePremium = riskAmount / lotSize / slDistPct;
+    if (oneLotRisk > effectiveRiskBudget) {
+      console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — one lot risk ₹${oneLotRisk.toFixed(2)} exceeds risk budget ₹${effectiveRiskBudget.toFixed(2)} on ${tradeSymbol} (SL ${(slDistPct * 100).toFixed(2)}%). Attempting D39 cheaper-strike resolution...`);
+      const maxAffordablePremium = effectiveRiskBudget / lotSize / slDistPct;
       emitActivity(state.sessionToken, "signal",
         `⊘ Risk budget: one lot of ${tradeSymbol} needs ₹${oneLotRisk.toFixed(0)} vs ₹${riskAmount.toFixed(0)} available (SL ${(slDistPct * 100).toFixed(1)}%). Searching cheaper strike (max premium ₹${maxAffordablePremium.toFixed(0)})...`);
       // Re-resolve to a cheaper strike whose worst-case SL risk fits the budget
@@ -8887,13 +8911,13 @@ const isExpiryDay = isOptionInstrument && (
           ? await resolveAtmMcxOptionToken(state.underlyingToken ?? state.instrumentToken, ceOrPeD39, state.accessToken, d39Exclude, state.lastPrice)
           : await resolveAtmOptionToken(state.underlyingToken ?? state.instrumentToken, ceOrPeD39, state.accessToken, d39Exclude, state.sessionToken);
         // Second OTM attempt if the first cheaper strike is still over budget
-        if (resolvedD39 && resolvedD39.premium * slDistPct * lotSize > riskAmount) {
+        if (resolvedD39 && resolvedD39.premium * slDistPct * lotSize > effectiveRiskBudget) {
           resolvedD39 = isMcxForD39
             ? await resolveAtmMcxOptionToken(state.underlyingToken ?? state.instrumentToken, ceOrPeD39, state.accessToken, [...d39Exclude, resolvedD39.strike], state.lastPrice)
             : await resolveAtmOptionToken(state.underlyingToken ?? state.instrumentToken, ceOrPeD39, state.accessToken, [...d39Exclude, resolvedD39.strike], state.sessionToken);
         }
       }
-      if (resolvedD39 && resolvedD39.premium > 0 && resolvedD39.premium * slDistPct * lotSize <= riskAmount && resolvedD39.premium * lotSize <= state.capital) {
+      if (resolvedD39 && resolvedD39.premium > 0 && resolvedD39.premium * slDistPct * lotSize <= effectiveRiskBudget && resolvedD39.premium * lotSize <= state.capital) {
         // Cheaper strike fits the risk budget — swap sizing inputs and let the
         // normal sizing path (rawQtyByRisk / maxQtyByCapital / qty-mode) run
         // with the resolved strike. Keep the original inputs logged for audit.
@@ -8905,11 +8929,11 @@ const isExpiryDay = isOptionInstrument && (
         state.optionTradeToken = resolvedD39.token;
         state.optionPremiumPrice = resolvedD39.premium;
         state.lotSize = resolvedD39.lotSize ?? lotSize;
-        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — D39 cheaper-strike resolution: switched to ${tradeSymbol} @ ₹${resolvedD39.premium.toFixed(2)} (one-lot risk ₹${(resolvedD39.premium * slDistPct * state.lotSize).toFixed(0)} ≤ ₹${riskAmount.toFixed(0)})`);
-        emitActivity(state.sessionToken, "signal", `✅ D39 risk-budget fallback: switched to cheaper OTM strike ${resolvedD39.strike} ${ceOrPeD39} @ ₹${resolvedD39.premium.toFixed(2)} — now fits the ₹${riskAmount.toFixed(0)} risk budget`);
+        console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — D39 cheaper-strike resolution: switched to ${tradeSymbol} @ ₹${resolvedD39.premium.toFixed(2)} (one-lot risk ₹${(resolvedD39.premium * slDistPct * state.lotSize).toFixed(0)} ≤ ₹${effectiveRiskBudget.toFixed(0)})`);
+        emitActivity(state.sessionToken, "signal", `✅ D39 risk-budget fallback: switched to cheaper OTM strike ${resolvedD39.strike} ${ceOrPeD39} @ ₹${resolvedD39.premium.toFixed(2)} — now fits the ₹${effectiveRiskBudget.toFixed(0)} effective risk budget`);
       } else {
         // Nothing fits — reject with a fully visible, actionable diagnostic
-        const reason = `D39 no affordable strike — one lot of ${state.instrumentSymbol} ${ceOrPeD39} needs SL risk ₹${oneLotRisk.toFixed(0)} vs budget ₹${riskAmount.toFixed(0)} (SL ${(slDistPct * 100).toFixed(1)}%). Cheaper strikes tried; none fit (max affordable premium ₹${maxAffordablePremium.toFixed(0)}/lot). Fix: raise capital above ₹${(oneLotRisk * 100 / (state.riskPerTradePct > 0 ? state.riskPerTradePct : 1)).toFixed(0)} or risk% above ${((oneLotRisk / state.capital) * 100).toFixed(1)}%, or pick a lower-strike/lot contract.`;
+        const reason = `D39 no affordable strike — one lot of ${state.instrumentSymbol} ${ceOrPeD39} needs SL risk ₹${oneLotRisk.toFixed(0)} vs budget ₹${effectiveRiskBudget.toFixed(0)} (SL ${(slDistPct * 100).toFixed(1)}%). Cheaper strikes tried; none fit (max affordable premium ₹${maxAffordablePremium.toFixed(0)}/lot). Fix: raise capital above ₹${(oneLotRisk * 100 / (state.riskPerTradePct > 0 ? state.riskPerTradePct : 1)).toFixed(0)} or risk% above ${((oneLotRisk / state.capital) * 100).toFixed(1)}%, or pick a lower-strike/lot contract.`;
         console.log(`[BotEngine] ${state.sessionToken.slice(0, 8)} — ${reason}`);
         emitActivity(state.sessionToken, "signal", `⛔ ${reason}`);
         pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, reason);
@@ -8924,7 +8948,7 @@ const isExpiryDay = isOptionInstrument && (
         return;
       }
     }
-    const rawQtyByRisk = Math.floor(riskAmount / slDist / lotSize) * lotSize;
+    const rawQtyByRisk = Math.floor(effectiveRiskBudget / slDist / lotSize) * lotSize;
     // Also cap by capital (can't buy more than capital allows)
     const maxQtyByCapital = Math.floor(Math.min(state.capital, MAX_CAPITAL_PER_TRADE) / optionPremiumForSizing / lotSize) * lotSize;
     // MAX LOT CAP REMOVED per user request — risk-based sizing formula handles quantity.
@@ -9868,6 +9892,10 @@ export function startBot(
   }, intervalMs);
   state.intervalHandle = handle;
   bots.set(config.sessionToken, state);
+  // Start the shared V3 feed immediately for both the underlying and any
+  // already-resolved option token. The tick remains non-blocking; quote and
+  // candle consumers use fresh socket data when available.
+  void ensureUpstoxMarketDataFeed(state.accessToken ?? "", [state.underlyingToken || state.instrumentToken, state.optionTradeToken || ""]);
   console.log(`[startBot] ✓ Bot added to Map — token=${config.sessionToken.slice(0,8)}, mapSize=${bots.size}, status=${state.status}`);
   emitActivity(config.sessionToken, "bot_start", `Bot registered — ${config.instrumentLabel} | ${config.mode} mode | Capital: ₹${config.capital.toLocaleString()} | Scan: ${config.scanIntervalSec}s | MapSize: ${bots.size}`);
 
