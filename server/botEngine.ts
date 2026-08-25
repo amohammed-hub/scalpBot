@@ -24,6 +24,7 @@ import { fetchIndiaVix } from "./riskManager";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 import { clearDemoLayerOverrides, computeLayerStats, computeViableCandidates, getLayerGateForMode, getLayerTrackerTenantKey } from "./layerTracker";
 import { demoSafetyActiveFor } from "./demoSafety";
+import { scanPremiumFirstCandidates, selectPremiumChainCandidates, type PremiumCandidateQuote } from "./optionPremiumMomentum";
 
 // Production log suppression — hide strategy details in production logs
 const IS_DEV = process.env.NODE_ENV !== "production";
@@ -93,7 +94,7 @@ export interface Signal {
   targetPrice: number;
   atr: number;
   reason: string;
-  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity" | "PremiumRenko" | "BoxingStrategy" | "MeanReversionV13" | "None";
+  layer: "Breakout" | "Pattern" | "Trend" | "Momentum" | "TrendMomentum" | "MACD_BB" | "PowerHour" | "MCXEvening" | "MCXLateSession" | "HeroZero" | "ORB" | "VWAPReversion" | "VWAPPullback" | "InstFootprint" | "HourlyClose" | "BoomingBulls" | "FailedBreakout" | "OpeningBurst" | "CPR" | "RedBarTheory" | "TrikalStrategy" | "Adeeb" | "OIFlow" | "MaxPainGravity"     | "PremiumRenko" | "BoxingStrategy" | "MeanReversionV13" | "PremiumMomentum" | "None";
   // Institutional strategy metadata
   orbHigh?: number;
   orbLow?: number;
@@ -239,6 +240,13 @@ export interface BotState {
   d39ResolvedLotSize?: number;
   optionQuoteStatus?: "live" | "stale" | "unavailable";
   optionQuoteUpdatedAt?: number;
+  premiumFirstEnabled?: boolean;
+  premiumHistory?: Map<string, import("./optionPremiumMomentum").PremiumCandle[]>;
+  premiumFirstToken?: string;
+  premiumFirstStrike?: number;
+  premiumFirstType?: "CE" | "PE";
+  premiumFirstPremium?: number;
+  premiumFirstExpiry?: string;
   isOpeningTrade?: boolean; // mutex: prevents duplicate trade opens from concurrent ticks
   tickInProgress?: boolean; // lock: prevents overlapping ticks from running concurrently
   // Layer selection: user can enable/disable specific strategy layers.
@@ -1691,6 +1699,7 @@ export const LAYER_REGIME_AFFINITY = {
   PremiumRenko: "TRENDING",
   BoxingStrategy: "RANGING",
   MeanReversionV13: "RANGING",
+  PremiumMomentum: "TRENDING",
   None: "NONE",
 } as const satisfies Record<Signal["layer"], LayerRegimeAffinity>;
 
@@ -7456,6 +7465,12 @@ async function tick(
   const slMult = isReEntry ? state.stopLossMultiplier * 0.8 : state.stopLossMultiplier;
   // V4 SL Strategy override: B = 1:2 R:R, D = 1:1.5 R:R
   const effectiveTargetMult = state.slStrategy === "D" ? 1.5 : state.slStrategy === "B" ? 2.0 : state.targetMultiplier;
+  // Premium-first selection is per-tick; never carry a previous candidate into a later signal.
+  state.premiumFirstToken = undefined;
+  state.premiumFirstStrike = undefined;
+  state.premiumFirstType = undefined;
+  state.premiumFirstPremium = undefined;
+  state.premiumFirstExpiry = undefined;
   let signal: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No session-layer path applicable", layer: "None" };
 
   // Previous trading day candle (index -2 from today = yesterday's candle)
@@ -7652,6 +7667,48 @@ const isExpiryDay = isOptionInstrument && (
       signal = generateSignal(state.candles, slMult, effectiveTargetMult, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, false, state.enabledLayers || []);
     }
   }
+  // Premium-first option scan: evaluate a bounded ATM/ITM universe when the
+  // underlying-first engine has no signal. This remains subject to all existing
+  // risk, margin, contract, and entry-quality gates below.
+  if (signal.direction === "HOLD" && isOptionsMode && state.accessToken && state.accessToken !== "DEMO_NO_TOKEN" && state.premiumFirstEnabled !== false) {
+    try {
+      const underlyingForPremium = state.underlyingToken || state.instrumentToken;
+      const analytics = getCachedAnalytics(underlyingForPremium) ?? await fetchOptionsAnalytics(underlyingForPremium, state.accessToken);
+      if (analytics) {
+        state.premiumHistory ??= new Map();
+        const chainCandidates = selectPremiumChainCandidates(analytics.strikes, analytics.underlyingPrice, 3);
+        const nowPremium = Date.now();
+        const quoteCandidates: PremiumCandidateQuote[] = chainCandidates.map(candidate => ({
+          ...candidate,
+          spreadPercent: null,
+          timestamp: nowPremium,
+        }));
+        const scans = scanPremiumFirstCandidates(quoteCandidates, state.premiumHistory, nowPremium, 12);
+        const winner = scans.find(result => result.signal && result.signal.confidence >= state.minConfidence / 100);
+        if (winner?.signal) {
+          state.premiumFirstToken = winner.candidate.token;
+          state.premiumFirstStrike = winner.candidate.strike;
+          state.premiumFirstType = winner.candidate.optionType;
+          state.premiumFirstPremium = winner.candidate.premium;
+          state.premiumFirstExpiry = analytics.expiry;
+          signal = {
+            direction: winner.signal.direction,
+            confidence: winner.signal.confidence,
+            entryPrice: winner.signal.entry,
+            slPrice: winner.signal.stopLoss,
+            targetPrice: winner.signal.target,
+            atr: winner.signal.atr,
+            reason: `[PremiumMomentum] ${winner.reason} | ${winner.candidate.symbol}`,
+            layer: "PremiumMomentum",
+            regimeV2: state.regimeV2,
+          };
+          emitActivity(state.sessionToken, "signal", `⚡ Premium-first candidate ${winner.candidate.symbol} ${winner.signal.direction} @ ₹${winner.signal.entry.toFixed(2)} | ${(winner.signal.confidence * 100).toFixed(0)}%`);
+        }
+      }
+    } catch (premiumErr) {
+      if ((state.tickCount ?? 0) % 20 === 1) console.warn(`[PremiumFirst] scan failed:`, premiumErr instanceof Error ? premiumErr.message : String(premiumErr));
+    }
+  }
   // Every signal path, including specialised and legacy V1 paths, is journalled
   // against the one V2 state value calculated above.
   signal.regimeV2 ??= state.regimeV2;
@@ -7670,6 +7727,7 @@ const isExpiryDay = isOptionInstrument && (
     "BoxingStrategy": 1,   // reduced from 2 → 1
     "ORB": 1, // ORB V8: max 1 trade per day (by design)
     "MeanReversionV13": 2, // max 2 mean reversion trades per day
+    "PremiumMomentum": 2, // bounded premium-first momentum entries
   };
   // TRADE CAP REMOVED (Aug 2026): the per-bot total daily layer-trade limit
   // (10 MCX / 6 NSE) was removed per founder directive — subscriptions must never be
@@ -8459,9 +8517,9 @@ const isExpiryDay = isOptionInstrument && (
 
   if (isOptionsMode && state.accessToken) {
     // Determine CE or PE based on signal direction (or explicit optionType override)
-    const ceOrPe: "CE" | "PE" = state.optionType === "CE" ? "CE"
+    const ceOrPe: "CE" | "PE" = state.premiumFirstType ?? (state.optionType === "CE" ? "CE"
       : state.optionType === "PE" ? "PE"
-      : signal.direction === "BUY" ? "CE" : "PE";
+      : signal.direction === "BUY" ? "CE" : "PE");
     if (isMCX) { console.log("[MCX-DIAG] " + state.sessionToken.slice(0,8) + " " + state.instrumentSymbol + " entering option resolution: ceOrPe=" + ceOrPe + " underlying=" + state.underlyingToken); }
 
     // Detect MCX placeholder token (e.g. MCX_FO|GOLDM — no numeric ID)
@@ -8522,9 +8580,11 @@ const isExpiryDay = isOptionInstrument && (
       emitActivity(state.sessionToken, "signal", `🎯 Diversifying: skipping strikes [${excludeStrikes.join(", ")}] (used by other bots)`);
     }
     const isMcxToken = resolvedUnderlying.startsWith("MCX_FO|");
-    const resolved = isMcxToken
-      ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes, state.lastPrice)
-      : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes, state.sessionToken);
+    const resolved: ResolvedOption | null = state.premiumFirstToken && state.premiumFirstPremium && state.premiumFirstStrike
+      ? { token: state.premiumFirstToken, premium: state.premiumFirstPremium, strike: state.premiumFirstStrike, expiry: state.premiumFirstExpiry, tradingSymbol: `${state.instrumentSymbol}_${state.premiumFirstType}_${state.premiumFirstStrike}` }
+      : (isMcxToken
+        ? await resolveAtmMcxOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes, state.lastPrice)
+        : await resolveAtmOptionToken(resolvedUnderlying, ceOrPe, state.accessToken, excludeStrikes, state.sessionToken));
 
     if (!resolved) {
       // Option resolve failed.

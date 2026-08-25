@@ -2,30 +2,18 @@
  * activityLog.ts
  *
  * In-memory circular buffer for per-session bot activity events.
- * Stores the last MAX_EVENTS events per session token.
- * Events are emitted by botEngine callbacks and read by the tRPC activity.log procedure.
  */
 
 export type ActivityEventType =
-  | "tick"
-  | "signal"
-  | "trade_open"
-  | "trade_close"
-  | "bot_start"
-  | "bot_stop"
-  | "bot_crash"
-  | "sl_update"
-  | "partial_book"
-  | "market_closed"
-  | "bot_pause"
-  | "bot_resume"
-  | "error";
+  | "tick" | "signal" | "trade_open" | "trade_close" | "bot_start" | "bot_stop"
+  | "bot_crash" | "sl_update" | "partial_book" | "market_closed" | "bot_pause"
+  | "bot_resume" | "error";
 
 export interface ActivityEvent {
   id: number;
-  ts: number; // Unix ms
+  ts: number;
   type: ActivityEventType;
-  slot: number; // 0 = primary, 1 = slot1, 2 = slot2, 3 = slot3
+  slot: number;
   message: string;
   price?: number;
   pnl?: number;
@@ -36,68 +24,39 @@ const MAX_EVENTS = 200;
 const logs = new Map<string, ActivityEvent[]>();
 let globalId = 0;
 
-/**
- * Emit an activity event for a session.
- * sessionToken should be the ROOT token (without -slot1/-slot2 suffix).
- */
+function rootAndSlot(sessionToken: string): { rootToken: string; slot: number } {
+  const match = sessionToken.match(/-slot(\d+)$/);
+  return { rootToken: sessionToken.replace(/-slot\d+$/, ""), slot: match ? Number(match[1]) : 0 };
+}
+
 export function emitActivity(
   sessionToken: string,
   type: ActivityEventType,
   message: string,
-  extras?: { price?: number; pnl?: number; confidence?: number; slot?: number }
+  extras?: { price?: number; pnl?: number; confidence?: number; slot?: number },
 ): void {
-  // Normalize: strip -slot1 / -slot2 / -slot3 suffix so all slots write to the same log
-  const rootToken = sessionToken.replace(/-slot\d+$/, "");
-  const slot = sessionToken.endsWith("-slot3") ? 3 : sessionToken.endsWith("-slot2") ? 2 : sessionToken.endsWith("-slot1") ? 1 : 0;
-
-  if (!logs.has(rootToken)) logs.set(rootToken, []);
-  const buf = logs.get(rootToken)!;
-
-  buf.push({
-    id: ++globalId,
-    ts: Date.now(),
-    type,
-    slot: extras?.slot ?? slot,
-    message,
-    price: extras?.price,
-    pnl: extras?.pnl,
-    confidence: extras?.confidence,
-  });
-
-  // Trim to MAX_EVENTS
-  if (buf.length > MAX_EVENTS) buf.splice(0, buf.length - MAX_EVENTS);
-}
-
-/**
- * Get the last `limit` events for a session, optionally after a given event id.
- */
-export function getActivity(
-  sessionToken: string,
-  limit = 50,
-  afterId = 0
-): ActivityEvent[] {
-  const rootToken = sessionToken.replace(/-slot\d+$/, "");
+  const { rootToken, slot } = rootAndSlot(sessionToken);
   const buf = logs.get(rootToken) ?? [];
-  const filtered = afterId > 0 ? buf.filter(e => e.id > afterId) : buf;
-  return filtered.slice(-limit);
+  buf.push({ id: ++globalId, ts: Date.now(), type, slot: extras?.slot ?? slot, message, price: extras?.price, pnl: extras?.pnl, confidence: extras?.confidence });
+  if (buf.length > MAX_EVENTS) buf.splice(0, buf.length - MAX_EVENTS);
+  logs.set(rootToken, buf);
 }
 
-/**
- * Clear activity log for a session (e.g. on bot stop).
- * Only clears events for the specific slot, not all slots' logs.
- */
+export function getActivity(sessionToken: string, limit = 50, afterId = 0): ActivityEvent[] {
+  const { rootToken } = rootAndSlot(sessionToken);
+  const buf = logs.get(rootToken) ?? [];
+  return (afterId > 0 ? buf.filter(event => event.id > afterId) : buf).slice(-limit);
+}
+
 export function clearActivity(sessionToken: string, clearAll = false): void {
-  const rootToken = sessionToken.replace(/-slot\d+$/, "");
+  const { rootToken, slot } = rootAndSlot(sessionToken);
   if (clearAll) {
     logs.delete(rootToken);
     return;
   }
-  // Only clear events for the specific slot
-  const slot = sessionToken.endsWith("-slot3") ? 3 : sessionToken.endsWith("-slot2") ? 2 : sessionToken.endsWith("-slot1") ? 1 : 0;
   const buf = logs.get(rootToken);
-  if (buf) {
-    const filtered = buf.filter(e => e.slot !== slot);
-    if (filtered.length === 0) logs.delete(rootToken);
-    else logs.set(rootToken, filtered);
-  }
+  if (!buf) return;
+  const remaining = buf.filter(event => event.slot !== slot);
+  if (remaining.length === 0) logs.delete(rootToken);
+  else logs.set(rootToken, remaining);
 }

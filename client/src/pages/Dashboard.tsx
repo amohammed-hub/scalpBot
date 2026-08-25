@@ -1105,18 +1105,26 @@ export default function Dashboard() {
   type ActivityEvent = { id: number; ts: number; type: string; slot: number; message: string; price?: number; pnl?: number; confidence?: number };
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
   const activityScrollRef = useRef<HTMLDivElement>(null);
+  const activitySessionRef = useRef(sessionToken);
   const { data: newActivityEvents } = trpc.activity.log.useQuery(
     { sessionToken, limit: 50, afterId: activityAfterId },
-    { refetchInterval: 2000, enabled: authReady && activeTab === "log" }
+    { refetchInterval: 2000, enabled: authReady && activeTab === "log" && !!sessionToken }
   );
+  useEffect(() => {
+    if (activitySessionRef.current === sessionToken) return;
+    activitySessionRef.current = sessionToken;
+    setActivityEvents([]);
+    setActivityAfterId(0);
+  }, [sessionToken]);
   useEffect(() => {
     if (!newActivityEvents || newActivityEvents.length === 0) return;
     setActivityEvents(prev => {
-      const combined = [...prev, ...newActivityEvents];
-      return combined.slice(-200);
+      const byId = new Map<number, ActivityEvent>();
+      for (const event of [...prev, ...newActivityEvents]) byId.set(event.id, event);
+      return Array.from(byId.values()).sort((a, b) => a.id - b.id).slice(-200);
     });
     const lastId = newActivityEvents[newActivityEvents.length - 1]?.id;
-    if (lastId) setActivityAfterId(lastId);
+    if (lastId) setActivityAfterId(previous => Math.max(previous, lastId));
     setTimeout(() => {
       if (activityScrollRef.current) {
         activityScrollRef.current.scrollTop = activityScrollRef.current.scrollHeight;

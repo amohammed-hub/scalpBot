@@ -16,7 +16,7 @@ const entryLayers: Signal["layer"][] = [
   "VWAPReversion", "VWAPPullback", "InstFootprint", "HourlyClose",
   "BoomingBulls", "FailedBreakout", "OpeningBurst", "CPR", "RedBarTheory",
   "TrikalStrategy", "Adeeb", "OIFlow", "MaxPainGravity", "PremiumRenko",
-  "BoxingStrategy", "MeanReversionV13", "None",
+  "BoxingStrategy", "MeanReversionV13", "PremiumMomentum", "None",
 ];
 
 describe("D5 complete regime-affinity contract", () => {
