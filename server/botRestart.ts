@@ -571,7 +571,8 @@ export async function restartSingleSession(session: BotSessionRow): Promise<bool
       instrumentLocked: (session as any).instrumentLocked ?? false,
       // D53: Restore the persisted strategy/scalper intent after deploy/watchdog restart.
       strategyMode: session.strategyMode === "manual" ? "manual" : "auto",
-      scalperMode: session.scalperMode ?? false,
+      scalperMode: (session.scalperMode ?? false) && !(session.momentumScalperMode ?? false),
+      momentumScalperMode: session.momentumScalperMode ?? false,
     },
     onTradeOpen,
     onTradeClose,

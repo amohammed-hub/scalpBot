@@ -174,6 +174,15 @@ export function generatePremiumMomentumSignal(
   return { direction, entry, stopLoss, target, atr, breakoutLevel, bodyRatio, volumeRatio, fastEma, slowEma, confidence };
 }
 
+export function selectMomentumScalperWinner(
+  scans: PremiumFirstScanResult[],
+  minConfidence: number,
+): PremiumFirstScanResult | null {
+  return scans.find(result => result.signal
+    && result.signal.direction === "BUY"
+    && result.signal.confidence >= minConfidence) ?? null;
+}
+
 export function scanPremiumFirstCandidates(
   quotes: PremiumCandidateQuote[],
   histories: Map<string, PremiumCandle[]>,

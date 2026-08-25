@@ -130,6 +130,7 @@ async function initDb() {
       // Older Railway schemas may not have received the generated migration.
       for (const [column, definition] of [
         ["scalperMode", "boolean DEFAULT false"],
+        ["momentumScalperMode", "boolean DEFAULT false"],
         ["instrumentLocked", "boolean DEFAULT false"],
       ] as const) {
         try {

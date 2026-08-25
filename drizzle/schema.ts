@@ -121,6 +121,8 @@ export const botSessions = mysqlTable("bot_sessions", {
   // D29: scalper mode — high-frequency premium-target scalping profile (tight cooldowns,
   // premium-based exits, direction lock, time windows, premium band)
   scalperMode: boolean("scalperMode").default(false),
+  // Separate premium-momentum execution profile; mutually exclusive with scalperMode.
+  momentumScalperMode: boolean("momentumScalperMode").default(false),
   // Restart-critical strategy and safety state. Defaults are fail-safe for existing rows.
   adaptiveRegimeEnabled: boolean("adaptiveRegimeEnabled").default(false),
   renkoExitEnabled: boolean("renkoExitEnabled").default(false),

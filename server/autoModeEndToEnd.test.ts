@@ -54,13 +54,13 @@ describe("AUTO strategy mode end-to-end configuration", () => {
     expect(routers).toContain('strategyMode: z.enum(["auto", "manual"]).default("auto")');
     expect(routers).toContain("scalperMode: z.boolean().default(false)");
     expect(routers).toContain("strategyMode: input.strategyMode ?? \"auto\"");
-    expect(routers).toContain("scalperMode: input.scalperMode ?? false");
+    expect(routers).toContain("scalperMode: (input.scalperMode ?? false) && !(input.momentumScalperMode ?? false)");
     expect(routers).toContain("setStrategyMode(input.sessionToken, input.strategyMode ?? \"auto\")");
   });
 
   it("requires automatic restart to restore and register both mode settings", () => {
     expect(restart).toContain("strategyMode: session.strategyMode === \"manual\" ? \"manual\" : \"auto\"");
-    expect(restart).toContain("scalperMode: session.scalperMode ?? false");
+    expect(restart).toContain("scalperMode: (session.scalperMode ?? false) && !(session.momentumScalperMode ?? false)");
     expect(restart).toContain("setStrategyMode(session.sessionToken, session.strategyMode === \"manual\" ? \"manual\" : \"auto\")");
   });
 });

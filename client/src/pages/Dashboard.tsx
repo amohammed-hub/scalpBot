@@ -54,6 +54,7 @@ interface BotConfig {
   mode: "demo" | "live";
   strategyMode: "auto" | "manual";
   scalperMode: boolean;
+  momentumScalperMode: boolean;
   capital: number;
   riskPerTradePct: number;
   maxTradesPerDay: number;
@@ -313,6 +314,7 @@ export default function Dashboard() {
       enabledLayers: ["RedBarTheory", "VWAPReversion", "TrikalStrategy", "PremiumRenko", "BoxingStrategy", "ORB", "MeanReversionV13"],
       strategyMode: ((lsSm: string | null) => (lsSm === "manual" || lsSm === "auto") ? lsSm : "auto")(localStorage.getItem("scalpbot_strategy_mode")),
       scalperMode: localStorage.getItem("scalpbot_scalper_mode") === "true",
+      momentumScalperMode: localStorage.getItem("scalpbot_momentum_scalper_mode") === "true",
       partial1Pct: 30,
       partial2Pct: 60,
       openingBurstEnabled: localStorage.getItem("scalpbot_opening_burst") === "true",
@@ -325,6 +327,7 @@ export default function Dashboard() {
     localStorage.setItem(LS_CONFIG, JSON.stringify(config));
     localStorage.setItem("scalpbot_strategy_mode", config.strategyMode);
     localStorage.setItem("scalpbot_scalper_mode", config.scalperMode ? "true" : "false");
+    localStorage.setItem("scalpbot_momentum_scalper_mode", config.momentumScalperMode ? "true" : "false");
   }, [config]);
 
   // D21: Demo Safety server persistence — the mode toggle is now a server-owned
@@ -684,6 +687,7 @@ export default function Dashboard() {
           // D49/D53: Preserve the live UI selections across instrument restarts.
           strategyMode: config.strategyMode,
           scalperMode: config.scalperMode,
+          momentumScalperMode: config.momentumScalperMode,
         });
       } else {
         await startSecondaryMutation.mutateAsync({
@@ -710,6 +714,7 @@ export default function Dashboard() {
           // D49/D53: Preserve the live UI selections across instrument restarts.
           strategyMode: config.strategyMode,
           scalperMode: config.scalperMode,
+          momentumScalperMode: config.momentumScalperMode,
         });
       }
       if (isCurrentSwitch()) toast.success(`Bot ${slot + 1} switched to ${resolved.label}`);
@@ -2105,7 +2110,7 @@ Setting is saved and applies to ALL bot slots you start after this. Best with Ma
               {([false, true] as const).map((on) => (
                 <button
                   key={String(on)}
-                  onClick={() => setConfig(c => ({ ...c, scalperMode: on }))}
+                  onClick={() => setConfig(c => ({ ...c, scalperMode: on, momentumScalperMode: false }))}
                   className={`px-4 py-1.5 transition-colors ${
                     config.scalperMode === on
                       ? on
@@ -2118,9 +2123,17 @@ Setting is saved and applies to ALL bot slots you start after this. Best with Ma
                 </button>
               ))}
             </div>
-            {config.scalperMode && (
+            <button
+              onClick={() => setConfig(c => ({ ...c, scalperMode: false, momentumScalperMode: true }))}
+              className={`px-4 py-1.5 transition-colors text-xs font-bold rounded-lg border ${config.momentumScalperMode ? "bg-cyan-500/30 text-cyan-300 border-cyan-500/40" : "bg-transparent text-white/40 hover:text-white/70 border-transparent"}`}
+            >
+              🚀 MOMENTUM SCALPER — Premium Breakout
+            </button>
+            {config.momentumScalperMode ? (
+              <span className="text-[10px] text-cyan-400/80">🚀 Premium-first CE/PE competition • spread gate • fast invalidation • adaptive trailing • anti-churn cooldown • hard risk limits</span>
+            ) : config.scalperMode ? (
               <span className="text-[10px] text-amber-400/80">⚡ Fast re-entries • tight SL/TP • 5-min time-stop • direction lock after 2 wins • no 11–13 dead zone</span>
-            )}
+            ) : null}
           </div>
 
           {/* Category A: Proven */}

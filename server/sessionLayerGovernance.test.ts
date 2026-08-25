@@ -61,12 +61,13 @@ describe("Session-Special Layer Governance (post-loss-day 2026-08-12)", () => {
     expect(engineSource).toContain('(state.enabledLayers ?? []).includes("MCXEvening")');
     expect(engineSource).toContain('(state.enabledLayers ?? []).includes("MCXLateSession")');
     // Session window conditions now require the derived flag (not bare inMCXEvening).
-    expect(engineSource).toContain("else if (inMCXEvening && mcxSessionLayerEnabled)");
-    expect(engineSource).toContain("else if (inMCXLateSession && mcxSessionLayerEnabled)");
-    // Opening Burst and Power Hour also honor the master toggle.
-    expect(engineSource).toContain("if (inOpeningBurst && state.candles.length >= 2 && sessionSpecialEnabled)");
-    expect(engineSource).toContain("else if (inPowerHour && sessionSpecialEnabled)");
-    expect(engineSource).toContain("else if (inHeroZeroWindow && state.candles.length > 0 && sessionSpecialEnabled)");
+    expect(engineSource).toMatch(/else if \(\!isMomentumScalper && inMCXEvening && mcxSessionLayerEnabled\)/);
+    expect(engineSource).toMatch(/else if \(\!isMomentumScalper && inMCXLateSession && mcxSessionLayerEnabled\)/);
+    // Opening Burst, Power Hour, and Hero Zero also honor the master toggle;
+    // Momentum Scalper intentionally bypasses these clock-based session layers.
+    expect(engineSource).toMatch(/if \(\!isMomentumScalper && inOpeningBurst && state\.candles\.length >= 2 && sessionSpecialEnabled\)/);
+    expect(engineSource).toMatch(/else if \(\!isMomentumScalper && inPowerHour && sessionSpecialEnabled\)/);
+    expect(engineSource).toMatch(/else if \(\!isMomentumScalper && inHeroZeroWindow && state\.candles\.length > 0 && sessionSpecialEnabled\)/);
   });
 
   it("blocks a session layer when the regime is unclassified or ineligible and logs the gate", () => {

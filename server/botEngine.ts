@@ -24,7 +24,7 @@ import { fetchIndiaVix } from "./riskManager";
 import { selectRequestedUpstoxQuote } from "./upstoxQuote";
 import { clearDemoLayerOverrides, computeLayerStats, computeViableCandidates, getLayerGateForMode, getLayerTrackerTenantKey } from "./layerTracker";
 import { demoSafetyActiveFor } from "./demoSafety";
-import { scanPremiumFirstCandidates, selectPremiumChainCandidates, type PremiumCandidateQuote } from "./optionPremiumMomentum";
+import { scanPremiumFirstCandidates, selectPremiumChainCandidates, selectMomentumScalperWinner, type PremiumCandidateQuote } from "./optionPremiumMomentum";
 import { ensureUpstoxMarketDataFeed, getUpstoxWebSocketQuote } from "./upstoxMarketDataFeed";
 
 // Production log suppression — hide strategy details in production logs
@@ -269,6 +269,8 @@ export interface BotState {
   // +302 pts, the best hour of the day) and the kill zone made results worse
   // in every segment. It was replaced by the D31 traffic-light gate below.
   scalperMode?: boolean;
+  // Separate premium-momentum profile; mutually exclusive with scalperMode.
+  momentumScalperMode?: boolean;
   // D31: traffic-light regime state (Scalper Mode entry gate, all segments).
   // GREEN: spread >= 0.3*ATR14 AND spread >= 0.15*medianATR AND ATR14 >= 50% of
   //   20-candle median ATR — entries allowed. The median-based floor prevents
@@ -7398,7 +7400,7 @@ async function tick(
   }
   // Cooldown guard: minimum 2 minutes between trade entries to prevent rapid-fire
   // D29: scalper mode tightens this to 20 s — scalping frequency needs fast re-entries
-  const entryCooldownMs = state.scalperMode ? 20_000 : 120_000;
+  const entryCooldownMs = state.momentumScalperMode ? 30_000 : state.scalperMode ? 20_000 : 120_000;
   if (state.lastTradeOpenedAt && Date.now() - state.lastTradeOpenedAt < entryCooldownMs) {
     return;
   }
@@ -7449,7 +7451,7 @@ async function tick(
 
   // Re-entry cooldown logic — time-based (120s default = 2 candles worth regardless of scan interval;
   // D29 scalper mode: 20 s)
-  const reEntryCooldownMs = state.scalperMode ? 20_000 : 120_000;
+  const reEntryCooldownMs = state.momentumScalperMode ? 30_000 : state.scalperMode ? 20_000 : 120_000;
   let isReEntry = false;
   if (state.lastSlHitAt && state.lastSlDirection) {
     const elapsedSinceSlMs = Date.now() - state.lastSlHitAt;
@@ -7481,7 +7483,8 @@ async function tick(
   state.premiumFirstType = undefined;
   state.premiumFirstPremium = undefined;
   state.premiumFirstExpiry = undefined;
-  let signal: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: "No session-layer path applicable", layer: "None" };
+  const isMomentumScalper = state.momentumScalperMode === true;
+  let signal: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: isMomentumScalper ? "Momentum Scalper warming premium universe" : "No session-layer path applicable", layer: "None" };
 
   // Previous trading day candle (index -2 from today = yesterday's candle)
   const prevDayCandle = state.candlesDay.length >= 2 ? state.candlesDay[state.candlesDay.length - 2] : null;
@@ -7520,7 +7523,7 @@ const isExpiryDay = isOptionInstrument && (
   state.heroZeroMode = inHeroZeroWindow;
 
   devLog(`[tick] PRE-SIGNAL — ${state.sessionToken.slice(0,8)} | openingBurst=${inOpeningBurst} | powerHour=${inPowerHour} | mcxEve=${inMCXEvening} | mcxLate=${inMCXLateSession} | heroZero=${inHeroZeroWindow}`);
-  if (inOpeningBurst && state.candles.length >= 2 && sessionSpecialEnabled) {
+  if (!isMomentumScalper && inOpeningBurst && state.candles.length >= 2 && sessionSpecialEnabled) {
     // Fetch VIX for Opening Burst filter (cached 60s, fail-open returns 0)
     const vixNow = await fetchIndiaVix(state.accessToken ?? undefined);
     signal = generateOpeningBurstSignal(state.candles, prevDayClose, slMult, vixNow);
@@ -7544,13 +7547,13 @@ const isExpiryDay = isOptionInstrument && (
     // Scan every candle during Opening Burst: override nextScanAt to 15s (minimum interval)
     // Normal scan might be 30-60s, but burst moves happen in 1-2 candles
     state.nextScanAt = Date.now() + 15_000;
-  } else if (inPowerHour && sessionSpecialEnabled) {
+  } else if (!isMomentumScalper && inPowerHour && sessionSpecialEnabled) {
     if (sessionLayerRegimeBlocked("PowerHour")) {
       emitActivity(state.sessionToken, "signal", `🛑 Power Hour skipped: regime gate (see above). User-selected layers only.`);
     } else {
       signal = generatePowerHourSignal(state.candles, state.candles5m, slMult, effectiveTargetMult);
     }
-  } else if (inMCXEvening && mcxSessionLayerEnabled) {
+  } else if (!isMomentumScalper && inMCXEvening && mcxSessionLayerEnabled) {
     if (sessionLayerRegimeBlocked("MCXEvening")) {
       emitActivity(state.sessionToken, "signal", `🛑 MCX Evening skipped: regime gate (see above). User-selected layers only.`);
     } else {
@@ -7577,7 +7580,7 @@ const isExpiryDay = isOptionInstrument && (
         }
       }
     }
-  } else if (inMCXLateSession && mcxSessionLayerEnabled) {
+  } else if (!isMomentumScalper && inMCXLateSession && mcxSessionLayerEnabled) {
     if (sessionLayerRegimeBlocked("MCXLateSession")) {
       emitActivity(state.sessionToken, "signal", `🛑 MCX Late Session skipped: regime gate (see above). User-selected layers only.`);
     } else {
@@ -7603,7 +7606,7 @@ const isExpiryDay = isOptionInstrument && (
         }
       }
     }
-  } else if (inHeroZeroWindow && state.candles.length > 0 && sessionSpecialEnabled) {
+  } else if (!isMomentumScalper && inHeroZeroWindow && state.candles.length > 0 && sessionSpecialEnabled) {
     // Hero Zero: current price IS the option premium (bot is tracking the option instrument)
     const optionPremium = price;
     // Strike distance: approximate from instrument token (e.g. NIFTY_25000CE → |25000 - spot|)
@@ -7665,7 +7668,7 @@ const isExpiryDay = isOptionInstrument && (
     }
 
     // ── Signal generation (now uses correctly updated layers) ──────────────────
-    if (state.useV2Engine) {
+    if (!isMomentumScalper && state.useV2Engine) {
       signal = generateSignalV2(
         state.candles, slMult, effectiveTargetMult, state.minConfidence / 100,
         state.candles5m, prevDayHigh, prevDayLow, prevDayClose,
@@ -7673,14 +7676,14 @@ const isExpiryDay = isOptionInstrument && (
         state.enabledLayers || [],
         tickRegimeSnapshot,
       );
-    } else {
+    } else if (!isMomentumScalper) {
       signal = generateSignal(state.candles, slMult, effectiveTargetMult, state.minConfidence / 100, state.candles5m, prevDayHigh, prevDayLow, prevDayClose, false, state.enabledLayers || []);
     }
   }
   // Premium-first option scan: evaluate a bounded ATM/ITM universe when the
   // underlying-first engine has no signal. This remains subject to all existing
   // risk, margin, contract, and entry-quality gates below.
-  if (signal.direction === "HOLD" && isOptionsMode && state.accessToken && state.accessToken !== "DEMO_NO_TOKEN" && state.premiumFirstEnabled !== false) {
+  if ((isMomentumScalper || signal.direction === "HOLD") && isOptionsMode && state.accessToken && state.accessToken !== "DEMO_NO_TOKEN" && state.premiumFirstEnabled !== false) {
     try {
       const underlyingForPremium = state.underlyingToken || state.instrumentToken;
       const analytics = getCachedAnalytics(underlyingForPremium) ?? await fetchOptionsAnalytics(underlyingForPremium, state.accessToken);
@@ -7699,7 +7702,9 @@ const isExpiryDay = isOptionInstrument && (
           return [{ ...candidate, premium: wsQuote.ltp, spreadPercent, timestamp: wsQuote.receivedAt }];
         });
         const scans = scanPremiumFirstCandidates(quoteCandidates, state.premiumHistory, nowPremium, 12);
-        const winner = scans.find(result => result.signal && result.signal.confidence >= state.minConfidence / 100);
+        // Momentum Scalper buys only premiums with bullish momentum. A bearish
+        // premium signal is not converted into a long option order by accident.
+        const winner = selectMomentumScalperWinner(scans, state.minConfidence / 100);
         if (winner?.signal) {
           state.premiumFirstToken = winner.candidate.token;
           state.premiumFirstStrike = winner.candidate.strike;
@@ -8496,7 +8501,7 @@ const isExpiryDay = isOptionInstrument && (
   // ── PER-INSTRUMENT COOLDOWN (30 min between trades on same instrument) ────────────────────
   // D29: scalper mode allows re-entry on the same instrument after 3 min (user's manual scalps
   // reused the same crude contract 12 times in 90 min — 30 min cooldown would allow only 3)
-  const INSTRUMENT_COOLDOWN_MS = state.scalperMode ? 3 * 60 * 1000 : 30 * 60 * 1000;
+  const INSTRUMENT_COOLDOWN_MS = state.momentumScalperMode ? 2 * 60 * 1000 : state.scalperMode ? 3 * 60 * 1000 : 30 * 60 * 1000;
   const cooldownSymbol = (state.instrumentSymbol ?? "").toUpperCase();
   const lastEntryOnInstrument = instrumentCooldowns.get(getTenantInstrumentKey(state.sessionToken, cooldownSymbol));
   if (lastEntryOnInstrument) {
@@ -9046,7 +9051,7 @@ const isExpiryDay = isOptionInstrument && (
       // Same effective-SL logic as the premium safety net computed later in this
       // function (risk SL, tightening to scalper mode when configured).
       const optSlPctLocal = (state.optionSlPct ?? 5) / 100;
-      const safetySlPct = state.scalperMode ? 0.02 : optSlPctLocal;
+      const safetySlPct = state.momentumScalperMode ? 0.015 : state.scalperMode ? 0.02 : optSlPctLocal;
       const perUnitWorstLoss = optionPremiumForSizing * safetySlPct;
       const legWorstCase = quantity * perUnitWorstLoss;
       if (legWorstCase > headroom) {
@@ -9305,10 +9310,10 @@ const isExpiryDay = isOptionInstrument && (
   // 50% at +4% premium, the rest at +8%, with a 2% premium SL and a 5-min time stop.
   // (Swing mode: 7%/15% ladder as before.)
   const partial1RPrice = signal.partial1RPrice ?? (isOptionsMode
-    ? (state.scalperMode ? optionEntry * 1.04 : optionEntry * 1.07)
+    ? (state.momentumScalperMode ? optionEntry + Math.max(signal.atr * 0.8, optionEntry * 0.015) : state.scalperMode ? optionEntry * 1.04 : optionEntry * 1.07)
     : (signal.direction === "BUY" ? optionEntry + slDist : optionEntry - slDist));
   const partial2RPrice = signal.partial2RPrice ?? (isOptionsMode
-    ? (state.scalperMode ? optionEntry * 1.08 : optionEntry * 1.15)
+    ? (state.momentumScalperMode ? signal.targetPrice : state.scalperMode ? optionEntry * 1.08 : optionEntry * 1.15)
     : (signal.direction === "BUY" ? optionEntry + slDist * (p2Pct / p1Pct) : optionEntry - slDist * (p2Pct / p1Pct)));
 
   // For options: entry/SL/target are based on option premium, not underlying price
@@ -9318,13 +9323,14 @@ const isExpiryDay = isOptionInstrument && (
     const optSlPct = (state.optionSlPct ?? 5) / 100;
     const optTpPct = (state.optionTpPct ?? 8) / 100;  // default 8% TP (was 15%)
     // D29: scalper mode tightens the option SL/TP for fast 2-5 min scalps
-    const effectiveOptSlPct = state.scalperMode ? 0.02 : optSlPct;
-    const effectiveOptTpPct = state.scalperMode ? 0.04 : optTpPct;
-  const tradeSl = isOptionsMode && optionPremiumForSizing 
-    ? optionPremiumForSizing * (1 - effectiveOptSlPct)  // e.g., ₹800 × 0.95 = ₹760 SL (2% in scalper mode)
+    const effectiveOptSlPct = state.momentumScalperMode ? 0.015 : state.scalperMode ? 0.02 : optSlPct;
+    const effectiveOptTpPct = state.momentumScalperMode ? 0.03 : state.scalperMode ? 0.04 : optTpPct;
+    const useMomentumPremiumLevels = state.momentumScalperMode && signal.layer === "PremiumMomentum";
+  const tradeSl = isOptionsMode && optionPremiumForSizing
+    ? (useMomentumPremiumLevels ? signal.slPrice : optionPremiumForSizing * (1 - effectiveOptSlPct))
     : signal.slPrice;
   const tradeTarget = isOptionsMode && optionPremiumForSizing
-    ? optionPremiumForSizing * (1 + effectiveOptTpPct)  // e.g., ₹800 × 1.08 = ₹864 target (4% in scalper mode)
+    ? (useMomentumPremiumLevels ? signal.targetPrice : optionPremiumForSizing * (1 + effectiveOptTpPct))
     : signal.targetPrice;
   // D2: record the strategy thesis on the underlying, separate from the unchanged
   // premium 5% / 8% safety net used for option execution risk.
@@ -9494,7 +9500,7 @@ const isExpiryDay = isOptionInstrument && (
     premiumSafetySlPrice, premiumSafetyTargetPrice,
     signalReason: signalLabel, signalLayer: signal.layer,
     // D29: scalper time stop — exit at market price after 5 minutes
-    scalperTimeStopUntil: state.scalperMode ? Date.now() + 5 * 60 * 1000 : undefined,
+    scalperTimeStopUntil: (state.scalperMode || state.momentumScalperMode) ? Date.now() + 5 * 60 * 1000 : undefined,
   };
 
   state.isOpeningTrade = false; // Release mutex after openTrade is set

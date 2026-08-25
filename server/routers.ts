@@ -500,6 +500,7 @@ export const appRouter = router({
         // 5-min time stop), direction lock after consecutive wins, and a traffic-light entry gate (D31),
         // preferred premium band Rs 200-450. Hard safety gates remain unchanged.
         scalperMode: z.boolean().default(false),
+        momentumScalperMode: z.boolean().default(false),
         averagingEnabled: z.boolean().default(true),
         averagingLossThreshold: z.number().default(0.20), // 20% loss triggers averaging
         useV2Engine: z.boolean().default(false), // V2 regime-based signal engine
@@ -850,7 +851,8 @@ export const appRouter = router({
              partial2Pct: input.partial2Pct,
              strategyMode: input.strategyMode ?? "auto",
              strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
-             scalperMode: input.scalperMode ?? false,
+             scalperMode: (input.scalperMode ?? false) && !(input.momentumScalperMode ?? false),
+          momentumScalperMode: input.momentumScalperMode ?? false,
              averagingEnabled: input.averagingEnabled,
              averagingLossThreshold: input.averagingLossThreshold,
              useV2Engine: input.useV2Engine,
@@ -906,7 +908,8 @@ export const appRouter = router({
               sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
               strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
               instrumentLocked: input.instrumentLocked ?? false,
-              scalperMode: input.scalperMode ?? false,
+              scalperMode: (input.scalperMode ?? false) && !(input.momentumScalperMode ?? false),
+          momentumScalperMode: input.momentumScalperMode ?? false,
               consecutiveUnderlyingSLs: 0,
               lastUnderlyingSLAt: null,
               layerTradesCount: JSON.stringify({}),
@@ -1078,7 +1081,8 @@ export const appRouter = router({
            strategyMode: input.strategyMode ?? "auto",
            strategyLocked: (input as any).strategyLocked ?? (input.strategyMode === "manual" ? true : false),
            instrumentLocked: input.instrumentLocked ?? false,
-           scalperMode: input.scalperMode ?? false,
+           scalperMode: (input.scalperMode ?? false) && !(input.momentumScalperMode ?? false),
+          momentumScalperMode: input.momentumScalperMode ?? false,
            consecutiveTickErrors: 0,
             capitalUsed: 0,
            partial1Pct: input.partial1Pct,
@@ -1638,7 +1642,8 @@ export const appRouter = router({
            // D26: restore the user's strategy mode across server restarts
            strategyMode: (row.strategyMode === "manual" || row.strategyMode === "auto") ? row.strategyMode : "auto",
            // D29: restore scalper mode across server restarts
-           scalperMode: row.scalperMode ?? false,
+           scalperMode: (row.scalperMode ?? false) && !(row.momentumScalperMode ?? false),
+           momentumScalperMode: row.momentumScalperMode ?? false,
            consecutiveUnderlyingSLs: resumeConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: resumeLastUnderlyingSLAt,
            layerTradesCount: resumeLayerTradesCount,
@@ -3031,6 +3036,7 @@ export const appRouter = router({
         // D29: scalper mode — high-frequency premium-target scalping profile (tight cooldowns,
         // premium-based exits, direction lock, traffic-light entry gate (D31), premium band Rs 200-450)
         scalperMode: z.boolean().default(false),
+        momentumScalperMode: z.boolean().default(false),
       }))
      .mutation(async ({ input, ctx }) => {
         // SECURITY: Verify caller owns this session
@@ -3320,7 +3326,8 @@ export const appRouter = router({
            // D46: Persist instrumentLocked flag — true if user picked an instrument 
            // manually (not the session default).
            instrumentLocked: input.instrumentLocked ?? false,
-          scalperMode: input.scalperMode ?? false,
+          scalperMode: (input.scalperMode ?? false) && !(input.momentumScalperMode ?? false),
+          momentumScalperMode: input.momentumScalperMode ?? false,
            consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
            lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
            layerTradesCount: JSON.stringify(slotRestoredLayerTradesCount),
@@ -3358,7 +3365,8 @@ export const appRouter = router({
             strategyLocked: input.strategyLocked ?? (input.strategyMode === "manual" ? true : false),
             // D46: Persist instrumentLocked flag
             instrumentLocked: input.instrumentLocked ?? false,
-            scalperMode: input.scalperMode ?? false,
+            scalperMode: (input.scalperMode ?? false) && !(input.momentumScalperMode ?? false),
+          momentumScalperMode: input.momentumScalperMode ?? false,
             strategyMode: input.strategyMode ?? "auto",
             consecutiveUnderlyingSLs: 0,
             lastUnderlyingSLAt: null,
@@ -3464,7 +3472,8 @@ export const appRouter = router({
           sessionLayersRequireWhitelist: input.sessionLayersRequireWhitelist ?? true,
           strategyLocked: input.strategyLocked ?? false,
           instrumentLocked: input.instrumentLocked ?? false,
-          scalperMode: input.scalperMode ?? false,
+          scalperMode: (input.scalperMode ?? false) && !(input.momentumScalperMode ?? false),
+          momentumScalperMode: input.momentumScalperMode ?? false,
           consecutiveUnderlyingSLs: slotRestoredConsecutiveUnderlyingSLs,
           lastUnderlyingSLAt: slotRestoredLastUnderlyingSLAt,
           layerTradesCount: slotRestoredLayerTradesCount,
