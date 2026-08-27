@@ -26,6 +26,7 @@ import { clearDemoLayerOverrides, computeLayerStats, computeViableCandidates, ge
 import { demoSafetyActiveFor } from "./demoSafety";
 import { scanPremiumFirstCandidates, selectPremiumChainCandidates, selectMomentumScalperWinner, type PremiumCandidateQuote } from "./optionPremiumMomentum";
 import { ensureUpstoxMarketDataFeed, getUpstoxWebSocketQuote } from "./upstoxMarketDataFeed";
+import { shouldMomentumScalperLoserTimeout, updateMomentumScalperTrailingStop } from "./momentumScalperExits";
 
 // Production log suppression — hide strategy details in production logs
 const IS_DEV = process.env.NODE_ENV !== "production";
@@ -6668,9 +6669,23 @@ async function tick(
     const trade = state.openTrade;
 
 
-    // ── D29: scalper time stop — market-exit everything after 5 minutes ──────
-    // Evidence: user's manual losers held ~19 min (Rs −3,816 on CE); winners ~8 min.
-    if (trade.scalperTimeStopUntil && Date.now() >= trade.scalperTimeStopUntil) {
+    // ── PDF Step 3: Demo Momentum Scalper loser timeout ───────────────────────
+    // Momentum Demo trades are not time-exited while profitable. Losing trades
+    // are cut after 60 minutes; market-close handling remains an independent
+    // hard exit. Existing Scalper behavior retains its five-minute fail-safe.
+    const isDemoMomentumExit = trade.mode === "demo" && state.momentumScalperMode === true;
+    const timeExitReason = isDemoMomentumExit
+      ? "Momentum Scalper Loser Timeout — 60 min"
+      : "Scalper Time Stop — 5 min max hold";
+    const shouldTimeExit = trade.scalperTimeStopUntil && Date.now() >= trade.scalperTimeStopUntil &&
+      (!isDemoMomentumExit || shouldMomentumScalperLoserTimeout(
+        trade.entryPrice,
+        effectivePrice,
+        trade.enteredAt ? new Date(trade.enteredAt).getTime() : 0,
+        Date.now(),
+        60 * 60 * 1000,
+      ));
+    if (shouldTimeExit) {
       const timeExitPx = state.optionPremiumPrice && state.optionPremiumPrice > 0
         ? state.optionPremiumPrice
         : (effectivePrice > 0 ? effectivePrice : trade.entryPrice);
@@ -6703,10 +6718,10 @@ async function tick(
       if (timeTotalPnl < 0) { recordDirectionalLoss(state.sessionToken, trade.direction, isMCX); recordDirectionExit(state.sessionToken, trade.direction, false); }
       else { recordDirectionalWin(state.sessionToken, trade.direction); recordDirectionExit(state.sessionToken, trade.direction, false); }
       if (state.scalperMode) { applyScalperDirectionLock(state, trade.direction, timeTotalPnl, state.sessionToken, state.tickCount ?? 0); }
-      await persistTradeClose(onTradeClose, trade, timeExitPx, timeTotalPnl, "Scalper Time Stop — 5 min max hold");
-      console.log(`[BotEngine] ${state.sessionToken} — scalper time stop | P&L: ₹${timeTotalPnl.toFixed(0)}`);
-      emitActivity(state.sessionToken, "trade_close", `⏱ Scalper Time Stop — ${trade.symbolLabel} @ ₹${timeExitPx.toFixed(2)} | P&L: ${timeTotalPnl >= 0 ? "+" : ""}₹${timeTotalPnl.toFixed(0)} (5 min max hold)`, { price: timeExitPx, pnl: timeTotalPnl });
-      sendTelegramAlert(state, `⏱ <b>SCALPER TIME STOP</b>\n📊 <b>${trade.symbolLabel}</b> | Exit: ₹${timeExitPx.toFixed(2)}\n💰 P&L: ${timeTotalPnl >= 0 ? "+" : ""}₹${timeTotalPnl.toFixed(0)}` + (trade.bookedPnl > 0 ? ` (locked: ₹${trade.bookedPnl.toFixed(0)})` : ""), "tradeExit");
+      await persistTradeClose(onTradeClose, trade, timeExitPx, timeTotalPnl, timeExitReason);
+      console.log(`[BotEngine] ${state.sessionToken} — ${timeExitReason} | P&L: ₹${timeTotalPnl.toFixed(0)}`);
+      emitActivity(state.sessionToken, "trade_close", `⏱ ${timeExitReason} — ${trade.symbolLabel} @ ₹${timeExitPx.toFixed(2)} | P&L: ${timeTotalPnl >= 0 ? "+" : ""}₹${timeTotalPnl.toFixed(0)}`, { price: timeExitPx, pnl: timeTotalPnl });
+      sendTelegramAlert(state, `⏱ <b>${timeExitReason.toUpperCase()}</b>\n📊 <b>${trade.symbolLabel}</b> | Exit: ₹${timeExitPx.toFixed(2)}\n💰 P&L: ${timeTotalPnl >= 0 ? "+" : ""}₹${timeTotalPnl.toFixed(0)}` + (trade.bookedPnl > 0 ? ` (locked: ₹${trade.bookedPnl.toFixed(0)})` : ""), "tradeExit");
       return;
     }
 
@@ -6906,11 +6921,24 @@ async function tick(
     }
 
     // ── Premium Trailing Stop (options mode) ─────────────────────────────────
-    // If price ≥ entry × 1.07 → move SL to breakeven (entry)
-    // If price ≥ entry × 1.12 → move SL to entry × 1.07 (lock +7%)
     if (trade.isIndexOptions || isOptionsMode) {
       const premEntry = trade.entryPrice;
-      if (trade.direction === "BUY") {
+      if (isDemoMomentumExit) {
+        const trailing = updateMomentumScalperTrailingStop(
+          premEntry,
+          effectivePrice,
+          trade.currentSl,
+          trade.direction,
+        );
+        if (trailing.currentSl !== trade.currentSl) {
+          trade.currentSl = trailing.currentSl;
+          emitActivity(state.sessionToken, "signal",
+            `↗ Momentum trailing stop ${trailing.stage} — ${trade.symbolLabel} | SL ₹${trade.currentSl.toFixed(2)}`,
+            { price: effectivePrice });
+          devLog(`[MomentumTrailing] ${state.sessionToken} — ${trailing.stage} | SL ₹${trade.currentSl.toFixed(2)}`);
+        }
+      } else if (trade.direction === "BUY") {
+        // Legacy option ladder for Normal/Scalper profiles.
         if (effectivePrice >= premEntry * 1.12 && trade.currentSl < premEntry * 1.07) {
           trade.currentSl = premEntry * 1.07;
           devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to +7% (₹${trade.currentSl.toFixed(2)})`);
@@ -6919,7 +6947,7 @@ async function tick(
           devLog(`[TrailingStop] ${state.sessionToken} — SL moved to breakeven (₹${trade.currentSl.toFixed(2)})`);
         }
       } else {
-        // SELL direction (PE options): price going DOWN is profitable
+        // Legacy SELL direction (PE options): price going DOWN is profitable.
         if (effectivePrice <= premEntry * 0.88 && trade.currentSl > premEntry * 0.93) {
           trade.currentSl = premEntry * 0.93;
           devLog(`[TrailingStop] ${state.sessionToken} — SL trailed to -7% (₹${trade.currentSl.toFixed(2)})`);
@@ -9355,7 +9383,11 @@ const isExpiryDay = isOptionInstrument && (
     premiumSafetySlPrice, premiumSafetyTargetPrice,
     signalReason: signalLabel, signalLayer: signal.layer,
     // D29: scalper time stop — exit at market price after 5 minutes
-    scalperTimeStopUntil: (state.scalperMode || state.momentumScalperMode) ? Date.now() + 5 * 60 * 1000 : undefined,
+    scalperTimeStopUntil: state.momentumScalperMode && state.mode === "demo"
+      ? Date.now() + 60 * 60 * 1000
+      : state.scalperMode
+        ? Date.now() + 5 * 60 * 1000
+        : undefined,
   };
 
   state.isOpeningTrade = false; // Release mutex after openTrade is set
