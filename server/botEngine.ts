@@ -8175,32 +8175,9 @@ const isExpiryDay = isOptionInstrument && (
       return;
     }
   }
- // ── ADX 25 PAPER-DEMO GATE ───────────────────────────────────────────────────
-  // The requested ADX 25 threshold applies to every paper-demo profile. Live
-  // sessions retain the existing BankNifty-only gate and therefore are not
-  // changed by this demo-only rollout.
-  const isBankNiftyInstrument = (
-    state.instrumentSymbol === "BANKNIFTY" ||
-    state.instrumentToken.includes("BANKNIFTY") ||
-    state.instrumentToken.includes("Nifty Bank") ||
-    (state.underlyingToken ?? "").includes("Nifty Bank")
-  );
-  const enforceAdx25 = state.mode === "demo" || isBankNiftyInstrument;
-  if (enforceAdx25 && state.candles.length >= 20) {
-    const adxNow = calcADX(state.candles, 14);
-    if (adxNow < 25) {
-      const gateScope = state.mode === "demo" ? "all paper-demo profiles" : "BankNifty live profile";
-      emitActivity(state.sessionToken, "signal", `⊘ ADX FILTER: ${signal.direction} from ${signal.layer} blocked — ADX(${adxNow.toFixed(1)}) < 25 (${gateScope}). Waiting for stronger move.`);
-      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `ADX filter: ${adxNow.toFixed(1)} < 25 (${gateScope})`);
-      logSignalToJournal({
-        sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
-        direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
-        entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-        atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `ADX ${adxNow.toFixed(1)} < 25`,
-      });
-      return;
-    }
-  }
+  // PDF Step 1 / CAPA: D5 owns regime affinity. The global ADX 25 paper-demo
+  // gate contradicted ranging-strategy eligibility, so it is intentionally
+  // removed. The hard ADX < 15 dead-market floor above remains in force.
 
   // ── GLOBAL ANTI-CHASING GATE ──────────────────────────────────────────────────
   // Reject signals where the current price has already moved significantly past the
