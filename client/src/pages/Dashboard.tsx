@@ -1852,7 +1852,7 @@ export default function Dashboard() {
           <span className={`font-bold min-w-0 break-words ${config.mode === "demo" ? "text-blue-400" : "text-emerald-400"}`}>
             {config.mode === "demo" ? "🔵 DEMO — Real API, fake money" : "⚡ LIVE — Real trades"}
           </span>
-          {isRunning && optionQuoteStatus !== "live" && (
+          {isRunning && activeTradeIsOption && optionQuoteStatus !== "live" && (
             <>
               <div className="w-px h-4 bg-white/10" />
               <span className={`font-medium whitespace-nowrap ${optionQuoteStatus === "stale" ? "text-amber-400" : "text-white/50"}`}>
