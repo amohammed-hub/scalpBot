@@ -8179,47 +8179,7 @@ const isExpiryDay = isOptionInstrument && (
   // gate contradicted ranging-strategy eligibility, so it is intentionally
   // removed. The hard ADX < 15 dead-market floor above remains in force.
 
-  // ── GLOBAL ANTI-CHASING GATE ──────────────────────────────────────────────────
-  // Reject signals where the current price has already moved significantly past the
-  // signal's entry price. This prevents entering at local highs/lows (chasing).
-  // All 4 trades on July 21 hit SL within 1-5 min because they entered at extremes.
-  // Layers exempt from this gate (they rely on consecutive same-direction candles):
-  // ORB, Trend, Momentum, Adeeb, RedBarTheory (5 red/green bricks = 5 same-dir candles).
-  // Applies to: BoomingBulls, CPR, FailedBreakout, HourlyClose, etc.
-  // EXEMPTION: RedBarTheory and Momentum signals are BASED on consecutive same-direction
-  // candles — the anti-chase gate would ALWAYS block them (5 red bricks = 5 red candles).
-  // These layers have their own built-in confirmation logic (brick size, strength score).
-  const antiChaseExemptLayers = ["RedBarTheory", "Momentum", "Trend", "ORB", "Adeeb"];
-  if (signal.entryPrice > 0 && state.candles.length >= 3 && !antiChaseExemptLayers.includes(signal.layer)) {
-    const lastCandle = state.candles[state.candles.length - 1];
-    const prevCandle = state.candles[state.candles.length - 2];
-    const prev2Candle = state.candles[state.candles.length - 3];
-    // Check if last 3 candles all moved in signal direction (momentum exhaustion risk)
-    const allSameDir = signal.direction === "BUY"
-      ? (lastCandle.close > lastCandle.open && prevCandle.close > prevCandle.open && prev2Candle.close > prev2Candle.open)
-      : (lastCandle.close < lastCandle.open && prevCandle.close < prevCandle.open && prev2Candle.close < prev2Candle.open);
-    // Calculate how far price moved in signal direction over last 3 candles
-    const moveFrom3CandlesAgo = signal.direction === "BUY"
-      ? (lastCandle.close - prev2Candle.open) / prev2Candle.open
-      : (prev2Candle.open - lastCandle.close) / prev2Candle.open;
-    // If 3 consecutive same-direction candles AND moved > threshold → chasing
-    // MCX instruments (CrudeOil, NatGas, Gold) trend strongly — 3 same-direction candles is NORMAL.
-    // Use 1.5% threshold for MCX vs 0.3% for NSE to avoid blocking valid trend entries.
-    const CHASE_THRESHOLD = isMCX ? 0.015 : 0.003; // MCX: 1.5%, NSE: 0.3%
-    if (allSameDir && moveFrom3CandlesAgo > CHASE_THRESHOLD) {
-      const movePct = (moveFrom3CandlesAgo * 100).toFixed(2);
-      emitActivity(state.sessionToken, "signal", `⊘ ANTI-CHASE: ${signal.direction} from ${signal.layer} rejected — 3 consecutive ${signal.direction === "BUY" ? "green" : "red"} candles moved ${movePct}% (>${(CHASE_THRESHOLD*100).toFixed(1)}%). Wait for pullback.`);
-      pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Anti-chase: 3 same-dir candles moved ${movePct}%`);
-      logSignalToJournal({
-        sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
-        direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
-        entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-        atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: `Anti-chase: ${movePct}% in 3 candles`,
-      });
-      return;
-    }
-  }
-
+  // PDF Step 2: Anti-chase rejection removed; signal-specific confirmation and risk gates remain.
   // ── P2: Underlying-Level Cooldown (any direction) ───────────────────────────
   // After 2+ consecutive SLs on this underlying (regardless of CE/PE direction), block for 15 min (NSE) / 8 min (MCX)
   if (state.consecutiveUnderlyingSLs >= 2 && state.lastUnderlyingSLAt) {
@@ -8242,75 +8202,12 @@ const isExpiryDay = isOptionInstrument && (
       state.lastUnderlyingSLAt = null;
     }
   }
-  // ── P1: Direction-Aware Cooldown ─────────────────────────────────────────────
-  // After SL, penalize same-direction signals:
-  // - Within 3 minutes (NSE) / 90 sec (MCX): BLOCK same direction entirely (market proved you wrong)
-  // - 3-5 minutes (NSE) / 90s-2.5min (MCX): require 75% confidence for same direction (higher bar)
-  // - After 2+ consecutive same-direction SLs: BLOCK that direction for 10 min (NSE) / 5 min (MCX)
-  if (state.lastSlExitAt && state.lastSlExitDirection) {
-    // Direction-aware cooldown is a hard risk control and cannot be bypassed.
-    const elapsedSinceSl = Date.now() - state.lastSlExitAt;
-    const signalMatchesSLDirection = signal.direction === state.lastSlExitDirection;
-
-    if (signalMatchesSLDirection) {
-      // 2+ consecutive SLs in same direction → block for 10 min (NSE) / 5 min (MCX)
-      const P1_CONSECUTIVE_BLOCK_MS = isMCX ? 300_000 : 600_000; // MCX: 5 min, NSE: 10 min
-      if (state.consecutiveSameDirectionSLs >= 2 && elapsedSinceSl < P1_CONSECUTIVE_BLOCK_MS) {
-        const remainMin = Math.ceil((P1_CONSECUTIVE_BLOCK_MS - elapsedSinceSl) / 60000);
-        emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked — ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs (${remainMin}min cooldown remaining)`);
-        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Direction cooldown: ${state.consecutiveSameDirectionSLs} consecutive ${signal.direction} SLs`);
-        return;
-      }
-      // Within short window of SL → block same direction (MCX: 90s, NSE: 3min)
-      const P1_SHORT_BLOCK_MS = isMCX ? 90_000 : 180_000; // MCX: 90s, NSE: 3 min
-      if (elapsedSinceSl < P1_SHORT_BLOCK_MS) {
-        const remainSec = Math.ceil((P1_SHORT_BLOCK_MS - elapsedSinceSl) / 1000);
-        emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} blocked — same direction as recent SL (${remainSec}s cooldown)`);
-        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Same-direction cooldown (${remainSec}s remaining)`);
-        return;
-      }
-      // After short block: require higher confidence (75%) for a brief window
-      const P1_CONFIDENCE_GATE_MS = isMCX ? 150_000 : 300_000; // MCX: 2.5 min, NSE: 5 min
-      if (elapsedSinceSl < P1_CONFIDENCE_GATE_MS && signal.confidence < 0.75) {
-        emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} needs ≥75% conf after SL (got ${(signal.confidence*100).toFixed(0)}%)`);
-        pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Post-SL confidence gate: needs 75%, got ${(signal.confidence*100).toFixed(0)}%`);
-        return;
-      }
-    } else {
-      // Opposite direction signal after SL — this is GOOD (market flipped), clear the cooldown
-      state.lastSlExitDirection = null;
-      state.lastSlExitAt = null;
-      state.consecutiveSameDirectionSLs = 0;
-    }
-  }
-
+  // PDF Step 2: post-SL direction/confidence throttles removed; daily loss,
+  // portfolio drawdown, spread, and risk-budget protections remain active.
   // (Layer filter moved to immediately after signal generation — see BUG FIX 2 above)
 
   // ── HourlyClose one-shot guard: only fire once per day ─────────────────────
-  // ── Same-direction loss-streak guard: block direction after 2 consecutive losses ─
-  // If the last 2 trades in this direction were losses within 90 min, the read is
-  // wrong (e.g. buying CE dips on a fading rally). Block that direction for 30 min;
-  // opposite-direction signals stay allowed — that's the flip the market is signaling.
-  const dirBlock = isDirectionBlocked(state.sessionToken, signal.direction as "BUY" | "SELL");
-  if (dirBlock.blocked) {
-    emitActivity(state.sessionToken, "signal", `⊘ ${signal.direction} signal blocked — 2 consecutive ${signal.direction} losses, direction cooldown ${dirBlock.remainingMin}min (opposite direction still allowed)`);
-    pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, `Direction blocked after consecutive losses (${dirBlock.remainingMin}min left)`);
-    return;
-  }
-
-  // ── DIRECTION FLIP-FLOP LOCK (BUG #4): 30-min lock after direction change ──────────────
-  // Once a bot picks a direction (BUY/CE or SELL/PE), it cannot flip to the opposite
-  // direction within 30 minutes unless the previous direction's trade hit SL (confirming reversal).
-  const flipCheck = isDirectionFlipBlocked(state.sessionToken, signal.direction as "BUY" | "SELL");
-  if (flipCheck.blocked) {
-    emitActivity(state.sessionToken, "signal",
-      `⊘ DIRECTION FLIP BLOCKED: ${signal.direction} rejected — ${flipCheck.reason}`);
-    pushRejectedSignal(state,
-      { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
-      `Direction flip blocked: ${flipCheck.remainingMin}min remaining`);
-    return;
-  }
-
+  // PDF Step 2: same-direction loss and flip-flop entry locks removed.
   if (signal.layer === "HourlyClose" && state.hourlyCloseSignalFired) {
     emitActivity(state.sessionToken, "signal", `⊘ HourlyClose signal skipped (already fired today)`);
     pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, "HourlyClose already fired today");
@@ -8475,27 +8372,8 @@ const isExpiryDay = isOptionInstrument && (
     }
   }
 
-  // ── PER-INSTRUMENT COOLDOWN (30 min between trades on same instrument) ────────────────────
-  // D29: scalper mode allows re-entry on the same instrument after 3 min (user's manual scalps
-  // reused the same crude contract 12 times in 90 min — 30 min cooldown would allow only 3)
-  const INSTRUMENT_COOLDOWN_MS = state.momentumScalperMode ? 2 * 60 * 1000 : state.scalperMode ? 3 * 60 * 1000 : 30 * 60 * 1000;
-  const cooldownSymbol = (state.instrumentSymbol ?? "").toUpperCase();
-  const lastEntryOnInstrument = instrumentCooldowns.get(getTenantInstrumentKey(state.sessionToken, cooldownSymbol));
-  if (lastEntryOnInstrument) {
-    const elapsedMs = Date.now() - lastEntryOnInstrument;
-    const minutesAgo = (elapsedMs / 60000).toFixed(1);
-    console.log(`[DUPLICATE CHECK] ${cooldownSymbol} last entry was ${minutesAgo} min ago, cooldown is 30`);
-    if (elapsedMs < INSTRUMENT_COOLDOWN_MS) {
-      const remainMin = Math.ceil((INSTRUMENT_COOLDOWN_MS - elapsedMs) / 60000);
-      emitActivity(state.sessionToken, "signal",
-        `⊘ INSTRUMENT COOLDOWN: ${cooldownSymbol} traded ${minutesAgo}min ago — waiting ${remainMin}min before next entry`);
-      pushRejectedSignal(state,
-        { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason },
-        `Instrument cooldown: ${remainMin}min remaining`);
-      return;
-    }
-  }
-
+  // PDF Step 2: per-instrument re-entry cooldown removed; open-position,
+  // portfolio, spread, daily-loss, and risk-budget checks remain active.
   // ── Options mode: resolve ATM option token based on signal direction ──────────────────────
   // When isOptionsMode=true, the bot reads the underlying (Nifty/BankNifty futures) for signals
   // but places the actual order on the ATM CE (for BUY) or ATM PE (for SELL).

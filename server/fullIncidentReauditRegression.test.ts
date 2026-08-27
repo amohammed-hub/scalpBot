@@ -47,7 +47,8 @@ describe("full incident re-audit reproductions", () => {
 
     expect(engine).toContain("function getTenantInstrumentKey(sessionToken: string, symbol: string)");
     expect(engine).toContain("function getTenantSymbolLockKey(sessionToken: string, symbol: string)");
-    expect(engine).toContain("instrumentCooldowns.get(getTenantInstrumentKey(state.sessionToken, cooldownSymbol))");
+    // PDF Step 2 removes the entry-blocking cooldown lookup; tenant-scoped tracking remains for diagnostics/backward compatibility.
+    expect(engine).toContain("instrumentCooldowns.set(getTenantInstrumentKey(state.sessionToken, (state.instrumentSymbol ?? \"\").toUpperCase()), Date.now())");
     expect(engine).toContain("isSymbolGloballyLocked(state.sessionToken, tradeLabel)");
     expect(engine).toContain("lockSymbolGlobally(state.sessionToken, tradeLabel)");
     expect(engine).toContain("eq(tradeLog.sessionToken, state.sessionToken)");
