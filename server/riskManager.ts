@@ -97,6 +97,8 @@ let cachedVix = 0;
 const VIX_CACHE_MS = 60_000; // cache 60s
 
 export async function fetchIndiaVix(accessToken?: string | null): Promise<number> {
+  // No-token paths fail fast; authenticated production calls still fetch VIX.
+  if (accessToken == null) return cachedVix;
   if (Date.now() - lastVixFetch < VIX_CACHE_MS && cachedVix > 0) return cachedVix;
   try {
     // India VIX instrument key on Upstox

@@ -4312,6 +4312,7 @@ Setting is saved and applies to ALL bot slots you start after this. Best with Ma
                   ev.type === "partial_book" ? "text-yellow-400" :
                   ev.type === "error" ? "text-red-400" :
                   ev.type === "candidate_reject" ? "text-amber-300" :
+                  ev.type === "candidate_audit" ? "text-violet-300" :
                   "text-white/50";
                 const icon =
                   ev.type === "trade_open" ? "▶" :
@@ -4321,7 +4322,8 @@ Setting is saved and applies to ALL bot slots you start after this. Best with Ma
                   ev.type === "bot_stop" ? "□" :
                   ev.type === "partial_book" ? "◐" :
                   ev.type === "error" ? "⚠" :
-                  ev.type === "candidate_reject" ? "⊘" : "•";
+                  ev.type === "candidate_reject" ? "⊘" :
+                  ev.type === "candidate_audit" ? "◎" : "•";
                 return (
                   <div key={ev.id} className={`flex gap-2 ${color}`}>
                     <span className="text-white/20 shrink-0">{time}{slotTag}</span>

@@ -7512,6 +7512,9 @@ async function tick(
   state.premiumFirstPremium = undefined;
   state.premiumFirstExpiry = undefined;
   const isMomentumScalper = state.momentumScalperMode === true;
+  // Demo-only telemetry path: observe the expanded option universe even when
+  // Normal mode has an underlying signal, but never replace that signal.
+  const isDemoOpportunityAudit = state.mode === "demo" && !isMomentumScalper;
   let signal: Signal = { direction: "HOLD", confidence: 0, entryPrice: 0, slPrice: 0, targetPrice: 0, atr: 0, reason: isMomentumScalper ? "Momentum Scalper warming premium universe" : "No session-layer path applicable", layer: "None" };
 
   // Previous trading day candle (index -2 from today = yesterday's candle)
@@ -7711,7 +7714,7 @@ const isExpiryDay = isOptionInstrument && (
   // Premium-first option scan: evaluate a bounded ATM/ITM universe when the
   // underlying-first engine has no signal. This remains subject to all existing
   // risk, margin, contract, and entry-quality gates below.
-  if ((isMomentumScalper || signal.direction === "HOLD") && isOptionsMode && state.accessToken && state.accessToken !== "DEMO_NO_TOKEN" && state.premiumFirstEnabled !== false) {
+  if ((isMomentumScalper || signal.direction === "HOLD" || isDemoOpportunityAudit) && isOptionsMode && state.accessToken && state.accessToken !== "DEMO_NO_TOKEN" && state.premiumFirstEnabled !== false) {
     try {
       const underlyingForPremium = state.underlyingToken || state.instrumentToken;
       const analytics = getCachedAnalytics(underlyingForPremium) ?? await fetchOptionsAnalytics(underlyingForPremium, state.accessToken);
@@ -7728,7 +7731,7 @@ const isExpiryDay = isOptionInstrument && (
         const quoteCandidates: PremiumCandidateQuote[] = chainCandidates.flatMap(candidate => {
           const wsQuote = getUpstoxWebSocketQuote(state.accessToken!, candidate.token);
           if (!wsQuote || wsQuote.ltp <= 0) {
-            emitActivity(state.sessionToken, "candidate_reject", `Premium candidate ${candidate.symbol} ${candidate.optionType} rejected: no fresh WebSocket quote | token ...${candidate.token.slice(-12)}`);
+            emitActivity(state.sessionToken, "candidate_audit", `AUDIT ONLY — ${candidate.symbol} ${candidate.optionType} rejected: no fresh WebSocket quote | token ...${candidate.token.slice(-12)}`);
             return [];
           }
           const spreadPercent = wsQuote.bid > 0 && wsQuote.ask > 0
@@ -7739,15 +7742,17 @@ const isExpiryDay = isOptionInstrument && (
         const scans = scanPremiumFirstCandidates(quoteCandidates, state.premiumHistory, nowPremium, isMomentumScalper ? 12 : 6);
         for (const scan of scans) {
           if (!scan.signal) {
-            emitActivity(state.sessionToken, "candidate_reject", `Premium candidate ${scan.candidate.symbol} ${scan.candidate.optionType} rejected: ${scan.reason} | ₹${scan.candidate.premium.toFixed(2)}`);
+            emitActivity(state.sessionToken, "candidate_audit", `AUDIT ONLY — ${scan.candidate.symbol} ${scan.candidate.optionType} rejected: ${scan.reason} | ₹${scan.candidate.premium.toFixed(2)}`);
           } else if (scan.signal.direction !== "BUY" || scan.signal.confidence < state.minConfidence / 100) {
-            emitActivity(state.sessionToken, "candidate_reject", `Premium candidate ${scan.candidate.symbol} ${scan.candidate.optionType} rejected: ${scan.signal.direction} / confidence ${(scan.signal.confidence * 100).toFixed(0)}% below ${(state.minConfidence).toFixed(0)}%` , { confidence: scan.signal.confidence });
+            emitActivity(state.sessionToken, "candidate_audit", `AUDIT ONLY — ${scan.candidate.symbol} ${scan.candidate.optionType} rejected: ${scan.signal.direction} / confidence ${(scan.signal.confidence * 100).toFixed(0)}% below ${(state.minConfidence).toFixed(0)}%` , { confidence: scan.signal.confidence });
+          } else if (isDemoOpportunityAudit) {
+            emitActivity(state.sessionToken, "candidate_audit", `AUDIT ONLY — ${scan.candidate.symbol} ${scan.candidate.optionType} would qualify at ₹${scan.candidate.premium.toFixed(2)} | ${(scan.signal.confidence * 100).toFixed(0)}% | Normal signal preserved`, { price: scan.candidate.premium, confidence: scan.signal.confidence });
           }
         }
         // Momentum Scalper buys only premiums with bullish momentum. A bearish
         // premium signal is not converted into a long option order by accident.
         const winner = selectMomentumScalperWinner(scans, state.minConfidence / 100);
-        if (winner?.signal) {
+        if (winner?.signal && isMomentumScalper) {
           state.premiumFirstToken = winner.candidate.token;
           state.premiumFirstStrike = winner.candidate.strike;
           state.premiumFirstType = winner.candidate.optionType;
