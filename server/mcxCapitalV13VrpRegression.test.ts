@@ -8,13 +8,13 @@ import {
 const engineSource = fs.readFileSync(path.join(process.cwd(), "server", "botEngine.ts"), "utf8");
 const routerSource = fs.readFileSync(path.join(process.cwd(), "server", "routers.ts"), "utf8");
 
-describe("Fix 2 — MCX capital guard (post-loss-day)", () => {
-  it("clamps state.capital to 50k for MCX instruments at session start with an activity warning", () => {
-    expect(engineSource).toContain("const MAX_MCX_CAPITAL_INR = 50000;");
+describe("Fix 2 — MCX configured capital preservation", () => {
+  it("preserves user-configured capital and reports downstream MCX safeguards", () => {
     expect(engineSource).toContain("const isMcxInstrument = config.instrumentToken.startsWith(\"MCX\");");
-    expect(engineSource).toContain("if (isMcxInstrument && state.capital > MAX_MCX_CAPITAL_INR)");
-    expect(engineSource).toContain("state.capital = MAX_MCX_CAPITAL_INR;");
-    expect(engineSource).toContain("MCX capital guard: configured");
+    expect(engineSource).toContain("Configured capital preserved:");
+    expect(engineSource).toContain("MCX affordability, margin, risk-budget, exposure, and daily-loss guards remain active.");
+    expect(engineSource).not.toContain("const MAX_MCX_CAPITAL_INR = 50000;");
+    expect(engineSource).not.toContain("state.capital = MAX_MCX_CAPITAL_INR;");
   });
 });
 

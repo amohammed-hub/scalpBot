@@ -9538,18 +9538,12 @@ export function startBot(
     instrumentLocked: config.instrumentLocked ?? false,
   };
 
-  // D20: MCX capital guard — illiquid MCX contracts concentrated risk at 100-200k
-  // (Copper lost -18k alone with ~3x the capital of index slots). Clamp to
-  // MAX_MCX_CAPITAL_INR at session start and emit one warning; the clamped
-  // value drives all downstream risk sizing.
-  const MAX_MCX_CAPITAL_INR = 50000;
+  // D20 CAPA: preserve user-configured capital. Downstream controls remain
+  // authoritative for affordability, broker margin, D39 risk budget,
+  // portfolio exposure, and daily-loss protection; capital is never rewritten.
   const isMcxInstrument = config.instrumentToken.startsWith("MCX");
-  if (isMcxInstrument && state.capital > MAX_MCX_CAPITAL_INR) {
-    const originalCapital = state.capital;
-    state.capital = MAX_MCX_CAPITAL_INR;
-    emitActivity(config.sessionToken, "bot_start",
-      `🛡️ MCX capital guard: configured ₹${originalCapital.toLocaleString("en-IN")} → capped at ₹${MAX_MCX_CAPITAL_INR.toLocaleString("en-IN")} (illiquid MCX contract risk control). Adjust in Settings → Capital to restore.`);
-  }
+  emitActivity(config.sessionToken, "bot_start",
+    `💰 Configured capital preserved: ₹${state.capital.toLocaleString("en-IN")} | MCX affordability, margin, risk-budget, exposure, and daily-loss guards remain active.`);
   // CRITICAL: Log whether accessToken was passed to startBot
   console.log(`[BotEngine] startBot: session=${config.sessionToken.slice(0, 8)}... mode=${config.mode} accessToken=${config.accessToken ? `SET (${config.accessToken.slice(0, 8)}...)` : "NULL ⚠"} instrument=${config.instrumentSymbol}`);
   if (config.mode === "live" && !config.accessToken) {
