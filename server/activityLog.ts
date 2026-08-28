@@ -7,7 +7,7 @@
 export type ActivityEventType =
   | "tick" | "signal" | "trade_open" | "trade_close" | "bot_start" | "bot_stop"
   | "bot_crash" | "sl_update" | "partial_book" | "market_closed" | "bot_pause"
-  | "bot_resume" | "error";
+  | "bot_resume" | "candidate_reject" | "error";
 
 export interface ActivityEvent {
   id: number;

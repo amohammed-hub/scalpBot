@@ -1113,7 +1113,7 @@ export default function Dashboard() {
   const activitySessionRef = useRef(sessionToken);
   const { data: newActivityEvents } = trpc.activity.log.useQuery(
     { sessionToken, limit: 50, afterId: activityAfterId },
-    { refetchInterval: 2000, enabled: authReady && activeTab === "log" && !!sessionToken }
+    { refetchInterval: 2000, refetchOnMount: "always", enabled: authReady && activeTab === "log" && !!sessionToken }
   );
   useEffect(() => {
     if (activitySessionRef.current === sessionToken) return;
@@ -1121,6 +1121,11 @@ export default function Dashboard() {
     setActivityEvents([]);
     setActivityAfterId(0);
   }, [sessionToken]);
+  useEffect(() => {
+    if (activeTab !== "log") return;
+    setActivityEvents([]);
+    setActivityAfterId(0);
+  }, [activeTab]);
   useEffect(() => {
     if (!newActivityEvents || newActivityEvents.length === 0) return;
     setActivityEvents(prev => {
@@ -4306,6 +4311,7 @@ Setting is saved and applies to ALL bot slots you start after this. Best with Ma
                   ev.type === "bot_crash" ? "text-red-500" :
                   ev.type === "partial_book" ? "text-yellow-400" :
                   ev.type === "error" ? "text-red-400" :
+                  ev.type === "candidate_reject" ? "text-amber-300" :
                   "text-white/50";
                 const icon =
                   ev.type === "trade_open" ? "▶" :
@@ -4314,7 +4320,8 @@ Setting is saved and applies to ALL bot slots you start after this. Best with Ma
                   ev.type === "bot_start" ? "▷" :
                   ev.type === "bot_stop" ? "□" :
                   ev.type === "partial_book" ? "◐" :
-                  ev.type === "error" ? "⚠" : "•";
+                  ev.type === "error" ? "⚠" :
+                  ev.type === "candidate_reject" ? "⊘" : "•";
                 return (
                   <div key={ev.id} className={`flex gap-2 ${color}`}>
                     <span className="text-white/20 shrink-0">{time}{slotTag}</span>

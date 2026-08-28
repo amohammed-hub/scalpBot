@@ -7717,19 +7717,33 @@ const isExpiryDay = isOptionInstrument && (
       const analytics = getCachedAnalytics(underlyingForPremium) ?? await fetchOptionsAnalytics(underlyingForPremium, state.accessToken);
       if (analytics) {
         state.premiumHistory ??= new Map();
-        const chainCandidates = selectPremiumChainCandidates(analytics.strikes, analytics.underlyingPrice, 3);
+        // Momentum Scalper needs a wider observable universe than the legacy
+        // fallback scan: the original 3-per-side cap could omit a valid PE
+        // that was several strikes ITM/OTM during a fast move.
+        const maxPerSide = isMomentumScalper ? 6 : 3;
+        const chainCandidates = selectPremiumChainCandidates(analytics.strikes, analytics.underlyingPrice, maxPerSide);
         const candidateKeys = chainCandidates.map(candidate => candidate.token).filter(Boolean);
         void ensureUpstoxMarketDataFeed(state.accessToken, [underlyingForPremium, ...candidateKeys]);
         const nowPremium = Date.now();
         const quoteCandidates: PremiumCandidateQuote[] = chainCandidates.flatMap(candidate => {
           const wsQuote = getUpstoxWebSocketQuote(state.accessToken!, candidate.token);
-          if (!wsQuote || wsQuote.ltp <= 0) return [];
+          if (!wsQuote || wsQuote.ltp <= 0) {
+            emitActivity(state.sessionToken, "candidate_reject", `Premium candidate ${candidate.symbol} ${candidate.optionType} rejected: no fresh WebSocket quote | token ...${candidate.token.slice(-12)}`);
+            return [];
+          }
           const spreadPercent = wsQuote.bid > 0 && wsQuote.ask > 0
             ? ((wsQuote.ask - wsQuote.bid) / wsQuote.ltp) * 100
             : null;
           return [{ ...candidate, premium: wsQuote.ltp, spreadPercent, timestamp: wsQuote.receivedAt }];
         });
-        const scans = scanPremiumFirstCandidates(quoteCandidates, state.premiumHistory, nowPremium, 12);
+        const scans = scanPremiumFirstCandidates(quoteCandidates, state.premiumHistory, nowPremium, isMomentumScalper ? 12 : 6);
+        for (const scan of scans) {
+          if (!scan.signal) {
+            emitActivity(state.sessionToken, "candidate_reject", `Premium candidate ${scan.candidate.symbol} ${scan.candidate.optionType} rejected: ${scan.reason} | ₹${scan.candidate.premium.toFixed(2)}`);
+          } else if (scan.signal.direction !== "BUY" || scan.signal.confidence < state.minConfidence / 100) {
+            emitActivity(state.sessionToken, "candidate_reject", `Premium candidate ${scan.candidate.symbol} ${scan.candidate.optionType} rejected: ${scan.signal.direction} / confidence ${(scan.signal.confidence * 100).toFixed(0)}% below ${(state.minConfidence).toFixed(0)}%` , { confidence: scan.signal.confidence });
+          }
+        }
         // Momentum Scalper buys only premiums with bullish momentum. A bearish
         // premium signal is not converted into a long option order by accident.
         const winner = selectMomentumScalperWinner(scans, state.minConfidence / 100);
