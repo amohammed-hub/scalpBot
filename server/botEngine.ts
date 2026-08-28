@@ -8759,15 +8759,8 @@ const isExpiryDay = isOptionInstrument && (
   // Use the actual capital allocated on the dashboard for both NSE and MCX
   const isMcxForCapital = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
   const MAX_CAPITAL_PER_TRADE = state.capital;
-  const MAX_OPEN_POSITIONS = 4;
-  // Check max open positions across all bots for this user
-  const userBots = getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, ""));
-  const currentOpenCount = userBots.filter(b => b.openTrade !== null).length;
-  if (currentOpenCount >= MAX_OPEN_POSITIONS) {
-    emitActivity(state.sessionToken, "signal", `⛔ Max ${MAX_OPEN_POSITIONS} open positions reached — skipping entry`);
-    state.isOpeningTrade = false;
-    return;
-  }
+  // Multi-slot CAPA: no fixed global open-position ceiling. Each slot remains
+  // protected by its own open-trade mutex, affordability, risk, margin, and loss caps.
   // BUG 26: Per-bot capital guard — if this bot already has capital deployed (open position), block new entry
   // This prevents the scenario where a bot with an existing open trade somehow tries to open another.
   if (state.capitalUsed > 0 && state.openTrade) {
@@ -8997,33 +8990,9 @@ const isExpiryDay = isOptionInstrument && (
     }
   }
 
-  // ── v3 Risk Gate: Portfolio exposure cap (80% of combined capital) ──────────
-  // ── V2 Regime Size Reduction: halve position in VOLATILE regime ─────────────
-  if (signal.sizeReduction && signal.sizeReduction > 0 && signal.sizeReduction < 1) {
-    const reducedQty = Math.max(lotSize, Math.floor((quantity * signal.sizeReduction) / lotSize) * lotSize);
-    if (reducedQty < quantity) {
-      devLog(`[tick] SIZE REDUCTION — ${state.sessionToken.slice(0,8)} | regime=${signal.regimeV2} | qty ${quantity} → ${reducedQty} (${(signal.sizeReduction * 100).toFixed(0)}% reduction)`);
-      quantity = reducedQty;
-    }
-  }
-
-  const entryPriceForExposure = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
-  const newTradeExposure = entryPriceForExposure * quantity;
-  const exposureCheck = canOpenNewTrade(getAllRunningBotsForSession(state.sessionToken.replace(/-slot\d+$/, "")), newTradeExposure);
-  if (!exposureCheck.allowed) {
-    const rejectSignal: Signal = { direction: "HOLD", confidence: 0, entryPrice: price, slPrice: price, targetPrice: price, atr: 0, reason: exposureCheck.reason ?? "Portfolio exposure cap reached", layer: "None" };
-    state.lastSignal = rejectSignal;
-    emitActivity(state.sessionToken, "signal", `⛔ Entry blocked — ${exposureCheck.reason}`);
-    pushRejectedSignal(state, { direction: signal.direction as "BUY" | "SELL", layer: signal.layer, confidence: signal.confidence, reason: signal.reason }, exposureCheck.reason ?? "Exposure cap");
-    logSignalToJournal({
-      sessionToken: state.sessionToken, symbol: state.instrumentSymbol, instrumentToken: state.instrumentToken,
-      direction: signal.direction, layer: signal.layer, confidence: signal.confidence,
-      entryPrice: signal.entryPrice, suggestedSl: signal.slPrice, suggestedTarget: signal.targetPrice,
-      atr: signal.atr, regime: signal.regimeV2 ?? state.regimeV2 ?? signal.marketRegime, outcome: "rejected", rejectReason: exposureCheck.reason ?? "Exposure cap",
-    });
-    return;
-  }
-
+  // Multi-slot CAPA: no fixed global portfolio exposure ceiling.
+  // Per-slot affordability, D39, broker margin, daily-loss, and per-trade risk
+  // controls remain enforced before order placement.
   // ── Place order ─────────────────────────────────────────────────────────────────────────────
   // For options mode: always BUY the option (CE or PE) regardless of signal direction.
   // The direction (BUY/SELL) in the trade log refers to the underlying signal direction.
@@ -9072,6 +9041,9 @@ const isExpiryDay = isOptionInstrument && (
     // Options: always BUY the option (CE for bullish, PE for bearish)
     // Futures/equity: use signal direction directly
     const orderDirection = isOptionsMode ? "BUY" : signal.direction;
+    // Use the actual option premium for broker-margin validation; underlying
+    // signal price remains the basis only for non-option instruments.
+    const entryPriceForExposure = isOptionsMode && optionPremiumForSizing ? optionPremiumForSizing : signal.entryPrice;
     // ── MARGIN CHECK: Verify sufficient funds before placing order ──────────────
     const orderValue = entryPriceForExposure * quantity;
     const isMcxForMargin = (state.underlyingToken ?? state.instrumentToken).startsWith("MCX");
